@@ -113,8 +113,14 @@ blob-report/
 # -----------------------------------------------------------------------------
 # Secrets, credentials, and private keys
 # -----------------------------------------------------------------------------
-secrets/
-credentials/
+# Ignore directory contents with `dir/**` (not `dir/`) so the negated
+# exceptions below can still reach files nested inside these directories:
+# a bare `dir/` ignore excludes the directory itself, and git never
+# descends into an excluded directory to evaluate per-file `!` exceptions.
+# `dir/**/` additionally re-includes every subdirectory so git keeps
+# recursing far enough to find the nested exceptions.
+secrets/**
+credentials/**
 credentials*.json
 service-account*.json
 *.pem
@@ -124,9 +130,11 @@ service-account*.json
 *.jks
 *.keystore
 
-# Keep safe examples and templates.
+# Keep safe examples and templates, including in nested subdirectories.
+!secrets/**/
 !secrets/.gitkeep
 !secrets/**/*.example
+!credentials/**/
 !credentials/**/*.example
 
 # -----------------------------------------------------------------------------
@@ -139,13 +147,15 @@ service-account*.json
 *.sqlite-shm
 *.sqlite-wal
 
-data/
-var/
+# Ignore directory contents with `dir/*` (not `dir/`) for directories that
+# have a `!dir/.gitkeep` exception below — see note above.
+data/*
+var/*
 .var/
 runtime/
-uploads/
-media/
-storage/
+uploads/*
+media/*
+storage/*
 local-storage/
 
 # Keep intentionally committed empty directories or fixtures.
@@ -217,6 +227,7 @@ pnpm-debug.log*
 .opencode/
 .aider*
 .claude/settings.local.json
+.claude/worktrees/
 .cursor/*.local.*
 .windsurf/*.local.*
 
