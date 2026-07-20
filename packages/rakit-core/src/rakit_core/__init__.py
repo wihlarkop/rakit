@@ -1,3 +1,4 @@
+from rakit_core.compatibility import validate_official_package_versions
 from rakit_core.config import (
     LifecycleConfig,
     RakitConfig,
@@ -31,4 +32,5 @@ __all__ = [
     "SecretValue",
     "SecurityConfig",
     "__version__",
+    "validate_official_package_versions",
 ]
