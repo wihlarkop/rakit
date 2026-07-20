@@ -1,6 +1,5 @@
 import pytest
 from pydantic import ValidationError
-
 from rakit_core.config import RakitConfig, SecretValue
 
 
