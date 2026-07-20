@@ -19,6 +19,9 @@ rakit-implementation/
 rakit-design-ready.zip
 rakit-design-and-implementation-plans.zip
 
+# Local plan review packages (summary/verification/patch bundles for external review)
+review/
+
 # -----------------------------------------------------------------------------
 # Python bytecode and interpreter caches
 # -----------------------------------------------------------------------------
