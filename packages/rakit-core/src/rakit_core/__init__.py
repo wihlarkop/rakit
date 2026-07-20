@@ -1,3 +1,9 @@
+from rakit_core.config import (
+    LifecycleConfig,
+    RakitConfig,
+    SecurityConfig,
+    SecretValue,
+)
 from rakit_core.errors import (
     ErrorCode,
     ErrorDetail,
@@ -21,4 +27,8 @@ __all__ = [
     "RakitConfigurationWarning",
     "RakitPerformanceWarning",
     "RakitSecurityWarning",
+    "RakitConfig",
+    "SecurityConfig",
+    "LifecycleConfig",
+    "SecretValue",
 ]
