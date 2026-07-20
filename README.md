@@ -68,7 +68,13 @@ The exact API remains provisional until implementation begins.
 - [Framework design](docs/design/2026-07-19-rakit-framework-design.md)
 - [Roadmap](docs/roadmap.md)
 
-Implementation plans will be added under `docs/plans/` after the design specification has been reviewed.
+The framework design and roadmap are public documentation and are committed to
+the repository. Task-by-task implementation plans under `docs/plans/` are
+local, maintainer-only working documents used to drive development — they are
+not committed, are not published documentation, and are not a public API or
+compatibility commitment. The design specification and the shipped public API
+are the source of truth; a plan describes how a change was built, not a
+guarantee of what it produces.
 
 ## Intended package layout
 

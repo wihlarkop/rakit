@@ -1471,13 +1471,18 @@ The repository should contain:
 
 - focused README;
 - design specification;
-- implementation plans;
 - roadmap without date promises;
 - `SECURITY.md`;
 - `CONTRIBUTING.md`;
 - `CODE_OF_CONDUCT.md`;
 - license;
 - changelog.
+
+Task-by-task implementation plans are local, maintainer-only working
+documents that drive development. They are not committed to the repository,
+are not published documentation, and are not a public API or compatibility
+commitment — the design specification and the shipped public API remain the
+source of truth.
 
 Large irreversible decisions may receive ADRs under `docs/design/decisions/`.
 
