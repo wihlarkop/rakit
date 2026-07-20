@@ -1,7 +1,7 @@
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ErrorCode(StrEnum):
@@ -23,7 +23,7 @@ class ErrorDetail(BaseModel):
     location: tuple[str | int, ...] = ()
     code: str
     message: str
-    context: dict[str, Any] = {}
+    context: dict[str, Any] = Field(default_factory=dict)
 
 
 class RakitError(Exception):
