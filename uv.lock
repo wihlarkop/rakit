@@ -218,8 +218,17 @@ dependencies = [
     { name = "rakit-core" },
 ]
 
+[package.optional-dependencies]
+sqlalchemy = [
+    { name = "rakit-sqlalchemy" },
+]
+
 [package.metadata]
-requires-dist = [{ name = "rakit-core", editable = "packages/rakit-core" }]
+requires-dist = [
+    { name = "rakit-core", editable = "packages/rakit-core" },
+    { name = "rakit-sqlalchemy", marker = "extra == 'sqlalchemy'", editable = "packages/rakit-sqlalchemy" },
+]
+provides-extras = ["sqlalchemy"]
 
 [[package]]
 name = "rakit-auth-sqlalchemy"
