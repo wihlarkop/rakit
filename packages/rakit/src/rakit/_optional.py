@@ -10,6 +10,8 @@ def require_module(module_name: str, *, extra: str) -> ModuleType:
     try:
         return import_module(module_name)
     except ModuleNotFoundError as exc:
+        if exc.name != module_name:
+            raise
         raise RakitOptionalDependencyError(
             f"Optional Rakit support is not installed. Install it with:\n\n"
             f'    uv add "rakit[{extra}]"\n'
