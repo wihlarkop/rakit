@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rakit"
+version = "0.1.0a1"
+requires-python = ">=3.12"
+dependencies = ["rakit-core==0.1.0a1"]
+
+[tool.uv.sources]
+rakit-core = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rakit"]

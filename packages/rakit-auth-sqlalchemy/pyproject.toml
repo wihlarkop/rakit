@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rakit-auth-sqlalchemy"
+version = "0.1.0a1"
+requires-python = ">=3.12"
+dependencies = ["rakit-sqlalchemy==0.1.0a1", "rakit-core==0.1.0a1"]
+
+[tool.uv.sources]
+rakit-sqlalchemy = { workspace = true }
+rakit-core = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rakit_auth_sqlalchemy"]
