@@ -105,9 +105,22 @@ class ApplicationBuilder:
                     details={"plugin": plugin.plugin_id, "conflicts_with": installed_id},
                 )
 
+        routes_snapshot = list(self._routes)
+        plugin_ids_snapshot = list(self._plugin_ids)
+        plugin_conflicts_snapshot = dict(self._plugin_conflicts)
+        providers_snapshot = self.registry._snapshot_providers()
+
         self._plugin_ids.append(plugin.plugin_id)
         self._plugin_conflicts[plugin.plugin_id] = conflicts_with
-        plugin.configure(self)
+        try:
+            plugin.configure(self)
+        except BaseException:
+            self._routes[:] = routes_snapshot
+            self._plugin_ids[:] = plugin_ids_snapshot
+            self._plugin_conflicts.clear()
+            self._plugin_conflicts.update(plugin_conflicts_snapshot)
+            self.registry._restore_providers(providers_snapshot)
+            raise
 
 
 @dataclass(frozen=True)

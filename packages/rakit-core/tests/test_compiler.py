@@ -221,6 +221,93 @@ def test_failed_compile_leaves_builder_editable() -> None:
     assert any(route.route_name == "app.valid" for route in builder.routes)
 
 
+class _ServiceB:
+    pass
+
+
+class _PluginThatFailsMidConfigure:
+    plugin_id = "flaky"
+
+    def configure(self, builder: ApplicationBuilder) -> None:
+        builder.add_route(
+            RouteDefinition(
+                route_name="app.flaky",
+                methods=("GET",),
+                path="/flaky",
+                owner_id="flaky",
+            )
+        )
+        builder.registry.add_factory(
+            _ServiceB, lambda _: _ServiceB(), scope=ServiceScope.APPLICATION
+        )
+        raise RuntimeError("boom")
+
+
+class _PluginThatSucceeds:
+    plugin_id = "flaky"
+
+    def configure(self, builder: ApplicationBuilder) -> None:
+        builder.add_route(
+            RouteDefinition(
+                route_name="app.flaky",
+                methods=("GET",),
+                path="/flaky",
+                owner_id="flaky",
+            )
+        )
+        builder.registry.add_factory(
+            _ServiceB, lambda _: _ServiceB(), scope=ServiceScope.APPLICATION
+        )
+
+
+def test_failed_install_rolls_back_routes_plugin_ids_conflicts_and_providers() -> None:
+    builder = ApplicationBuilder()
+    plugin = _PluginThatFailsMidConfigure()
+
+    with pytest.raises(RuntimeError, match="boom"):
+        builder.install(plugin)
+
+    assert builder.routes == ()
+    assert builder.plugins == ()
+    assert plugin.plugin_id not in builder._plugin_conflicts
+    assert all(key.service_type is not _ServiceB for key in builder.registry.providers)
+
+    # Proves the registration was genuinely removed, not just hidden from view.
+    builder.registry.add_factory(_ServiceB, lambda _: _ServiceB(), scope=ServiceScope.APPLICATION)
+
+
+def test_corrected_plugin_can_be_installed_after_rollback() -> None:
+    builder = ApplicationBuilder()
+    failing_plugin = _PluginThatFailsMidConfigure()
+
+    with pytest.raises(RuntimeError, match="boom"):
+        builder.install(failing_plugin)
+
+    corrected_plugin = _PluginThatSucceeds()
+    builder.install(corrected_plugin)
+
+    assert builder.plugins == ("flaky",)
+    assert len(builder.routes) == 1
+    assert builder.routes[0].route_name == "app.flaky"
+    assert any(key.service_type is _ServiceB for key in builder.registry.providers)
+
+
+def test_successful_install_survives_compile_with_rollback_machinery_in_place() -> None:
+    builder = ApplicationBuilder()
+    builder.install(_PluginThatSucceeds())
+
+    compiled = compile_application(builder)
+
+    assert any(route.route_name == "app.flaky" for route in compiled.routes)
+    assert "flaky" in compiled.plugins
+
+    with pytest.raises(RakitError) as caught:
+        builder.registry.add_factory(
+            _ServiceA, lambda _: _ServiceA(), scope=ServiceScope.APPLICATION
+        )
+    assert caught.value.code == "di.registry_frozen"
+
+
 def test_routes_and_plugins_are_read_only_tuples() -> None:
     builder = ApplicationBuilder()
     assert isinstance(builder.routes, tuple)

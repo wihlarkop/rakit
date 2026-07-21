@@ -99,6 +99,15 @@ class ServiceRegistry:
     def freeze(self) -> None:
         self._frozen = True
 
+    def _snapshot_providers(self) -> dict[ServiceKey[Any], tuple[ServiceScope, Factory]]:
+        return dict(self._providers)
+
+    def _restore_providers(
+        self, snapshot: dict[ServiceKey[Any], tuple[ServiceScope, Factory]]
+    ) -> None:
+        self._providers.clear()
+        self._providers.update(snapshot)
+
     def add_value(
         self, service_type: type[T], value: T, *, scope: ServiceScope, name: str | None = None
     ) -> None:
