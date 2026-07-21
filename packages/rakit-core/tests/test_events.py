@@ -237,3 +237,34 @@ async def test_concurrent_dispatch_does_not_cross_contaminate_causation_chains()
 
     assert captured["child_causation_id"] == captured["a_event_id"]
     assert captured["child_correlation_id"] == captured["a_correlation_id"]
+
+
+@pytest.mark.anyio
+async def test_separate_event_buses_do_not_share_dispatch_context() -> None:
+    """Two independent EventBus/EventPublisher pairs must not contaminate each
+    other's envelope stack even when one's dispatch is nested (same task)
+    inside the other's dispatch."""
+    bus_a = EventBus()
+    publisher_a = EventPublisher(bus_a)
+    bus_b = EventBus()
+    publisher_b = EventPublisher(bus_b)
+
+    captured: dict[str, object] = {}
+
+    async def on_root_a(_event: RootA) -> None:
+        assert bus_a.current_dispatch_depth() == 1
+        await publisher_b.publish_pre(RootB(tag="b"))
+
+    def on_root_b(_event: RootB) -> None:
+        envelope = bus_b.current_envelope()
+        assert envelope is not None
+        captured["b_causation_id"] = envelope.causation_id
+        captured["b_dispatch_depth"] = bus_b.current_dispatch_depth()
+
+    bus_a.subscribe(RootA, on_root_a)
+    bus_b.subscribe(RootB, on_root_b)
+
+    await publisher_a.publish_pre(RootA(tag="a"))
+
+    assert captured["b_causation_id"] is None
+    assert captured["b_dispatch_depth"] == 1
