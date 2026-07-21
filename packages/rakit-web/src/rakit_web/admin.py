@@ -13,7 +13,7 @@ from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .lifecycle import LifecycleManager
-from .logging import bind_request_context, clear_request_context, configure_logging
+from .logging import bind_request_context, configure_logging, reset_request_context
 
 logger = structlog.get_logger(__name__)
 
@@ -39,12 +39,12 @@ class RequestContextMiddleware:
             return
 
         request_id = str(uuid.uuid4())
-        bind_request_context(request_id=request_id, admin_id=self.admin_id)
+        tokens = bind_request_context(request_id=request_id, admin_id=self.admin_id)
         try:
             logger.info("http.request.started", path=scope.get("path"))
             await self.app(scope, receive, send)
         finally:
-            clear_request_context()
+            reset_request_context(tokens)
 
 
 class Admin:
