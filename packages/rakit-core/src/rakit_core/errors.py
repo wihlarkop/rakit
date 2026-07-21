@@ -23,6 +23,8 @@ class ErrorCode(StrEnum):
     EVENTS_QUEUE_DEPTH_EXCEEDED = "events.queue_depth_exceeded"
     EVENTS_CAUSATION_DEPTH_EXCEEDED = "events.causation_depth_exceeded"
     EVENTS_DRAIN_BUDGET_EXCEEDED = "events.drain_budget_exceeded"
+    EVENTS_NESTED_PUBLISH_PRE_NOT_ALLOWED = "events.nested_publish_pre_not_allowed"
+    EVENTS_ENQUEUE_PRE_WITHOUT_ACTIVE_DRAIN = "events.enqueue_pre_without_active_drain"
     CONFIG_MISSING_PLUGIN_DEPENDENCY = "config.missing_plugin_dependency"
     CONFIG_PLUGIN_CONFLICT = "config.plugin_conflict"
     CONFIG_RESERVED_PATH = "config.reserved_path"

@@ -37,6 +37,11 @@ class ChildOfA(DomainEvent):
     tag: str
 
 
+@dataclass(frozen=True)
+class ChildTaskEvent(DomainEvent):
+    tag: str
+
+
 @pytest.mark.anyio
 async def test_event_is_delivered_after_commit() -> None:
     received: list[str] = []
@@ -110,7 +115,7 @@ async def test_publish_raises_when_queue_depth_exceeded() -> None:
 
 
 @pytest.mark.anyio
-async def test_correlation_and_causation_propagate_through_nested_publish_pre() -> None:
+async def test_correlation_and_causation_propagate_through_nested_enqueue_pre() -> None:
     bus = EventBus()
     publisher = EventPublisher(bus)
 
@@ -122,7 +127,7 @@ async def test_correlation_and_causation_propagate_through_nested_publish_pre() 
         captured["first_event_id"] = first_envelope.event_id
         captured["first_correlation_id"] = first_envelope.correlation_id
 
-        await publisher.publish_pre(OrderShipped(order_id="o-1"))
+        await publisher.enqueue_pre(OrderShipped(order_id="o-1"))
 
     def on_order_shipped(_event: OrderShipped) -> None:
         second_envelope = bus.current_envelope()
@@ -141,12 +146,12 @@ async def test_correlation_and_causation_propagate_through_nested_publish_pre() 
 
 
 @pytest.mark.anyio
-async def test_cycle_diagnostics_raises_on_deep_nested_publish_pre() -> None:
+async def test_cycle_diagnostics_raises_on_deep_nested_enqueue_pre() -> None:
     bus = EventBus()
     publisher = EventPublisher(bus, max_causation_depth=3)
 
     async def on_order_created(_event: OrderCreated) -> None:
-        await publisher.publish_pre(OrderCreated(order_id="o-1"))
+        await publisher.enqueue_pre(OrderCreated(order_id="o-1"))
 
     bus.subscribe(OrderCreated, on_order_created)
 
@@ -208,7 +213,7 @@ async def test_concurrent_dispatch_does_not_cross_contaminate_causation_chains()
         assert bus.current_dispatch_depth() == 1
         assert bus.current_envelope() is own_envelope
 
-        await publisher.publish_pre(ChildOfA(tag="child"))
+        await publisher.enqueue_pre(ChildOfA(tag="child"))
 
         # Let B proceed to completion only after A has already read/used its
         # own (uncontaminated) chain.
@@ -307,7 +312,7 @@ async def test_dispatch_never_has_more_than_one_active_call_even_when_nested(
         depth_counter["n"] += 1
         if depth_counter["n"] < 4:
             # Nest at least 3 levels deep.
-            await publisher.publish_pre(OrderCreated(order_id=event.order_id))
+            await publisher.enqueue_pre(OrderCreated(order_id=event.order_id))
 
     bus.subscribe(OrderCreated, on_order_created)
 
@@ -331,7 +336,7 @@ async def test_queue_and_causation_limits_terminate_self_triggering_chain() -> N
     publisher = EventPublisher(bus, max_queue_depth=2, max_causation_depth=2)
 
     async def on_order_created(event: OrderCreated) -> None:
-        await publisher.publish_pre(OrderCreated(order_id=event.order_id))
+        await publisher.enqueue_pre(OrderCreated(order_id=event.order_id))
 
     bus.subscribe(OrderCreated, on_order_created)
 
@@ -354,7 +359,7 @@ async def test_unbounded_self_triggering_chain_terminates_via_causation_depth() 
     publisher = EventPublisher(bus)
 
     async def on_order_created(event: OrderCreated) -> None:
-        await publisher.publish_pre(OrderCreated(order_id=event.order_id))
+        await publisher.enqueue_pre(OrderCreated(order_id=event.order_id))
 
     bus.subscribe(OrderCreated, on_order_created)
 
@@ -376,7 +381,7 @@ async def test_drain_budget_exceeded_for_many_sibling_pre_events() -> None:
 
     async def on_root_a(event: RootA) -> None:
         for i in range(20):
-            await publisher.publish_pre(ChildOfA(tag=f"{event.tag}-{i}"))
+            await publisher.enqueue_pre(ChildOfA(tag=f"{event.tag}-{i}"))
 
     bus.subscribe(RootA, on_root_a)
     bus.subscribe(ChildOfA, lambda _event: None)
@@ -436,3 +441,209 @@ async def test_publish_pre_stops_at_first_failing_handler_for_same_event() -> No
         await publisher.publish_pre(OrderCreated(order_id="o-1"))
 
     assert ran["second"] is False
+
+
+@pytest.mark.anyio
+async def test_child_task_created_during_drain_gets_own_drain_after_parent_finishes() -> None:
+    """Finding 1 regression: a child asyncio.Task spawned via
+    asyncio.create_task() while a parent task's publish_pre drain is active
+    must NOT inherit the parent's (possibly-stale) _PreDrainState via
+    ContextVar copying. If it did, the child's own later publish_pre call
+    would wrongly think it is "nested" inside the parent's drain, enqueue its
+    envelope, and return immediately without ever actually dispatching it
+    (because the parent's pump has already finished and will never come back
+    to drain it) -- silently and permanently losing the event."""
+    bus = EventBus()
+    publisher = EventPublisher(bus)
+
+    child_may_publish = asyncio.Event()
+    order: list[str] = []
+    child_dispatched: list[str] = []
+
+    async def on_child_event(event: ChildTaskEvent) -> None:
+        order.append("child_handler_ran")
+        child_dispatched.append(event.tag)
+
+    bus.subscribe(ChildTaskEvent, on_child_event)
+
+    task_holder: dict[str, asyncio.Task[None]] = {}
+
+    async def child_task_body() -> None:
+        await child_may_publish.wait()
+        order.append("child_publish_pre_start")
+        await publisher.publish_pre(ChildTaskEvent(tag="child"))
+        order.append("child_publish_pre_return")
+
+    async def on_root_a(_event: RootA) -> None:
+        task_holder["task"] = asyncio.create_task(child_task_body())
+        # Give the child task a chance to actually start running (and park
+        # on child_may_publish) before the root's own drain finishes.
+        await asyncio.sleep(0)
+
+    bus.subscribe(RootA, on_root_a)
+
+    await publisher.publish_pre(RootA(tag="root"))
+
+    # The root's own publish_pre call has now fully completed; the child
+    # task is still parked on child_may_publish, holding a ContextVar copy
+    # inherited from the moment it was created (while root's drain was
+    # active).
+    assert publisher._active_state_for_current_task() is None
+
+    child_may_publish.set()
+    await task_holder["task"]
+
+    # The event must have been dispatched exactly once -- not lost.
+    assert child_dispatched == ["child"]
+    # The child's own publish_pre call must not have returned before its
+    # handler actually ran.
+    assert order == [
+        "child_publish_pre_start",
+        "child_handler_ran",
+        "child_publish_pre_return",
+    ]
+    # No stray/stranded queue state remains afterward.
+    assert publisher._active_state_for_current_task() is None
+
+
+@pytest.mark.anyio
+async def test_child_task_started_during_active_parent_drain_is_fully_isolated() -> None:
+    """Same finding-1 scenario, but with the child task's own publish_pre
+    call made WHILE the parent's pump is still active (not after it
+    completes) -- proving the two tasks remain fully isolated from each
+    other regardless of timing, via the owner_task check."""
+    bus = EventBus()
+    publisher = EventPublisher(bus)
+
+    child_dispatched: list[str] = []
+
+    async def on_child_event(event: ChildTaskEvent) -> None:
+        child_dispatched.append(event.tag)
+
+    bus.subscribe(ChildTaskEvent, on_child_event)
+
+    async def child_task_body() -> None:
+        # Runs concurrently, on a DIFFERENT task, while root's drain is
+        # still active. This must succeed as its own independent top-level
+        # drain, not be mistaken for a nested call into root's drain.
+        await publisher.publish_pre(ChildTaskEvent(tag="child"))
+
+    async def on_root_a(_event: RootA) -> None:
+        root_state_before = publisher._active_state_for_current_task()
+        assert root_state_before is not None
+        assert root_state_before.owner_task is asyncio.current_task()
+
+        child_task = asyncio.create_task(child_task_body())
+        await child_task
+
+        # Root's own drain state must be completely unaffected by the
+        # child task's independent (and already-completed) drain.
+        root_state_after = publisher._active_state_for_current_task()
+        assert root_state_after is root_state_before
+        assert root_state_after.owner_task is asyncio.current_task()
+
+    bus.subscribe(RootA, on_root_a)
+
+    await publisher.publish_pre(RootA(tag="root"))
+
+    assert child_dispatched == ["child"]
+    assert publisher._active_state_for_current_task() is None
+
+
+@pytest.mark.anyio
+async def test_publish_pre_top_level_call_waits_for_full_transitive_drain() -> None:
+    """Normal (non-nested) top-level usage: by the time
+    ``await publisher.publish_pre(event)`` returns, the event and anything it
+    transitively enqueued via enqueue_pre have been fully dispatched."""
+    bus = EventBus()
+    publisher = EventPublisher(bus)
+    ran: list[str] = []
+
+    async def on_order_created(event: OrderCreated) -> None:
+        ran.append("created")
+        await publisher.enqueue_pre(OrderShipped(order_id=event.order_id))
+
+    def on_order_shipped(_event: OrderShipped) -> None:
+        ran.append("shipped")
+
+    bus.subscribe(OrderCreated, on_order_created)
+    bus.subscribe(OrderShipped, on_order_shipped)
+
+    await publisher.publish_pre(OrderCreated(order_id="o-1"))
+
+    assert ran == ["created", "shipped"]
+
+
+@pytest.mark.anyio
+async def test_nested_publish_pre_from_pump_task_is_rejected() -> None:
+    """A handler that calls await publisher.publish_pre(nested_event) (NOT
+    enqueue_pre) from within its own execution -- same task, active drain --
+    must be rejected rather than silently handled."""
+    bus = EventBus()
+    publisher = EventPublisher(bus)
+
+    async def on_order_created(_event: OrderCreated) -> None:
+        await publisher.publish_pre(OrderShipped(order_id="o-1"))
+
+    bus.subscribe(OrderCreated, on_order_created)
+
+    with pytest.raises(RakitError) as exc_info:
+        await publisher.publish_pre(OrderCreated(order_id="o-1"))
+
+    assert exc_info.value.code == "events.nested_publish_pre_not_allowed"
+
+
+@pytest.mark.anyio
+async def test_enqueue_pre_from_handler_is_processed_before_outer_publish_pre_returns() -> None:
+    """A handler for event A calls await publisher.enqueue_pre(B); B's
+    handler must run before the outermost publish_pre(A) call returns."""
+    bus = EventBus()
+    publisher = EventPublisher(bus)
+    b_ran = {"value": False}
+
+    async def on_order_created(_event: OrderCreated) -> None:
+        await publisher.enqueue_pre(OrderShipped(order_id="o-1"))
+
+    def on_order_shipped(_event: OrderShipped) -> None:
+        b_ran["value"] = True
+
+    bus.subscribe(OrderCreated, on_order_created)
+    bus.subscribe(OrderShipped, on_order_shipped)
+
+    assert b_ran["value"] is False
+    await publisher.publish_pre(OrderCreated(order_id="o-1"))
+    assert b_ran["value"] is True
+
+
+@pytest.mark.anyio
+async def test_enqueue_pre_child_rejection_propagates_from_outer_publish_pre() -> None:
+    """A's handler calls enqueue_pre(B); B's handler raises; the OUTERMOST
+    await publisher.publish_pre(A) call must raise that same exception."""
+    bus = EventBus()
+    publisher = EventPublisher(bus)
+
+    async def on_order_created(_event: OrderCreated) -> None:
+        await publisher.enqueue_pre(OrderShipped(order_id="o-1"))
+
+    def rejecting_shipped_handler(_event: OrderShipped) -> None:
+        raise ValueError("shipped rejected")
+
+    bus.subscribe(OrderCreated, on_order_created)
+    bus.subscribe(OrderShipped, rejecting_shipped_handler)
+
+    with pytest.raises(ValueError, match="shipped rejected"):
+        await publisher.publish_pre(OrderCreated(order_id="o-1"))
+
+
+@pytest.mark.anyio
+async def test_enqueue_pre_without_active_drain_raises() -> None:
+    """enqueue_pre() must raise a clear RakitError when there is no active
+    drain owned by the current task -- it is meaningless to call it outside
+    of a publish_pre-initiated drain running on the same task."""
+    bus = EventBus()
+    publisher = EventPublisher(bus)
+
+    with pytest.raises(RakitError) as exc_info:
+        await publisher.enqueue_pre(OrderCreated(order_id="o-1"))
+
+    assert exc_info.value.code == "events.enqueue_pre_without_active_drain"

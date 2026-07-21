@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 import logging
 import uuid
@@ -117,11 +118,27 @@ class _PreDrainState:
 
     Held behind a per-``EventPublisher``-instance ``ContextVar`` so that
     concurrent operations (different asyncio tasks) get isolated state
-    automatically, while nested ``await``s within the same task's call chain
-    correctly observe and share the same active state.
+    automatically, while nested calls made from *the same task* correctly
+    observe and share the same active state.
+
+    ``owner_task`` records which ``asyncio.Task`` actually started this
+    drain. This is essential because ``ContextVar`` values are copied (not
+    shared) whenever a new ``asyncio.Task`` is created: a child task spawned
+    with ``asyncio.create_task(...)`` while a drain is active on the parent
+    task gets its own frozen copy of whatever this ContextVar held at that
+    moment. Without an explicit ownership check, that child task would later
+    see a stale, inherited state object and wrongly treat itself as "nested"
+    -- enqueuing onto a queue that no pump will ever come back to drain, and
+    silently losing the event. Checking ``asyncio.current_task() is
+    state.owner_task`` (see ``EventPublisher._active_state_for_current_task``)
+    ensures only the task that actually owns an active drain can observe it;
+    every other task treats the ContextVar as if it held ``None``.
     """
 
+    owner_task: "asyncio.Task[Any] | None"
+    active: bool
     queue: list[EventEnvelope] = field(default_factory=list)
+    processed: int = 0
 
 
 class EventPublisher:
@@ -186,79 +203,117 @@ class EventPublisher:
         envelope = self._build_envelope(event, version=version)
         self.deferred.append(envelope)
 
-    async def publish_pre(self, event: DomainEvent, *, version: int = 1) -> None:
-        """Publish a pre-commit event and wait for it (and anything it
-        transitively triggers) to finish dispatching.
+    def _active_state_for_current_task(self) -> "_PreDrainState | None":
+        """Return the drain state if -- and only if -- the CURRENT task is
+        its genuine owner.
 
-        Non-recursive by design: ``EventBus.dispatch`` is only ever active
-        once at a time per task, even when handlers call ``publish_pre``
-        again from within a handler. The OUTERMOST call in a given call
-        chain becomes a "pump" that drains a queue serially; any NESTED call
-        (made while a pump is already draining on this task) merely enqueues
-        its envelope and returns immediately, without waiting for it to be
-        processed.
-
-        Behavioral trade-off: because nested calls return immediately, a
-        handler that awaits a nested ``publish_pre(child)`` no longer
-        synchronously observes whether ``child`` was rejected -- the nested
-        call always returns successfully from the handler's point of view.
-        If a later-queued envelope's dispatch raises (a handler rejects it),
-        that exception propagates out of the OUTERMOST ``publish_pre`` call
-        instead (the one application code originally awaited), still failing
-        the overall operation, just not visibly at the nested call site.
-        This is required to keep dispatch genuinely non-recursive (see
-        module-level design notes / the fix report for why a synchronously-
-        blocking nested call would deadlock under asyncio's cooperative
-        scheduling).
+        A state inherited via ``ContextVar`` copying from a DIFFERENT (e.g.
+        parent) task must never be treated as this task's own active drain:
+        see the note on ``_PreDrainState`` for why that check is required.
         """
         state = self._pre_drain_state.get()
-        is_top_level = state is None
-        token = None
-        if is_top_level:
-            state = _PreDrainState()
-            token = self._pre_drain_state.set(state)
+        if state is not None and state.active and asyncio.current_task() is state.owner_task:
+            return state
+        return None
 
-        try:
-            if len(state.queue) >= self.max_queue_depth:
+    def _enqueue(self, state: "_PreDrainState", envelope: EventEnvelope) -> None:
+        if len(state.queue) >= self.max_queue_depth:
+            raise RakitError(
+                code=ErrorCode.EVENTS_QUEUE_DEPTH_EXCEEDED,
+                message=(
+                    f"Pre-event queue depth exceeds the configured limit ({self.max_queue_depth})."
+                ),
+                status_code=500,
+            )
+        state.queue.append(envelope)
+
+    async def _drain(self, state: "_PreDrainState") -> None:
+        while state.queue:
+            state.processed += 1
+            if state.processed > self.max_total_processed_per_drain:
+                state.queue.clear()
                 raise RakitError(
-                    code=ErrorCode.EVENTS_QUEUE_DEPTH_EXCEEDED,
+                    code=ErrorCode.EVENTS_DRAIN_BUDGET_EXCEEDED,
                     message=(
-                        "Pre-event queue depth exceeds the configured limit "
-                        f"({self.max_queue_depth})."
+                        "Pre-event drain processed more than the configured "
+                        f"budget ({self.max_total_processed_per_drain}) of "
+                        "envelopes in a single publish_pre call chain; this "
+                        "likely indicates events that keep re-triggering "
+                        "themselves without terminating."
                     ),
                     status_code=500,
                 )
+            envelope = state.queue.pop(0)
+            await self.bus.dispatch(envelope, on_handler_error="raise")
 
+    async def publish_pre(self, event: DomainEvent, *, version: int = 1) -> None:
+        """Publish a pre-commit event and wait for it (and anything it
+        transitively triggers via ``enqueue_pre``) to finish dispatching.
+
+        This is the TOP-LEVEL, operation-facing API: it starts a fresh drain
+        owned by the CURRENT ``asyncio.Task``, dispatches ``event`` and
+        drains anything transitively queued during that dispatch, and only
+        returns once every one of those events has actually been processed
+        -- rejections propagate to the caller.
+
+        It must NOT be called recursively from within a handler that is
+        itself running as part of an active drain on the same task; that is
+        rejected with ``RakitError(code="events.nested_publish_pre_not_allowed")``,
+        because a synchronously-blocking nested drain would either deadlock
+        or silently violate the "only one dispatch() active at a time per
+        task" invariant. Handlers that need to publish another pre-event
+        from within their own execution must call ``enqueue_pre`` instead,
+        which queues onto the SAME active drain without waiting.
+        """
+        if self._active_state_for_current_task() is not None:
+            raise RakitError(
+                code=ErrorCode.EVENTS_NESTED_PUBLISH_PRE_NOT_ALLOWED,
+                message=(
+                    "publish_pre() cannot be called recursively from within an "
+                    "active pre-event handler on the same task. Use "
+                    "enqueue_pre() instead to queue a nested pre-event for the "
+                    "active drain."
+                ),
+                status_code=500,
+            )
+
+        state = _PreDrainState(owner_task=asyncio.current_task(), active=True)
+        token = self._pre_drain_state.set(state)
+        try:
             envelope = self._build_envelope(event, version=version)
-            state.queue.append(envelope)
-
-            if not is_top_level:
-                # A pump is already active (further up this same task's call
-                # chain). Enqueue and return -- the active pump will process
-                # this envelope in its turn.
-                return
-
-            processed = 0
-            while state.queue:
-                processed += 1
-                if processed > self.max_total_processed_per_drain:
-                    state.queue.clear()
-                    raise RakitError(
-                        code=ErrorCode.EVENTS_DRAIN_BUDGET_EXCEEDED,
-                        message=(
-                            "Pre-event drain processed more than the configured "
-                            f"budget ({self.max_total_processed_per_drain}) of "
-                            "envelopes in a single publish_pre call chain; this "
-                            "likely indicates events that keep re-triggering "
-                            "themselves without terminating."
-                        ),
-                        status_code=500,
-                    )
-                next_envelope = state.queue.pop(0)
-                await self.bus.dispatch(next_envelope, on_handler_error="raise")
+            self._enqueue(state, envelope)
+            await self._drain(state)
         finally:
-            if token is not None:
-                self._pre_drain_state.reset(token)
+            state.active = False
+            self._pre_drain_state.reset(token)
+
+    async def enqueue_pre(self, event: DomainEvent, *, version: int = 1) -> None:
+        """Queue a pre-commit event onto the CURRENT task's active drain,
+        without waiting for it to be dispatched.
+
+        This is the explicit, NESTED-handler API: call it from within a
+        handler that is itself running as part of an active ``publish_pre``
+        drain on this same task. The active pump (running further up this
+        same task's call stack) will process the queued event in its turn,
+        after the handler that called ``enqueue_pre`` returns.
+
+        Raises ``RakitError(code="events.enqueue_pre_without_active_drain")``
+        if there is no active drain owned by the current task -- it is
+        meaningless to call ``enqueue_pre`` outside of a
+        ``publish_pre``-initiated drain running on the same task.
+        """
+        state = self._active_state_for_current_task()
+        if state is None:
+            raise RakitError(
+                code=ErrorCode.EVENTS_ENQUEUE_PRE_WITHOUT_ACTIVE_DRAIN,
+                message=(
+                    "enqueue_pre() can only be called from within an active "
+                    "publish_pre() drain running on the same task."
+                ),
+                status_code=500,
+            )
+        envelope = self._build_envelope(event, version=version)
+        self._enqueue(state, envelope)
 
     async def after_commit(self) -> None:
         while self.deferred:
