@@ -6,7 +6,11 @@ build-backend = "hatchling.build"
 name = "rakit-server-uvicorn"
 version = "0.1.0a1"
 requires-python = ">=3.12"
-dependencies = ["rakit-web==0.1.0a1", "rakit-core==0.1.0a1"]
+dependencies = [
+    "rakit-web==0.1.0a1",
+    "rakit-core==0.1.0a1",
+    "uvicorn>=0.51.0",
+]
 
 [tool.uv.sources]
 rakit-web = { workspace = true }

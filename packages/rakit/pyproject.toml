@@ -7,12 +7,16 @@ name = "rakit"
 version = "0.1.0a1"
 requires-python = ">=3.12"
 dependencies = [
+    "click>=8.4.2",
     "rakit-core==0.1.0a1",
     "rakit-web==0.1.0a1",
 ]
 
 [project.optional-dependencies]
 sqlalchemy = ["rakit-sqlalchemy==0.1.0a1"]
+
+[project.scripts]
+rakit = "rakit.cli:cli"
 
 [tool.uv.sources]
 rakit-core = { workspace = true }
