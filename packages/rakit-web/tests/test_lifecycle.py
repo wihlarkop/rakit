@@ -153,6 +153,93 @@ async def test_health_endpoint_returns_200_when_lifecycle_healthy(client) -> Non
 
 
 @pytest.mark.anyio
+async def test_check_ready_runs_critical_checks_concurrently() -> None:
+    # Deterministic proof that critical checks overlap in flight, rather than
+    # running one at a time: both checks record that they started and then
+    # block on a shared release event. If they ran sequentially, the second
+    # check could not start until the first one returned -- but the first
+    # one is deliberately blocked on the (not yet set) release event, so
+    # both "started" events becoming set proves genuine concurrency.
+    manager = LifecycleManager()
+    started_order: list[str] = []
+    check_a_started = asyncio.Event()
+    check_b_started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def check_a() -> bool:
+        started_order.append("a")
+        check_a_started.set()
+        await release.wait()
+        return True
+
+    async def check_b() -> bool:
+        started_order.append("b")
+        check_b_started.set()
+        await release.wait()
+        return True
+
+    manager.state = RuntimeState.READY
+    manager.register_health_check("a", check_a, critical=True)
+    manager.register_health_check("b", check_b, critical=True)
+
+    task = asyncio.create_task(manager.check_ready())
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(check_a_started.wait(), check_b_started.wait()), timeout=1
+        )
+        assert set(started_order) == {"a", "b"}
+        release.set()
+        assert await asyncio.wait_for(task, timeout=1) is True
+    finally:
+        release.set()
+        if not task.done():
+            await asyncio.wait_for(task, timeout=1)
+
+
+@pytest.mark.anyio
+async def test_check_ready_bounds_concurrency_to_max_concurrent_checks() -> None:
+    # Prove the semaphore genuinely serializes execution when the limit is
+    # 1: check B must not start until check A has been released and has
+    # completed.
+    manager = LifecycleManager(max_concurrent_checks=1)
+    check_a_started = asyncio.Event()
+    check_b_started = asyncio.Event()
+    release_a = asyncio.Event()
+
+    async def check_a() -> bool:
+        check_a_started.set()
+        await release_a.wait()
+        return True
+
+    async def check_b() -> bool:
+        check_b_started.set()
+        return True
+
+    manager.state = RuntimeState.READY
+    manager.register_health_check("a", check_a, critical=True)
+    manager.register_health_check("b", check_b, critical=True)
+
+    task = asyncio.create_task(manager.check_ready())
+    try:
+        await asyncio.wait_for(check_a_started.wait(), timeout=1)
+
+        # Check B must not have started yet -- it is blocked on the
+        # semaphore held by check A.
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(check_b_started.wait(), timeout=0.2)
+        assert not check_b_started.is_set()
+
+        release_a.set()
+
+        await asyncio.wait_for(check_b_started.wait(), timeout=1)
+        assert await asyncio.wait_for(task, timeout=1) is True
+    finally:
+        release_a.set()
+        if not task.done():
+            await asyncio.wait_for(task, timeout=1)
+
+
+@pytest.mark.anyio
 async def test_lifespan_driver_surfaces_startup_failure_promptly(monkeypatch) -> None:
     # If LifecycleManager.run_startup() raises, Starlette's Router.lifespan()
     # sends "lifespan.startup.failed" then re-raises inside the ASGI

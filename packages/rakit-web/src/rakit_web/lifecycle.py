@@ -37,11 +37,17 @@ class LifecycleManager:
     critical health checks.
     """
 
-    def __init__(self, *, on_stopping: Callable[[], Awaitable[None]] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        on_stopping: Callable[[], Awaitable[None]] | None = None,
+        max_concurrent_checks: int = 5,
+    ) -> None:
         self.state: RuntimeState = RuntimeState.CREATED
         self._on_stopping = on_stopping
         self._checks: dict[str, _HealthCheck] = {}
         self._cache: dict[str, tuple[bool, float]] = {}
+        self._check_semaphore = asyncio.Semaphore(max_concurrent_checks)
 
     def register_health_check(
         self,
@@ -81,17 +87,22 @@ class LifecycleManager:
     async def check_ready(self) -> bool:
         if self.state is not RuntimeState.READY:
             return False
-        for check in self._checks.values():
-            if not check.critical:
-                continue
-            if not await self._evaluate_check(check):
-                return False
-        return True
+        critical_checks = [check for check in self._checks.values() if check.critical]
+        if not critical_checks:
+            return True
+        results = await asyncio.gather(
+            *(self._evaluate_check_bounded(check) for check in critical_checks)
+        )
+        return all(results)
 
     async def check_health(self) -> bool:
         # Process liveness only -- deliberately never touches registered
         # checks or any database.
         return self.state not in (RuntimeState.FAILED, RuntimeState.STOPPED)
+
+    async def _evaluate_check_bounded(self, check: _HealthCheck) -> bool:
+        async with self._check_semaphore:
+            return await self._evaluate_check(check)
 
     async def _evaluate_check(self, check: _HealthCheck) -> bool:
         cached = self._cache.get(check.name)
