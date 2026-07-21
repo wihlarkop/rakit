@@ -5,7 +5,7 @@ from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TypeVar, cast
 
 from rakit_core.errors import ErrorCode, RakitError
 
@@ -15,6 +15,20 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class DomainEvent:
     pass
+
+
+E = TypeVar("E", bound=DomainEvent)
+
+#: A subscribed event handler. Handlers may be plain synchronous functions
+#: returning any value, or asynchronous functions returning an awaitable;
+#: ``EventBus.dispatch`` awaits the result whenever it is awaitable
+#: (``inspect.isawaitable``), so both call styles are accepted. Stored
+#: internally against the base ``DomainEvent`` type since handlers for
+#: different event types share one dict; ``subscribe`` accepts (and
+#: dispatch always calls) a handler with its own specific ``event_type``,
+#: never a mismatched one, so the narrowing is sound even though it isn't
+#: expressible in the stored container's type.
+EventHandler = Callable[[DomainEvent], Any]
 
 
 @dataclass(frozen=True)
@@ -30,14 +44,16 @@ class EventEnvelope:
 
 class EventBus:
     def __init__(self) -> None:
-        self.handlers: dict[type[DomainEvent], list[tuple[int, Callable[[Any], Any]]]] = {}
+        self.handlers: dict[type[DomainEvent], list[tuple[int, EventHandler]]] = {}
         self._envelope_stack: ContextVar[tuple[EventEnvelope, ...]] = ContextVar(
             f"rakit_event_envelope_stack_{id(self)}", default=()
         )
 
-    def subscribe(self, event_type, handler, *, priority: int = 0) -> None:
+    def subscribe(
+        self, event_type: type[E], handler: Callable[[E], Any], *, priority: int = 0
+    ) -> None:
         entries = self.handlers.setdefault(event_type, [])
-        entries.append((priority, handler))
+        entries.append((priority, cast(EventHandler, handler)))
         entries.sort(key=lambda entry: entry[0])
 
     def current_envelope(self) -> EventEnvelope | None:

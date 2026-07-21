@@ -1,5 +1,5 @@
 import pytest
-from rakit_core.di import ServiceRegistry, ServiceScope
+from rakit_core.di import ServiceKey, ServiceRegistry, ServiceScope
 from rakit_core.errors import RakitError
 
 
@@ -199,7 +199,7 @@ class Frozenable:
 async def test_registry_not_frozen_accepts_registrations() -> None:
     registry = ServiceRegistry()
     registry.add_value(Frozenable, Frozenable(), scope=ServiceScope.APPLICATION)
-    assert Frozenable in registry.providers
+    assert ServiceKey(Frozenable) in registry.providers
 
 
 @pytest.mark.anyio
@@ -222,3 +222,140 @@ async def test_frozen_registry_rejects_add_factory() -> None:
         registry.add_factory(Frozenable, lambda _: Frozenable(), scope=ServiceScope.APPLICATION)
 
     assert exc_info.value.code == "di.registry_frozen"
+
+
+class NamedDatabase:
+    def __init__(self, label: str) -> None:
+        self.label = label
+
+
+@pytest.mark.anyio
+async def test_named_services_resolve_to_different_instances() -> None:
+    registry = ServiceRegistry()
+    registry.add_factory(
+        NamedDatabase,
+        lambda _: NamedDatabase("primary"),
+        scope=ServiceScope.APPLICATION,
+        name="primary",
+    )
+    registry.add_factory(
+        NamedDatabase,
+        lambda _: NamedDatabase("secondary"),
+        scope=ServiceScope.APPLICATION,
+        name="secondary",
+    )
+
+    async with registry.application_scope() as application:
+        primary = application.require(NamedDatabase, name="primary")
+        secondary = application.require(NamedDatabase, name="secondary")
+
+        assert primary.label == "primary"
+        assert secondary.label == "secondary"
+        assert primary is not secondary
+
+        # cached per scope, keyed by name
+        assert application.require(NamedDatabase, name="primary") is primary
+        assert application.require(NamedDatabase, name="secondary") is secondary
+
+
+@pytest.mark.anyio
+async def test_unnamed_lookup_raises_when_only_named_registered() -> None:
+    registry = ServiceRegistry()
+    registry.add_factory(
+        NamedDatabase,
+        lambda _: NamedDatabase("primary"),
+        scope=ServiceScope.APPLICATION,
+        name="primary",
+    )
+
+    async with registry.application_scope() as application:
+        with pytest.raises(KeyError):
+            application.require(NamedDatabase)
+
+
+@pytest.mark.anyio
+async def test_named_and_unnamed_registration_of_same_type_coexist() -> None:
+    registry = ServiceRegistry()
+    registry.add_factory(
+        NamedDatabase, lambda _: NamedDatabase("default"), scope=ServiceScope.APPLICATION
+    )
+    registry.add_factory(
+        NamedDatabase,
+        lambda _: NamedDatabase("primary"),
+        scope=ServiceScope.APPLICATION,
+        name="primary",
+    )
+
+    async with registry.application_scope() as application:
+        default = application.require(NamedDatabase)
+        primary = application.require(NamedDatabase, name="primary")
+        assert default.label == "default"
+        assert primary.label == "primary"
+        assert default is not primary
+
+
+@pytest.mark.anyio
+async def test_duplicate_named_registration_raises() -> None:
+    registry = ServiceRegistry()
+    registry.add_value(
+        NamedDatabase, NamedDatabase("primary"), scope=ServiceScope.APPLICATION, name="primary"
+    )
+
+    with pytest.raises(RakitError) as exc_info:
+        registry.add_value(
+            NamedDatabase,
+            NamedDatabase("primary-2"),
+            scope=ServiceScope.APPLICATION,
+            name="primary",
+        )
+
+    assert exc_info.value.code == "di.duplicate_registration"
+
+
+@pytest.mark.anyio
+async def test_unnamed_and_named_registration_are_not_duplicates() -> None:
+    registry = ServiceRegistry()
+    registry.add_value(NamedDatabase, NamedDatabase("default"), scope=ServiceScope.APPLICATION)
+    # Should NOT raise: different ServiceKey (name differs).
+    registry.add_value(
+        NamedDatabase, NamedDatabase("primary"), scope=ServiceScope.APPLICATION, name="primary"
+    )
+
+    assert ServiceKey(NamedDatabase) in registry.providers
+    assert ServiceKey(NamedDatabase, "primary") in registry.providers
+
+
+class NamedConsumerOfBoth:
+    def __init__(self, primary: NamedDatabase, secondary: NamedDatabase) -> None:
+        self.primary = primary
+        self.secondary = secondary
+
+
+@pytest.mark.anyio
+async def test_resolving_two_named_variants_in_one_chain_is_not_a_false_cycle() -> None:
+    registry = ServiceRegistry()
+    registry.add_factory(
+        NamedDatabase,
+        lambda _: NamedDatabase("primary"),
+        scope=ServiceScope.APPLICATION,
+        name="primary",
+    )
+    registry.add_factory(
+        NamedDatabase,
+        lambda _: NamedDatabase("secondary"),
+        scope=ServiceScope.APPLICATION,
+        name="secondary",
+    )
+    registry.add_factory(
+        NamedConsumerOfBoth,
+        lambda resolver: NamedConsumerOfBoth(
+            resolver.require(NamedDatabase, name="primary"),
+            resolver.require(NamedDatabase, name="secondary"),
+        ),
+        scope=ServiceScope.APPLICATION,
+    )
+
+    async with registry.application_scope() as application:
+        consumer = application.require(NamedConsumerOfBoth)
+        assert consumer.primary.label == "primary"
+        assert consumer.secondary.label == "secondary"

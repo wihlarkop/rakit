@@ -2,8 +2,10 @@ import logging
 import sys
 from collections.abc import Mapping
 from contextvars import Token
+from typing import Any
 
 import structlog
+from structlog.types import EventDict, Processor
 
 #: Logger namespaces owned by Rakit that should be bridged into the
 #: structured logging pipeline. Deliberately scoped -- never the root
@@ -30,7 +32,7 @@ SENSITIVE_KEYS = {
 }
 
 
-def redact_event(_, __, event_dict):
+def redact_event(logger: Any, method_name: str, event_dict: EventDict) -> EventDict:
     for key in tuple(event_dict):
         if key.lower() in SENSITIVE_KEYS:
             event_dict[key] = "[REDACTED]"
@@ -54,7 +56,7 @@ def configure_logging(*, debug: bool) -> None:
     _configure_stdlib_bridge(renderer=renderer, level=level)
 
 
-def _configure_stdlib_bridge(*, renderer, level: int) -> None:
+def _configure_stdlib_bridge(*, renderer: Processor, level: int) -> None:
     """Bridge Rakit-owned stdlib logger namespaces into the structlog pipeline.
 
     Attaches a handler formatted with ``structlog.stdlib.ProcessorFormatter``

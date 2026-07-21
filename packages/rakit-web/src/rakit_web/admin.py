@@ -3,7 +3,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import structlog
-from rakit_core.compiler import ApplicationBuilder, compile_application
+from rakit_core.compiler import ApplicationBuilder, CompiledApplication, Plugin, compile_application
 from rakit_core.config import RakitConfig, SecretValue
 from rakit_core.di import ServiceResolver
 from starlette.applications import Starlette
@@ -51,9 +51,9 @@ class Admin:
     def __init__(
         self,
         *,
-        admin_id="admin",
+        admin_id: str = "admin",
         title: str,
-        debug=False,
+        debug: bool = False,
         secret_key: SecretValue | None = None,
     ) -> None:
         self.config = RakitConfig(
@@ -63,16 +63,16 @@ class Admin:
             security={"secret_key": secret_key},
         )
         self.builder = ApplicationBuilder()
-        self.compiled = None
+        self.compiled: CompiledApplication | None = None
         self._application_resolver: ServiceResolver | None = None
         self.lifecycle = LifecycleManager(on_stopping=self._close_application_resolver)
 
-    def install(self, plugin) -> None:
+    def install(self, plugin: Plugin) -> None:
         if self.compiled is not None:
             raise RuntimeError("Cannot install plugins after compilation")
         self.builder.install(plugin)
 
-    def compile(self):
+    def compile(self) -> CompiledApplication:
         if self.compiled is None:
             self.compiled = compile_application(self.builder)
         return self.compiled
@@ -89,7 +89,7 @@ class Admin:
     def asgi(self) -> ASGIApp:
         self.compile()
 
-        async def home(_):
+        async def home(_request: Request) -> PlainTextResponse:
             return PlainTextResponse(self.config.title)
 
         async def health(_request: Request) -> JSONResponse:

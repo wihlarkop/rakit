@@ -2,7 +2,8 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
-MachineId = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]*$")]
+from .config import MachineId
+
 AbsolutePath = Annotated[str, Field(pattern=r"^/")]
 
 

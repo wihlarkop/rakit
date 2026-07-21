@@ -13,8 +13,8 @@ from rakit_web.logging import (
 
 def test_sensitive_values_are_redacted() -> None:
     event = redact_event(
-        None,
-        None,
+        object(),
+        "info",
         {
             "event": "auth.login",
             "password": "secret",
