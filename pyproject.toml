@@ -8,6 +8,7 @@ members = ["packages/*"]
 
 [dependency-groups]
 dev = [
+  "httpx>=0.28.1",
   "pytest>=8.3,<9",
   "pytest-anyio>=0.0.0",
   "ruff>=0.12,<0.13",

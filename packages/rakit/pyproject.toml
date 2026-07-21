@@ -6,7 +6,10 @@ build-backend = "hatchling.build"
 name = "rakit"
 version = "0.1.0a1"
 requires-python = ">=3.12"
-dependencies = ["rakit-core==0.1.0a1"]
+dependencies = [
+    "rakit-core==0.1.0a1",
+    "rakit-web==0.1.0a1",
+]
 
 [project.optional-dependencies]
 sqlalchemy = ["rakit-sqlalchemy==0.1.0a1"]
@@ -14,6 +17,7 @@ sqlalchemy = ["rakit-sqlalchemy==0.1.0a1"]
 [tool.uv.sources]
 rakit-core = { workspace = true }
 rakit-sqlalchemy = { workspace = true }
+rakit-web = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/rakit"]
