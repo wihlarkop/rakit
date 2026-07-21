@@ -65,7 +65,8 @@ class Admin:
         self.builder = ApplicationBuilder()
         self.compiled: CompiledApplication | None = None
         self._application_resolver: ServiceResolver | None = None
-        self.lifecycle = LifecycleManager(on_stopping=self._close_application_resolver)
+        self.lifecycle = LifecycleManager()
+        self.lifecycle.register_stopping_callback(self._close_application_resolver)
 
     def install(self, plugin: Plugin) -> None:
         if self.compiled is not None:
@@ -82,9 +83,9 @@ class Admin:
         await self._application_resolver.__aenter__()
 
     async def _close_application_resolver(self) -> None:
-        if self._application_resolver is not None:
-            await self._application_resolver.__aexit__(None, None, None)
-            self._application_resolver = None
+        resolver, self._application_resolver = self._application_resolver, None
+        if resolver is not None:
+            await resolver.__aexit__(None, None, None)
 
     def asgi(self) -> ASGIApp:
         self.compile()

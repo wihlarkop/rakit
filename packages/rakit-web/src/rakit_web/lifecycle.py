@@ -5,6 +5,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
 
+from rakit_core.errors import ErrorCode, RakitError
+
 logger = logging.getLogger(__name__)
 
 
@@ -40,14 +42,24 @@ class LifecycleManager:
     def __init__(
         self,
         *,
-        on_stopping: Callable[[], Awaitable[None]] | None = None,
         max_concurrent_checks: int = 5,
     ) -> None:
+        if max_concurrent_checks < 1:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="max_concurrent_checks must be >= 1 (a value of 0 would make the "
+                "health-check semaphore block forever).",
+                status_code=500,
+                details={"max_concurrent_checks": max_concurrent_checks},
+            )
         self.state: RuntimeState = RuntimeState.CREATED
-        self._on_stopping = on_stopping
+        self._stopping_callbacks: list[Callable[[], Awaitable[None]]] = []
         self._checks: dict[str, _HealthCheck] = {}
         self._cache: dict[str, tuple[bool, float]] = {}
         self._check_semaphore = asyncio.Semaphore(max_concurrent_checks)
+
+    def register_stopping_callback(self, callback: Callable[[], Awaitable[None]]) -> None:
+        self._stopping_callbacks.append(callback)
 
     def register_health_check(
         self,
@@ -58,6 +70,34 @@ class LifecycleManager:
         timeout_seconds: float = 2.0,
         cache_seconds: float = 5.0,
     ) -> None:
+        if not name:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="Health check name must be non-empty.",
+                status_code=500,
+                details={"name": name},
+            )
+        if timeout_seconds <= 0:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="Health check timeout_seconds must be > 0.",
+                status_code=500,
+                details={"name": name, "timeout_seconds": timeout_seconds},
+            )
+        if cache_seconds < 0:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="Health check cache_seconds must be >= 0.",
+                status_code=500,
+                details={"name": name, "cache_seconds": cache_seconds},
+            )
+        if name in self._checks:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message=f"Health check {name!r} is already registered.",
+                status_code=500,
+                details={"name": name},
+            )
         self._checks[name] = _HealthCheck(
             name=name,
             check=check,
@@ -80,8 +120,17 @@ class LifecycleManager:
         # cleanup runs.
         self.state = RuntimeState.DRAINING
         self.state = RuntimeState.STOPPING
-        if self._on_stopping is not None:
-            await self._on_stopping()
+        # Shutdown failure policy is log-and-continue (unlike startup, which
+        # fails fast): run every registered cleanup callback in reverse
+        # registration order (LIFO, matching AsyncExitStack's reverse
+        # acquisition-order close discipline), and never let one callback's
+        # failure stop the rest from running or leave state stuck at
+        # STOPPING.
+        for callback in reversed(self._stopping_callbacks):
+            try:
+                await callback()
+            except Exception:
+                logger.exception("Shutdown cleanup callback %r failed", callback)
         self.state = RuntimeState.STOPPED
 
     async def check_ready(self) -> bool:

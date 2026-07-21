@@ -1,9 +1,11 @@
 import asyncio
+import logging
 
 import httpx
 import pytest
 from conftest import LifespanDriver
 from rakit import Admin, SecretValue
+from rakit_core.errors import ErrorCode, RakitError
 from rakit_web.lifecycle import LifecycleManager, RuntimeState
 
 
@@ -99,23 +101,20 @@ async def test_shutdown_marks_not_ready_before_owned_service_cleanup_runs() -> N
     async def on_stopping() -> None:
         events.append("cleanup_started")
 
-    manager = LifecycleManager(on_stopping=on_stopping)
+    manager = LifecycleManager()
     await manager.run_startup()
 
     # Readiness is state-driven: the instant run_shutdown() flips state away
     # from READY (before awaiting the on_stopping hook), check_ready() must
     # already report False.
-    original_on_stopping = manager._on_stopping
-    assert original_on_stopping is not None
-
     async def wrapped_on_stopping() -> None:
         # By the time this hook (cleanup) runs, state must no longer be READY.
         assert manager.state is RuntimeState.STOPPING
         assert await manager.check_ready() is False
         events.append("ready_false_before_cleanup")
-        await original_on_stopping()
+        await on_stopping()
 
-    manager._on_stopping = wrapped_on_stopping
+    manager.register_stopping_callback(wrapped_on_stopping)
 
     await manager.run_shutdown()
 
@@ -262,3 +261,128 @@ async def test_lifespan_driver_surfaces_startup_failure_promptly(monkeypatch) ->
 
     with pytest.raises(RuntimeError, match="boom: plugin configure\\(\\) failed"):
         await asyncio.wait_for(driver.__aenter__(), timeout=5)
+
+
+@pytest.mark.anyio
+async def test_run_shutdown_logs_and_continues_when_stopping_callback_raises(caplog) -> None:
+    manager = LifecycleManager()
+    await manager.run_startup()
+
+    async def failing_callback() -> None:
+        raise RuntimeError("boom: cleanup failed")
+
+    manager.register_stopping_callback(failing_callback)
+
+    with caplog.at_level(logging.ERROR, logger="rakit_web.lifecycle"):
+        await manager.run_shutdown()
+
+    assert "failed" in caplog.text
+    assert "boom: cleanup failed" in caplog.text
+
+
+@pytest.mark.anyio
+async def test_run_shutdown_reaches_stopped_when_stopping_callback_raises() -> None:
+    manager = LifecycleManager()
+    await manager.run_startup()
+
+    async def failing_callback() -> None:
+        raise RuntimeError("boom: cleanup failed")
+
+    manager.register_stopping_callback(failing_callback)
+
+    await manager.run_shutdown()
+
+    assert manager.state is RuntimeState.STOPPED
+
+
+@pytest.mark.anyio
+async def test_run_shutdown_runs_remaining_callbacks_in_reverse_order_after_failure() -> None:
+    # Callbacks run in reverse registration order (LIFO), matching
+    # AsyncExitStack's reverse-acquisition-order close discipline. The
+    # last-registered callback runs first; if it raises, the first-registered
+    # callback must still run afterward.
+    events: list[str] = []
+
+    async def first_registered() -> None:
+        events.append("first_registered_ran")
+
+    async def second_registered_raises() -> None:
+        events.append("second_registered_ran")
+        raise RuntimeError("boom: second callback failed")
+
+    manager = LifecycleManager()
+    await manager.run_startup()
+    manager.register_stopping_callback(first_registered)
+    manager.register_stopping_callback(second_registered_raises)
+
+    await manager.run_shutdown()
+
+    assert events == ["second_registered_ran", "first_registered_ran"]
+    assert manager.state is RuntimeState.STOPPED
+
+
+@pytest.mark.anyio
+async def test_max_concurrent_checks_zero_raises_config_invalid() -> None:
+    with pytest.raises(RakitError) as exc_info:
+        LifecycleManager(max_concurrent_checks=0)
+    assert exc_info.value.code == ErrorCode.CONFIG_INVALID.value
+
+
+@pytest.mark.anyio
+async def test_register_health_check_rejects_empty_name() -> None:
+    manager = LifecycleManager()
+
+    async def check() -> bool:
+        return True
+
+    with pytest.raises(RakitError) as exc_info:
+        manager.register_health_check("", check, critical=True)
+    assert exc_info.value.code == ErrorCode.CONFIG_INVALID.value
+
+
+@pytest.mark.anyio
+async def test_register_health_check_rejects_non_positive_timeout() -> None:
+    manager = LifecycleManager()
+
+    async def check() -> bool:
+        return True
+
+    with pytest.raises(RakitError):
+        manager.register_health_check("x", check, critical=True, timeout_seconds=0)
+    with pytest.raises(RakitError):
+        manager.register_health_check("x", check, critical=True, timeout_seconds=-1)
+
+
+@pytest.mark.anyio
+async def test_register_health_check_cache_seconds_boundary() -> None:
+    manager = LifecycleManager()
+
+    async def check() -> bool:
+        return True
+
+    with pytest.raises(RakitError):
+        manager.register_health_check("x", check, critical=True, cache_seconds=-1)
+
+    # Zero means "never cache" and is a valid boundary value.
+    manager.register_health_check("y", check, critical=True, cache_seconds=0)
+    assert "y" in manager._checks
+
+
+@pytest.mark.anyio
+async def test_register_health_check_rejects_duplicate_name() -> None:
+    manager = LifecycleManager()
+
+    async def original_check() -> bool:
+        return True
+
+    async def replacement_check() -> bool:
+        return False
+
+    manager.register_health_check("x", original_check, critical=True)
+
+    with pytest.raises(RakitError):
+        manager.register_health_check("x", replacement_check, critical=True)
+
+    # The first registration must still be in effect -- not silently
+    # overwritten by the rejected second call.
+    assert manager._checks["x"].check is original_check

@@ -64,3 +64,32 @@ async def test_application_resolver_closed_when_startup_fails(monkeypatch) -> No
 
     assert cleanup_calls == ["resolver_closed"]
     assert admin._application_resolver is None
+
+
+@pytest.mark.anyio
+async def test_application_resolver_detached_even_when_aexit_raises() -> None:
+    # Regression test: _close_application_resolver() used to set
+    # self._application_resolver = None only AFTER __aexit__() completed, so
+    # a raising __aexit__() would leave a stale resolver reference (risking a
+    # double-close). It must detach the reference before awaiting close.
+    admin = Admin(
+        admin_id="operations",
+        title="Operations",
+        debug=False,
+        secret_key=SecretValue("x" * 32),
+    )
+    app = admin.asgi()
+    driver = LifespanDriver(app)
+
+    async with driver:
+        assert admin._application_resolver is not None
+
+        async def failing_cleanup() -> None:
+            raise RuntimeError("boom: resolver cleanup failed")
+
+        admin._application_resolver.stack.push_async_callback(failing_cleanup)
+
+    # Shutdown failure policy is log-and-continue: the LifespanDriver's
+    # __aexit__ must not raise, and the resolver reference must be detached
+    # regardless of the cleanup callback's failure.
+    assert admin._application_resolver is None
