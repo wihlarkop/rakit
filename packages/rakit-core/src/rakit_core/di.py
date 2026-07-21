@@ -1,8 +1,8 @@
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from enum import StrEnum
-from types import TracebackType
+from types import MappingProxyType, TracebackType
 from typing import Any, TypeVar
 
 from rakit_core.errors import ErrorCode, RakitError
@@ -89,8 +89,12 @@ Factory = Callable[[ServiceResolver], Any]
 
 class ServiceRegistry:
     def __init__(self) -> None:
-        self.providers: dict[ServiceKey[Any], tuple[ServiceScope, Factory]] = {}
+        self._providers: dict[ServiceKey[Any], tuple[ServiceScope, Factory]] = {}
         self._frozen: bool = False
+
+    @property
+    def providers(self) -> Mapping[ServiceKey[Any], tuple[ServiceScope, Factory]]:
+        return MappingProxyType(self._providers)
 
     def freeze(self) -> None:
         self._frozen = True
@@ -98,10 +102,20 @@ class ServiceRegistry:
     def add_value(
         self, service_type: type[T], value: T, *, scope: ServiceScope, name: str | None = None
     ) -> None:
+        if scope is not ServiceScope.APPLICATION:
+            raise RakitError(
+                code=ErrorCode.DI_INVALID_VALUE_SCOPE,
+                message=(
+                    "add_value() only supports ServiceScope.APPLICATION; use add_factory() for "
+                    "REQUEST, OPERATION, and TRANSIENT scopes."
+                ),
+                status_code=500,
+                details={"service_type": service_type.__name__, "scope": str(scope)},
+            )
         key = ServiceKey(service_type, name)
         self._check_frozen(key)
         self._check_duplicate_registration(key)
-        self.providers[key] = (scope, lambda _: value)
+        self._providers[key] = (scope, lambda _: value)
 
     def add_factory(
         self,
@@ -114,7 +128,7 @@ class ServiceRegistry:
         key = ServiceKey(service_type, name)
         self._check_frozen(key)
         self._check_duplicate_registration(key)
-        self.providers[key] = (scope, factory)
+        self._providers[key] = (scope, factory)
 
     def _check_frozen(self, key: ServiceKey[Any]) -> None:
         if self._frozen:
@@ -129,7 +143,7 @@ class ServiceRegistry:
             )
 
     def _check_duplicate_registration(self, key: ServiceKey[Any]) -> None:
-        if key in self.providers:
+        if key in self._providers:
             raise RakitError(
                 code=ErrorCode.DI_DUPLICATE_REGISTRATION,
                 message=(
@@ -157,7 +171,7 @@ class ServiceRegistry:
     def _resolve(
         self, key: ServiceKey[T], resolver: ServiceResolver, context: _ResolutionContext
     ) -> T:
-        scope, factory = self.providers[key]
+        scope, factory = self._providers[key]
         self._check_captive_dependency(key, scope, context)
 
         if scope is ServiceScope.TRANSIENT:
@@ -170,7 +184,7 @@ class ServiceRegistry:
             raise RuntimeError(f"No {scope} scope is active for {key.service_type.__name__}")
 
         if key not in owner.instances:
-            owner.instances[key] = self._invoke_factory(key, scope, factory, resolver, context)
+            owner.instances[key] = self._invoke_factory(key, scope, factory, owner, context)
 
         return owner.instances[key]
 
@@ -220,8 +234,13 @@ class ServiceRegistry:
         else:
             effective_scope = scope
         context.effective_scope_stack.append(effective_scope)
+        owns_resolver_context = resolver._resolution_context is None
+        if owns_resolver_context:
+            resolver._resolution_context = context
         try:
             return factory(resolver)
         finally:
+            if owns_resolver_context:
+                resolver._resolution_context = None
             context.effective_scope_stack.pop()
             context.resolving.discard(key)

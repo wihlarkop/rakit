@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 from rakit_core.di import ServiceKey, ServiceRegistry, ServiceScope
 from rakit_core.errors import RakitError
@@ -359,3 +361,96 @@ async def test_resolving_two_named_variants_in_one_chain_is_not_a_false_cycle() 
         consumer = application.require(NamedConsumerOfBoth)
         assert consumer.primary.label == "primary"
         assert consumer.secondary.label == "secondary"
+
+
+class AppServiceWithCleanup:
+    pass
+
+
+@pytest.mark.anyio
+async def test_application_scoped_cleanup_registered_on_application_not_request() -> None:
+    cleanup_events: list[str] = []
+
+    async def cleanup_recorder() -> None:
+        cleanup_events.append("cleaned")
+
+    registry = ServiceRegistry()
+
+    def factory(resolver: Any) -> AppServiceWithCleanup:
+        resolver.stack.push_async_callback(cleanup_recorder)
+        return AppServiceWithCleanup()
+
+    registry.add_factory(AppServiceWithCleanup, factory, scope=ServiceScope.APPLICATION)
+
+    async with registry.application_scope() as application:
+        request = application.request_scope()
+        await request.__aenter__()
+        request.require(AppServiceWithCleanup)
+
+        await request.__aexit__(None, None, None)
+        assert cleanup_events == []
+
+    assert cleanup_events == ["cleaned"]
+
+
+class RequestServiceWithCleanup:
+    pass
+
+
+@pytest.mark.anyio
+async def test_request_scoped_cleanup_registered_on_request_not_operation() -> None:
+    cleanup_events: list[str] = []
+
+    async def cleanup_recorder() -> None:
+        cleanup_events.append("cleaned")
+
+    registry = ServiceRegistry()
+
+    def factory(resolver: Any) -> RequestServiceWithCleanup:
+        resolver.stack.push_async_callback(cleanup_recorder)
+        return RequestServiceWithCleanup()
+
+    registry.add_factory(RequestServiceWithCleanup, factory, scope=ServiceScope.REQUEST)
+
+    async with registry.application_scope() as application:
+        async with application.request_scope() as request:
+            operation = request.operation_scope()
+            await operation.__aenter__()
+            operation.require(RequestServiceWithCleanup)
+
+            await operation.__aexit__(None, None, None)
+            assert cleanup_events == []
+
+        assert cleanup_events == ["cleaned"]
+
+
+@pytest.mark.anyio
+async def test_providers_property_is_read_only() -> None:
+    registry = ServiceRegistry()
+    registry.add_value(Frozenable, Frozenable(), scope=ServiceScope.APPLICATION)
+
+    with pytest.raises(TypeError):
+        registry.providers[ServiceKey(Frozenable)] = (  # type: ignore
+            ServiceScope.APPLICATION,
+            lambda _: None,
+        )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "scope", [ServiceScope.REQUEST, ServiceScope.OPERATION, ServiceScope.TRANSIENT]
+)
+async def test_add_value_rejects_non_application_scope(scope: ServiceScope) -> None:
+    registry = ServiceRegistry()
+
+    with pytest.raises(RakitError) as exc_info:
+        registry.add_value(Frozenable, Frozenable(), scope=scope)
+
+    assert exc_info.value.code == "di.invalid_value_scope"
+
+
+@pytest.mark.anyio
+async def test_add_value_accepts_application_scope() -> None:
+    registry = ServiceRegistry()
+    registry.add_value(Frozenable, Frozenable(), scope=ServiceScope.APPLICATION)
+    assert ServiceKey(Frozenable) in registry.providers
