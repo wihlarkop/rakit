@@ -149,3 +149,93 @@ def test_compiles_successfully_with_lockstep_versions() -> None:
     )
     compiled = compile_application(builder)
     assert compiled.routes[0].route_name == "app.home"
+
+
+def test_add_route_after_successful_compile_fails() -> None:
+    builder = ApplicationBuilder()
+    builder.add_route(
+        RouteDefinition(
+            route_name="app.home",
+            methods=("GET",),
+            path="/",
+            owner_id="home",
+        )
+    )
+    compile_application(builder)
+    with pytest.raises(RakitError) as caught:
+        builder.add_route(
+            RouteDefinition(
+                route_name="app.other",
+                methods=("GET",),
+                path="/other",
+                owner_id="other",
+            )
+        )
+    assert caught.value.code == "config.already_compiled"
+
+
+def test_install_after_successful_compile_fails() -> None:
+    builder = ApplicationBuilder()
+    compile_application(builder)
+    with pytest.raises(RakitError) as caught:
+        builder.install(_PluginA())
+    assert caught.value.code == "config.already_compiled"
+
+
+def test_registry_mutation_after_successful_compile_fails() -> None:
+    builder = ApplicationBuilder()
+    compile_application(builder)
+    with pytest.raises(RakitError) as caught:
+        builder.registry.add_value(_ServiceA, _ServiceA(), scope=ServiceScope.APPLICATION)
+    assert caught.value.code == "di.registry_frozen"
+
+    with pytest.raises(RakitError) as caught_factory:
+        builder.registry.add_factory(
+            _ServiceA, lambda _: _ServiceA(), scope=ServiceScope.APPLICATION
+        )
+    assert caught_factory.value.code == "di.registry_frozen"
+
+
+def test_failed_compile_leaves_builder_editable() -> None:
+    builder = ApplicationBuilder()
+    builder.add_route(
+        RouteDefinition(
+            route_name="app.custom",
+            methods=("GET",),
+            path="/_system/custom",
+            owner_id="custom",
+        )
+    )
+    with pytest.raises(RakitError) as caught:
+        compile_application(builder)
+    assert caught.value.code == "config.reserved_path"
+
+    builder.add_route(
+        RouteDefinition(
+            route_name="app.valid",
+            methods=("GET",),
+            path="/valid",
+            owner_id="valid",
+        )
+    )
+    assert any(route.route_name == "app.valid" for route in builder.routes)
+
+
+def test_routes_and_plugins_are_read_only_tuples() -> None:
+    builder = ApplicationBuilder()
+    assert isinstance(builder.routes, tuple)
+    assert isinstance(builder.plugins, tuple)
+    builder.add_route(
+        RouteDefinition(
+            route_name="app.home",
+            methods=("GET",),
+            path="/",
+            owner_id="home",
+        )
+    )
+    builder.install(_PluginA())
+    assert isinstance(builder.routes, tuple)
+    assert isinstance(builder.plugins, tuple)
+    compile_application(builder)
+    assert isinstance(builder.routes, tuple)
+    assert isinstance(builder.plugins, tuple)

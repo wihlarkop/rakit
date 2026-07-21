@@ -28,16 +28,39 @@ class Plugin(Protocol):
 
 @dataclass
 class ApplicationBuilder:
-    routes: list[RouteDefinition] = field(default_factory=list)
-    plugins: list[str] = field(default_factory=list)
+    _routes: list[RouteDefinition] = field(default_factory=list)
+    _plugin_ids: list[str] = field(default_factory=list)
     registry: ServiceRegistry = field(default_factory=ServiceRegistry)
     _plugin_conflicts: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    _compiled: bool = field(default=False, init=False)
+
+    @property
+    def routes(self) -> tuple[RouteDefinition, ...]:
+        return tuple(self._routes)
+
+    @property
+    def plugins(self) -> tuple[str, ...]:
+        return tuple(self._plugin_ids)
+
+    def _check_not_compiled(self) -> None:
+        if self._compiled:
+            raise RakitError(
+                code=ErrorCode.CONFIG_ALREADY_COMPILED,
+                message="Cannot modify an ApplicationBuilder after it has been compiled.",
+                status_code=500,
+            )
+
+    def _mark_compiled(self) -> None:
+        self._compiled = True
+        self.registry.freeze()
 
     def add_route(self, route: RouteDefinition) -> None:
-        self.routes.append(route)
+        self._check_not_compiled()
+        self._routes.append(route)
 
     def install(self, plugin: Plugin) -> None:
-        if plugin.plugin_id in self.plugins:
+        self._check_not_compiled()
+        if plugin.plugin_id in self._plugin_ids:
             raise RakitError(
                 code=ErrorCode.CONFIG_DUPLICATE_PLUGIN,
                 message=f'Plugin "{plugin.plugin_id}" is already installed.',
@@ -46,7 +69,7 @@ class ApplicationBuilder:
 
         depends_on: tuple[str, ...] = getattr(plugin, "depends_on", ())
         for dependency_id in depends_on:
-            if dependency_id not in self.plugins:
+            if dependency_id not in self._plugin_ids:
                 raise RakitError(
                     code=ErrorCode.CONFIG_MISSING_PLUGIN_DEPENDENCY,
                     message=(
@@ -59,7 +82,7 @@ class ApplicationBuilder:
 
         conflicts_with: tuple[str, ...] = getattr(plugin, "conflicts_with", ())
         for conflicting_id in conflicts_with:
-            if conflicting_id in self.plugins:
+            if conflicting_id in self._plugin_ids:
                 raise RakitError(
                     code=ErrorCode.CONFIG_PLUGIN_CONFLICT,
                     message=(
@@ -82,7 +105,7 @@ class ApplicationBuilder:
                     details={"plugin": plugin.plugin_id, "conflicts_with": installed_id},
                 )
 
-        self.plugins.append(plugin.plugin_id)
+        self._plugin_ids.append(plugin.plugin_id)
         self._plugin_conflicts[plugin.plugin_id] = conflicts_with
         plugin.configure(self)
 
@@ -129,4 +152,6 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
                     details={"first": seen[key], "second": route.route_name},
                 )
             seen[key] = route.route_name
-    return CompiledApplication(tuple(builder.routes), tuple(builder.plugins))
+
+    builder._mark_compiled()
+    return CompiledApplication(builder.routes, builder.plugins)
