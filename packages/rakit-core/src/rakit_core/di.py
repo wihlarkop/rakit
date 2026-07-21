@@ -69,10 +69,24 @@ class ServiceRegistry:
         self._consumer_scope_stack: list[ServiceScope] = []
 
     def add_value(self, service_type: type[T], value: T, *, scope: ServiceScope) -> None:
+        self._check_duplicate_registration(service_type)
         self.providers[service_type] = (scope, lambda _: value)
 
     def add_factory(self, service_type: type[T], factory: Factory, *, scope: ServiceScope) -> None:
+        self._check_duplicate_registration(service_type)
         self.providers[service_type] = (scope, factory)
+
+    def _check_duplicate_registration(self, service_type: type[Any]) -> None:
+        if service_type in self.providers:
+            raise RakitError(
+                code="di.duplicate_registration",
+                message=(
+                    f"Service {service_type.__name__} is already registered; "
+                    "re-registration would silently overwrite the previous provider."
+                ),
+                status_code=500,
+                details={"service_type": service_type.__name__},
+            )
 
     def resolve(self, service_type: type[T], resolver: ServiceResolver) -> T:
         scope, factory = self.providers[service_type]
