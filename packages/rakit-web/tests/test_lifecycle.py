@@ -1,5 +1,4 @@
 import asyncio
-import logging
 
 import httpx
 import pytest
@@ -7,6 +6,7 @@ from conftest import LifespanDriver
 from rakit import Admin, SecretValue
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_web.lifecycle import LifecycleManager, RuntimeState
+from rakit_web.logging import configure_logging
 
 
 @pytest.mark.anyio
@@ -264,7 +264,15 @@ async def test_lifespan_driver_surfaces_startup_failure_promptly(monkeypatch) ->
 
 
 @pytest.mark.anyio
-async def test_run_shutdown_logs_and_continues_when_stopping_callback_raises(caplog) -> None:
+async def test_run_shutdown_logs_and_continues_when_stopping_callback_raises(capsys) -> None:
+    # rakit_web.lifecycle is bridged into the structured logging pipeline
+    # (finding 8 follow-up), which deliberately disables propagate on the
+    # "rakit_web" namespace -- so pytest's caplog (a root-logger handler)
+    # never sees these records. Assert against the actual bridged output
+    # instead, matching the pattern used in
+    # test_rakit_web_stdlib_logging_bridges_into_structured_pipeline.
+    configure_logging(debug=False)
+
     manager = LifecycleManager()
     await manager.run_startup()
 
@@ -273,11 +281,13 @@ async def test_run_shutdown_logs_and_continues_when_stopping_callback_raises(cap
 
     manager.register_stopping_callback(failing_callback)
 
-    with caplog.at_level(logging.ERROR, logger="rakit_web.lifecycle"):
-        await manager.run_shutdown()
+    await manager.run_shutdown()
 
-    assert "failed" in caplog.text
-    assert "boom: cleanup failed" in caplog.text
+    captured = capsys.readouterr()
+    output = captured.err or captured.out
+
+    assert "failed" in output
+    assert "boom: cleanup failed" in output
 
 
 @pytest.mark.anyio

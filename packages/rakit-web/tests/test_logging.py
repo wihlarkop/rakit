@@ -4,6 +4,7 @@ import structlog
 from rakit_web.logging import (
     _RakitBridgeHandler,
     bind_request_context,
+    bridge_additional_logger_namespace,
     clear_request_context,
     configure_logging,
     redact_event,
@@ -154,5 +155,96 @@ def test_configure_logging_does_not_duplicate_stdlib_bridge_handlers() -> None:
     configure_logging(debug=False)
 
     std_logger = logging.getLogger("rakit_core")
+    rakit_handlers = [h for h in std_logger.handlers if isinstance(h, _RakitBridgeHandler)]
+    assert len(rakit_handlers) == 1
+
+
+def test_rakit_web_stdlib_logging_bridges_into_structured_pipeline(capsys) -> None:
+    """rakit_web's own stdlib loggers (e.g. rakit_web.lifecycle) must be bridged
+    into the structured pipeline too, not just rakit_core.
+    """
+    configure_logging(debug=False)
+
+    std_logger = logging.getLogger("rakit_web.lifecycle")
+    std_logger.warning(
+        "Health check failed for %s; continuing shutdown.",
+        "some-resource",
+        extra={"password": "secret123", "resource": "db-pool"},
+    )
+
+    captured = capsys.readouterr()
+    output = captured.err or captured.out
+
+    assert "Health check failed" in output
+    assert "warning" in output.lower()
+    assert "db-pool" in output
+    assert "secret123" not in output
+    assert "[REDACTED]" in output
+
+
+def test_bridge_additional_logger_namespace_routes_third_party_logger(capsys) -> None:
+    """bridge_additional_logger_namespace() opts a third-party stdlib logger
+    namespace into the same structured, redacted pipeline as Rakit-owned ones.
+    """
+    configure_logging(debug=False)
+    bridge_additional_logger_namespace("some_third_party_lib", debug=False)
+
+    std_logger = logging.getLogger("some_third_party_lib")
+    std_logger.warning(
+        "Connection pool exhausted for %s.",
+        "primary",
+        extra={"api_key": "secret456", "pool": "primary"},
+    )
+
+    captured = capsys.readouterr()
+    output = captured.err or captured.out
+
+    assert "Connection pool exhausted" in output
+    assert "warning" in output.lower()
+    assert "primary" in output
+    assert "secret456" not in output
+    assert "[REDACTED]" in output
+
+
+def test_root_logger_is_never_touched_by_bridging() -> None:
+    """Neither configure_logging() nor bridge_additional_logger_namespace() may
+    attach a handler to, or otherwise reconfigure, the root logger.
+    """
+    root_logger = logging.getLogger()
+    original_propagate = root_logger.propagate
+    original_level = root_logger.level
+
+    configure_logging(debug=False)
+    bridge_additional_logger_namespace("another_third_party_lib", debug=False)
+
+    root_handlers = [h for h in root_logger.handlers if isinstance(h, _RakitBridgeHandler)]
+    assert root_handlers == []
+    assert root_logger.propagate == original_propagate
+    assert root_logger.level == original_level
+
+
+def test_configure_logging_does_not_duplicate_bridge_handlers_for_rakit_web() -> None:
+    """Repeated configure_logging() calls must not accumulate handlers on the
+    newly-bridged rakit_web namespace either.
+    """
+    configure_logging(debug=False)
+    configure_logging(debug=False)
+    configure_logging(debug=False)
+
+    std_logger = logging.getLogger("rakit_web")
+    rakit_handlers = [h for h in std_logger.handlers if isinstance(h, _RakitBridgeHandler)]
+    assert len(rakit_handlers) == 1
+
+
+def test_bridge_additional_logger_namespace_does_not_duplicate_handlers() -> None:
+    """Repeated calls to bridge_additional_logger_namespace() for the same
+    namespace must not accumulate duplicate handlers.
+    """
+    configure_logging(debug=False)
+    bridge_additional_logger_namespace("repeated_third_party_lib", debug=False)
+    bridge_additional_logger_namespace("repeated_third_party_lib", debug=False)
+    bridge_additional_logger_namespace("repeated_third_party_lib", debug=False)
+
+    std_logger = logging.getLogger("repeated_third_party_lib")
     rakit_handlers = [h for h in std_logger.handlers if isinstance(h, _RakitBridgeHandler)]
     assert len(rakit_handlers) == 1

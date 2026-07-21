@@ -10,7 +10,9 @@ from structlog.types import EventDict, Processor
 #: Logger namespaces owned by Rakit that should be bridged into the
 #: structured logging pipeline. Deliberately scoped -- never the root
 #: logger -- so we don't hijack a host application's logging config.
-BRIDGED_LOGGER_NAMESPACES = ("rakit_core",)
+#: Each entry is a package-root namespace; stdlib logging propagation
+#: means any child logger (e.g. "rakit_web.lifecycle") is bridged too.
+BRIDGED_LOGGER_NAMESPACES = ("rakit_core", "rakit_web", "rakit_server_uvicorn")
 
 
 class _RakitBridgeHandler(logging.StreamHandler):
@@ -66,6 +68,20 @@ def _configure_stdlib_bridge(*, renderer: Processor, level: int) -> None:
     logger has ``propagate`` disabled so the host application's root logger
     handlers (if any) don't also emit the same record a second time.
     """
+    for name in BRIDGED_LOGGER_NAMESPACES:
+        _attach_bridge_handler(name, renderer=renderer, level=level)
+
+
+def _attach_bridge_handler(name: str, *, renderer: Processor, level: int) -> None:
+    """Attach (or replace) the structlog bridge handler on a single stdlib
+    logger namespace.
+
+    Shared by ``_configure_stdlib_bridge`` (for Rakit-owned namespaces) and
+    ``bridge_additional_logger_namespace`` (for opt-in third-party
+    namespaces) so there is exactly one implementation of "how to bridge a
+    namespace into the structured pipeline." Never touches the root logger --
+    callers are responsible for passing a specific, non-empty namespace.
+    """
     formatter = structlog.stdlib.ProcessorFormatter(
         foreign_pre_chain=[
             structlog.contextvars.merge_contextvars,
@@ -83,18 +99,35 @@ def _configure_stdlib_bridge(*, renderer: Processor, level: int) -> None:
     handler.setFormatter(formatter)
     handler.setLevel(level)
 
-    for name in BRIDGED_LOGGER_NAMESPACES:
-        std_logger = logging.getLogger(name)
-        # configure_logging() may run more than once in the same process
-        # (e.g. across tests, or repeated ASGI lifespans); drop any handler
-        # we previously attached so they don't accumulate and duplicate
-        # output on each subsequent call.
-        for existing in list(std_logger.handlers):
-            if isinstance(existing, _RakitBridgeHandler):
-                std_logger.removeHandler(existing)
-        std_logger.addHandler(handler)
-        std_logger.setLevel(level)
-        std_logger.propagate = False
+    std_logger = logging.getLogger(name)
+    # configure_logging()/bridge_additional_logger_namespace() may run more
+    # than once in the same process (e.g. across tests, or repeated ASGI
+    # lifespans); drop any handler we previously attached so they don't
+    # accumulate and duplicate output on each subsequent call.
+    for existing in list(std_logger.handlers):
+        if isinstance(existing, _RakitBridgeHandler):
+            std_logger.removeHandler(existing)
+    std_logger.addHandler(handler)
+    std_logger.setLevel(level)
+    std_logger.propagate = False
+
+
+def bridge_additional_logger_namespace(name: str, *, debug: bool) -> None:
+    """Opt an additional (typically third-party) stdlib logger namespace into
+    the same structured pipeline that Rakit's own namespaces use.
+
+    Call this AFTER ``configure_logging()`` for namespaces Rakit does not own
+    by default but that a specific deployment wants captured through the same
+    structured, redacted pipeline -- for example Uvicorn's own ``"uvicorn"``/
+    ``"uvicorn.error"``/``"uvicorn.access"`` loggers when running under the
+    Uvicorn server adapter, or a future SQLAlchemy engine logger. This never
+    touches the root logger and never bridges anything automatically -- the
+    caller (e.g. ``rakit_server_uvicorn``'s own server-startup code, once it
+    exists) decides which additional namespaces, if any, to opt in.
+    """
+    renderer = structlog.dev.ConsoleRenderer() if debug else structlog.processors.JSONRenderer()
+    level = logging.DEBUG if debug else logging.INFO
+    _attach_bridge_handler(name, renderer=renderer, level=level)
 
 
 def bind_request_context(
