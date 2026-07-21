@@ -106,3 +106,119 @@ async def test_application_scope_may_depend_on_transient() -> None:
     async with registry.application_scope() as application:
         service = application.require(AppServiceUsingTransient)
         assert isinstance(service.widget, TransientWidget)
+
+
+class OperationThing:
+    pass
+
+
+class TransientBuilder:
+    def __init__(self, thing: OperationThing) -> None:
+        self.thing = thing
+
+
+class AppServiceUsingTransientBuilder:
+    def __init__(self, builder: TransientBuilder) -> None:
+        self.builder = builder
+
+
+class RequestServiceUsingTransientBuilder:
+    def __init__(self, builder: TransientBuilder) -> None:
+        self.builder = builder
+
+
+class OperationServiceUsingTransientBuilder:
+    def __init__(self, builder: TransientBuilder) -> None:
+        self.builder = builder
+
+
+def _build_transitive_captive_registry() -> ServiceRegistry:
+    registry = ServiceRegistry()
+    registry.add_factory(OperationThing, lambda _: OperationThing(), scope=ServiceScope.OPERATION)
+    registry.add_factory(
+        TransientBuilder,
+        lambda resolver: TransientBuilder(resolver.require(OperationThing)),
+        scope=ServiceScope.TRANSIENT,
+    )
+    return registry
+
+
+@pytest.mark.anyio
+async def test_application_scope_transient_transitively_capturing_operation_raises() -> None:
+    registry = _build_transitive_captive_registry()
+    registry.add_factory(
+        AppServiceUsingTransientBuilder,
+        lambda resolver: AppServiceUsingTransientBuilder(resolver.require(TransientBuilder)),
+        scope=ServiceScope.APPLICATION,
+    )
+
+    async with registry.application_scope() as application:
+        with pytest.raises(RakitError) as exc_info:
+            application.require(AppServiceUsingTransientBuilder)
+
+        assert exc_info.value.code == "di.captive_dependency"
+
+
+@pytest.mark.anyio
+async def test_request_scope_transient_transitively_capturing_operation_raises() -> None:
+    registry = _build_transitive_captive_registry()
+    registry.add_factory(
+        RequestServiceUsingTransientBuilder,
+        lambda resolver: RequestServiceUsingTransientBuilder(resolver.require(TransientBuilder)),
+        scope=ServiceScope.REQUEST,
+    )
+
+    async with registry.application_scope() as application:  # noqa: SIM117
+        async with application.request_scope() as request:
+            with pytest.raises(RakitError) as exc_info:
+                request.require(RequestServiceUsingTransientBuilder)
+
+            assert exc_info.value.code == "di.captive_dependency"
+
+
+@pytest.mark.anyio
+async def test_operation_scope_transient_depending_on_operation_succeeds() -> None:
+    registry = _build_transitive_captive_registry()
+    registry.add_factory(
+        OperationServiceUsingTransientBuilder,
+        lambda resolver: OperationServiceUsingTransientBuilder(resolver.require(TransientBuilder)),
+        scope=ServiceScope.OPERATION,
+    )
+
+    async with registry.application_scope() as application:  # noqa: SIM117
+        async with application.operation_scope() as operation:
+            service = operation.require(OperationServiceUsingTransientBuilder)
+            assert isinstance(service.builder, TransientBuilder)
+
+
+class Frozenable:
+    pass
+
+
+@pytest.mark.anyio
+async def test_registry_not_frozen_accepts_registrations() -> None:
+    registry = ServiceRegistry()
+    registry.add_value(Frozenable, Frozenable(), scope=ServiceScope.APPLICATION)
+    assert Frozenable in registry.providers
+
+
+@pytest.mark.anyio
+async def test_frozen_registry_rejects_add_value() -> None:
+    registry = ServiceRegistry()
+    registry.freeze()
+
+    with pytest.raises(RakitError) as exc_info:
+        registry.add_value(Frozenable, Frozenable(), scope=ServiceScope.APPLICATION)
+
+    assert exc_info.value.code == "di.registry_frozen"
+
+
+@pytest.mark.anyio
+async def test_frozen_registry_rejects_add_factory() -> None:
+    registry = ServiceRegistry()
+    registry.freeze()
+
+    with pytest.raises(RakitError) as exc_info:
+        registry.add_factory(Frozenable, lambda _: Frozenable(), scope=ServiceScope.APPLICATION)
+
+    assert exc_info.value.code == "di.registry_frozen"

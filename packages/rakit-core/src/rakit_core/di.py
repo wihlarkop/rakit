@@ -24,6 +24,14 @@ _SCOPE_RANK: dict[ServiceScope, int] = {
 }
 
 
+class _ResolutionContext:
+    __slots__ = ("effective_scope_stack", "resolving")
+
+    def __init__(self) -> None:
+        self.resolving: set[type[Any]] = set()
+        self.effective_scope_stack: list[ServiceScope] = []
+
+
 class ServiceResolver:
     def __init__(
         self,
@@ -36,6 +44,7 @@ class ServiceResolver:
         self.parent = parent
         self.instances: dict[type[Any], Any] = {}
         self.stack = AsyncExitStack()
+        self._resolution_context: _ResolutionContext | None = None
 
     async def __aenter__(self) -> "ServiceResolver":
         await self.stack.__aenter__()
@@ -65,16 +74,32 @@ Factory = Callable[[ServiceResolver], Any]
 class ServiceRegistry:
     def __init__(self) -> None:
         self.providers: dict[type[Any], tuple[ServiceScope, Factory]] = {}
-        self._resolving: set[type[Any]] = set()
-        self._consumer_scope_stack: list[ServiceScope] = []
+        self._frozen: bool = False
+
+    def freeze(self) -> None:
+        self._frozen = True
 
     def add_value(self, service_type: type[T], value: T, *, scope: ServiceScope) -> None:
+        self._check_frozen(service_type)
         self._check_duplicate_registration(service_type)
         self.providers[service_type] = (scope, lambda _: value)
 
     def add_factory(self, service_type: type[T], factory: Factory, *, scope: ServiceScope) -> None:
+        self._check_frozen(service_type)
         self._check_duplicate_registration(service_type)
         self.providers[service_type] = (scope, factory)
+
+    def _check_frozen(self, service_type: type[Any]) -> None:
+        if self._frozen:
+            raise RakitError(
+                code=ErrorCode.DI_REGISTRY_FROZEN,
+                message=(
+                    f"Cannot register {service_type.__name__}: the service registry has "
+                    "already been frozen and no longer accepts new registrations."
+                ),
+                status_code=500,
+                details={"service_type": service_type.__name__},
+            )
 
     def _check_duplicate_registration(self, service_type: type[Any]) -> None:
         if service_type in self.providers:
@@ -89,11 +114,25 @@ class ServiceRegistry:
             )
 
     def resolve(self, service_type: type[T], resolver: ServiceResolver) -> T:
+        is_top_level = resolver._resolution_context is None
+        if is_top_level:
+            resolver._resolution_context = _ResolutionContext()
+        context = resolver._resolution_context
+        assert context is not None
+        try:
+            return self._resolve(service_type, resolver, context)
+        finally:
+            if is_top_level:
+                resolver._resolution_context = None
+
+    def _resolve(
+        self, service_type: type[T], resolver: ServiceResolver, context: _ResolutionContext
+    ) -> T:
         scope, factory = self.providers[service_type]
-        self._check_captive_dependency(service_type, scope)
+        self._check_captive_dependency(service_type, scope, context)
 
         if scope is ServiceScope.TRANSIENT:
-            return self._invoke_factory(service_type, scope, factory, resolver)
+            return self._invoke_factory(service_type, scope, factory, resolver, context)
 
         owner = resolver
         while owner.scope is not scope and owner.parent is not None:
@@ -103,7 +142,7 @@ class ServiceRegistry:
 
         if service_type not in owner.instances:
             owner.instances[service_type] = self._invoke_factory(
-                service_type, scope, factory, resolver
+                service_type, scope, factory, resolver, context
             )
 
         return owner.instances[service_type]
@@ -111,12 +150,14 @@ class ServiceRegistry:
     def application_scope(self) -> ServiceResolver:
         return ServiceResolver(self, ServiceScope.APPLICATION)
 
-    def _check_captive_dependency(self, service_type: type[Any], scope: ServiceScope) -> None:
+    def _check_captive_dependency(
+        self, service_type: type[Any], scope: ServiceScope, context: _ResolutionContext
+    ) -> None:
         if scope is ServiceScope.TRANSIENT:
             return
-        if not self._consumer_scope_stack:
+        if not context.effective_scope_stack:
             return
-        consumer_scope = self._consumer_scope_stack[-1]
+        consumer_scope = context.effective_scope_stack[-1]
         if _SCOPE_RANK[consumer_scope] < _SCOPE_RANK[scope]:
             raise RakitError(
                 code=ErrorCode.DI_CAPTIVE_DEPENDENCY,
@@ -133,17 +174,24 @@ class ServiceRegistry:
         scope: ServiceScope,
         factory: Factory,
         resolver: ServiceResolver,
+        context: _ResolutionContext,
     ) -> Any:
-        if service_type in self._resolving:
+        if service_type in context.resolving:
             raise RakitError(
                 code=ErrorCode.DI_CIRCULAR_DEPENDENCY,
                 message=f"Circular dependency detected while resolving {service_type.__name__}.",
                 status_code=500,
             )
-        self._resolving.add(service_type)
-        self._consumer_scope_stack.append(scope)
+        context.resolving.add(service_type)
+        if scope is ServiceScope.TRANSIENT:
+            effective_scope = (
+                context.effective_scope_stack[-1] if context.effective_scope_stack else scope
+            )
+        else:
+            effective_scope = scope
+        context.effective_scope_stack.append(effective_scope)
         try:
             return factory(resolver)
         finally:
-            self._consumer_scope_stack.pop()
-            self._resolving.discard(service_type)
+            context.effective_scope_stack.pop()
+            context.resolving.discard(service_type)
