@@ -82,3 +82,27 @@ async def test_captive_dependency_raises_rakit_error() -> None:
             application.require(WideServiceDependingOnNarrow)
 
         assert exc_info.value.code == "di.captive_dependency"
+
+
+class TransientWidget:
+    pass
+
+
+class AppServiceUsingTransient:
+    def __init__(self, widget: TransientWidget) -> None:
+        self.widget = widget
+
+
+@pytest.mark.anyio
+async def test_application_scope_may_depend_on_transient() -> None:
+    registry = ServiceRegistry()
+    registry.add_factory(TransientWidget, lambda _: TransientWidget(), scope=ServiceScope.TRANSIENT)
+    registry.add_factory(
+        AppServiceUsingTransient,
+        lambda resolver: AppServiceUsingTransient(resolver.require(TransientWidget)),
+        scope=ServiceScope.APPLICATION,
+    )
+
+    async with registry.application_scope() as application:
+        service = application.require(AppServiceUsingTransient)
+        assert isinstance(service.widget, TransientWidget)

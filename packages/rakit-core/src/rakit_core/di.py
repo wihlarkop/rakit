@@ -98,6 +98,8 @@ class ServiceRegistry:
         return ServiceResolver(self, ServiceScope.APPLICATION)
 
     def _check_captive_dependency(self, service_type: type[Any], scope: ServiceScope) -> None:
+        if scope is ServiceScope.TRANSIENT:
+            return
         if not self._consumer_scope_stack:
             return
         consumer_scope = self._consumer_scope_stack[-1]
