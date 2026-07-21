@@ -24,6 +24,8 @@ class LifespanDriver:
         self._receive_queue: asyncio.Queue = asyncio.Queue()
         self._startup_complete = asyncio.Event()
         self._shutdown_complete = asyncio.Event()
+        self._startup_failure_message: str | None = None
+        self._shutdown_failure_message: str | None = None
         self._task: asyncio.Task | None = None
 
     async def __aenter__(self) -> "LifespanDriver":
@@ -33,12 +35,20 @@ class LifespanDriver:
         async def send(message):
             if message["type"] == "lifespan.startup.complete":
                 self._startup_complete.set()
+            elif message["type"] == "lifespan.startup.failed":
+                self._startup_failure_message = message.get("message", "")
+                self._startup_complete.set()
             elif message["type"] == "lifespan.shutdown.complete":
+                self._shutdown_complete.set()
+            elif message["type"] == "lifespan.shutdown.failed":
+                self._shutdown_failure_message = message.get("message", "")
                 self._shutdown_complete.set()
 
         self._task = asyncio.create_task(self._app({"type": "lifespan"}, receive, send))
         await self._receive_queue.put({"type": "lifespan.startup"})
         await self._startup_complete.wait()
+        if self._startup_failure_message is not None:
+            raise RuntimeError(f"ASGI lifespan startup failed: {self._startup_failure_message}")
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -46,6 +56,8 @@ class LifespanDriver:
         await self._shutdown_complete.wait()
         assert self._task is not None
         await self._task
+        if self._shutdown_failure_message is not None:
+            raise RuntimeError(f"ASGI lifespan shutdown failed: {self._shutdown_failure_message}")
 
 
 @pytest.fixture

@@ -1,5 +1,8 @@
+import asyncio
+
 import httpx
 import pytest
+from conftest import LifespanDriver
 from rakit import Admin, SecretValue
 from rakit_web.lifecycle import LifecycleManager, RuntimeState
 
@@ -118,3 +121,28 @@ async def test_shutdown_marks_not_ready_before_owned_service_cleanup_runs() -> N
 
     assert events == ["ready_false_before_cleanup", "cleanup_started"]
     assert manager.state is RuntimeState.STOPPED
+
+
+@pytest.mark.anyio
+async def test_lifespan_driver_surfaces_startup_failure_promptly(monkeypatch) -> None:
+    # If LifecycleManager.run_startup() raises, Starlette's Router.lifespan()
+    # sends "lifespan.startup.failed" then re-raises inside the ASGI
+    # callable's background task. LifespanDriver must not hang waiting for
+    # "lifespan.startup.complete" that will never arrive -- it must wake up
+    # and raise a clear error surfacing the real failure.
+    async def failing_run_startup(self) -> None:
+        raise RuntimeError("boom: plugin configure() failed")
+
+    monkeypatch.setattr(LifecycleManager, "run_startup", failing_run_startup)
+
+    admin = Admin(
+        admin_id="operations",
+        title="Operations",
+        debug=False,
+        secret_key=SecretValue("x" * 32),
+    )
+    app = admin.asgi()
+    driver = LifespanDriver(app)
+
+    with pytest.raises(RuntimeError, match="boom: plugin configure\\(\\) failed"):
+        await asyncio.wait_for(driver.__aenter__(), timeout=5)
