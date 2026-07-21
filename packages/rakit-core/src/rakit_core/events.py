@@ -2,6 +2,7 @@ import inspect
 import logging
 import uuid
 from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -27,25 +28,38 @@ class EventEnvelope:
     causation_id: str | None = None
 
 
+_envelope_stack: ContextVar[tuple["EventEnvelope", ...]] = ContextVar(
+    "rakit_event_envelope_stack", default=()
+)
+
+
 class EventBus:
     def __init__(self) -> None:
         self.handlers: dict[type[DomainEvent], list[tuple[int, Callable[[Any], Any]]]] = {}
-        self._dispatch_stack: list[EventEnvelope] = []
 
     def subscribe(self, event_type, handler, *, priority: int = 0) -> None:
         entries = self.handlers.setdefault(event_type, [])
         entries.append((priority, handler))
         entries.sort(key=lambda entry: entry[0])
 
+    def current_envelope(self) -> EventEnvelope | None:
+        """Return the innermost envelope currently dispatching on this task's context."""
+        stack = _envelope_stack.get()
+        return stack[-1] if stack else None
+
+    def current_dispatch_depth(self) -> int:
+        """Return how many envelopes are currently in-flight on this task's context."""
+        return len(_envelope_stack.get())
+
     async def dispatch(self, envelope: EventEnvelope) -> None:
-        self._dispatch_stack.append(envelope)
+        token = _envelope_stack.set((*_envelope_stack.get(), envelope))
         try:
             for _, handler in self.handlers.get(type(envelope.payload), []):
                 result = handler(envelope.payload)
                 if inspect.isawaitable(result):
                     await result
         finally:
-            self._dispatch_stack.pop()
+            _envelope_stack.reset(token)
 
 
 class EventPublisher:
@@ -62,8 +76,8 @@ class EventPublisher:
         self.max_causation_depth = max_causation_depth
 
     def _build_envelope(self, event: DomainEvent, *, version: int) -> EventEnvelope:
-        current_depth = len(self.bus._dispatch_stack)
-        if current_depth > self.max_causation_depth:
+        current_depth = self.bus.current_dispatch_depth()
+        if current_depth >= self.max_causation_depth:
             raise RakitError(
                 code=ErrorCode.EVENTS_CAUSATION_DEPTH_EXCEEDED,
                 message=(
@@ -75,7 +89,7 @@ class EventPublisher:
                 status_code=500,
             )
 
-        parent = self.bus._dispatch_stack[-1] if self.bus._dispatch_stack else None
+        parent = self.bus.current_envelope()
         event_id = str(uuid.uuid4())
         correlation_id = parent.correlation_id if parent is not None else event_id
         causation_id = parent.event_id if parent is not None else None
@@ -109,8 +123,8 @@ class EventPublisher:
         await self.bus.dispatch(envelope)
 
     async def after_commit(self) -> None:
-        queue, self.deferred = self.deferred, []
-        for envelope in queue:
+        while self.deferred:
+            envelope = self.deferred.pop(0)
             try:
                 await self.bus.dispatch(envelope)
             except Exception:

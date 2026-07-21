@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 
 import pytest
@@ -13,6 +14,26 @@ class OrderCreated(DomainEvent):
 @dataclass(frozen=True)
 class OrderShipped(DomainEvent):
     order_id: str
+
+
+@dataclass(frozen=True)
+class OrderArchived(DomainEvent):
+    order_id: str
+
+
+@dataclass(frozen=True)
+class RootA(DomainEvent):
+    tag: str
+
+
+@dataclass(frozen=True)
+class RootB(DomainEvent):
+    tag: str
+
+
+@dataclass(frozen=True)
+class ChildOfA(DomainEvent):
+    tag: str
 
 
 @pytest.mark.anyio
@@ -95,14 +116,16 @@ async def test_correlation_and_causation_propagate_through_nested_publish_pre() 
     captured: dict[str, object] = {}
 
     async def on_order_created(_event: OrderCreated) -> None:
-        first_envelope = bus._dispatch_stack[-1]
+        first_envelope = bus.current_envelope()
+        assert first_envelope is not None
         captured["first_event_id"] = first_envelope.event_id
         captured["first_correlation_id"] = first_envelope.correlation_id
 
         await publisher.publish_pre(OrderShipped(order_id="o-1"))
 
     def on_order_shipped(_event: OrderShipped) -> None:
-        second_envelope = bus._dispatch_stack[-1]
+        second_envelope = bus.current_envelope()
+        assert second_envelope is not None
         captured["second_causation_id"] = second_envelope.causation_id
         captured["second_correlation_id"] = second_envelope.correlation_id
 
@@ -130,3 +153,87 @@ async def test_cycle_diagnostics_raises_on_deep_nested_publish_pre() -> None:
         await publisher.publish_pre(OrderCreated(order_id="o-1"))
 
     assert exc_info.value.code == "events.causation_depth_exceeded"
+
+
+@pytest.mark.anyio
+async def test_after_commit_drains_events_deferred_by_handlers_during_the_same_call() -> None:
+    ran: list[str] = []
+    bus = EventBus()
+    publisher = EventPublisher(bus)
+
+    def on_order_created(event: OrderCreated) -> None:
+        ran.append(f"created:{event.order_id}")
+        # Nested publish() during after_commit() must still be drained within
+        # this same after_commit() call, not stranded until a later call.
+        publisher.publish(OrderArchived(order_id=event.order_id))
+
+    def on_order_archived(event: OrderArchived) -> None:
+        ran.append(f"archived:{event.order_id}")
+
+    bus.subscribe(OrderCreated, on_order_created)
+    bus.subscribe(OrderArchived, on_order_archived)
+
+    publisher.publish(OrderCreated(order_id="o-1"))
+
+    await publisher.after_commit()
+
+    assert ran == ["created:o-1", "archived:o-1"]
+    assert publisher.deferred == []
+
+
+@pytest.mark.anyio
+async def test_concurrent_dispatch_does_not_cross_contaminate_causation_chains() -> None:
+    bus = EventBus()
+    publisher = EventPublisher(bus)
+
+    a_started = asyncio.Event()
+    b_started = asyncio.Event()
+    b_may_return = asyncio.Event()
+    captured: dict[str, object] = {}
+
+    async def on_root_a(_event: RootA) -> None:
+        own_envelope = bus.current_envelope()
+        assert own_envelope is not None
+        captured["a_event_id"] = own_envelope.event_id
+        captured["a_correlation_id"] = own_envelope.correlation_id
+
+        a_started.set()
+        # Wait until B has genuinely entered its own dispatch (pushed its own
+        # envelope onto its own task context) before proceeding.
+        await b_started.wait()
+
+        # B is now concurrently "in-flight" on a sibling task, but A's own
+        # context must be unaffected by that.
+        assert bus.current_dispatch_depth() == 1
+        assert bus.current_envelope() is own_envelope
+
+        await publisher.publish_pre(ChildOfA(tag="child"))
+
+        # Let B proceed to completion only after A has already read/used its
+        # own (uncontaminated) chain.
+        b_may_return.set()
+
+    async def on_root_b(_event: RootB) -> None:
+        await a_started.wait()
+        b_started.set()
+        # Stay "in-flight" (own envelope still pushed) until A has finished
+        # reading its own chain and published its child event.
+        await b_may_return.wait()
+
+    async def on_child_of_a(_event: ChildOfA) -> None:
+        envelope = bus.current_envelope()
+        assert envelope is not None
+        captured["child_causation_id"] = envelope.causation_id
+        captured["child_correlation_id"] = envelope.correlation_id
+
+    bus.subscribe(RootA, on_root_a)
+    bus.subscribe(RootB, on_root_b)
+    bus.subscribe(ChildOfA, on_child_of_a)
+
+    task_a = asyncio.create_task(publisher.publish_pre(RootA(tag="a")))
+    task_b = asyncio.create_task(publisher.publish_pre(RootB(tag="b")))
+
+    await asyncio.gather(task_a, task_b)
+
+    assert captured["child_causation_id"] == captured["a_event_id"]
+    assert captured["child_correlation_id"] == captured["a_correlation_id"]
