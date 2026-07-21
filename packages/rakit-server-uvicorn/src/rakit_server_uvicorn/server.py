@@ -13,7 +13,7 @@ class UvicornServer:
     log_level: str | None = None
 
     def run(self, **overrides: Any) -> None:
-        unsupported = set(overrides) - {f.name for f in fields(self)}
+        unsupported = set(overrides) - {f.name for f in fields(self) if f.name != "app"}
         if unsupported:
             raise ValueError(
                 f"Unsupported Uvicorn option(s): {', '.join(sorted(unsupported))}. "

@@ -39,3 +39,21 @@ def test_run_rejects_unsupported_option_without_calling_uvicorn(
         server.run(workers=4)
 
     assert calls == []
+
+
+def test_run_rejects_app_override_without_calling_uvicorn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[Any, dict[str, Any]]] = []
+
+    def fake_run(app: Any, **kwargs: Any) -> None:
+        calls.append((app, kwargs))
+
+    monkeypatch.setattr("rakit_server_uvicorn.server.uvicorn.run", fake_run)
+
+    server = UvicornServer(app="myapp:app")
+
+    with pytest.raises(ValueError, match="app"):
+        server.run(app="something-else")
+
+    assert calls == []

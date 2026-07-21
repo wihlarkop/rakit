@@ -15,6 +15,17 @@ class ErrorCode(StrEnum):
     DATASOURCE_FAILURE = "datasource.failure"
     OPERATION_TIMEOUT = "operation.timeout"
     INTERNAL_ERROR = "internal.error"
+    DI_CIRCULAR_DEPENDENCY = "di.circular_dependency"
+    DI_CAPTIVE_DEPENDENCY = "di.captive_dependency"
+    DI_DUPLICATE_REGISTRATION = "di.duplicate_registration"
+    EVENTS_QUEUE_DEPTH_EXCEEDED = "events.queue_depth_exceeded"
+    EVENTS_CAUSATION_DEPTH_EXCEEDED = "events.causation_depth_exceeded"
+    CONFIG_MISSING_PLUGIN_DEPENDENCY = "config.missing_plugin_dependency"
+    CONFIG_PLUGIN_CONFLICT = "config.plugin_conflict"
+    CONFIG_RESERVED_PATH = "config.reserved_path"
+    CONFIG_ROUTE_NAME_COLLISION = "config.route_name_collision"
+    CONFIG_ROUTE_COLLISION = "config.route_collision"
+    CONFIG_DUPLICATE_PLUGIN = "config.duplicate_plugin"
 
 
 class ErrorDetail(BaseModel):

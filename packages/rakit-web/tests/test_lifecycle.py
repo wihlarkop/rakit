@@ -124,6 +124,35 @@ async def test_shutdown_marks_not_ready_before_owned_service_cleanup_runs() -> N
 
 
 @pytest.mark.anyio
+async def test_health_endpoint_returns_503_when_lifecycle_failed() -> None:
+    admin = Admin(
+        admin_id="operations",
+        title="Operations",
+        debug=False,
+        secret_key=SecretValue("x" * 32),
+    )
+    app = admin.asgi()
+    transport = httpx.ASGITransport(app=app)
+    async with LifespanDriver(app):
+        assert admin.lifecycle.state is RuntimeState.READY
+        admin.lifecycle.state = RuntimeState.FAILED
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as http_client:
+            response = await http_client.get("/_system/health")
+        assert response.status_code == 503
+        assert response.json() == {"status": "unhealthy"}
+        admin.lifecycle.state = RuntimeState.READY
+
+
+@pytest.mark.anyio
+async def test_health_endpoint_returns_200_when_lifecycle_healthy(client) -> None:
+    response = await client.get("/_system/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+@pytest.mark.anyio
 async def test_lifespan_driver_surfaces_startup_failure_promptly(monkeypatch) -> None:
     # If LifecycleManager.run_startup() raises, Starlette's Router.lifespan()
     # sends "lifespan.startup.failed" then re-raises inside the ASGI

@@ -4,7 +4,7 @@ from typing import Protocol
 from .compatibility import validate_official_package_versions
 from .definitions import RouteDefinition
 from .di import ServiceRegistry
-from .errors import RakitError
+from .errors import ErrorCode, RakitError
 
 RESERVED_PATH_PREFIXES = ("/_system",)
 
@@ -39,7 +39,7 @@ class ApplicationBuilder:
     def install(self, plugin: Plugin) -> None:
         if plugin.plugin_id in self.plugins:
             raise RakitError(
-                code="config.duplicate_plugin",
+                code=ErrorCode.CONFIG_DUPLICATE_PLUGIN,
                 message=f'Plugin "{plugin.plugin_id}" is already installed.',
                 status_code=500,
             )
@@ -48,7 +48,7 @@ class ApplicationBuilder:
         for dependency_id in depends_on:
             if dependency_id not in self.plugins:
                 raise RakitError(
-                    code="config.missing_plugin_dependency",
+                    code=ErrorCode.CONFIG_MISSING_PLUGIN_DEPENDENCY,
                     message=(
                         f'Plugin "{plugin.plugin_id}" depends on "{dependency_id}", '
                         "which is not installed."
@@ -61,7 +61,7 @@ class ApplicationBuilder:
         for conflicting_id in conflicts_with:
             if conflicting_id in self.plugins:
                 raise RakitError(
-                    code="config.plugin_conflict",
+                    code=ErrorCode.CONFIG_PLUGIN_CONFLICT,
                     message=(
                         f'Plugin "{plugin.plugin_id}" conflicts with already-installed '
                         f'plugin "{conflicting_id}".'
@@ -73,7 +73,7 @@ class ApplicationBuilder:
         for installed_id, installed_conflicts in self._plugin_conflicts.items():
             if plugin.plugin_id in installed_conflicts:
                 raise RakitError(
-                    code="config.plugin_conflict",
+                    code=ErrorCode.CONFIG_PLUGIN_CONFLICT,
                     message=(
                         f'Plugin "{plugin.plugin_id}" conflicts with already-installed '
                         f'plugin "{installed_id}".'
@@ -104,7 +104,7 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
             for prefix in RESERVED_PATH_PREFIXES
         ):
             raise RakitError(
-                code="config.reserved_path",
+                code=ErrorCode.CONFIG_RESERVED_PATH,
                 message=f'Route path "{route.path}" is reserved for framework use.',
                 status_code=500,
                 details={"path": route.path, "route_name": route.route_name},
@@ -112,7 +112,7 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
 
         if route.route_name in seen_route_names:
             raise RakitError(
-                code="config.route_name_collision",
+                code=ErrorCode.CONFIG_ROUTE_NAME_COLLISION,
                 message=f'Route name "{route.route_name}" is already used by another route.',
                 status_code=500,
                 details={"route_name": route.route_name},
@@ -123,7 +123,7 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
             key = (method.upper(), route.path)
             if key in seen:
                 raise RakitError(
-                    code="config.route_collision",
+                    code=ErrorCode.CONFIG_ROUTE_COLLISION,
                     message=f"Route collision for {method.upper()} {route.path}.",
                     status_code=500,
                     details={"first": seen[key], "second": route.route_name},

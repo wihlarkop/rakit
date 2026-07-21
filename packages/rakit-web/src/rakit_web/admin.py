@@ -93,7 +93,9 @@ class Admin:
             return PlainTextResponse(self.config.title)
 
         async def health(_request: Request) -> JSONResponse:
-            return JSONResponse({"status": "ok"})
+            if await self.lifecycle.check_health():
+                return JSONResponse({"status": "ok"})
+            return JSONResponse({"status": "unhealthy"}, status_code=503)
 
         async def ready(_request: Request) -> JSONResponse:
             if await self.lifecycle.check_ready():
@@ -104,11 +106,14 @@ class Admin:
         async def lifespan(_app: Starlette) -> AsyncIterator[None]:
             configure_logging(debug=self.config.debug)
             await self._open_application_resolver()
-            await self.lifecycle.run_startup()
             try:
-                yield
+                await self.lifecycle.run_startup()
+                try:
+                    yield
+                finally:
+                    await self.lifecycle.run_shutdown()
             finally:
-                await self.lifecycle.run_shutdown()
+                await self._close_application_resolver()
 
         app = Starlette(debug=self.config.debug, routes=[Route("/", home)], lifespan=lifespan)
         app.routes.append(Route("/_system/health", health))

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from rakit_core.errors import RakitError
+from rakit_core.errors import ErrorCode, RakitError
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ class EventPublisher:
         current_depth = len(self.bus._dispatch_stack)
         if current_depth > self.max_causation_depth:
             raise RakitError(
-                code="events.causation_depth_exceeded",
+                code=ErrorCode.EVENTS_CAUSATION_DEPTH_EXCEEDED,
                 message=(
                     "Event causation chain depth "
                     f"({current_depth}) exceeds the configured limit "
@@ -93,7 +93,7 @@ class EventPublisher:
     def publish(self, event: DomainEvent, *, version: int = 1) -> None:
         if len(self.deferred) >= self.max_queue_depth:
             raise RakitError(
-                code="events.queue_depth_exceeded",
+                code=ErrorCode.EVENTS_QUEUE_DEPTH_EXCEEDED,
                 message=(
                     "Deferred event queue depth exceeds the configured limit "
                     f"({self.max_queue_depth})."

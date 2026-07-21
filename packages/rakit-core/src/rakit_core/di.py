@@ -4,7 +4,7 @@ from enum import StrEnum
 from types import TracebackType
 from typing import Any, TypeVar
 
-from rakit_core.errors import RakitError
+from rakit_core.errors import ErrorCode, RakitError
 
 T = TypeVar("T")
 
@@ -79,7 +79,7 @@ class ServiceRegistry:
     def _check_duplicate_registration(self, service_type: type[Any]) -> None:
         if service_type in self.providers:
             raise RakitError(
-                code="di.duplicate_registration",
+                code=ErrorCode.DI_DUPLICATE_REGISTRATION,
                 message=(
                     f"Service {service_type.__name__} is already registered; "
                     "re-registration would silently overwrite the previous provider."
@@ -119,7 +119,7 @@ class ServiceRegistry:
         consumer_scope = self._consumer_scope_stack[-1]
         if _SCOPE_RANK[consumer_scope] < _SCOPE_RANK[scope]:
             raise RakitError(
-                code="di.captive_dependency",
+                code=ErrorCode.DI_CAPTIVE_DEPENDENCY,
                 message=(
                     f"Captive dependency detected: a {consumer_scope} service cannot depend on "
                     f"{service_type.__name__}, which is registered at the narrower {scope} scope."
@@ -136,7 +136,7 @@ class ServiceRegistry:
     ) -> Any:
         if service_type in self._resolving:
             raise RakitError(
-                code="di.circular_dependency",
+                code=ErrorCode.DI_CIRCULAR_DEPENDENCY,
                 message=f"Circular dependency detected while resolving {service_type.__name__}.",
                 status_code=500,
             )
