@@ -1,6 +1,8 @@
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import structlog
 from rakit_core.compiler import ApplicationBuilder, compile_application
 from rakit_core.config import RakitConfig, SecretValue
 from rakit_core.di import ServiceResolver
@@ -8,8 +10,41 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Route
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .lifecycle import LifecycleManager
+from .logging import bind_request_context, clear_request_context, configure_logging
+
+logger = structlog.get_logger(__name__)
+
+
+class RequestContextMiddleware:
+    """Raw ASGI middleware that binds request-scoped context via structlog contextvars.
+
+    A raw ASGI wrapper is used instead of ``BaseHTTPMiddleware`` because the
+    latter runs the downstream app inside a separate anyio task, which is a
+    known source of contextvars-propagation bugs across Starlette versions.
+    Wrapping the ASGI callable directly keeps everything in the same task, so
+    contextvars set before calling the inner app are reliably visible to
+    structlog calls made while handling the request.
+    """
+
+    def __init__(self, app: ASGIApp, *, admin_id: str) -> None:
+        self.app = app
+        self.admin_id = admin_id
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request_id = str(uuid.uuid4())
+        bind_request_context(request_id=request_id, admin_id=self.admin_id)
+        try:
+            logger.info("http.request.started", path=scope.get("path"))
+            await self.app(scope, receive, send)
+        finally:
+            clear_request_context()
 
 
 class Admin:
@@ -51,7 +86,7 @@ class Admin:
             await self._application_resolver.__aexit__(None, None, None)
             self._application_resolver = None
 
-    def asgi(self) -> Starlette:
+    def asgi(self) -> ASGIApp:
         self.compile()
 
         async def home(_):
@@ -67,6 +102,7 @@ class Admin:
 
         @asynccontextmanager
         async def lifespan(_app: Starlette) -> AsyncIterator[None]:
+            configure_logging(debug=self.config.debug)
             await self._open_application_resolver()
             await self.lifecycle.run_startup()
             try:
@@ -77,4 +113,4 @@ class Admin:
         app = Starlette(debug=self.config.debug, routes=[Route("/", home)], lifespan=lifespan)
         app.routes.append(Route("/_system/health", health))
         app.routes.append(Route("/_system/ready", ready))
-        return app
+        return RequestContextMiddleware(app, admin_id=self.config.admin_id)

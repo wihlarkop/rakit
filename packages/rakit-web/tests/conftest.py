@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator
 import httpx
 import pytest
 from rakit import Admin, SecretValue
-from starlette.applications import Starlette
+from starlette.types import ASGIApp
 
 
 class LifespanDriver:
@@ -19,7 +19,7 @@ class LifespanDriver:
     by calling LifecycleManager methods directly.
     """
 
-    def __init__(self, app: Starlette) -> None:
+    def __init__(self, app: ASGIApp) -> None:
         self._app = app
         self._receive_queue: asyncio.Queue = asyncio.Queue()
         self._startup_complete = asyncio.Event()
@@ -44,7 +44,10 @@ class LifespanDriver:
                 self._shutdown_failure_message = message.get("message", "")
                 self._shutdown_complete.set()
 
-        self._task = asyncio.create_task(self._app({"type": "lifespan"}, receive, send))
+        async def run_app() -> None:
+            await self._app({"type": "lifespan"}, receive, send)
+
+        self._task = asyncio.create_task(run_app())
         await self._receive_queue.put({"type": "lifespan.startup"})
         await self._startup_complete.wait()
         if self._startup_failure_message is not None:
