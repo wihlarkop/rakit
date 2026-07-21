@@ -22,6 +22,7 @@ class ErrorCode(StrEnum):
     DI_INVALID_VALUE_SCOPE = "di.invalid_value_scope"
     EVENTS_QUEUE_DEPTH_EXCEEDED = "events.queue_depth_exceeded"
     EVENTS_CAUSATION_DEPTH_EXCEEDED = "events.causation_depth_exceeded"
+    EVENTS_DRAIN_BUDGET_EXCEEDED = "events.drain_budget_exceeded"
     CONFIG_MISSING_PLUGIN_DEPENDENCY = "config.missing_plugin_dependency"
     CONFIG_PLUGIN_CONFLICT = "config.plugin_conflict"
     CONFIG_RESERVED_PATH = "config.reserved_path"

@@ -1,9 +1,10 @@
 import asyncio
 from dataclasses import dataclass
+from typing import Literal
 
 import pytest
 from rakit_core.errors import RakitError
-from rakit_core.events import DomainEvent, EventBus, EventPublisher
+from rakit_core.events import DomainEvent, EventBus, EventEnvelope, EventPublisher
 
 
 @dataclass(frozen=True)
@@ -268,3 +269,170 @@ async def test_separate_event_buses_do_not_share_dispatch_context() -> None:
 
     assert captured["b_causation_id"] is None
     assert captured["b_dispatch_depth"] == 1
+
+
+@pytest.mark.anyio
+async def test_dispatch_never_has_more_than_one_active_call_even_when_nested(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Instrument EventBus.dispatch itself to prove that, even across a 3+
+    level deep chain of nested publish_pre calls, only one dispatch() call is
+    ever active at a time -- the property the queue-based redesign exists to
+    guarantee."""
+    bus = EventBus()
+    publisher = EventPublisher(bus)
+
+    active = {"count": 0}
+    max_active = {"value": 0}
+    original_dispatch = EventBus.dispatch
+
+    async def instrumented_dispatch(
+        self: EventBus,
+        envelope: EventEnvelope,
+        *,
+        on_handler_error: Literal["raise", "log_and_continue"] = "raise",
+    ) -> None:
+        active["count"] += 1
+        max_active["value"] = max(max_active["value"], active["count"])
+        try:
+            await original_dispatch(self, envelope, on_handler_error=on_handler_error)
+        finally:
+            active["count"] -= 1
+
+    monkeypatch.setattr(EventBus, "dispatch", instrumented_dispatch)
+
+    depth_counter = {"n": 0}
+
+    async def on_order_created(event: OrderCreated) -> None:
+        depth_counter["n"] += 1
+        if depth_counter["n"] < 4:
+            # Nest at least 3 levels deep.
+            await publisher.publish_pre(OrderCreated(order_id=event.order_id))
+
+    bus.subscribe(OrderCreated, on_order_created)
+
+    await publisher.publish_pre(OrderCreated(order_id="o-1"))
+
+    assert depth_counter["n"] == 4
+    assert max_active["value"] == 1
+    assert active["count"] == 0
+
+
+@pytest.mark.anyio
+async def test_queue_and_causation_limits_terminate_self_triggering_chain() -> None:
+    """With max_queue_depth=2 and max_causation_depth=2, a handler that keeps
+    publishing one more instance of the same event must terminate with a
+    RakitError rather than hanging or silently exceeding the limits. Tracing
+    the implementation: the pre-drain queue never holds more than one pending
+    envelope at a time for this chain shape (each dispatch pops one before
+    the handler re-queues one), so causation_depth crosses the limit before
+    the queue-depth check ever does."""
+    bus = EventBus()
+    publisher = EventPublisher(bus, max_queue_depth=2, max_causation_depth=2)
+
+    async def on_order_created(event: OrderCreated) -> None:
+        await publisher.publish_pre(OrderCreated(order_id=event.order_id))
+
+    bus.subscribe(OrderCreated, on_order_created)
+
+    with pytest.raises(RakitError) as exc_info:
+        await publisher.publish_pre(OrderCreated(order_id="o-1"))
+
+    assert exc_info.value.code == "events.causation_depth_exceeded"
+
+
+@pytest.mark.anyio
+async def test_unbounded_self_triggering_chain_terminates_via_causation_depth() -> None:
+    """A handler that always republishes itself, run with the (generous but
+    finite) default limits, must terminate with a stable RakitError rather
+    than hanging. With the defaults (max_causation_depth=20,
+    max_total_processed_per_drain=10_000), causation_depth grows by 1 on
+    every republish of the SAME logical chain, so it crosses its limit long
+    before the drain-processed budget would; that's exercised separately by
+    test_drain_budget_exceeded_for_many_sibling_pre_events below."""
+    bus = EventBus()
+    publisher = EventPublisher(bus)
+
+    async def on_order_created(event: OrderCreated) -> None:
+        await publisher.publish_pre(OrderCreated(order_id=event.order_id))
+
+    bus.subscribe(OrderCreated, on_order_created)
+
+    with pytest.raises(RakitError) as exc_info:
+        await publisher.publish_pre(OrderCreated(order_id="o-1"))
+
+    assert exc_info.value.code == "events.causation_depth_exceeded"
+
+
+@pytest.mark.anyio
+async def test_drain_budget_exceeded_for_many_sibling_pre_events() -> None:
+    """Exercise max_total_processed_per_drain directly: a handler that
+    publishes many SIBLING events (all at the same causation depth, from the
+    same outer pump) rather than deepening the causation chain. This should
+    exhaust the total-processed-per-drain budget without ever approaching
+    the (generous default) causation-depth limit."""
+    bus = EventBus()
+    publisher = EventPublisher(bus, max_total_processed_per_drain=5)
+
+    async def on_root_a(event: RootA) -> None:
+        for i in range(20):
+            await publisher.publish_pre(ChildOfA(tag=f"{event.tag}-{i}"))
+
+    bus.subscribe(RootA, on_root_a)
+    bus.subscribe(ChildOfA, lambda _event: None)
+
+    with pytest.raises(RakitError) as exc_info:
+        await publisher.publish_pre(RootA(tag="root"))
+
+    assert exc_info.value.code == "events.drain_budget_exceeded"
+
+
+@pytest.mark.anyio
+async def test_after_commit_continues_to_second_handler_after_first_raises() -> None:
+    """First post-commit handler for an event raises; the second handler
+    subscribed to the SAME event must still run, and after_commit() itself
+    must not raise (log-and-continue, now enforced per-handler inside
+    dispatch() rather than per-envelope around it)."""
+    ran: list[str] = []
+    bus = EventBus()
+
+    def first_handler(_event: OrderCreated) -> None:
+        raise RuntimeError("boom")
+
+    def second_handler(event: OrderCreated) -> None:
+        ran.append(event.order_id)
+
+    bus.subscribe(OrderCreated, first_handler, priority=0)
+    bus.subscribe(OrderCreated, second_handler, priority=1)
+
+    publisher = EventPublisher(bus)
+    publisher.publish(OrderCreated(order_id="o-1"))
+
+    await publisher.after_commit()
+
+    assert ran == ["o-1"]
+
+
+@pytest.mark.anyio
+async def test_publish_pre_stops_at_first_failing_handler_for_same_event() -> None:
+    """First pre-event handler for an event raises; subsequent handlers
+    subscribed to the SAME event must NOT run, and the exception must
+    propagate (raise semantics, unlike post-commit's log-and-continue)."""
+    ran = {"second": False}
+    bus = EventBus()
+
+    def first_handler(_event: OrderCreated) -> None:
+        raise ValueError("rejected")
+
+    def second_handler(_event: OrderCreated) -> None:
+        ran["second"] = True
+
+    bus.subscribe(OrderCreated, first_handler, priority=0)
+    bus.subscribe(OrderCreated, second_handler, priority=1)
+
+    publisher = EventPublisher(bus)
+
+    with pytest.raises(ValueError, match="rejected"):
+        await publisher.publish_pre(OrderCreated(order_id="o-1"))
+
+    assert ran["second"] is False
