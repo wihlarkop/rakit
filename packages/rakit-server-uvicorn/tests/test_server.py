@@ -1,7 +1,12 @@
 from typing import Any
 
 import pytest
+import rakit_server_uvicorn
 from rakit_server_uvicorn.server import UvicornServer
+
+
+def test_package_root_exports_uvicorn_server() -> None:
+    assert rakit_server_uvicorn.UvicornServer is UvicornServer
 
 
 def test_run_applies_supported_option_override(monkeypatch: pytest.MonkeyPatch) -> None:

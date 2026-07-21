@@ -279,6 +279,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+server-uvicorn = [
+    { name = "rakit-server-uvicorn" },
+]
 sqlalchemy = [
     { name = "rakit-sqlalchemy" },
 ]
@@ -287,10 +290,11 @@ sqlalchemy = [
 requires-dist = [
     { name = "click", specifier = ">=8.4.2" },
     { name = "rakit-core", editable = "packages/rakit-core" },
+    { name = "rakit-server-uvicorn", marker = "extra == 'server-uvicorn'", editable = "packages/rakit-server-uvicorn" },
     { name = "rakit-sqlalchemy", marker = "extra == 'sqlalchemy'", editable = "packages/rakit-sqlalchemy" },
     { name = "rakit-web", editable = "packages/rakit-web" },
 ]
-provides-extras = ["sqlalchemy"]
+provides-extras = ["server-uvicorn", "sqlalchemy"]
 
 [[package]]
 name = "rakit-auth-sqlalchemy"
