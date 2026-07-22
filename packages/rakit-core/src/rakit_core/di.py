@@ -87,6 +87,12 @@ class ServiceResolver:
 Factory = Callable[[ServiceResolver], Any]
 
 
+@dataclass(frozen=True)
+class _RegistrySnapshot:
+    providers: dict[ServiceKey[Any], tuple[ServiceScope, Factory]]
+    frozen: bool
+
+
 class ServiceRegistry:
     def __init__(self) -> None:
         self._providers: dict[ServiceKey[Any], tuple[ServiceScope, Factory]] = {}
@@ -99,14 +105,13 @@ class ServiceRegistry:
     def freeze(self) -> None:
         self._frozen = True
 
-    def _snapshot_providers(self) -> dict[ServiceKey[Any], tuple[ServiceScope, Factory]]:
-        return dict(self._providers)
+    def _snapshot(self) -> "_RegistrySnapshot":
+        return _RegistrySnapshot(providers=dict(self._providers), frozen=self._frozen)
 
-    def _restore_providers(
-        self, snapshot: dict[ServiceKey[Any], tuple[ServiceScope, Factory]]
-    ) -> None:
+    def _restore(self, snapshot: "_RegistrySnapshot") -> None:
         self._providers.clear()
-        self._providers.update(snapshot)
+        self._providers.update(snapshot.providers)
+        self._frozen = snapshot.frozen
 
     def add_value(
         self, service_type: type[T], value: T, *, scope: ServiceScope, name: str | None = None

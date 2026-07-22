@@ -32,6 +32,7 @@ class ErrorCode(StrEnum):
     CONFIG_ROUTE_COLLISION = "config.route_collision"
     CONFIG_DUPLICATE_PLUGIN = "config.duplicate_plugin"
     CONFIG_ALREADY_COMPILED = "config.already_compiled"
+    CONFIG_COMPILE_DURING_PLUGIN_INSTALL = "config.compile_during_plugin_install"
 
 
 class ErrorDetail(BaseModel):

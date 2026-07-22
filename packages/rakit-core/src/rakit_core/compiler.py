@@ -3,7 +3,7 @@ from typing import Protocol
 
 from .compatibility import validate_official_package_versions
 from .definitions import RouteDefinition
-from .di import ServiceRegistry
+from .di import ServiceRegistry, _RegistrySnapshot
 from .errors import ErrorCode, RakitError
 
 RESERVED_PATH_PREFIXES = ("/_system",)
@@ -33,6 +33,7 @@ class ApplicationBuilder:
     registry: ServiceRegistry = field(default_factory=ServiceRegistry)
     _plugin_conflicts: dict[str, tuple[str, ...]] = field(default_factory=dict)
     _compiled: bool = field(default=False, init=False)
+    _installing: bool = field(default=False, init=False)
 
     @property
     def routes(self) -> tuple[RouteDefinition, ...]:
@@ -105,22 +106,45 @@ class ApplicationBuilder:
                     details={"plugin": plugin.plugin_id, "conflicts_with": installed_id},
                 )
 
-        routes_snapshot = list(self._routes)
-        plugin_ids_snapshot = list(self._plugin_ids)
-        plugin_conflicts_snapshot = dict(self._plugin_conflicts)
-        providers_snapshot = self.registry._snapshot_providers()
+        snapshot = _InstallSnapshot.capture(self)
 
         self._plugin_ids.append(plugin.plugin_id)
         self._plugin_conflicts[plugin.plugin_id] = conflicts_with
+        self._installing = True
         try:
             plugin.configure(self)
         except BaseException:
-            self._routes[:] = routes_snapshot
-            self._plugin_ids[:] = plugin_ids_snapshot
-            self._plugin_conflicts.clear()
-            self._plugin_conflicts.update(plugin_conflicts_snapshot)
-            self.registry._restore_providers(providers_snapshot)
+            snapshot.restore(self)
             raise
+        finally:
+            self._installing = False
+
+
+@dataclass
+class _InstallSnapshot:
+    routes: list[RouteDefinition]
+    plugin_ids: list[str]
+    plugin_conflicts: dict[str, tuple[str, ...]]
+    compiled: bool
+    registry: _RegistrySnapshot
+
+    @classmethod
+    def capture(cls, builder: "ApplicationBuilder") -> "_InstallSnapshot":
+        return cls(
+            routes=list(builder._routes),
+            plugin_ids=list(builder._plugin_ids),
+            plugin_conflicts=dict(builder._plugin_conflicts),
+            compiled=builder._compiled,
+            registry=builder.registry._snapshot(),
+        )
+
+    def restore(self, builder: "ApplicationBuilder") -> None:
+        builder._routes[:] = self.routes
+        builder._plugin_ids[:] = self.plugin_ids
+        builder._plugin_conflicts.clear()
+        builder._plugin_conflicts.update(self.plugin_conflicts)
+        builder._compiled = self.compiled
+        builder.registry._restore(self.registry)
 
 
 @dataclass(frozen=True)
@@ -130,6 +154,13 @@ class CompiledApplication:
 
 
 def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
+    if builder._installing:
+        raise RakitError(
+            code=ErrorCode.CONFIG_COMPILE_DURING_PLUGIN_INSTALL,
+            message="Cannot compile the application while a plugin's configure() is still running.",
+            status_code=500,
+        )
+
     validate_official_package_versions(OFFICIAL_PACKAGE_NAMES)
 
     seen: dict[tuple[str, str], str] = {}

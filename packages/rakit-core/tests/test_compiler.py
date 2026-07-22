@@ -308,6 +308,110 @@ def test_successful_install_survives_compile_with_rollback_machinery_in_place() 
     assert caught.value.code == "di.registry_frozen"
 
 
+class _PluginThatRecompilesRecursively:
+    plugin_id = "recompiler"
+
+    def configure(self, builder: ApplicationBuilder) -> None:
+        builder.add_route(
+            RouteDefinition(
+                route_name="app.recompiler",
+                methods=("GET",),
+                path="/recompiler",
+                owner_id="recompiler",
+            )
+        )
+        builder.registry.add_factory(
+            _ServiceB, lambda _: _ServiceB(), scope=ServiceScope.APPLICATION
+        )
+        compile_application(builder)
+
+
+def test_recursive_compile_during_configure_is_rejected_and_rolled_back() -> None:
+    builder = ApplicationBuilder()
+    plugin = _PluginThatRecompilesRecursively()
+
+    with pytest.raises(RakitError) as caught:
+        builder.install(plugin)
+    assert caught.value.code == "config.compile_during_plugin_install"
+
+    assert builder._compiled is False
+    assert builder.routes == ()
+    assert builder.plugins == ()
+    assert plugin.plugin_id not in builder._plugin_conflicts
+    assert all(key.service_type is not _ServiceB for key in builder.registry.providers)
+
+    # Proves the registration was genuinely removed, not just hidden from view.
+    builder.registry.add_factory(_ServiceB, lambda _: _ServiceB(), scope=ServiceScope.APPLICATION)
+
+    corrected_plugin = _PluginThatSucceeds()
+    with pytest.raises(RakitError) as duplicate_caught:
+        builder.install(corrected_plugin)
+    assert duplicate_caught.value.code == "di.duplicate_registration"
+
+
+def test_recursive_compile_during_configure_allows_clean_reinstall_afterward() -> None:
+    builder = ApplicationBuilder()
+    plugin = _PluginThatRecompilesRecursively()
+
+    with pytest.raises(RakitError) as caught:
+        builder.install(plugin)
+    assert caught.value.code == "config.compile_during_plugin_install"
+
+    corrected_plugin = _PluginThatSucceeds()
+    builder.install(corrected_plugin)
+    assert builder.plugins == ("flaky",)
+
+    compiled = compile_application(builder)
+    assert "flaky" in compiled.plugins
+
+
+class _PluginThatFreezesRegistryThenFails:
+    plugin_id = "freezer"
+
+    def configure(self, builder: ApplicationBuilder) -> None:
+        builder.add_route(
+            RouteDefinition(
+                route_name="app.freezer",
+                methods=("GET",),
+                path="/freezer",
+                owner_id="freezer",
+            )
+        )
+        builder.registry.add_factory(
+            _ServiceB, lambda _: _ServiceB(), scope=ServiceScope.APPLICATION
+        )
+        builder.registry.freeze()
+        raise RuntimeError("freezer boom")
+
+
+class _ServiceProbe:
+    pass
+
+
+def test_direct_freeze_during_configure_is_rolled_back() -> None:
+    builder = ApplicationBuilder()
+    plugin = _PluginThatFreezesRegistryThenFails()
+
+    with pytest.raises(RuntimeError, match="freezer boom"):
+        builder.install(plugin)
+
+    assert builder.plugins == ()
+    assert builder.routes == ()
+    assert plugin.plugin_id not in builder._plugin_conflicts
+
+    # _frozen must have been rolled back to False, otherwise this raises di.registry_frozen.
+    builder.registry.add_factory(
+        _ServiceProbe, lambda _: _ServiceProbe(), scope=ServiceScope.APPLICATION
+    )
+
+    corrected_plugin = _PluginThatSucceeds()
+    builder.install(corrected_plugin)
+    assert builder.plugins == ("flaky",)
+
+    compiled = compile_application(builder)
+    assert "flaky" in compiled.plugins
+
+
 def test_routes_and_plugins_are_read_only_tuples() -> None:
     builder = ApplicationBuilder()
     assert isinstance(builder.routes, tuple)
