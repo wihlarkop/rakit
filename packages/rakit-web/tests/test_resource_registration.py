@@ -198,6 +198,46 @@ def test_compiled_field_policy_is_copied_and_immutable() -> None:
 
 
 @pytest.mark.parametrize(
+    ("policy_name", "malformed_value"),
+    (
+        ("list_fields", None),
+        ("detail_fields", "super-secret-token"),
+        ("filter_fields", 7),
+        ("search_fields", ["name", None]),
+        ("sort_fields", ("name", object())),
+        ("list_fields", {"id": "super-secret-token"}),
+    ),
+)
+def test_register_rejects_malformed_policy_declarations_safely(
+    policy_name: str,
+    malformed_value: object,
+) -> None:
+    class MalformedPolicyAdmin(ResourceAdmin):
+        resource_id = "malformed_policy"
+        path = "/malformed-policy"
+        label = "Malformed Policies"
+        singular_label = "Malformed Policy"
+        data_source = FakeDataSource()
+        list_fields = ("id",)
+        detail_fields = ("id",)
+
+    setattr(MalformedPolicyAdmin, policy_name, malformed_value)
+    admin = _make_admin()
+
+    with pytest.raises(RakitError) as exc_info:
+        admin.register(MalformedPolicyAdmin)
+
+    assert exc_info.value.code == ErrorCode.CONFIG_INVALID_RESOURCE_POLICY
+    assert exc_info.value.details == {
+        "resource_id": "malformed_policy",
+        "policy": policy_name,
+        "reason": "fields_invalid",
+    }
+    assert "super-secret-token" not in str(exc_info.value.to_public_dict())
+    assert admin.compile().resources == ()
+
+
+@pytest.mark.parametrize(
     ("policy_name", "policy_fields", "reason"),
     (
         ("list_fields", ("id", "password_hash"), "unknown_field"),

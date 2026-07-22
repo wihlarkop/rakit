@@ -23,6 +23,46 @@ from .lifecycle import LifecycleManager
 from .logging import bind_request_context, configure_logging, reset_request_context
 from .resource_routes import ResourceBinding, build_resource_routes, build_templates
 
+_FIELD_POLICY_NAMES = (
+    "list_fields",
+    "detail_fields",
+    "filter_fields",
+    "search_fields",
+    "sort_fields",
+)
+
+
+def _invalid_field_policy(resource_id: str, policy_name: str) -> RakitError:
+    return RakitError(
+        code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+        message="Invalid resource field policy declaration",
+        status_code=500,
+        details={
+            "resource_id": resource_id,
+            "policy": policy_name,
+            "reason": "fields_invalid",
+        },
+    )
+
+
+def _normalize_field_policy(admin_cls: type[ResourceAdmin]) -> ResourceFieldPolicy:
+    resource_id = admin_cls.resource_id
+    normalized: dict[str, tuple[str, ...]] = {}
+    for policy_name in _FIELD_POLICY_NAMES:
+        raw_fields = getattr(admin_cls, policy_name, ())
+        if not isinstance(raw_fields, list | tuple) or not all(
+            isinstance(field_name, str) for field_name in raw_fields
+        ):
+            raise _invalid_field_policy(resource_id, policy_name)
+        normalized[policy_name] = tuple(raw_fields)
+    try:
+        return ResourceFieldPolicy(**normalized)
+    except (TypeError, ValueError):
+        # Keep Pydantic implementation details and declaration values out of
+        # the public configuration boundary.
+        raise _invalid_field_policy(resource_id, policy_name) from None
+
+
 logger = structlog.get_logger(__name__)
 
 
@@ -122,13 +162,7 @@ class Admin:
                     details={"admin_class": admin_cls.__name__, "attribute": attribute_name},
                 )
 
-        field_policy = ResourceFieldPolicy(
-            list_fields=tuple(getattr(admin_cls, "list_fields", ())),
-            detail_fields=tuple(getattr(admin_cls, "detail_fields", ())),
-            filter_fields=tuple(getattr(admin_cls, "filter_fields", ())),
-            search_fields=tuple(getattr(admin_cls, "search_fields", ())),
-            sort_fields=tuple(getattr(admin_cls, "sort_fields", ())),
-        )
+        field_policy = _normalize_field_policy(admin_cls)
 
         if issubclass(admin_cls, ModelAdmin):
             claims = [
