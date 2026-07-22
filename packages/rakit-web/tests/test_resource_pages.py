@@ -254,6 +254,11 @@ async def test_explicit_field_policy_hides_sensitive_fields_from_pages_and_error
             "/credentials",
             params={"filter": "password_hash:is_null:maybe"},
         )
+        counted = await client.get(
+            "/credentials/_count",
+            params={"sort": "password_hash"},
+            headers={"HX-Request": "true"},
+        )
     await engine.dispose()
 
     for response in (listed, detailed, malformed_forbidden_filter):
@@ -263,6 +268,8 @@ async def test_explicit_field_policy_hides_sensitive_fields_from_pages_and_error
         assert "api_token" not in response.text
         assert "sensitive-password-hash" not in response.text
         assert "sensitive-api-token" not in response.text
+    assert counted.status_code == 200
+    assert counted.text.strip() == "1"
 
 
 async def test_renamed_mapper_attributes_drive_list_detail_filter_sort_and_search() -> None:

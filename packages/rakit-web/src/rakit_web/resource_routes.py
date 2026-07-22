@@ -167,7 +167,6 @@ class ResourceBinding:
 
     def parse_query(self, params: QueryParams) -> ResourceQuery:
         allowed_sort_fields = set(self.sort_fields)
-        identity_fields = self.identity_fields
         page = _parse_int(params.get("page"), _PAGINATION_DEFAULTS.page)
         per_page = _parse_int(params.get("per_page"), _PAGINATION_DEFAULTS.per_page)
         sort = params.get("sort")
@@ -180,7 +179,6 @@ class ResourceBinding:
                 page=page,
                 per_page=per_page,
                 allowed_sort_fields=allowed_sort_fields,
-                identity_fields=identity_fields,
                 filters=filters,
                 search=search,
                 count_policy=count_policy,
@@ -201,7 +199,6 @@ class ResourceBinding:
                 page=_PAGINATION_DEFAULTS.page,
                 per_page=_PAGINATION_DEFAULTS.per_page,
                 allowed_sort_fields=allowed_sort_fields,
-                identity_fields=identity_fields,
                 filters=filters,
                 search=search,
                 count_policy=count_policy,
