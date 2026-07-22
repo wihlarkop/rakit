@@ -1,0 +1,28 @@
+<table data-rakit-resource="{{ resource.resource_id }}">
+  <thead>
+    <tr>
+      {% for field_name in fields %}
+      <th scope="col">{{ field_name }}</th>
+      {% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr>
+      {% for cell in row.cells %}
+      <td>
+        {% if loop.first and row.detail_url %}
+        <a href="{{ row.detail_url }}">{{ cell }}</a>
+        {% else %}
+        {{ cell }}
+        {% endif %}
+      </td>
+      {% endfor %}
+    </tr>
+    {% else %}
+    <tr>
+      <td colspan="{{ fields | length }}">No records.</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>

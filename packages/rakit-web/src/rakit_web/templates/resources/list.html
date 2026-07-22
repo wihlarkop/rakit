@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}{{ resource.label }}{% endblock %}
+{% block content %}
+<h1>{{ resource.label }}</h1>
+{% include "resources/_table.html" %}
+{% endblock %}

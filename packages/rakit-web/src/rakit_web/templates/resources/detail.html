@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}{{ resource.singular_label }}{% endblock %}
+{% block content %}
+<h1>{{ resource.singular_label }}</h1>
+<dl data-rakit-resource="{{ resource.resource_id }}">
+  {% for field_name in fields %}
+  <dt>{{ field_name }}</dt>
+  <dd>{{ cells[field_name] }}</dd>
+  {% endfor %}
+</dl>
+{% endblock %}

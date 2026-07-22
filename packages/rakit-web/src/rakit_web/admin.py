@@ -1,12 +1,14 @@
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
+from types import SimpleNamespace
 
 import structlog
 from rakit_core.admin_types import ModelAdmin, ResourceAdmin
 from rakit_core.compiler import ApplicationBuilder, CompiledApplication, Plugin, compile_application
 from rakit_core.config import RakitConfig, SecretValue
-from rakit_core.definitions import ResourceDefinition
+from rakit_core.definitions import ResourceDefinition, RouteDefinition
 from rakit_core.di import ServiceRegistry, ServiceResolver
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.resources import ResourceService
@@ -18,6 +20,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .lifecycle import LifecycleManager
 from .logging import bind_request_context, configure_logging, reset_request_context
+from .resource_routes import ResourceBinding, build_resource_routes, build_templates
 
 logger = structlog.get_logger(__name__)
 
@@ -59,6 +62,7 @@ class Admin:
         title: str,
         debug: bool = False,
         secret_key: SecretValue | None = None,
+        template_dirs: tuple[Path, ...] = (),
     ) -> None:
         self.config = RakitConfig(
             admin_id=admin_id,
@@ -71,6 +75,8 @@ class Admin:
         self._compiled_registry: ServiceRegistry | None = None
         self._application_resolver: ServiceResolver | None = None
         self._resource_services: dict[str, ResourceService] = {}
+        self._resource_definitions: dict[str, ResourceDefinition] = {}
+        self._template_dirs = template_dirs
         self.lifecycle = LifecycleManager()
         self.lifecycle.register_stopping_callback(self._close_application_resolver)
 
@@ -154,7 +160,24 @@ class Admin:
             singular_label=admin_cls.singular_label,
         )
         self._builder.add_resource(definition)
+        self._builder.add_route(
+            RouteDefinition(
+                route_name=f"resource:{definition.resource_id}:list",
+                methods=("GET",),
+                path=definition.path,
+                owner_id=definition.resource_id,
+            )
+        )
+        self._builder.add_route(
+            RouteDefinition(
+                route_name=f"resource:{definition.resource_id}:detail",
+                methods=("GET",),
+                path=f"{definition.path}/{{identity}}",
+                owner_id=definition.resource_id,
+            )
+        )
         self._resource_services[admin_cls.resource_id] = ResourceService(data_source)
+        self._resource_definitions[admin_cls.resource_id] = definition
 
     def compile(self) -> CompiledApplication:
         if self.compiled is None:
@@ -188,6 +211,13 @@ class Admin:
                 return JSONResponse({"status": "ready"})
             return JSONResponse({"status": "not_ready"}, status_code=503)
 
+        async def rakit_error_handler(_request: Request, exc: Exception) -> JSONResponse:
+            # Minimal error-to-HTTP translation: a RakitError already carries the
+            # HTTP status it intends (e.g. RESOURCE_NOT_FOUND -> 404), so honour it
+            # rather than letting it surface as an unhandled 500.
+            assert isinstance(exc, RakitError)
+            return JSONResponse(exc.to_public_dict(), status_code=exc.status_code)
+
         @asynccontextmanager
         async def lifespan(_app: Starlette) -> AsyncIterator[None]:
             configure_logging(debug=self.config.debug)
@@ -201,7 +231,27 @@ class Admin:
             finally:
                 await self._close_application_resolver()
 
-        app = Starlette(debug=self.config.debug, routes=[Route("/", home)], lifespan=lifespan)
+        templates = build_templates(self._template_dirs)
+        bindings: dict[str, ResourceBinding] = {}
+        resource_routes: list[Route] = []
+        for resource_id, service in self._resource_services.items():
+            binding = ResourceBinding(
+                definition=self._resource_definitions[resource_id],
+                service=service,
+                templates=templates,
+            )
+            bindings[resource_id] = binding
+            resource_routes.extend(build_resource_routes(binding))
+
+        app = Starlette(
+            debug=self.config.debug,
+            routes=[Route("/", home)],
+            lifespan=lifespan,
+            exception_handlers={RakitError: rakit_error_handler},
+        )
         app.routes.append(Route("/_system/health", health))
         app.routes.append(Route("/_system/ready", ready))
+        for route in resource_routes:
+            app.routes.append(route)
+        app.state.rakit = SimpleNamespace(resources=bindings)
         return RequestContextMiddleware(app, admin_id=self.config.admin_id)
