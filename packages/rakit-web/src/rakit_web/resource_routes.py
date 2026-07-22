@@ -311,6 +311,19 @@ def _sort_parameter(sorting: Sequence[Sort]) -> str:
     )
 
 
+def _toggle_explicit_sort(sorting: Sequence[Sort], field_name: str) -> str:
+    updated = list(sorting)
+    for index, sort in enumerate(updated):
+        if sort.field != field_name:
+            continue
+        direction = SortDirection.DESC if sort.direction is SortDirection.ASC else SortDirection.ASC
+        updated[index] = sort.model_copy(update={"direction": direction})
+        break
+    else:
+        updated.append(Sort(field=field_name))
+    return _sort_parameter(updated)
+
+
 def _sort_headers(
     fields: Sequence[str],
     query: ResourceQuery,
@@ -334,11 +347,9 @@ def _sort_headers(
         preserved_params.append(("count_policy", query.count_policy.value))
     headers: list[dict[str, str]] = []
     for field_name in fields:
-        is_primary_asc = (
-            primary is not None and primary.field == field_name and primary.direction.value == "asc"
-        )
-        # Toggle: an already-ascending primary column flips to descending.
-        next_sort = f"-{field_name}" if is_primary_asc else field_name
+        # Toggle this column in place without discarding the other explicit
+        # user sorts. A newly clicked field is appended to that sequence.
+        next_sort = _toggle_explicit_sort(explicit_sorting, field_name)
         params: list[tuple[str, str]] = [("sort", next_sort), *preserved_params]
         aria_sort = "none"
         if primary is not None and primary.field == field_name:

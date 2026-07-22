@@ -143,6 +143,45 @@ async def _assert_controls_preserve_active_query(
     assert "Grace" not in _table_cell_texts(searched_response.text)
 
 
+async def _assert_multi_column_sort_links(
+    client: httpx.AsyncClient,
+    *,
+    prefix: str,
+) -> None:
+    response = await client.get(
+        f"{prefix}/users",
+        params=[
+            ("filter", "email:contains:example.com"),
+            ("sort", "-name,email"),
+            ("search", "a"),
+            ("page", "2"),
+            ("per_page", "1"),
+            ("count_policy", "disabled"),
+        ],
+    )
+    assert response.status_code == 200
+
+    # `id` is the adapter tie-breaker but remains absent from the first two
+    # links until the user explicitly clicks that column.
+    expected_sorts = {
+        "name": "name,email",
+        "email": "-name,-email",
+        "id": "-name,email,id",
+    }
+    for field, expected_sort in expected_sorts.items():
+        sort_url, pairs = _sort_link(response.text, field)
+        assert sort_url.startswith(f"{prefix}/users?")
+        assert [value for key, value in pairs if key == "sort"] == [expected_sort]
+        assert ("filter", "email:contains:example.com") in pairs
+        assert ("search", "a") in pairs
+        assert ("per_page", "1") in pairs
+        assert ("count_policy", "disabled") in pairs
+        assert not any(key == "page" for key, _value in pairs)
+
+        followed = await client.get(sort_url)
+        assert followed.status_code == 200
+
+
 @pytest.fixture
 async def client() -> AsyncIterator[httpx.AsyncClient]:
     factory, engine = await _seeded_factory()
@@ -269,6 +308,33 @@ async def test_sort_and_search_controls_preserve_active_query_when_mounted() -> 
         httpx.AsyncClient(transport=transport, base_url="http://testserver") as mounted_client,
     ):
         await _assert_controls_preserve_active_query(mounted_client, prefix="/admin")
+    await engine.dispose()
+
+
+async def test_multi_column_sort_links_preserve_sequence_standalone(
+    client: httpx.AsyncClient,
+) -> None:
+    await _assert_multi_column_sort_links(client, prefix="")
+
+
+async def test_multi_column_sort_links_preserve_sequence_when_mounted() -> None:
+    factory, engine = await _seeded_factory()
+    admin = Admin(
+        admin_id="operations",
+        title="Operations",
+        debug=False,
+        secret_key=SecretValue("x" * 32),
+    )
+    admin.install(SQLAlchemyPlugin(session_factory=factory))
+    admin.register(UserAdmin)
+    child_app = admin.asgi()
+    mounted_app = Starlette(routes=[Mount("/admin", app=child_app)])
+    transport = httpx.ASGITransport(app=mounted_app)
+    async with (
+        LifespanDriver(child_app),
+        httpx.AsyncClient(transport=transport, base_url="http://testserver") as mounted_client,
+    ):
+        await _assert_multi_column_sort_links(mounted_client, prefix="/admin")
     await engine.dispose()
 
 
