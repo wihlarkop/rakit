@@ -7,9 +7,13 @@ import sys
 import tomllib
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any, cast
 
 import httpx
 import pytest
+from rakit import Admin
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 repository = Path(__file__).resolve().parents[2]
 
@@ -48,6 +52,31 @@ def test_minimal_example_compiles_without_optional_integrations() -> None:
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_readme_primary_example_executes_and_compiles_without_io() -> None:
+    readme = (repository / "README.md").read_text(encoding="utf-8")
+    section = readme.split("## Example direction", 1)[1]
+    match = re.search(r"```python\s+(.*?)```", section, flags=re.DOTALL)
+    assert match is not None
+
+    class DocumentationBase(DeclarativeBase):
+        pass
+
+    class DocumentationUser(DocumentationBase):
+        __tablename__ = "documentation_users"
+
+        id: Mapped[int] = mapped_column(primary_key=True)
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    namespace: dict[str, Any] = {"engine": engine, "User": DocumentationUser}
+
+    exec(compile(match.group(1), "README.md", "exec"), namespace)
+
+    admin = cast(Admin, namespace["admin"])
+    compiled = admin.compile()
+    assert [resource.resource_id for resource in compiled.resources] == ["users"]
+    assert namespace["app"] is not None
 
 
 def test_fastapi_example_has_mounted_admin_and_compiles() -> None:

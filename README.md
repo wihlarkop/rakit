@@ -41,13 +41,14 @@ Executable read-only examples now live in
 optional dependency, configuration-check, route-listing, and startup commands.
 
 ```python
-from rakit import Admin, ModelAdmin
+from rakit import Admin, ModelAdmin, SecretValue
 from rakit.sqlalchemy import SQLAlchemyPlugin
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 admin = Admin(
     admin_id="operations",
     title="Operations",
+    secret_key=SecretValue("replace-with-a-real-secret-at-least-32-bytes"),
 )
 
 # Application code owns the engine lifecycle and gives Rakit a session factory.
@@ -57,6 +58,10 @@ admin.install(SQLAlchemyPlugin(session_factory=session_factory))
 
 class UserAdmin(ModelAdmin):
     model = User
+    resource_id = "users"
+    path = "/users"
+    label = "Users"
+    singular_label = "User"
 
 
 admin.register(UserAdmin)
@@ -64,7 +69,7 @@ admin.register(UserAdmin)
 app = admin.asgi()
 ```
 
-The exact API remains provisional until implementation begins.
+This is the implemented Plan 02 read-only registration API; broader v0.1 APIs remain provisional.
 
 ## Repository documentation
 
