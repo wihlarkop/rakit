@@ -1,5 +1,14 @@
+from typing import Any, cast
+
 import pytest
-from rakit_core.query import CountPolicy, PageResult, ResourceQuery, SortDirection
+from rakit_core.query import (
+    CountPolicy,
+    Filter,
+    FilterOperator,
+    PageResult,
+    ResourceQuery,
+    SortDirection,
+)
 
 
 def test_query_appends_identity_tie_breaker() -> None:
@@ -70,3 +79,62 @@ def test_page_result_holds_arbitrary_items() -> None:
     )
     assert result.items == ({"id": 1, "name": "Ada"},)
     assert result.total_count is None
+
+
+def test_filter_values_are_copied_deeply_frozen_and_still_serialize_and_compare() -> None:
+    caller_value = {"groups": [["admin", "operator"]]}
+    filter_ = Filter(field="metadata", operator=FilterOperator.EQ, value=caller_value)
+    equivalent = Filter(
+        field="metadata",
+        operator=FilterOperator.EQ,
+        value={"groups": (("admin", "operator"),)},
+    )
+
+    caller_value["groups"][0].append("auditor")
+
+    assert filter_ == equivalent
+    assert filter_.model_dump() == {
+        "field": "metadata",
+        "operator": FilterOperator.EQ,
+        "value": {"groups": (("admin", "operator"),)},
+    }
+    assert '"auditor"' not in filter_.model_dump_json()
+    frozen_value = cast(Any, filter_.value)
+    with pytest.raises(TypeError, match="immutable"):
+        frozen_value["groups"] = ()
+    with pytest.raises(TypeError):
+        frozen_value["groups"][0][0] = "owner"
+
+
+def test_in_filter_sequence_is_canonical_immutable_tuple() -> None:
+    caller_value = ["active", "pending"]
+    filter_ = Filter(field="status", operator=FilterOperator.IN, value=caller_value)
+
+    caller_value.append("disabled")
+
+    assert filter_.value == ("active", "pending")
+    frozen_value = cast(Any, filter_.value)
+    with pytest.raises(TypeError):
+        frozen_value[0] = "disabled"
+
+
+def test_duplicate_sort_field_with_same_direction_is_deduplicated() -> None:
+    query = ResourceQuery.from_params(
+        sort="name,name",
+        allowed_sort_fields={"id", "name"},
+        identity_fields=("id",),
+    )
+
+    assert [(item.field, item.direction) for item in query.sorting] == [
+        ("name", SortDirection.ASC),
+        ("id", SortDirection.ASC),
+    ]
+
+
+def test_duplicate_sort_field_with_contradictory_direction_is_rejected() -> None:
+    with pytest.raises(ValueError, match="Contradictory sort field"):
+        ResourceQuery.from_params(
+            sort="id,-id",
+            allowed_sort_fields={"id"},
+            identity_fields=("id",),
+        )

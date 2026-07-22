@@ -2,7 +2,9 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from ._immutability import deep_freeze
 
 
 class SortDirection(StrEnum):
@@ -46,6 +48,11 @@ class Filter(BaseModel):
     field: str
     operator: FilterOperator
     value: object
+
+    @field_validator("value")
+    @classmethod
+    def freeze_value(cls, value: object) -> object:
+        return deep_freeze(value)
 
 
 class OffsetPagination(BaseModel):
@@ -128,6 +135,7 @@ class ResourceQuery(BaseModel):
             return []
 
         items: list[Sort] = []
+        seen: dict[str, SortDirection] = {}
         for raw_field in sort.split(","):
             token = raw_field.strip()
             if not token:
@@ -141,7 +149,14 @@ class ResourceQuery(BaseModel):
             if field not in allowed:
                 raise ValueError(f"Sort field {field!r} is not allowed")
 
+            existing_direction = seen.get(field)
+            if existing_direction is not None:
+                if existing_direction is not direction:
+                    raise ValueError(f"Contradictory sort field {field!r}")
+                continue
+
             items.append(Sort(field=field, direction=direction))
+            seen[field] = direction
 
         return items
 
