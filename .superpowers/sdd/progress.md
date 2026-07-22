@@ -99,3 +99,14 @@ Plan 02 external review round 2 implementation: complete in focused commits `7cd
   identity-type claim/registration behavior, runtime/type/installed-wheel facade imports, and
   first/middle/last pagination standalone and mounted under every count policy. Exact final-gate
   evidence is recorded in `plan-02-external-review-round2-report.md`.
+Plan 02 external review round 2 Important follow-up: implementation complete in focused commits
+  `de5dec5`, `55140d1`, and `f0e51f5`. Direct SQLAlchemy queries can no longer opt into identity sorting unless
+  the identity is explicitly declared in `sort_fields`; adapter-added identity tie-break ordering
+  remains internal and exactly once. Malformed ResourceAdmin field declarations now normalize at
+  registration or fail as safe non-echoing `config.invalid_resource_policy` errors without partial
+  resource registration. TDD RED was 7 failures with 2 positive controls already passing; focused
+  GREEN was 9 passed, broader affected regression was 55 passed, CLI regression was 2 passed, and
+  Ruff/ty passed. A subsequent web integration RED showed parser-injected identities returning 400;
+  identity insertion now occurs only inside the adapter after validation. The focused list/count,
+  renamed-attribute, and query-UI regression passed 32/32. Exact evidence is in
+  `plan-02-external-review-round2-report.md`.

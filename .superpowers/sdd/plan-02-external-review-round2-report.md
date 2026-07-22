@@ -91,3 +91,45 @@ The complete required sequence was run from committed documentation HEAD
 The fresh artifacts were written to `C:\tmp\rakit-plan02-round2-091cd9b`; the isolated install
 used a separately verified-new `C:\tmp\rakit-plan02-round2-install-091cd9b` environment with
 CPython 3.12.12. No push, merge, tag, or publish action was performed.
+
+## 6. Fresh-review Important follow-up
+
+Two later Important findings were fixed in focused commits:
+
+- `de5dec5 fix(sqlalchemy): enforce declared identity sort policy`
+- `55140d1 fix(web): normalize resource field declarations`
+- `f0e51f5 fix(web): defer identity sort tie breakers`
+
+SQLAlchemy now validates every caller-supplied sort strictly against declared `sort_fields`.
+Identity fields are appended only afterward as internal stable-pagination tie-breakers. RED showed
+the undeclared direct identity sort did not raise while the explicit opt-in and exactly-once
+tie-breaker cases already passed. GREEN was 3/3: undeclared identity sorting returns the same safe,
+non-echoing `validation.failed` response; declaring the identity field permits it; internal
+identity ordering remains present exactly once.
+
+Registration now accepts only list/tuple declaration containers containing strings, copies them
+to immutable tuples, and converts malformed shapes into `config.invalid_resource_policy` with only
+`resource_id`, `policy`, and `reason=fields_invalid` details. The RED matrix reproduced six cases
+as leaked `TypeError`, leaked Pydantic `ValidationError`, or silently accepted scalar string/dict
+coercion. GREEN was 6/6, secret declaration values were absent from public details, and compiling
+after failed registration contained no partially registered resource.
+
+Combined focused RED: 7 failed and 2 already passed. Combined focused GREEN: 9 passed. Broader
+SQLAlchemy datasource/query and web registration regression: 55 passed; CLI regression: 2 passed;
+Ruff and ty: passed.
+
+The first whole-suite run after strict adapter validation exposed the web integration edge: the
+web parser still passed `identity_fields` to `ResourceQuery.from_params`, which made core append an
+identity sort before the adapter could distinguish user input from its internal tie-breaker. Two
+existing end-to-end resource-page tests failed with 400 responses. The web parser now carries only
+validated explicit user sorting; SQLAlchemy remains the sole identity append point after policy
+validation. A list/count regression was added for a resource whose identity is excluded from
+`sort_fields`; restoring the old injection reproduced the 400 RED, and the final focused web suite
+passed 32/32 (list, count, renamed attributes, and all query UI cases). Ruff and ty passed afterward.
+
+The sandbox approval service exhausted its usage allowance during the final rerun. Direct execution
+from the already locked/synced `.venv` collected 357 tests and passed 352 before the web integration
+fix; the other three failures were artifact/CLI subprocesses unable to use uv's sandbox-denied cache.
+After the integration fix, the affected 32-test web set passed. The controller's concurrent full
+run reported 354 product tests passing with only those same three uv-cache subprocess failures.
+No dependency or lockfile change was made.
