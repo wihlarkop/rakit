@@ -175,3 +175,45 @@ directory was verified absent before the build and is outside the repository und
 - The final diff contains no Plan 03 feature system and no generated build artifact.
 - No unresolved correctness, security, architecture, test, or documentation concern remains in
   the requested scope.
+
+## Final Important re-review follow-up: multi-column sort links
+
+### Finding and root cause
+
+For a request such as `sort=-name,email`, `_sort_headers()` derived accessibility state from the
+normalized explicit sequence but serialized each link from only the clicked field. Clicking
+`name`, `email`, or a new field therefore produced `sort=name`, `sort=email`, or `sort=id` and
+discarded the rest of the user's ordering.
+
+### Resolution
+
+Commit `be4fec3` (`fix(web): preserve multi-column sort links`) toggles an already explicit field
+at its existing sequence index and appends a newly clicked field. Every header serializes the
+complete normalized explicit sequence plus validated repeated filters, search, `per_page`, and
+count policy, while omitting only `page`.
+
+The sequence is still derived from the raw request sort through `_explicit_sorting(...,
+identity_fields=())`, not from the adapter-ready `ResourceQuery.sorting`. Consequently the
+automatically appended identity tie-breaker is not presented as explicit URL state. Clicking the
+identity header makes it explicit and appends it exactly once. No public URL shape or package
+boundary changed.
+
+### TDD evidence
+
+- RED: the standalone and mounted tests both failed with `sort=name` where `sort=name,email` was
+  required (**2 failed, 22 deselected**).
+- Focused GREEN after implementation and formatting: **2 passed, 22 deselected**.
+- Full query UI regression file: **24 passed in 0.94s**.
+- Both tests start from `sort=-name,email`, inspect and follow links for the existing primary
+  `name`, existing secondary `email`, and new/implicit-identity `id` cases. They also verify the
+  mount prefix, repeated filter/search/per-page/count-policy preservation, and page omission.
+
+### Final follow-up verification
+
+- `uv run pytest packages/rakit-web/tests/test_query_ui.py -v`: **24 passed in 0.91s**.
+- `uv run pytest -p no:cacheprovider`: **304 passed in 15.93s**.
+- `ruff format --check .`: **69 files already formatted**.
+- `ruff check .`: **All checks passed**.
+- `ty check`: **All checks passed**.
+- `git diff --check 7de96c0..HEAD`: clean after the evidence commit.
+- final tracked worktree status: clean on `worktree-plan-02-read-only-resources-ui`.

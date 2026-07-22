@@ -74,3 +74,12 @@ Plan 02 final whole-branch review fix wave: complete (commits 134535c, 371b2d4, 
   Ruff format/check passed, ty passed, `uv build --all-packages` produced exactly eight wheels and
   eight sdists at version `0.1.0a1`, every artifact contained `py.typed` and all nine required web
   resources, all four real example CLI checks passed, and the whole-branch diff-check was clean.
+Plan 02 final Important multi-column-sort follow-up: implementation complete in commit `be4fec3`.
+  Sort-header links now toggle an existing explicit field in place or append a newly clicked field,
+  serialize the complete normalized explicit sequence, retain validated filters/search/per-page/
+  count-policy state, and omit only page. Adapter-added identity ordering remains absent from the
+  URL until the user explicitly clicks the identity column. TDD RED was exactly 2 failures for the
+  standalone and mounted sequence-loss cases; focused GREEN was 2 passed, and the full query-UI
+  file was 24 passed. Final rerun: query-UI 24 passed, full suite 304 passed, Ruff format/check and
+  ty passed, and whole-branch diff-check/status were clean. Exact evidence is in the final-review
+  report.
