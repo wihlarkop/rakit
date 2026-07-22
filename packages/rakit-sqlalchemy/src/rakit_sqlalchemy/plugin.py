@@ -2,11 +2,12 @@ from rakit_core.compiler import ApplicationBuilder
 from rakit_core.datasource import DataSource
 from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.di import ServiceScope
+from rakit_core.errors import ErrorCode, RakitError
 from sqlalchemy.exc import NoInspectionAvailable
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .datasource import SQLAlchemyDataSource
-from .introspection import inspect_model
+from .introspection import UnsupportedIdentityError, inspect_model
 
 
 class SQLAlchemyPlugin:
@@ -28,8 +29,18 @@ class SQLAlchemyPlugin:
     ) -> DataSource | None:
         try:
             inspect_model(model)
-        except (ValueError, NoInspectionAvailable):
+        except NoInspectionAvailable:
             return None
+        except UnsupportedIdentityError as exc:
+            raise RakitError(
+                code=ErrorCode.CONFIG_UNSUPPORTED_IDENTITY,
+                message=(
+                    "SQLAlchemy resources require one Integer, String, or UUID identity column."
+                ),
+                status_code=500,
+                details={"model": model.__name__, "reason": exc.reason},
+                cause=exc,
+            ) from exc
         return SQLAlchemyDataSource(
             model=model,
             session_factory=self._session_factory,

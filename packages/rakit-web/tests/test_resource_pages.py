@@ -55,6 +55,14 @@ class CredentialRecord(Base):
     api_token: Mapped[str]
 
 
+class RenamedRecord(Base):
+    __tablename__ = "renamed_records"
+
+    user_id: Mapped[int] = mapped_column("id", primary_key=True)
+    display_name: Mapped[str] = mapped_column("name")
+    email: Mapped[str]
+
+
 class UserAdmin(ModelAdmin):
     model = User
     resource_id = "users"
@@ -107,6 +115,19 @@ class CredentialAdmin(ModelAdmin):
     sort_fields = ("email",)
 
 
+class RenamedAdmin(ModelAdmin):
+    model = RenamedRecord
+    resource_id = "renamed_records"
+    path = "/renamed-records"
+    label = "Renamed Records"
+    singular_label = "Renamed Record"
+    list_fields = ("user_id", "display_name", "email")
+    detail_fields = ("user_id", "display_name", "email")
+    filter_fields = ("display_name",)
+    search_fields = ("display_name", "email")
+    sort_fields = ("display_name",)
+
+
 async def _seeded_session_factory() -> tuple[async_sessionmaker[AsyncSession], AsyncEngine]:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
@@ -128,6 +149,11 @@ async def _seeded_session_factory() -> tuple[async_sessionmaker[AsyncSession], A
                     email="ada@example.com",
                     password_hash="sensitive-password-hash",
                     api_token="sensitive-api-token",
+                ),
+                RenamedRecord(
+                    user_id=7,
+                    display_name="Mapped Ada",
+                    email="mapped@example.com",
                 ),
             ]
         )
@@ -237,6 +263,36 @@ async def test_explicit_field_policy_hides_sensitive_fields_from_pages_and_error
         assert "api_token" not in response.text
         assert "sensitive-password-hash" not in response.text
         assert "sensitive-api-token" not in response.text
+
+
+async def test_renamed_mapper_attributes_drive_list_detail_filter_sort_and_search() -> None:
+    factory, engine = await _seeded_session_factory()
+    admin = _build_admin(factory, admin_classes=(RenamedAdmin,))
+    async with _client_for(admin) as client:
+        listed = await client.get(
+            "/renamed-records",
+            params=[
+                ("filter", "display_name:contains:Mapped"),
+                ("sort", "-display_name"),
+                ("search", "example.com"),
+            ],
+        )
+        detail_path = re.search(r'href="(/renamed-records/[^"]+)"', listed.text)
+        assert detail_path is not None
+        detailed = await client.get(detail_path.group(1))
+        database_name_query = await client.get(
+            "/renamed-records",
+            params={"filter": "name:is_null:maybe", "sort": "name"},
+        )
+    await engine.dispose()
+
+    assert listed.status_code == 200
+    assert "Mapped Ada" in listed.text
+    assert detailed.status_code == 200
+    assert "Mapped Ada" in detailed.text
+    assert "mapped@example.com" in detailed.text
+    assert database_name_query.status_code == 200
+    assert "Mapped Ada" in database_name_query.text
 
 
 async def test_detail_page_unknown_identity_returns_404(resource_client) -> None:

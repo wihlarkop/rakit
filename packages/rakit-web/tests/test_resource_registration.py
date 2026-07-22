@@ -6,6 +6,7 @@ from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.identity import RecordIdentity
 from rakit_core.query import PageResult, ResourceQuery
 from rakit_sqlalchemy.plugin import SQLAlchemyPlugin
+from sqlalchemy import Date
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -19,6 +20,12 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str]
+
+
+class UnsupportedDateIdentity(Base):
+    __tablename__ = "unsupported_date_identities"
+
+    id: Mapped[object] = mapped_column(Date, primary_key=True)
 
 
 class UserAdmin(ModelAdmin):
@@ -116,6 +123,29 @@ def test_model_admin_registration_fails_with_ambiguous_adapters(session_factory)
         admin.register(UserAdmin)
 
     assert exc_info.value.code == ErrorCode.CONFIG_ADAPTER_AMBIGUOUS
+
+
+def test_model_admin_registration_rejects_unsupported_identity_type(session_factory) -> None:
+    class UnsupportedIdentityAdmin(ModelAdmin):
+        model = UnsupportedDateIdentity
+        resource_id = "unsupported_identity"
+        path = "/unsupported-identity"
+        label = "Unsupported Identities"
+        singular_label = "Unsupported Identity"
+        list_fields = ("id",)
+        detail_fields = ("id",)
+
+    admin = _make_admin()
+    admin.install(SQLAlchemyPlugin(session_factory=session_factory))
+
+    with pytest.raises(RakitError) as exc_info:
+        admin.register(UnsupportedIdentityAdmin)
+
+    assert exc_info.value.code == ErrorCode.CONFIG_UNSUPPORTED_IDENTITY
+    assert exc_info.value.details == {
+        "model": "UnsupportedDateIdentity",
+        "reason": "unsupported_type",
+    }
 
 
 def test_register_after_compile_raises() -> None:

@@ -41,6 +41,7 @@ class ErrorCode(StrEnum):
     CONFIG_RESOURCE_MISSING_DATA_SOURCE = "config.resource_missing_data_source"
     CONFIG_INVALID_RESOURCE_POLICY = "config.invalid_resource_policy"
     CONFIG_INVALID_DATASOURCE = "config.invalid_datasource"
+    CONFIG_UNSUPPORTED_IDENTITY = "config.unsupported_identity"
 
 
 class ErrorDetail(BaseModel):
