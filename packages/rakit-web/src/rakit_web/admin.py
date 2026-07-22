@@ -15,9 +15,10 @@ from rakit_core.resources import ResourceService
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse
-from starlette.routing import Route
+from starlette.routing import Mount, Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from .assets import static_files
 from .lifecycle import LifecycleManager
 from .logging import bind_request_context, configure_logging, reset_request_context
 from .resource_routes import ResourceBinding, build_resource_routes, build_templates
@@ -259,6 +260,7 @@ class Admin:
         )
         app.routes.append(Route("/_system/health", health))
         app.routes.append(Route("/_system/ready", ready))
+        app.routes.append(Mount("/_system/static", app=static_files(), name="rakit-static"))
         for route in resource_routes:
             app.routes.append(route)
         app.state.rakit = SimpleNamespace(resources=bindings)

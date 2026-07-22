@@ -9,10 +9,12 @@ templates via `ResourceService`, the query parser, and the identity codec.
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, cast
 from urllib.parse import urlencode
 
-from jinja2 import ChoiceLoader, FileSystemLoader, PackageLoader, select_autoescape
+from jinja2 import ChoiceLoader, FileSystemLoader, PackageLoader, pass_context, select_autoescape
 from jinja2 import Environment as JinjaEnvironment
+from jinja2.runtime import Context
 from rakit_core.definitions import ResourceDefinition
 from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_core.query import (
@@ -29,7 +31,18 @@ from starlette.responses import Response
 from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 
+from .assets import static_url
+
 _PAGINATION_DEFAULTS = OffsetPagination()
+
+
+@pass_context
+def _template_static_url(context: Context, name: str) -> str:
+    url = static_url(name)
+    request = context.get("request")
+    if not isinstance(request, Request):
+        return url
+    return _mounted_path(request, url)
 
 
 def build_templates(template_dirs: Sequence[Path]) -> Jinja2Templates:
@@ -48,6 +61,7 @@ def build_templates(template_dirs: Sequence[Path]) -> Jinja2Templates:
         loader=ChoiceLoader(loaders),
         autoescape=select_autoescape(),
     )
+    cast(dict[str, Any], environment.globals)["static_url"] = _template_static_url
     return Jinja2Templates(env=environment)
 
 
@@ -64,6 +78,13 @@ def _identity_values(item: object, identity_fields: Sequence[str]) -> dict[str, 
         if isinstance(raw, int | str):
             values[field_name] = raw
     return values
+
+
+def _mounted_path(request: Request, path: str) -> str:
+    """Prefix a child-app route with the ASGI mount's root path, if present."""
+
+    root_path = request.scope.get("root_path", "").rstrip("/")
+    return f"{root_path}{path}"
 
 
 @dataclass(frozen=True)
@@ -264,7 +285,10 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
             detail_url = ""
             if identity_values:
                 encoded = binding.codec.encode(RecordIdentity(values=identity_values))
-                detail_url = str(request.url_for(binding.detail_route_name, identity=encoded))
+                detail_url = _mounted_path(
+                    request,
+                    binding.detail_path.replace("{identity}", encoded),
+                )
             rows.append(
                 {
                     "cells": [_field_value(item, field_name) for field_name in fields],
@@ -272,7 +296,7 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
                 }
             )
 
-        count_url = str(request.url_for(binding.count_route_name))
+        count_url = _mounted_path(request, binding.count_path)
         if request.url.query:
             # Carry the current filters/search into the deferred-count fetch so
             # the total matches the list it annotates, not the whole table.

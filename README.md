@@ -35,21 +35,24 @@ Rakit is currently under active design and early development. The initial design
 
 ## Example direction
 
+Executable read-only examples now live in
+[`examples/minimal`](examples/minimal) and
+[`examples/fastapi_sqlalchemy`](examples/fastapi_sqlalchemy). Their READMEs show the declared
+optional dependency, configuration-check, route-listing, and startup commands.
+
 ```python
 from rakit import Admin, ModelAdmin
 from rakit.sqlalchemy import SQLAlchemyPlugin
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 admin = Admin(
     admin_id="operations",
     title="Operations",
 )
 
-admin.install(
-    SQLAlchemyPlugin(
-        engine=engine,
-        owned=False,
-    )
-)
+# Application code owns the engine lifecycle and gives Rakit a session factory.
+session_factory = async_sessionmaker(engine, expire_on_commit=False)
+admin.install(SQLAlchemyPlugin(session_factory=session_factory))
 
 
 class UserAdmin(ModelAdmin):

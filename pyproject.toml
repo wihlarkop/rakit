@@ -1,10 +1,28 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
 [project]
 name = "rakit-workspace"
 version = "0.0.0"
 requires-python = ">=3.12"
 
+[project.optional-dependencies]
+examples = [
+  "aiosqlite>=0.20",
+  "fastapi>=0.116",
+  "rakit[sqlalchemy]",
+  "uvicorn>=0.35",
+]
+
 [tool.uv.workspace]
 members = ["packages/*"]
+
+[tool.uv.sources]
+rakit = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["examples"]
 
 [dependency-groups]
 dev = [

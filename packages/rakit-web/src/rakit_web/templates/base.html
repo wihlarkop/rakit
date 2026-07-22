@@ -4,8 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{% block title %}{{ resource.label if resource else "Rakit" }}{% endblock %}</title>
-    <!-- Task 8 bundles HTMX locally under /_system/static; this reference 404s until then. -->
-    <script src="/_system/static/htmx.min.js" defer></script>
+    <link rel="stylesheet" href="{{ static_url('rakit.css') }}" />
+    <script src="{{ static_url('htmx.min.js') }}" defer></script>
   </head>
   <body>
     <main>

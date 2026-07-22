@@ -1,3 +1,4 @@
+import importlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -98,6 +99,17 @@ async def test_list_full_page_and_fragment(resource_client) -> None:
     assert 'data-rakit-resource="users"' in fragment.text
     assert "Ada" in fragment.text
     assert fragment.headers["cache-control"] == "no-store"
+
+
+async def test_full_page_references_only_local_hashed_assets(resource_client) -> None:
+    static_url = importlib.import_module("rakit_web.assets").static_url
+    response = await resource_client.get("/users")
+
+    assert static_url("rakit.css") in response.text
+    assert static_url("htmx.min.js") in response.text
+    assert 'src="http://' not in response.text
+    assert 'src="https://' not in response.text
+    assert 'href="https://' not in response.text
 
 
 async def test_detail_page_renders_record(resource_client) -> None:
