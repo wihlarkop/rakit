@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from .compatibility import validate_official_package_versions
+from .datasource import DataSource
 from .definitions import ResourceDefinition, RouteDefinition
 from .di import ServiceRegistry, _RegistrySnapshot
 from .errors import ErrorCode, RakitError
@@ -34,7 +35,7 @@ class ApplicationBuilder:
     _plugin_ids: list[str] = field(default_factory=list)
     _registry: ServiceRegistry = field(default_factory=ServiceRegistry)
     _plugin_conflicts: dict[str, tuple[str, ...]] = field(default_factory=dict)
-    _adapters: dict[str, Callable[[type], object | None]] = field(default_factory=dict)
+    _adapters: dict[str, Callable[[type], DataSource | None]] = field(default_factory=dict)
     _compiled: bool = field(default=False, init=False)
     _install_depth: int = field(default=0, init=False)
 
@@ -81,7 +82,7 @@ class ApplicationBuilder:
             )
         self._resources.append(definition)
 
-    def register_adapter(self, name: str, claim: Callable[[type], object | None]) -> None:
+    def register_adapter(self, name: str, claim: Callable[[type], DataSource | None]) -> None:
         self._check_not_compiled()
         if name in self._adapters:
             raise RakitError(
@@ -169,7 +170,7 @@ class _InstallSnapshot:
     resources: list[ResourceDefinition]
     plugin_ids: list[str]
     plugin_conflicts: dict[str, tuple[str, ...]]
-    adapters: dict[str, Callable[[type], object | None]]
+    adapters: dict[str, Callable[[type], DataSource | None]]
     compiled: bool
     registry: _RegistrySnapshot
 

@@ -2,6 +2,7 @@ import contextlib
 
 import pytest
 from rakit_core.compiler import ApplicationBuilder, compile_application
+from rakit_core.datasource import DataSource
 from rakit_core.definitions import RouteDefinition
 from rakit_core.di import ServiceRegistry, ServiceScope
 from rakit_core.errors import RakitError
@@ -680,7 +681,7 @@ def test_post_compile_mutation_still_raises_registry_frozen() -> None:
 def test_register_adapter_stores_claim_callback() -> None:
     builder = ApplicationBuilder()
 
-    def claim(model: type) -> object | None:
+    def claim(model: type) -> DataSource | None:
         return None
 
     builder.register_adapter("sqlalchemy", claim)

@@ -1,13 +1,11 @@
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import cast
 
 import structlog
 from rakit_core.admin_types import ModelAdmin, ResourceAdmin
 from rakit_core.compiler import ApplicationBuilder, CompiledApplication, Plugin, compile_application
 from rakit_core.config import RakitConfig, SecretValue
-from rakit_core.datasource import DataSource
 from rakit_core.definitions import ResourceDefinition
 from rakit_core.di import ServiceRegistry, ServiceResolver
 from rakit_core.errors import ErrorCode, RakitError
@@ -135,7 +133,7 @@ class Admin:
                     status_code=500,
                     details={"admin_class": admin_cls.__name__, "claim_count": len(claims)},
                 )
-            data_source = cast(DataSource, claims[0])
+            data_source = claims[0]
         elif admin_cls.data_source is not None:
             data_source = admin_cls.data_source
         else:
