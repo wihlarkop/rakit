@@ -107,6 +107,37 @@ async def test_filter_via_url_param(client: httpx.AsyncClient) -> None:
     assert "Grace" not in response.text
 
 
+async def test_invalid_typed_filter_returns_safe_client_error(client: httpx.AsyncClient) -> None:
+    response = await client.get("/users", params={"filter": "id:gte:not-an-integer"})
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "code": "validation.failed",
+        "message": "Invalid filter value",
+        "details": {"field": "id", "operator": "gte"},
+    }
+
+
+@pytest.mark.parametrize(
+    ("raw_filter", "visible_names"),
+    [
+        ("__table__:eq:users", ("Ada", "Grace")),
+        ("name:drop:Ada", ("Ada", "Grace")),
+        ("name:eq:x' OR 1=1 --", ()),
+    ],
+)
+async def test_filter_whitelist_operator_and_bound_value_injection_resistance(
+    client: httpx.AsyncClient,
+    raw_filter: str,
+    visible_names: tuple[str, ...],
+) -> None:
+    response = await client.get("/users", params={"filter": raw_filter})
+
+    assert response.status_code == 200
+    for name in ("Ada", "Grace"):
+        assert (name in response.text) is (name in visible_names)
+
+
 async def test_search_via_url_param(client: httpx.AsyncClient) -> None:
     response = await client.get("/users", params={"search": "work"})
     assert response.status_code == 200

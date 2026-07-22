@@ -1,4 +1,12 @@
+from datetime import date, datetime
+from decimal import Decimal
+from enum import Enum as PythonEnum
+from math import isfinite
+from typing import Any
+from uuid import UUID
+
 from rakit_core.datasource import DataSourceCapabilities
+from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.identity import RecordIdentity
 from rakit_core.query import (
     CountPolicy,
@@ -9,9 +17,25 @@ from rakit_core.query import (
     ResourceQuery,
     Sort,
 )
-from sqlalchemy import String, Text, func, or_, select
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    Enum,
+    Float,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    Uuid,
+    func,
+    or_,
+    select,
+)
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql import ColumnElement, Select
+from sqlalchemy.sql.type_api import TypeEngine
+from sqlalchemy.types import TypeDecorator
 
 from .introspection import ModelMetadata, inspect_model
 
@@ -28,6 +52,161 @@ _OPERATOR_HANDLERS = {
         column.is_(None) if value else column.is_not(None)
     ),
 }
+
+
+def _invalid_filter(
+    filter_: Filter,
+    *,
+    message: str = "Invalid filter value",
+    cause: BaseException | None = None,
+) -> RakitError:
+    return RakitError(
+        code=ErrorCode.VALIDATION_FAILED,
+        message=message,
+        status_code=400,
+        details={"field": filter_.field, "operator": filter_.operator.value},
+        cause=cause,
+    )
+
+
+def _enum_value(type_: Enum, value: object) -> object:
+    if not isinstance(value, str):
+        if type_.enum_class is not None and isinstance(value, type_.enum_class):
+            return value
+        raise ValueError
+
+    if value not in type_.enums:
+        raise ValueError
+    if type_.enum_class is None:
+        return value
+
+    # ``Enum.enums`` is SQLAlchemy's persisted-value sequence. Its length tells
+    # us whether this type persists aliases: pair it with every declaration in
+    # that case, otherwise use only canonical members. This also supports a
+    # values_callable without constructing the Enum class from URL input.
+    declared_members = list(type_.enum_class.__members__.values())
+    canonical_members = [
+        member for name, member in type_.enum_class.__members__.items() if member.name == name
+    ]
+    members: list[PythonEnum] = (
+        declared_members if len(type_.enums) == len(declared_members) else canonical_members
+    )
+    return dict(zip(type_.enums, members, strict=True))[value]
+
+
+def _datetime_value(type_: DateTime, value: object) -> datetime:
+    if isinstance(value, datetime):
+        converted = value
+    elif isinstance(value, str):
+        converted = datetime.fromisoformat(value)
+    else:
+        raise ValueError
+    is_aware = converted.tzinfo is not None and converted.utcoffset() is not None
+    if type_.timezone != is_aware:
+        raise ValueError
+    return converted
+
+
+def _coerce_known_value(type_: TypeEngine[Any], value: object) -> object:
+    if isinstance(type_, Enum):
+        return _enum_value(type_, value)
+    if isinstance(type_, Boolean):
+        if isinstance(value, bool):
+            return value
+        if not isinstance(value, str):
+            raise ValueError
+        normalized = value.lower()
+        if normalized == "true":
+            return True
+        if normalized == "false":
+            return False
+        raise ValueError
+    if isinstance(type_, DateTime):
+        if not isinstance(value, str | datetime):
+            raise ValueError
+        return _datetime_value(type_, value)
+    if isinstance(type_, Date):
+        if isinstance(value, datetime) or not isinstance(value, str | date):
+            raise ValueError
+        return value if isinstance(value, date) else date.fromisoformat(value)
+    if isinstance(type_, Uuid):
+        if not isinstance(value, str | UUID):
+            raise ValueError
+        converted = value if isinstance(value, UUID) else UUID(value)
+        return converted if type_.as_uuid else str(converted)
+    if isinstance(type_, Integer):
+        if isinstance(value, bool) or not isinstance(value, str | int):
+            raise ValueError
+        return int(value)
+    if isinstance(type_, Float):
+        if isinstance(value, bool) or not isinstance(value, str | int | float | Decimal):
+            raise ValueError
+        converted_float = float(value)
+        if not isfinite(converted_float):
+            raise ValueError
+        return converted_float
+    if isinstance(type_, Numeric):
+        if isinstance(value, bool) or not isinstance(value, str | int | float | Decimal):
+            raise ValueError
+        converted_decimal = Decimal(str(value))
+        if not converted_decimal.is_finite():
+            raise ValueError
+        return converted_decimal
+    if isinstance(type_, String | Text):
+        if not isinstance(value, str):
+            raise ValueError
+        return value
+    raise ValueError
+
+
+def _unwrap_type(type_: TypeEngine[Any]) -> TypeEngine[Any]:
+    while isinstance(type_, TypeDecorator):
+        implementation = type_.impl
+        if not isinstance(implementation, TypeEngine):
+            raise ValueError
+        type_ = implementation
+    return type_
+
+
+def _coerce_filter_item(type_: TypeEngine[Any], value: object) -> object:
+    custom_coercer = getattr(type_, "rakit_coerce_filter_value", None)
+    if custom_coercer is not None:
+        if not callable(custom_coercer) or not isinstance(value, str):
+            raise ValueError
+        return custom_coercer(value)
+
+    # A TypeDecorator without an explicit Rakit hook inherits safe conversion
+    # from its declared implementation. Types with different URL semantics can
+    # override via ``rakit_coerce_filter_value`` above.
+    return _coerce_known_value(_unwrap_type(type_), value)
+
+
+def _coerce_filter_value(type_: TypeEngine[Any], filter_: Filter) -> object:
+    if filter_.operator is FilterOperator.IS_NULL:
+        if not isinstance(filter_.value, bool):
+            raise _invalid_filter(filter_)
+        return filter_.value
+
+    if filter_.operator is FilterOperator.IN:
+        if not isinstance(filter_.value, list | tuple):
+            raise _invalid_filter(filter_)
+        values = filter_.value
+    else:
+        values = None
+
+    try:
+        if values is not None:
+            return [_coerce_filter_item(type_, item) for item in values]
+        return _coerce_filter_item(type_, filter_.value)
+    except RakitError:
+        raise
+    except (ArithmeticError, TypeError, ValueError) as exc:
+        raise _invalid_filter(filter_, cause=exc) from exc
+
+
+def _is_string_type(type_: TypeEngine[Any]) -> bool:
+    type_ = _unwrap_type(type_)
+    return isinstance(type_, String | Text) and not isinstance(type_, Enum)
 
 
 class SQLAlchemyDataSource:
@@ -56,8 +235,14 @@ class SQLAlchemyDataSource:
 
     def _apply_filter(self, statement: Select, filter_: Filter) -> Select:
         column = getattr(self._model, filter_.field)
+        if filter_.operator is FilterOperator.CONTAINS and not _is_string_type(column.type):
+            raise _invalid_filter(
+                filter_,
+                message="Filter operator is not valid for this field",
+            )
+        value = _coerce_filter_value(column.type, filter_)
         handler = _OPERATOR_HANDLERS[filter_.operator]
-        return statement.where(handler(column, filter_.value))
+        return statement.where(handler(column, value))
 
     def _apply_search(self, statement: Select, search: str) -> Select:
         """OR-combine a `contains` predicate across every string-typed field.
