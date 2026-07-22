@@ -2,6 +2,8 @@ import httpx
 import pytest
 from conftest import LifespanDriver
 from rakit import Admin, SecretValue
+from rakit_core.compiler import ApplicationBuilder
+from rakit_core.di import ServiceScope
 from rakit_web.lifecycle import LifecycleManager
 
 
@@ -93,3 +95,64 @@ async def test_application_resolver_detached_even_when_aexit_raises() -> None:
     # __aexit__ must not raise, and the resolver reference must be detached
     # regardless of the cleanup callback's failure.
     assert admin._application_resolver is None
+
+
+# --- Finding 1: builder is read-only; compiled registry is captured once ---
+
+
+def test_admin_builder_rebinding_raises_attribute_error() -> None:
+    admin = Admin(
+        admin_id="operations",
+        title="Operations",
+        debug=False,
+        secret_key=SecretValue("x" * 32),
+    )
+    with pytest.raises(AttributeError):
+        admin.builder = ApplicationBuilder()  # type: ignore
+
+
+def test_compiled_registry_is_same_object_as_builder_registry_after_compile() -> None:
+    admin = Admin(
+        admin_id="operations",
+        title="Operations",
+        debug=False,
+        secret_key=SecretValue("x" * 32),
+    )
+    admin.compile()
+    assert admin._compiled_registry is admin.builder.registry
+
+
+class _ProbeService:
+    def __init__(self) -> None:
+        self.value = "probe-value"
+
+
+class _ProbePlugin:
+    plugin_id = "probe"
+
+    def configure(self, builder: ApplicationBuilder) -> None:
+        builder.registry.add_factory(
+            _ProbeService, lambda _: _ProbeService(), scope=ServiceScope.APPLICATION
+        )
+
+
+@pytest.mark.anyio
+async def test_lifespan_resolves_application_scoped_service_from_compiled_registry() -> None:
+    # Proves _open_application_resolver() genuinely uses the registry that
+    # was frozen at compile time, not a builder attribute reached at
+    # runtime that could have been replaced after compilation.
+    admin = Admin(
+        admin_id="operations",
+        title="Operations",
+        debug=False,
+        secret_key=SecretValue("x" * 32),
+    )
+    admin.install(_ProbePlugin())
+
+    app = admin.asgi()
+    driver = LifespanDriver(app)
+
+    async with driver:
+        assert admin._application_resolver is not None
+        service = admin._application_resolver.require(_ProbeService)
+        assert service.value == "probe-value"

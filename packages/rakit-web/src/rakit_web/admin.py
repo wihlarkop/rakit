@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 import structlog
 from rakit_core.compiler import ApplicationBuilder, CompiledApplication, Plugin, compile_application
 from rakit_core.config import RakitConfig, SecretValue
-from rakit_core.di import ServiceResolver
+from rakit_core.di import ServiceRegistry, ServiceResolver
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse
@@ -62,24 +62,31 @@ class Admin:
             debug=debug,
             security={"secret_key": secret_key},
         )
-        self.builder = ApplicationBuilder()
+        self._builder = ApplicationBuilder()
         self.compiled: CompiledApplication | None = None
+        self._compiled_registry: ServiceRegistry | None = None
         self._application_resolver: ServiceResolver | None = None
         self.lifecycle = LifecycleManager()
         self.lifecycle.register_stopping_callback(self._close_application_resolver)
 
+    @property
+    def builder(self) -> ApplicationBuilder:
+        return self._builder
+
     def install(self, plugin: Plugin) -> None:
         if self.compiled is not None:
             raise RuntimeError("Cannot install plugins after compilation")
-        self.builder.install(plugin)
+        self._builder.install(plugin)
 
     def compile(self) -> CompiledApplication:
         if self.compiled is None:
-            self.compiled = compile_application(self.builder)
+            self.compiled = compile_application(self._builder)
+            self._compiled_registry = self._builder.registry
         return self.compiled
 
     async def _open_application_resolver(self) -> None:
-        self._application_resolver = self.builder.registry.application_scope()
+        assert self._compiled_registry is not None
+        self._application_resolver = self._compiled_registry.application_scope()
         await self._application_resolver.__aenter__()
 
     async def _close_application_resolver(self) -> None:

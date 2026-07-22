@@ -207,7 +207,7 @@ async def test_registry_not_frozen_accepts_registrations() -> None:
 @pytest.mark.anyio
 async def test_frozen_registry_rejects_add_value() -> None:
     registry = ServiceRegistry()
-    registry.freeze()
+    registry._freeze()
 
     with pytest.raises(RakitError) as exc_info:
         registry.add_value(Frozenable, Frozenable(), scope=ServiceScope.APPLICATION)
@@ -218,7 +218,7 @@ async def test_frozen_registry_rejects_add_value() -> None:
 @pytest.mark.anyio
 async def test_frozen_registry_rejects_add_factory() -> None:
     registry = ServiceRegistry()
-    registry.freeze()
+    registry._freeze()
 
     with pytest.raises(RakitError) as exc_info:
         registry.add_factory(Frozenable, lambda _: Frozenable(), scope=ServiceScope.APPLICATION)

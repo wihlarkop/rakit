@@ -102,7 +102,7 @@ class ServiceRegistry:
     def providers(self) -> Mapping[ServiceKey[Any], tuple[ServiceScope, Factory]]:
         return MappingProxyType(self._providers)
 
-    def freeze(self) -> None:
+    def _freeze(self) -> None:
         self._frozen = True
 
     def _snapshot(self) -> "_RegistrySnapshot":

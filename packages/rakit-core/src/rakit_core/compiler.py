@@ -30,10 +30,10 @@ class Plugin(Protocol):
 class ApplicationBuilder:
     _routes: list[RouteDefinition] = field(default_factory=list)
     _plugin_ids: list[str] = field(default_factory=list)
-    registry: ServiceRegistry = field(default_factory=ServiceRegistry)
+    _registry: ServiceRegistry = field(default_factory=ServiceRegistry)
     _plugin_conflicts: dict[str, tuple[str, ...]] = field(default_factory=dict)
     _compiled: bool = field(default=False, init=False)
-    _installing: bool = field(default=False, init=False)
+    _install_depth: int = field(default=0, init=False)
 
     @property
     def routes(self) -> tuple[RouteDefinition, ...]:
@@ -42,6 +42,10 @@ class ApplicationBuilder:
     @property
     def plugins(self) -> tuple[str, ...]:
         return tuple(self._plugin_ids)
+
+    @property
+    def registry(self) -> ServiceRegistry:
+        return self._registry
 
     def _check_not_compiled(self) -> None:
         if self._compiled:
@@ -53,7 +57,7 @@ class ApplicationBuilder:
 
     def _mark_compiled(self) -> None:
         self._compiled = True
-        self.registry.freeze()
+        self.registry._freeze()
 
     def add_route(self, route: RouteDefinition) -> None:
         self._check_not_compiled()
@@ -110,14 +114,24 @@ class ApplicationBuilder:
 
         self._plugin_ids.append(plugin.plugin_id)
         self._plugin_conflicts[plugin.plugin_id] = conflicts_with
-        self._installing = True
+        self._install_depth += 1
         try:
             plugin.configure(self)
+            if self._registry._frozen and not snapshot.registry.frozen:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_PLUGIN_FROZE_REGISTRY,
+                    message=(
+                        f'Plugin "{plugin.plugin_id}" left the service registry frozen without '
+                        "the application being compiled; this is not allowed."
+                    ),
+                    status_code=500,
+                    details={"plugin": plugin.plugin_id},
+                )
         except BaseException:
             snapshot.restore(self)
             raise
         finally:
-            self._installing = False
+            self._install_depth -= 1
 
 
 @dataclass
@@ -154,7 +168,7 @@ class CompiledApplication:
 
 
 def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
-    if builder._installing:
+    if builder._install_depth > 0:
         raise RakitError(
             code=ErrorCode.CONFIG_COMPILE_DURING_PLUGIN_INSTALL,
             message="Cannot compile the application while a plugin's configure() is still running.",

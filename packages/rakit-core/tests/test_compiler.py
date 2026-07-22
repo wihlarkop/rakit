@@ -1,7 +1,9 @@
+import contextlib
+
 import pytest
 from rakit_core.compiler import ApplicationBuilder, compile_application
 from rakit_core.definitions import RouteDefinition
-from rakit_core.di import ServiceScope
+from rakit_core.di import ServiceRegistry, ServiceScope
 from rakit_core.errors import RakitError
 
 
@@ -380,7 +382,7 @@ class _PluginThatFreezesRegistryThenFails:
         builder.registry.add_factory(
             _ServiceB, lambda _: _ServiceB(), scope=ServiceScope.APPLICATION
         )
-        builder.registry.freeze()
+        builder.registry._freeze()
         raise RuntimeError("freezer boom")
 
 
@@ -430,3 +432,243 @@ def test_routes_and_plugins_are_read_only_tuples() -> None:
     compile_application(builder)
     assert isinstance(builder.routes, tuple)
     assert isinstance(builder.plugins, tuple)
+
+
+# --- Finding 1: registry field is read-only -------------------------------
+
+
+def test_registry_rebinding_raises_attribute_error() -> None:
+    builder = ApplicationBuilder()
+    with pytest.raises(AttributeError):
+        builder.registry = ServiceRegistry()  # type: ignore
+
+
+def test_registry_rebinding_raises_attribute_error_after_compile() -> None:
+    builder = ApplicationBuilder()
+    compile_application(builder)
+    with pytest.raises(AttributeError):
+        builder.registry = ServiceRegistry()  # type: ignore
+
+
+# --- Finding 2: reentrant-safe install depth counter -----------------------
+
+
+class _InnerPluginOk:
+    plugin_id = "inner-ok"
+
+    def configure(self, builder: ApplicationBuilder) -> None:
+        builder.add_route(
+            RouteDefinition(
+                route_name="app.inner",
+                methods=("GET",),
+                path="/inner",
+                owner_id="inner",
+            )
+        )
+
+
+class _OuterPluginRecompilesAfterInnerInstall:
+    plugin_id = "outer-recompiles"
+
+    def configure(self, builder: ApplicationBuilder) -> None:
+        builder.install(_InnerPluginOk())
+        compile_application(builder)
+
+
+def test_outer_install_guard_survives_inner_install_completion() -> None:
+    builder = ApplicationBuilder()
+
+    with pytest.raises(RakitError) as caught:
+        builder.install(_OuterPluginRecompilesAfterInnerInstall())
+    assert caught.value.code == "config.compile_during_plugin_install"
+
+    # Outer's own transaction (including the inner plugin it installed) is
+    # fully rolled back too.
+    assert builder.plugins == ()
+    assert builder.routes == ()
+    assert builder._install_depth == 0
+
+
+def test_inner_install_completion_does_not_clear_outer_install_depth() -> None:
+    builder = ApplicationBuilder()
+    observed: dict[str, int] = {}
+
+    class _Outer:
+        plugin_id = "outer-observe"
+
+        def configure(self, builder: ApplicationBuilder) -> None:
+            builder.install(_InnerPluginOk())
+            observed["depth_after_inner"] = builder._install_depth
+
+    builder.install(_Outer())
+    assert observed["depth_after_inner"] >= 1
+    assert builder._install_depth == 0
+
+
+class _ServiceNested:
+    pass
+
+
+def test_nested_install_failure_isolates_outer_state() -> None:
+    builder = ApplicationBuilder()
+
+    class _InnerFails:
+        plugin_id = "inner-fail"
+
+        def configure(self, builder: ApplicationBuilder) -> None:
+            builder.add_route(
+                RouteDefinition(
+                    route_name="app.inner_fail",
+                    methods=("GET",),
+                    path="/inner-fail",
+                    owner_id="inner_fail",
+                )
+            )
+            builder.registry.add_factory(
+                _ServiceNested, lambda _: _ServiceNested(), scope=ServiceScope.APPLICATION
+            )
+            raise RuntimeError("inner boom")
+
+    class _OuterCatchesInnerFailure:
+        plugin_id = "outer-catches"
+
+        def configure(self, builder: ApplicationBuilder) -> None:
+            builder.add_route(
+                RouteDefinition(
+                    route_name="app.outer",
+                    methods=("GET",),
+                    path="/outer",
+                    owner_id="outer",
+                )
+            )
+            with contextlib.suppress(RuntimeError):
+                builder.install(_InnerFails())
+
+    builder.install(_OuterCatchesInnerFailure())
+
+    assert builder.plugins == ("outer-catches",)
+    assert [route.route_name for route in builder.routes] == ["app.outer"]
+    assert all(key.service_type is not _ServiceNested for key in builder.registry.providers)
+    assert builder._install_depth == 0
+
+
+def test_install_depth_returns_to_zero_after_normal_install() -> None:
+    builder = ApplicationBuilder()
+    builder.install(_PluginA())
+    assert builder._install_depth == 0
+
+
+def test_install_depth_returns_to_zero_after_regular_exception() -> None:
+    builder = ApplicationBuilder()
+    with pytest.raises(RuntimeError, match="boom"):
+        builder.install(_PluginThatFailsMidConfigure())
+    assert builder._install_depth == 0
+
+
+class _WeirdBaseException(BaseException):
+    pass
+
+
+class _PluginRaisesNonExceptionBaseException:
+    plugin_id = "weird"
+
+    def configure(self, builder: ApplicationBuilder) -> None:
+        raise _WeirdBaseException("weird")
+
+
+def test_install_depth_returns_to_zero_after_non_exception_base_exception() -> None:
+    builder = ApplicationBuilder()
+    with pytest.raises(_WeirdBaseException):
+        builder.install(_PluginRaisesNonExceptionBaseException())
+    assert builder._install_depth == 0
+
+
+def test_corrected_plugin_installable_after_nested_failure_and_compiles() -> None:
+    builder = ApplicationBuilder()
+
+    class _InnerFails:
+        plugin_id = "inner-fail"
+
+        def configure(self, builder: ApplicationBuilder) -> None:
+            raise RuntimeError("inner boom")
+
+    class _OuterCatchesInnerFailure:
+        plugin_id = "outer-catches"
+
+        def configure(self, builder: ApplicationBuilder) -> None:
+            with contextlib.suppress(RuntimeError):
+                builder.install(_InnerFails())
+
+    builder.install(_OuterCatchesInnerFailure())
+
+    corrected_inner = _InnerPluginOk()
+    builder.install(corrected_inner)
+    assert "inner-ok" in builder.plugins
+
+    compiled = compile_application(builder)
+    assert "inner-ok" in compiled.plugins
+    assert "outer-catches" in compiled.plugins
+
+
+# --- Finding 3: plugins cannot freeze the registry without raising ---------
+
+
+class _PluginThatFreezesAndReturnsNormally:
+    plugin_id = "sneaky-freezer"
+
+    def configure(self, builder: ApplicationBuilder) -> None:
+        builder.add_route(
+            RouteDefinition(
+                route_name="app.sneaky",
+                methods=("GET",),
+                path="/sneaky",
+                owner_id="sneaky",
+            )
+        )
+        builder.registry._freeze()
+
+
+def test_plugin_that_freezes_registry_and_returns_normally_is_rejected() -> None:
+    builder = ApplicationBuilder()
+
+    with pytest.raises(RakitError) as caught:
+        builder.install(_PluginThatFreezesAndReturnsNormally())
+    assert caught.value.code == "config.plugin_froze_registry"
+
+
+def test_after_rejected_freezing_plugin_registry_and_builder_remain_usable() -> None:
+    builder = ApplicationBuilder()
+
+    with pytest.raises(RakitError) as caught:
+        builder.install(_PluginThatFreezesAndReturnsNormally())
+    assert caught.value.code == "config.plugin_froze_registry"
+
+    assert "sneaky-freezer" not in builder.plugins
+    assert builder.routes == ()
+
+    # Registry is unfrozen again; a new registration succeeds.
+    builder.registry.add_factory(
+        _ServiceNested, lambda _: _ServiceNested(), scope=ServiceScope.APPLICATION
+    )
+
+    # Builder itself is not considered compiled, so further calls are fine.
+    builder._check_not_compiled()
+
+    # A different, well-behaved plugin can still install afterward.
+    builder.install(_PluginThatSucceeds())
+    assert "flaky" in builder.plugins
+
+
+def test_normal_compile_still_freezes_registry() -> None:
+    builder = ApplicationBuilder()
+    builder.install(_PluginThatSucceeds())
+    compile_application(builder)
+    assert builder.registry._frozen is True
+
+
+def test_post_compile_mutation_still_raises_registry_frozen() -> None:
+    builder = ApplicationBuilder()
+    compile_application(builder)
+    with pytest.raises(RakitError) as caught:
+        builder.registry.add_value(_ServiceA, _ServiceA(), scope=ServiceScope.APPLICATION)
+    assert caught.value.code == "di.registry_frozen"
