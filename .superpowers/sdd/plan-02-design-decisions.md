@@ -360,3 +360,44 @@ The README's primary example is an executable public-contract smoke test. It sup
 in-memory mapped model/engine fixture, executes it, and compiles the application without starting
 the lifespan or connecting to a database. This keeps documentation drift visible without adding
 a ninth distribution or any runtime/network side effect.
+
+## 20. Fail-closed compiled resource field policy (external review round 2)
+
+Every resource declares nonempty `list_fields` and `detail_fields`; `filter_fields`,
+`search_fields`, and `sort_fields` default to empty. Registration copies those declarations into
+an immutable backend-neutral `ResourceFieldPolicy`. Compilation validates the policy against the
+associated datasource before accepting routes. The web layer uses the policy independently for
+rendering and query controls, and adapters receive the same policy and enforce it again for direct
+`ResourceQuery` callers. Identity fields remain valid internal ordering fields without becoming
+displayed or user-queryable by implication.
+
+Datasource validation is also a compile-time boundary: read capability, callable list/count/detail
+operations, nonempty unique fields and identities, and known policy fields are required. Failures
+use stable safe `config.invalid_resource_policy` or `config.invalid_datasource` errors.
+
+## 21. SQLAlchemy mapped attributes and supported identities (external review round 2)
+
+SQLAlchemy metadata exposes mapper attribute name, database column name, and column type as separate
+values. All ORM expression lookup uses mapper attribute names from `mapper.column_attrs`; renamed
+database columns are an internal persistence detail and never become API field names.
+
+Plan 02 supports exactly one identity attribute whose effective type is Integer/BigInteger,
+String-compatible, UUID, or a safe `TypeDecorator` wrapper around one of those types. Composite and
+unsupported scalar identities fail adapter claim/registration with the distinct stable
+`config.unsupported_identity` error instead of looking like an unmapped model.
+
+## 22. Plan 02 public core facade (external review round 2)
+
+`rakit.core` is the identity-preserving public facade for Plan 02's backend-neutral datasource,
+identity, query, policy, and resource-service contracts. Importing it must not import optional
+SQLAlchemy support. The facade is typed through the `rakit` distribution's `py.typed` marker and is
+verified from an ordinary isolated wheel installation.
+
+## 23. Canonical accessible pagination URLs (external review round 2)
+
+Previous and Next controls are ordinary full-page links inside a labelled pagination `nav`, with
+the current page marked using `aria-current`. Unavailable links are omitted. URLs are reconstructed
+only from the validated `ResourceQuery` and validated explicit sort sequence; they preserve repeated
+filters, search, complete explicit multi-sort, bounded `per_page`, count policy, and ASGI
+`root_path`, while changing only `page`. The same canonical serializer is used for deferred-count
+URLs so rejected raw query parameters are never reflected into generated controls.

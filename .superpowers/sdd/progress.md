@@ -91,3 +91,11 @@ Plan 02 exact locked-development gate follow-up: complete. Added `fastapi>=0.116
   `--extra`, followed by Ruff, ty, and 306 tests. A fresh ordinary-wheel install resolved 16
   packages with FastAPI absent, every official wheel's `Requires-Dist` excluded FastAPI, and no
   official package `pyproject.toml` changed.
+Plan 02 external review round 2 implementation: complete in focused commits `7cdf81c`, `7d9c04f`,
+  `c53764d`, and `cc07343`. Added immutable fail-closed field policy and compile-time datasource
+  validation; mapper-attribute SQLAlchemy metadata with explicit supported identity types; the
+  typed, optional-adapter-free `rakit.core` facade; and accessible canonical pagination controls.
+  TDD covered sensitive-field non-exposure and direct-query bypasses, renamed mapped attributes,
+  identity-type claim/registration behavior, runtime/type/installed-wheel facade imports, and
+  first/middle/last pagination standalone and mounted under every count policy. Exact final-gate
+  evidence is recorded in `plan-02-external-review-round2-report.md`.
