@@ -149,4 +149,17 @@ Plan 02 external review round 4: fixes for three CHANGES-REQUESTED findings agai
   `is not None`, so a malformed hook (e.g. `= object()`) fails registration instead of only
   failing at the first request that uses it. See design-decisions.md sections 27-29 (27
   supersedes section 25). 12 new/changed tests, full suite 388/388 passing, ruff format/check
-  and ty check clean (0 real diagnostics).
+  and ty check clean (0 real diagnostics). Full clean-filesystem verification ran in a fresh
+  detached worktree (.claude/worktrees/plan-02-final-verification, removed after use): uv sync,
+  ruff format/check, ty check, pytest (388/388), uv build (8 wheels+8 sdists at 0.1.0a1),
+  minimal/extra installs, both examples + rakit check/routes, git diff --check -- every command
+  exited 0 with zero io-access-denied entries (no locked scratch directories in a fresh
+  worktree). A fresh independent whole-branch review (no prior branch context, 35-commit
+  main...HEAD diff) verified all three findings against the tip-commit code and tests directly
+  (not the design doc's self-description) and found zero Critical/Important findings -- Ready
+  to merge: Yes. Two Minor notes: redundant double inspect_model() in
+  SQLAlchemyPlugin._claim/SQLAlchemyDataSource.__init__ (unchanged from round 3, still
+  harmless); resource_routes.py's _identity_values() silently drops a non-int/str/UUID identity
+  value instead of raising, currently unreachable since only int/str/UUID identities are
+  accepted, but inconsistent with the fail-closed philosophy applied elsewhere -- noted, not
+  fixed (no live vulnerability, cosmetic consistency only).
