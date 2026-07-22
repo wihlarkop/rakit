@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from .compatibility import validate_official_package_versions
-from .definitions import RouteDefinition
+from .definitions import ResourceDefinition, RouteDefinition
 from .di import ServiceRegistry, _RegistrySnapshot
 from .errors import ErrorCode, RakitError
 
@@ -30,6 +30,7 @@ class Plugin(Protocol):
 @dataclass
 class ApplicationBuilder:
     _routes: list[RouteDefinition] = field(default_factory=list)
+    _resources: list[ResourceDefinition] = field(default_factory=list)
     _plugin_ids: list[str] = field(default_factory=list)
     _registry: ServiceRegistry = field(default_factory=ServiceRegistry)
     _plugin_conflicts: dict[str, tuple[str, ...]] = field(default_factory=dict)
@@ -40,6 +41,10 @@ class ApplicationBuilder:
     @property
     def routes(self) -> tuple[RouteDefinition, ...]:
         return tuple(self._routes)
+
+    @property
+    def resources(self) -> tuple[ResourceDefinition, ...]:
+        return tuple(self._resources)
 
     @property
     def plugins(self) -> tuple[str, ...]:
@@ -64,6 +69,17 @@ class ApplicationBuilder:
     def add_route(self, route: RouteDefinition) -> None:
         self._check_not_compiled()
         self._routes.append(route)
+
+    def add_resource(self, definition: ResourceDefinition) -> None:
+        self._check_not_compiled()
+        if any(existing.resource_id == definition.resource_id for existing in self._resources):
+            raise RakitError(
+                code=ErrorCode.CONFIG_DUPLICATE_RESOURCE,
+                message=f'Resource "{definition.resource_id}" is already registered.',
+                status_code=500,
+                details={"resource_id": definition.resource_id},
+            )
+        self._resources.append(definition)
 
     def register_adapter(self, name: str, claim: Callable[[type], object | None]) -> None:
         self._check_not_compiled()
@@ -150,6 +166,7 @@ class ApplicationBuilder:
 @dataclass
 class _InstallSnapshot:
     routes: list[RouteDefinition]
+    resources: list[ResourceDefinition]
     plugin_ids: list[str]
     plugin_conflicts: dict[str, tuple[str, ...]]
     adapters: dict[str, Callable[[type], object | None]]
@@ -160,6 +177,7 @@ class _InstallSnapshot:
     def capture(cls, builder: "ApplicationBuilder") -> "_InstallSnapshot":
         return cls(
             routes=list(builder._routes),
+            resources=list(builder._resources),
             plugin_ids=list(builder._plugin_ids),
             plugin_conflicts=dict(builder._plugin_conflicts),
             adapters=dict(builder._adapters),
@@ -169,6 +187,7 @@ class _InstallSnapshot:
 
     def restore(self, builder: "ApplicationBuilder") -> None:
         builder._routes[:] = self.routes
+        builder._resources[:] = self.resources
         builder._plugin_ids[:] = self.plugin_ids
         builder._plugin_conflicts.clear()
         builder._plugin_conflicts.update(self.plugin_conflicts)
@@ -182,6 +201,7 @@ class _InstallSnapshot:
 class CompiledApplication:
     routes: tuple[RouteDefinition, ...]
     plugins: tuple[str, ...]
+    resources: tuple[ResourceDefinition, ...]
 
 
 def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
@@ -229,4 +249,4 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
             seen[key] = route.route_name
 
     builder._mark_compiled()
-    return CompiledApplication(builder.routes, builder.plugins)
+    return CompiledApplication(builder.routes, builder.plugins, builder.resources)

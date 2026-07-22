@@ -1,11 +1,17 @@
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import cast
 
 import structlog
+from rakit_core.admin_types import ModelAdmin, ResourceAdmin
 from rakit_core.compiler import ApplicationBuilder, CompiledApplication, Plugin, compile_application
 from rakit_core.config import RakitConfig, SecretValue
+from rakit_core.datasource import DataSource
+from rakit_core.definitions import ResourceDefinition
 from rakit_core.di import ServiceRegistry, ServiceResolver
+from rakit_core.errors import ErrorCode, RakitError
+from rakit_core.resources import ResourceService
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse
@@ -66,6 +72,7 @@ class Admin:
         self.compiled: CompiledApplication | None = None
         self._compiled_registry: ServiceRegistry | None = None
         self._application_resolver: ServiceResolver | None = None
+        self._resource_services: dict[str, ResourceService] = {}
         self.lifecycle = LifecycleManager()
         self.lifecycle.register_stopping_callback(self._close_application_resolver)
 
@@ -77,6 +84,79 @@ class Admin:
         if self.compiled is not None:
             raise RuntimeError("Cannot install plugins after compilation")
         self._builder.install(plugin)
+
+    def register(self, admin_cls: type[ResourceAdmin]) -> None:
+        if self.compiled is not None:
+            raise RuntimeError("Cannot register resources after compilation")
+
+        for attribute_name in ("resource_id", "path", "label", "singular_label"):
+            try:
+                value = getattr(admin_cls, attribute_name)
+            except AttributeError:
+                raise RakitError(
+                    code=ErrorCode.VALIDATION_FAILED,
+                    message=(
+                        f'{admin_cls.__name__} is missing required attribute "{attribute_name}".'
+                    ),
+                    status_code=500,
+                    details={"admin_class": admin_cls.__name__, "attribute": attribute_name},
+                ) from None
+            if not isinstance(value, str) or not value:
+                raise RakitError(
+                    code=ErrorCode.VALIDATION_FAILED,
+                    message=(f"{admin_cls.__name__}.{attribute_name} must be a non-empty string."),
+                    status_code=500,
+                    details={"admin_class": admin_cls.__name__, "attribute": attribute_name},
+                )
+
+        if issubclass(admin_cls, ModelAdmin):
+            claims = [
+                result
+                for claim in self._builder._adapters.values()
+                if (result := claim(admin_cls.model)) is not None
+            ]
+            if len(claims) == 0:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_ADAPTER_NOT_FOUND,
+                    message=(
+                        f'No installed adapter could claim model "{admin_cls.model!r}" for '
+                        f'"{admin_cls.__name__}".'
+                    ),
+                    status_code=500,
+                    details={"admin_class": admin_cls.__name__},
+                )
+            if len(claims) > 1:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_ADAPTER_AMBIGUOUS,
+                    message=(
+                        f'Multiple installed adapters claimed model "{admin_cls.model!r}" for '
+                        f'"{admin_cls.__name__}".'
+                    ),
+                    status_code=500,
+                    details={"admin_class": admin_cls.__name__, "claim_count": len(claims)},
+                )
+            data_source = cast(DataSource, claims[0])
+        elif admin_cls.data_source is not None:
+            data_source = admin_cls.data_source
+        else:
+            raise RakitError(
+                code=ErrorCode.CONFIG_RESOURCE_MISSING_DATA_SOURCE,
+                message=(
+                    f'"{admin_cls.__name__}" has no data source: it is not a ModelAdmin '
+                    "and no data_source was supplied."
+                ),
+                status_code=500,
+                details={"admin_class": admin_cls.__name__},
+            )
+
+        definition = ResourceDefinition(
+            resource_id=admin_cls.resource_id,
+            path=admin_cls.path,
+            label=admin_cls.label,
+            singular_label=admin_cls.singular_label,
+        )
+        self._builder.add_resource(definition)
+        self._resource_services[admin_cls.resource_id] = ResourceService(data_source)
 
     def compile(self) -> CompiledApplication:
         if self.compiled is None:

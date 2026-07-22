@@ -9,6 +9,15 @@ def test_core_type_is_reexported() -> None:
     assert RakitConfig.__module__ == "rakit_core.config"
 
 
+def test_admin_types_are_reexported() -> None:
+    from rakit import ModelAdmin, ResourceAdmin
+    from rakit_core.admin_types import ModelAdmin as RealModelAdmin
+    from rakit_core.admin_types import ResourceAdmin as RealResourceAdmin
+
+    assert ModelAdmin is RealModelAdmin
+    assert ResourceAdmin is RealResourceAdmin
+
+
 def test_plan01_core_types_are_reexported_with_preserved_identity() -> None:
     from rakit.core import EventBus, ServiceScope
     from rakit_core.di import ServiceScope as RealServiceScope

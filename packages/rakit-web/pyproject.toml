@@ -12,8 +12,12 @@ dependencies = [
     "structlog>=26.1.0",
 ]
 
+[dependency-groups]
+dev = ["aiosqlite>=0.20", "rakit-sqlalchemy"]
+
 [tool.uv.sources]
 rakit-core = { workspace = true }
+rakit-sqlalchemy = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/rakit_web"]

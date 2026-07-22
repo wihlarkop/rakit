@@ -35,6 +35,10 @@ class ErrorCode(StrEnum):
     CONFIG_COMPILE_DURING_PLUGIN_INSTALL = "config.compile_during_plugin_install"
     CONFIG_PLUGIN_FROZE_REGISTRY = "config.plugin_froze_registry"
     CONFIG_DUPLICATE_ADAPTER = "config.duplicate_adapter"
+    CONFIG_DUPLICATE_RESOURCE = "config.duplicate_resource"
+    CONFIG_ADAPTER_NOT_FOUND = "config.adapter_not_found"
+    CONFIG_ADAPTER_AMBIGUOUS = "config.adapter_ambiguous"
+    CONFIG_RESOURCE_MISSING_DATA_SOURCE = "config.resource_missing_data_source"
 
 
 class ErrorDetail(BaseModel):
