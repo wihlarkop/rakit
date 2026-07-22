@@ -60,14 +60,38 @@ class UUIDIdentity(Base):
 
 
 class SafeStringIdentity(TypeDecorator[str]):
+    """A safe wrapper: explicitly declares its effective Python type as
+    exactly `str`, matching Plan 02's int/str/UUID-only identity guarantee."""
+
     impl = String
     cache_ok = True
+
+    @property
+    def python_type(self) -> type:
+        return str
 
 
 class DecoratedIdentity(Base):
     __tablename__ = "decorated_identities"
 
     id: Mapped[str] = mapped_column(SafeStringIdentity, primary_key=True)
+
+
+class NoPythonTypeOverrideImpl(TypeDecorator[str]):
+    """A `TypeDecorator` that does NOT override `python_type` at all --
+    SQLAlchemy raises `NotImplementedError` for it, which must be treated as
+    "unproven safety", not "safe by omission". Wraps a supported `impl`
+    (`String`) to isolate this specific failure mode from an unsupported
+    `impl` (already covered by `DateIdentity`/`BooleanIdentity`/etc.)."""
+
+    impl = String
+    cache_ok = True
+
+
+class NoPythonTypeOverrideIdentity(Base):
+    __tablename__ = "no_python_type_override_identities"
+
+    id: Mapped[str] = mapped_column(NoPythonTypeOverrideImpl, primary_key=True)
 
 
 class DateIdentity(Base):
@@ -129,7 +153,9 @@ class Money:
 class UnsafeMoneyType(TypeDecorator[Money]):
     """Wraps `String` but hands back a custom domain object, not a `str` --
     exactly the "same problem" a `TypeDecorator` can reintroduce even when
-    its declared `impl` unwraps to a supported base type."""
+    its declared `impl` unwraps to a supported base type. Explicitly
+    declares `python_type` as the unsafe type (as opposed to
+    `ResultOnlyMoneyType` below, which declares no `python_type` at all)."""
 
     impl = String
     cache_ok = True
@@ -145,30 +171,26 @@ class UnsafeMoneyIdentity(Base):
     id: Mapped[object] = mapped_column(UnsafeMoneyType, primary_key=True)
 
 
-class ExplicitIdentityCodec:
-    def decode(self, raw: object) -> Money:
-        assert isinstance(raw, str)
-        return Money(int(raw))
-
-
-class CodecBackedMoneyType(TypeDecorator[Money]):
-    """An otherwise-unsafe custom identity type made safe by an explicit,
-    opt-in Rakit identity codec -- the only sanctioned way to support a
-    genuinely custom identity value type."""
+class ResultOnlyMoneyType(TypeDecorator[Money]):
+    """Overrides `process_result_value()` to return a custom domain object
+    but does NOT override `python_type` -- SQLAlchemy raises
+    `NotImplementedError` for the unoverridden `python_type`, which must be
+    rejected rather than trusted via the unwrapped `impl`. This is the
+    specific fail-open path finding #1 identified: a decorator can silently
+    return an unencodable object without ever declaring an unsafe
+    `python_type` for `_validate_identity_type` to catch."""
 
     impl = String
     cache_ok = True
-    rakit_identity_codec = ExplicitIdentityCodec()
 
-    @property
-    def python_type(self) -> type:
-        return Money
+    def process_result_value(self, value: str | None, dialect: object) -> Money | None:
+        return Money(int(value)) if value is not None else None
 
 
-class CodecBackedIdentity(Base):
-    __tablename__ = "codec_backed_identities"
+class ResultOnlyMoneyIdentity(Base):
+    __tablename__ = "result_only_money_identities"
 
-    id: Mapped[object] = mapped_column(CodecBackedMoneyType, primary_key=True)
+    id: Mapped[object] = mapped_column(ResultOnlyMoneyType, primary_key=True)
 
 
 @pytest.fixture
@@ -241,7 +263,6 @@ def test_introspection_uses_mapper_attributes_and_retains_database_names() -> No
         (StringIdentity, "id"),
         (UUIDIdentity, "id"),
         (DecoratedIdentity, "id"),
-        (CodecBackedIdentity, "id"),
     ),
 )
 def test_claim_accepts_supported_identity_types(
@@ -270,6 +291,8 @@ def test_claim_accepts_supported_identity_types(
         (PythonEnumIdentity, "unsupported_type"),
         (PlainStringEnumIdentity, "unsupported_type"),
         (UnsafeMoneyIdentity, "unsupported_type"),
+        (ResultOnlyMoneyIdentity, "unsupported_type"),
+        (NoPythonTypeOverrideIdentity, "unsupported_type"),
     ),
 )
 def test_claim_rejects_unsupported_identity_with_stable_error(
@@ -287,27 +310,6 @@ def test_claim_rejects_unsupported_identity_with_stable_error(
     assert exc_info.value.details == {"model": model.__name__, "reason": reason}
 
 
-def test_codec_backed_identity_uses_explicit_hook_before_strict_backend_binding(
-    session_factory,
-) -> None:
-    """An accepted custom identity type must actually route through its
-    explicit `rakit_identity_codec` hook (not `rakit_coerce_filter_value`,
-    and not silent inference) to produce its bound query value."""
-    datasource = SQLAlchemyDataSource(
-        model=CodecBackedIdentity,
-        session_factory=session_factory,
-        field_policy=ResourceFieldPolicy(list_fields=("id",), detail_fields=("id",)),
-    )
-
-    statement = datasource._detail_statement(RecordIdentity(values={"id": "500"}))
-    compiled = statement.compile(dialect=postgresql.dialect())
-
-    assert len(compiled.params) == 1
-    bound_value = next(iter(compiled.params.values()))
-    assert isinstance(bound_value, Money)
-    assert bound_value.cents == 500
-
-
 class _IdentitySessionFactorySpy:
     def __init__(self) -> None:
         self.calls = 0
@@ -317,10 +319,39 @@ class _IdentitySessionFactorySpy:
         raise AssertionError("invalid identities must fail before session creation")
 
 
-async def test_invalid_codec_backed_identity_is_safe_before_session_creation() -> None:
+@pytest.mark.parametrize(
+    ("model", "raw", "expected"),
+    (
+        (BigIntegerIdentity, "42", 42),
+        (StringIdentity, "record-42", "record-42"),
+        (DecoratedIdentity, "record-42", "record-42"),
+    ),
+)
+def test_accepted_identity_kinds_produce_a_working_detail_predicate(
+    model: type[object],
+    raw: str,
+    expected: object,
+) -> None:
+    """Every accepted identity kind (plain Integer/String and a safe
+    `TypeDecorator` wrapper) must actually produce a working, correctly
+    bound detail query -- not merely pass claim-time validation."""
+    datasource = SQLAlchemyDataSource(
+        model=model,
+        session_factory=cast(Any, _IdentitySessionFactorySpy()),
+        field_policy=ResourceFieldPolicy(list_fields=("id",), detail_fields=("id",)),
+    )
+
+    statement = datasource._detail_statement(RecordIdentity(values={"id": raw}))
+    compiled = statement.compile(dialect=postgresql.dialect())
+
+    assert len(compiled.params) == 1
+    assert next(iter(compiled.params.values())) == expected
+
+
+async def test_invalid_identity_is_safe_before_session_creation() -> None:
     factory = _IdentitySessionFactorySpy()
     datasource = SQLAlchemyDataSource(
-        model=CodecBackedIdentity,
+        model=BigIntegerIdentity,
         session_factory=cast(Any, factory),
         field_policy=ResourceFieldPolicy(list_fields=("id",), detail_fields=("id",)),
     )

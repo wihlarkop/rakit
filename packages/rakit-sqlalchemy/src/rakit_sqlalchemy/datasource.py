@@ -17,6 +17,7 @@ from rakit_core.query import (
     PageResult,
     ResourceQuery,
     Sort,
+    SortDirection,
 )
 from sqlalchemy import (
     Boolean,
@@ -241,14 +242,19 @@ def _is_filterable_type(type_: TypeEngine[Any]) -> bool:
     """Whether this mapped type has a supported filter-value coercion path.
 
     Mirrors `_coerce_known_value`'s type dispatch: any type it can actually
-    convert (plus a type with an explicit `rakit_coerce_filter_value` hook,
-    which bypasses that dispatch entirely) is filterable. Anything else
-    (e.g. `LargeBinary`, `JSON`, `PickleType`) would only fail with a bare
-    `ValueError` at the first request that tries to filter on it -- this
-    check exists so that failure surfaces at compile/claim time instead.
+    convert (plus a type with an explicit, genuinely *callable*
+    `rakit_coerce_filter_value` hook, which bypasses that dispatch entirely)
+    is filterable. Anything else (e.g. `LargeBinary`, `JSON`, `PickleType`, or
+    a malformed hook such as `rakit_coerce_filter_value = object()`) would
+    otherwise only fail at the first request that tries to use it -- this
+    check exists so that failure surfaces at compile/claim time instead. A
+    hook attribute that is merely non-`None` but not callable is treated as
+    unsupported here (not "safe by presence"), matching the runtime check
+    `_coerce_filter_item` already performs before invoking it.
     """
-    if getattr(type_, "rakit_coerce_filter_value", None) is not None:
-        return True
+    custom_coercer = getattr(type_, "rakit_coerce_filter_value", None)
+    if custom_coercer is not None:
+        return callable(custom_coercer)
     unwrapped = _unwrap_type(type_)
     return isinstance(
         unwrapped,
@@ -287,22 +293,15 @@ def _validate_field_policy_semantics(
 def _coerce_identity_component(type_: TypeEngine[Any], raw_value: object) -> object:
     """Convert one decoded identity component to its mapped column's value.
 
-    Deliberately separate from `_coerce_filter_item`: identity decoding has
-    its own explicit opt-in hook, `rakit_identity_codec`, rather than reusing
-    `rakit_coerce_filter_value` -- a type author may want different (or no)
-    behaviour for "a URL identity component" versus "a URL filter value", and
-    conflating the two would let a filter-only hook silently govern identity
-    decoding it was never written for. Only types that
-    `introspection._validate_identity_type` already accepted as identities
-    reach this function, so no further type-acceptance check is needed here.
+    Deliberately separate from `_coerce_filter_item`: Plan 02 supports only
+    int/str/UUID identities (no custom identity codec -- see
+    `introspection._validate_identity_type`), so this never consults the
+    filter-specific `rakit_coerce_filter_value` hook, which exists for a
+    different purpose and a type author may not have written with identity
+    decoding in mind. Only types that `_validate_identity_type` already
+    accepted as identities reach this function, so no further type-acceptance
+    check is needed here.
     """
-    identity_codec = getattr(type_, "rakit_identity_codec", None)
-    if identity_codec is not None:
-        decode = getattr(identity_codec, "decode", None)
-        if not callable(decode) or not isinstance(raw_value, str | int):
-            raise ValueError
-        return decode(raw_value)
-
     return _coerce_known_value(_unwrap_type(type_), raw_value)
 
 
@@ -383,16 +382,28 @@ class SQLAlchemyDataSource:
             for sort in query.sorting
         ):
             raise _query_field_not_allowed()
-        # `identity_tie_breakers` are internal, adapter-required stable ordering,
-        # not user-requested sorting: they are exempt from the `sort_fields`
-        # whitelist (that's the whole point -- an identity column need not be
-        # user-sortable for the tie-breaker composition to work), but must
-        # still name a real field on this model rather than reaching an
-        # unchecked `getattr` with caller-supplied text.
-        if any(
-            tie_breaker.field not in known_fields for tie_breaker in query.identity_tie_breakers
-        ):
-            raise _query_field_not_allowed()
+        # `identity_tie_breakers` are internal, adapter-required stable
+        # ordering, not user-requested sorting: they are exempt from the
+        # `sort_fields` whitelist (that's the whole point -- an identity
+        # column need not be user-sortable for the tie-breaker composition to
+        # work). But "exempt from the sort whitelist" must not mean "any
+        # known field" -- that would let a caller order by a sensitive,
+        # non-sortable column (e.g. `password_hash`) merely by placing it in
+        # `identity_tie_breakers` instead of `sorting`. A tie-breaker is only
+        # ever legitimate as this datasource's *actual* identity field(s),
+        # ascending, with no null-placement override, and each identity field
+        # named at most once.
+        identity_fields = set(self.identity_fields)
+        seen_tie_breaker_fields: set[str] = set()
+        for tie_breaker in query.identity_tie_breakers:
+            if (
+                tie_breaker.field not in identity_fields
+                or tie_breaker.field in seen_tie_breaker_fields
+                or tie_breaker.direction is not SortDirection.ASC
+                or tie_breaker.nulls is not NullPlacement.AUTO
+            ):
+                raise _query_field_not_allowed()
+            seen_tie_breaker_fields.add(tie_breaker.field)
         allowed_filter_fields = set(self._field_policy.filter_fields)
         if any(
             filter_.field not in known_fields or filter_.field not in allowed_filter_fields

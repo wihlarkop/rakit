@@ -99,6 +99,29 @@ Plan 02 external review round 2 implementation: complete in focused commits `7cd
   identity-type claim/registration behavior, runtime/type/installed-wheel facade imports, and
   first/middle/last pagination standalone and mounted under every count policy. Exact final-gate
   evidence is recorded in `plan-02-external-review-round2-report.md`.
+Plan 02 external review round 3: complete in commit `440c36d`. Fixed three CHANGES-REQUESTED
+  findings: (1) ResourceQuery.identity_tie_breakers separated from policy-validated `.sorting`
+  so from_params(identity_fields=...) composes with a narrower adapter sort_fields policy
+  without reopening the de5dec5 bypass; (2) SQLAlchemy identity acceptance now checks effective
+  Python type (int/str/UUID), unconditionally rejecting Enum (Python-Enum-backed and plain-
+  string alike) and TypeDecorators whose python_type override differs, with an explicit opt-in
+  rakit_identity_codec hook and a dedicated _coerce_identity_component boundary separate from
+  filter coercion; (3) SQLAlchemyDataSource.__init__ now fail-closed validates search_fields
+  (string-only, excl. Enum) and filter_fields (must have a coercion path or hook) at adapter-
+  claim time instead of silently no-op'ing unsupported search fields at request time. Also adds
+  a worktree-local .uv-cache/ (gitignored) working around a sandbox permission denial on the
+  shared user uv cache. TDD: 19 new tests across rakit-core/rakit-sqlalchemy/rakit-web,
+  full suite 376/376 passing, ruff format/check clean, ty check clean (0 real diagnostics; the
+  only io-access-denied entries are the pre-existing disposable .tmp-pytest-final-findings/ and
+  a same-cause locked scratch dir this round could not remove either, both git-invisible/
+  untracked). Full unrestricted verification (uv sync/build, 8 wheels+8 sdists at 0.1.0a1,
+  py.typed + templates/static/license/provenance present, minimal install excludes
+  SQLAlchemy/FastAPI, sqlalchemy extra installs, both examples + rakit check/routes, rakit.core
+  facade import) all passed at HEAD 440c36d. A fresh independent whole-branch review (34-commit
+  diff, main...HEAD) found zero Critical/Important findings -- Ready to merge: Yes, with two
+  Minor non-blocking notes (redundant double inspect_model in SQLAlchemyPlugin._claim; standard
+  Starlette debug-traceback behavior for non-RakitError exceptions under debug=True, unrelated
+  to Plan 02 scope).
 Plan 02 external review round 2 Important follow-up: implementation complete in focused commits
   `de5dec5`, `55140d1`, and `f0e51f5`. Direct SQLAlchemy queries can no longer opt into identity sorting unless
   the identity is explicitly declared in `sort_fields`; adapter-added identity tie-break ordering
@@ -110,3 +133,20 @@ Plan 02 external review round 2 Important follow-up: implementation complete in 
   identity insertion now occurs only inside the adapter after validation. The focused list/count,
   renamed-attribute, and query-UI regression passed 32/32. Exact evidence is in
   `plan-02-external-review-round2-report.md`.
+Plan 02 external review round 4: fixes for three CHANGES-REQUESTED findings against the round-3
+  commit (440c36d). (1) Removed custom identity domain-object support from Plan 02 entirely,
+  per the reviewer's preferred bounded fix: `rakit_identity_codec` is gone (it was fail-open --
+  accepted whenever merely non-None, no shape validation, no encode direction ever wired through
+  the web layer's `_identity_values()`). A TypeDecorator identity now MUST explicitly declare
+  `python_type` (a `NotImplementedError` from an unoverridden `python_type` is now rejected,
+  not trusted via impl -- this was the other fail-open path: a decorator overriding only
+  `process_result_value()` without `python_type` was silently accepted) and is accepted only
+  when that declared type is exactly int/str/UUID. (2) `identity_tie_breakers` are now
+  validated against `self.identity_fields` (not `self.fields`), ASC-only, `NullPlacement.AUTO`-
+  only, no duplicates -- closing a bypass where a caller could order by a sensitive known field
+  (e.g. password_hash) by placing it in identity_tie_breakers instead of sorting. (3)
+  `_is_filterable_type` now checks `callable(rakit_coerce_filter_value)`, not merely
+  `is not None`, so a malformed hook (e.g. `= object()`) fails registration instead of only
+  failing at the first request that uses it. See design-decisions.md sections 27-29 (27
+  supersedes section 25). 12 new/changed tests, full suite 388/388 passing, ruff format/check
+  and ty check clean (0 real diagnostics).

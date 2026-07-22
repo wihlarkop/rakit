@@ -5,14 +5,22 @@ import pytest
 from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.identity import RecordIdentity
-from rakit_core.query import Filter, FilterOperator, ResourceQuery, Sort, SortDirection
+from rakit_core.query import (
+    Filter,
+    FilterOperator,
+    NullPlacement,
+    ResourceQuery,
+    Sort,
+    SortDirection,
+)
 from rakit_sqlalchemy.datasource import SQLAlchemyDataSource
 from rakit_sqlalchemy.introspection import UnsupportedFieldPolicyError
 from rakit_sqlalchemy.plugin import SQLAlchemyPlugin
 from sqlalchemy import Enum as SQLAlchemyEnum
-from sqlalchemy import LargeBinary
+from sqlalchemy import LargeBinary, String
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.types import TypeDecorator
 
 
 class Base(DeclarativeBase):
@@ -24,6 +32,7 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str]
+    password_hash: Mapped[str | None] = mapped_column(nullable=True)
 
 
 class Status(PythonEnum):
@@ -43,6 +52,23 @@ class Article(Base):
     views: Mapped[int]
     status: Mapped[Status] = mapped_column(SQLAlchemyEnum(Status))
     payload: Mapped[bytes] = mapped_column(LargeBinary)
+
+
+class MalformedHookType(TypeDecorator):
+    """A `TypeDecorator` declaring `rakit_coerce_filter_value` as a non-`None`
+    but non-callable attribute -- a malformed adapter contract that must be
+    rejected at claim/registration time, not merely "present" and trusted."""
+
+    impl = String
+    cache_ok = True
+    rakit_coerce_filter_value = object()
+
+
+class MalformedHookRecord(Base):
+    __tablename__ = "malformed_hook_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(MalformedHookType)
 
 
 USER_POLICY = ResourceFieldPolicy(
@@ -277,6 +303,63 @@ async def test_from_params_identity_tie_breaker_composes_with_narrower_sort_poli
     }
 
 
+async def test_real_identity_tie_breaker_is_accepted(session_factory) -> None:
+    datasource = SQLAlchemyDataSource(
+        model=User, session_factory=session_factory, field_policy=USER_POLICY
+    )
+
+    page = await datasource.list(
+        ResourceQuery(sorting=(Sort(field="name"),), identity_tie_breakers=(Sort(field="id"),))
+    )
+
+    assert [item.name for item in page.items] == ["Ada", "Grace"]
+
+
+@pytest.mark.parametrize(
+    "identity_tie_breakers",
+    (
+        # Not this datasource's identity field, but a real (sensitive) column.
+        (Sort(field="password_hash"),),
+        # A real, ordinary, non-identity column.
+        (Sort(field="name"),),
+        # The real identity field, but not ascending.
+        (Sort(field="id", direction=SortDirection.DESC),),
+        # The real identity field, but with an explicit null-placement override.
+        (Sort(field="id", nulls=NullPlacement.FIRST),),
+        (Sort(field="id", nulls=NullPlacement.LAST),),
+        # The real identity field, named twice.
+        (Sort(field="id"), Sort(field="id")),
+    ),
+)
+async def test_identity_tie_breakers_restricted_to_canonical_identity_shape(
+    session_factory,
+    identity_tie_breakers: tuple[Sort, ...],
+) -> None:
+    """`identity_tie_breakers` is exempt from the `sort_fields` whitelist, but
+    that exemption must not mean "any known field" -- only this datasource's
+    actual identity field(s), ascending, with default null placement, named
+    at most once, may appear there. Anything else (a sensitive column, an
+    ordinary non-identity column, a non-ascending direction, an explicit null
+    placement, or a duplicate) is rejected exactly like an unknown query
+    field."""
+    datasource = SQLAlchemyDataSource(
+        model=User, session_factory=session_factory, field_policy=USER_POLICY
+    )
+
+    with pytest.raises(RakitError) as exc_info:
+        await datasource.list(
+            ResourceQuery(
+                sorting=(Sort(field="name"),),
+                identity_tie_breakers=identity_tie_breakers,
+            )
+        )
+
+    assert exc_info.value.to_public_dict() == {
+        "code": "validation.failed",
+        "message": "Query field is not allowed",
+    }
+
+
 @pytest.mark.parametrize(
     "search_fields",
     (
@@ -368,6 +451,26 @@ async def test_unsupported_filter_field_fails_before_registration(session_factor
     assert exc_info.value.policy == "filter_fields"
 
 
+async def test_malformed_filter_hook_fails_before_registration(session_factory) -> None:
+    """A type declaring `rakit_coerce_filter_value` as a non-`None` but
+    non-callable attribute is a malformed adapter contract -- it must be
+    rejected at claim/registration time (fail-closed), not accepted merely
+    because the attribute is present, only to fail on the first request that
+    actually tries to filter on it."""
+    with pytest.raises(UnsupportedFieldPolicyError) as exc_info:
+        SQLAlchemyDataSource(
+            model=MalformedHookRecord,
+            session_factory=session_factory,
+            field_policy=ResourceFieldPolicy(
+                list_fields=("id",),
+                detail_fields=("id",),
+                filter_fields=("code",),
+            ),
+        )
+    assert exc_info.value.field == "code"
+    assert exc_info.value.policy == "filter_fields"
+
+
 async def test_enum_filter_field_remains_valid_despite_being_unsearchable(
     session_factory,
 ) -> None:
@@ -410,3 +513,22 @@ async def test_claim_rejects_unsupported_search_field_with_stable_error(session_
     public = exc_info.value.to_public_dict()
     assert "SELECT" not in str(public)
     assert "articles" not in str(public)
+
+
+async def test_claim_rejects_malformed_filter_hook_with_stable_error(session_factory) -> None:
+    plugin = SQLAlchemyPlugin(session_factory=session_factory)
+    policy = ResourceFieldPolicy(
+        list_fields=("id",),
+        detail_fields=("id",),
+        filter_fields=("code",),
+    )
+
+    with pytest.raises(RakitError) as exc_info:
+        plugin._claim(MalformedHookRecord, policy)
+
+    assert exc_info.value.code == ErrorCode.CONFIG_UNSUPPORTED_FIELD_POLICY
+    assert exc_info.value.details == {
+        "model": "MalformedHookRecord",
+        "field": "code",
+        "policy": "filter_fields",
+    }

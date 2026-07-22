@@ -50,26 +50,9 @@ def _unwrap_type(type_: TypeEngine[Any]) -> TypeEngine[Any]:
     return type_
 
 
-def _effective_identity_python_type(type_: TypeEngine[Any]) -> type | None:
-    """The `TypeDecorator`'s own declared effective Python type, if any.
-
-    `TypeDecorator.python_type` raises `NotImplementedError` when a decorator
-    does not override it -- SQLAlchemy does not implicitly delegate to the
-    unwrapped `impl`'s python_type. That omission means the decorator makes
-    no explicit claim about its Python value differing from `impl`'s, so it
-    is treated as "no override" (`None`), not as evidence of an unsafe type:
-    the already-performed `impl`-unwrap check remains the source of truth for
-    that case. Only a decorator that *does* override `python_type` to
-    something other than int/str/UUID is rejected here.
-    """
-    try:
-        return type_.python_type
-    except NotImplementedError:
-        return None
-
-
 def _validate_identity_type(type_: TypeEngine[Any]) -> None:
-    """Reject any identity whose effective Python value isn't int/str/UUID.
+    """Reject any identity whose effective Python value isn't exactly int
+    (excluding bool), str, or UUID.
 
     `sqlalchemy.Enum` is a `String` subclass, so an `isinstance(type_, String)`
     check alone would wrongly accept an Enum primary key -- its persisted
@@ -79,29 +62,36 @@ def _validate_identity_type(type_: TypeEngine[Any]) -> None:
     therefore rejected unconditionally, both when it *is* backed by a Python
     `enum.Enum` class and when it persists a plain string.
 
-    A `TypeDecorator` gets the same treatment plus one extra check: even if
-    its declared `impl` unwraps to a supported base type, the decorator may
-    override `process_result_value`/`python_type` to hand back a domain
-    object instead of a plain int/str/UUID (e.g. a `TypeDecorator[String]`
-    that returns a custom value object) -- that failure mode is caught by
-    checking the type's own effective `python_type`, not just its `impl`.
+    Plan 02 supports only int/str/UUID identities (the approved v0.1
+    guarantee) -- it does not support custom identity domain objects, so
+    there is no opt-in codec hook here. A `TypeDecorator` must therefore
+    explicitly declare `python_type` as exactly `int`, `str`, or `UUID`:
 
-    A `TypeDecorator` may opt out of both checks by declaring an explicit
-    `rakit_identity_codec` attribute (mirroring the `rakit_coerce_filter_value`
-    filter-value hook): this is a deliberate, explicit contract for a genuine
-    custom identity type, never an inferred one -- no constructor is called
-    and no arbitrary Python type is trusted implicitly.
+    - a `TypeDecorator` that does not override `python_type` at all (SQLAlchemy
+      raises `NotImplementedError` in that case, and does *not* implicitly
+      delegate to the unwrapped `impl`'s `python_type`) is rejected -- an
+      unstated Python type is not proof of safety, and a decorator overriding
+      only `process_result_value()` without `python_type` would otherwise
+      silently return an unencodable custom object;
+    - a `TypeDecorator` whose `python_type` resolves to anything other than
+      exactly `int`, `str`, or `UUID` (e.g. a genuine custom domain object) is
+      rejected;
+    - the decorator's declared `impl` must *also* unwrap to a supported base
+      type (`Integer`/`String`/`Uuid`, never `Enum`) -- this is deliberate
+      defence in depth alongside the `python_type` check, not a substitute
+      for it.
     """
     if isinstance(type_, TypeDecorator):
-        if getattr(type_, "rakit_identity_codec", None) is not None:
-            return
         implementation = _unwrap_type(type_)
         if isinstance(implementation, Enum) or not isinstance(
             implementation, Integer | String | Uuid
         ):
             raise UnsupportedIdentityError("unsupported_type")
-        effective_type = _effective_identity_python_type(type_)
-        if effective_type is not None and effective_type not in _SUPPORTED_IDENTITY_PYTHON_TYPES:
+        try:
+            effective_type = type_.python_type
+        except NotImplementedError:
+            raise UnsupportedIdentityError("unsupported_type") from None
+        if effective_type not in _SUPPORTED_IDENTITY_PYTHON_TYPES:
             raise UnsupportedIdentityError("unsupported_type")
         return
 

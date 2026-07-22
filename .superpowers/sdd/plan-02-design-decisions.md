@@ -415,6 +415,12 @@ list, so no web-layer change was needed).
 
 ## 25. Effective-Python-type identity acceptance (external review round 3)
 
+**Superseded by section 27 (round 4).** The round-3 fix below still correctly rejects Enum
+identities, but its "trust the unwrapped `impl` when `python_type` raises `NotImplementedError`"
+fallback, and its `rakit_identity_codec` custom-object opt-in, were both found to be fail-open in
+round 4 and have been removed -- see section 27 for the corrected, narrower rule. This entry is
+kept for history; do not implement anything described below as still current.
+
 `sqlalchemy.Enum` is a `String` subclass, so `_validate_identity_type`'s `isinstance(type_,
 String)` check wrongly accepted an Enum primary key -- its persisted Python value (an
 `enum.Enum` member, or a plain string with no stable case mapping) cannot be encoded into a
@@ -460,3 +466,67 @@ only from the validated `ResourceQuery` and validated explicit sort sequence; th
 filters, search, complete explicit multi-sort, bounded `per_page`, count policy, and ASGI
 `root_path`, while changing only `page`. The same canonical serializer is used for deferred-count
 URLs so rejected raw query parameters are never reflected into generated controls.
+
+## 27. No custom identity domain objects in Plan 02; TypeDecorator identities require an
+    explicit, exact int/str/UUID `python_type` (external review round 4 -- supersedes section 25)
+
+Round 3's `rakit_identity_codec` opt-in and its "`NotImplementedError` from an unoverridden
+`python_type` means trust the unwrapped `impl`" fallback were both fail-open: (a) the codec hook
+was accepted whenever merely non-`None`, with no callable/shape validation, and only a decode
+direction was ever wired through the datasource -- the web layer's `_identity_values()` still
+only recognises already-int/str/UUID values, so an accepted custom-object identity produced an
+empty `detail_url` with no encode path at all; (b) a `TypeDecorator` overriding only
+`process_result_value()` (never `python_type`) hit the "no override claimed, trust `impl`"
+branch and was silently accepted despite returning an un-encodable custom object -- exactly the
+vulnerability the `python_type`-override check was supposed to catch.
+
+Fixed per the reviewer's preferred bounded plan: **remove custom identity domain-object support
+from Plan 02 entirely**, matching the approved v0.1 guarantee of int/string/UUID primary keys
+with no larger custom-identity API invented in this plan. `rakit_identity_codec` is gone --
+`_coerce_identity_component` no longer checks for it. A `TypeDecorator` now:
+- must unwrap (`impl`) to a supported base type (`Integer`/`String`/`Uuid`, never `Enum`) --
+  unchanged, defence in depth, not the sole check;
+- **must explicitly declare `python_type`** -- a `NotImplementedError` (no override at all) is
+  now rejected outright, never trusted via `impl`;
+- is accepted only when that declared `python_type` is *exactly* `int`, `str`, or `UUID` (not a
+  subclass, not a custom object).
+
+A direct (non-decorator) type is unaffected: still `Integer`/`String`/`Uuid`, never `Enum`.
+`SafeStringIdentity` (the existing "safe wrapper" test fixture) was updated to explicitly declare
+`python_type -> str`, since an unoverridden decorator is no longer accepted by omission. If a
+future plan wants genuine custom-identity-object support, it must implement a full bidirectional
+codec (`encode(domain_value) -> int | str | UUID` and `decode(url_scalar) -> domain_value`)
+propagated through both the datasource *and* the web layer's `_identity_values()`/detail-URL
+construction, not a decode-only hook -- that is explicitly out of Plan 02's scope.
+
+## 28. Identity tie-breakers are restricted to the datasource's actual identity fields, ascending,
+    with no null-placement override (external review round 4)
+
+Round 3 exempted `identity_tie_breakers` from the `sort_fields` whitelist entirely, checking only
+that a tie-breaker's field was *some* known column on the model -- so a caller constructing
+`ResourceQuery` directly could order by any known field, including a sensitive one (e.g.
+`password_hash`), merely by placing it in `identity_tie_breakers` instead of `sorting`, bypassing
+the whitelist meant to gate exactly that. "Exempt from the sort whitelist" was never meant to mean
+"any known field" -- it was meant to mean "this datasource's own actual identity field(s)".
+
+Fixed: `_validate_query_policy` now checks every `identity_tie_breakers` entry against
+`self.identity_fields` (not `self.fields`), and additionally requires `direction is
+SortDirection.ASC`, `nulls is NullPlacement.AUTO`, and no field named more than once within
+`identity_tie_breakers` -- any tie-breaker failing any of these is rejected with the same stable
+`validation.failed` / "Query field is not allowed" error as an unknown sort/filter field. The
+adapter's own unconditional append of `self.identity_fields` in `_effective_sorting` (the
+"adapter invariant" from section 17) is unchanged and still guarantees stable ordering even for a
+`ResourceQuery` built without going through `from_params()` at all.
+
+## 29. Explicit adapter hooks are validated as genuinely callable at claim time, not merely
+    non-`None` (external review round 4)
+
+`_is_filterable_type`'s `rakit_coerce_filter_value` check previously only tested `is not None`,
+so a malformed declaration such as `rakit_coerce_filter_value = object()` passed registration and
+only failed once a request actually tried to filter on that field (`_coerce_filter_item`'s own
+`callable(...)` check already existed at *that* layer, but registration-time validation didn't
+mirror it). Fixed: `_is_filterable_type` now checks `callable(custom_coercer)`, not merely
+`custom_coercer is not None` -- a non-callable hook fails claim/registration with the same
+`config.unsupported_field_policy` error as any other unsupported `filter_fields` declaration,
+before any resource compiles or serves a request. Since section 27 removes the identity codec
+hook entirely, there is no analogous identity-side hook left to validate.
