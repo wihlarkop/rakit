@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import tomllib
+import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, cast
@@ -287,3 +288,53 @@ def test_all_packages_builds_exactly_the_eight_official_distributions(tmp_path: 
     assert wheels == expected
     assert sdists == expected
     assert not any(path.name.startswith("rakit_workspace-") for path in output.iterdir())
+
+    rakit_wheel = next(output.glob("rakit-*.whl"))
+    with zipfile.ZipFile(rakit_wheel) as archive:
+        assert "rakit/py.typed" in archive.namelist()
+
+    installed = tmp_path / "installed-rakit"
+    subprocess.run(
+        ["uv", "venv", str(installed), "--python", sys.executable],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    installed_python = installed / "Scripts" / "python.exe"
+    subprocess.run(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            str(installed_python),
+            "--find-links",
+            str(output),
+            str(rakit_wheel),
+            "--offline",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    isolated_environment = os.environ.copy()
+    isolated_environment.pop("PYTHONPATH", None)
+    imported = subprocess.run(
+        [
+            str(installed_python),
+            "-c",
+            (
+                "import sys; "
+                "from rakit.core import (CountPolicy, DataSource, DataSourceCapabilities, Filter, "
+                "FilterOperator, IdentityCodec, NullPlacement, OffsetPagination, PageResult, "
+                "RecordIdentity, ResourceQuery, ResourceService, Sort, SortDirection); "
+                "assert 'rakit_sqlalchemy' not in sys.modules"
+            ),
+        ],
+        cwd=installed,
+        env=isolated_environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert imported.returncode == 0, imported.stderr

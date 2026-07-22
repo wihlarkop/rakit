@@ -29,6 +29,65 @@ def test_plan01_core_types_are_reexported_with_preserved_identity() -> None:
     assert EventBus.__module__ == "rakit_core.events"
 
 
+def test_plan02_core_types_are_reexported_with_preserved_identity() -> None:
+    from rakit.core import (
+        CountPolicy,
+        DataSource,
+        DataSourceCapabilities,
+        Filter,
+        FilterOperator,
+        IdentityCodec,
+        NullPlacement,
+        OffsetPagination,
+        PageResult,
+        RecordIdentity,
+        ResourceQuery,
+        ResourceService,
+        Sort,
+        SortDirection,
+    )
+    from rakit_core.datasource import DataSource as RealDataSource
+    from rakit_core.datasource import DataSourceCapabilities as RealDataSourceCapabilities
+    from rakit_core.identity import IdentityCodec as RealIdentityCodec
+    from rakit_core.identity import RecordIdentity as RealRecordIdentity
+    from rakit_core.query import CountPolicy as RealCountPolicy
+    from rakit_core.query import Filter as RealFilter
+    from rakit_core.query import FilterOperator as RealFilterOperator
+    from rakit_core.query import NullPlacement as RealNullPlacement
+    from rakit_core.query import OffsetPagination as RealOffsetPagination
+    from rakit_core.query import PageResult as RealPageResult
+    from rakit_core.query import ResourceQuery as RealResourceQuery
+    from rakit_core.query import Sort as RealSort
+    from rakit_core.query import SortDirection as RealSortDirection
+    from rakit_core.resources import ResourceService as RealResourceService
+
+    assert CountPolicy is RealCountPolicy
+    assert DataSource is RealDataSource
+    assert DataSourceCapabilities is RealDataSourceCapabilities
+    assert Filter is RealFilter
+    assert FilterOperator is RealFilterOperator
+    assert IdentityCodec is RealIdentityCodec
+    assert NullPlacement is RealNullPlacement
+    assert OffsetPagination is RealOffsetPagination
+    assert PageResult is RealPageResult
+    assert RecordIdentity is RealRecordIdentity
+    assert ResourceQuery is RealResourceQuery
+    assert ResourceService is RealResourceService
+    assert Sort is RealSort
+    assert SortDirection is RealSortDirection
+
+
+def test_importing_core_plan02_facade_does_not_load_optional_sqlalchemy(monkeypatch) -> None:
+    for name in list(sys.modules):
+        if name == "rakit" or name.startswith("rakit.") or name.startswith("rakit_sqlalchemy"):
+            monkeypatch.delitem(sys.modules, name, raising=False)
+
+    from rakit.core import ResourceQuery
+
+    assert ResourceQuery.__module__ == "rakit_core.query"
+    assert "rakit_sqlalchemy" not in sys.modules
+
+
 def test_missing_dependency_includes_uv_command() -> None:
     with pytest.raises(RakitOptionalDependencyError) as caught:
         require_module("missing_rakit_dependency", extra="sqlalchemy")
