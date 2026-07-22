@@ -1,10 +1,17 @@
-from collections.abc import Sequence
-
 from rakit_core.datasource import DataSourceCapabilities
 from rakit_core.identity import RecordIdentity
-from rakit_core.query import Filter, FilterOperator, NullPlacement, PageResult, ResourceQuery, Sort
-from sqlalchemy import Select, func, select
+from rakit_core.query import (
+    CountPolicy,
+    Filter,
+    FilterOperator,
+    NullPlacement,
+    PageResult,
+    ResourceQuery,
+    Sort,
+)
+from sqlalchemy import String, Text, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.sql import ColumnElement, Select
 
 from .introspection import ModelMetadata, inspect_model
 
@@ -52,6 +59,41 @@ class SQLAlchemyDataSource:
         handler = _OPERATOR_HANDLERS[filter_.operator]
         return statement.where(handler(column, filter_.value))
 
+    def _apply_search(self, statement: Select, search: str) -> Select:
+        """OR-combine a `contains` predicate across every string-typed field.
+
+        Only `String`/`Text` columns are searched -- attempting `.contains()` on
+        a non-string column (e.g. an integer PK) would produce nonsensical SQL or
+        raise, so those columns are skipped. Case sensitivity is inherited from
+        `column.contains()` (the same mapping used by the `contains` filter
+        operator), rather than inventing a separate behaviour for search.
+        """
+        predicates: list[ColumnElement[bool]] = []
+        for field_name in self.fields:
+            column = getattr(self._model, field_name)
+            if isinstance(column.type, String | Text):
+                predicates.append(column.contains(search))
+        if predicates:
+            statement = statement.where(or_(*predicates))
+        return statement
+
+    def _filtered_statement(self, query: ResourceQuery) -> Select:
+        """Base statement narrowed by filters and free-text search (no ordering).
+
+        Ordering is deliberately excluded so this can back both the paginated
+        fetch (which adds ordering) and the count query (which does not need it).
+        """
+        statement = self._base_statement()
+        for filter_ in query.filters:
+            statement = self._apply_filter(statement, filter_)
+        if query.search:
+            statement = self._apply_search(statement, query.search)
+        return statement
+
+    async def _count(self, session: AsyncSession, statement: Select) -> int:
+        count_statement = select(func.count()).select_from(statement.subquery())
+        return (await session.execute(count_statement)).scalar_one()
+
     def _apply_sort(self, statement: Select, sort: Sort) -> Select:
         column = getattr(self._model, sort.field)
         ordering = column.desc() if sort.direction.value == "desc" else column.asc()
@@ -62,33 +104,48 @@ class SQLAlchemyDataSource:
         return statement.order_by(ordering)
 
     async def list(self, query: ResourceQuery) -> PageResult:
-        statement = self._base_statement()
-        for filter_ in query.filters:
-            statement = self._apply_filter(statement, filter_)
+        filtered = self._filtered_statement(query)
+        ordered = filtered
         for sort in query.sorting:
-            statement = self._apply_sort(statement, sort)
+            ordered = self._apply_sort(ordered, sort)
 
+        pagination = query.pagination
         async with self._session_factory() as session:
-            count_statement = select(func.count()).select_from(statement.subquery())
-            total_count = (await session.execute(count_statement)).scalar_one()
-
-            paginated_statement = statement.offset(query.pagination.offset).limit(
-                query.pagination.per_page
-            )
-            result = await session.execute(paginated_statement)
-            items: Sequence[object] = result.scalars().all()
-
-        has_previous = query.pagination.page > 1
-        has_next = query.pagination.offset + len(items) < total_count
+            if query.count_policy is CountPolicy.EXACT:
+                total_count: int | None = await self._count(session, filtered)
+                paginated = ordered.offset(pagination.offset).limit(pagination.per_page)
+                items = tuple((await session.execute(paginated)).scalars().all())
+                has_next = pagination.offset + len(items) < total_count
+            else:
+                # DISABLED and DEFERRED both avoid the count query on this page:
+                # fetch one extra row to learn whether a next page exists, then
+                # trim it back off before building the result. DEFERRED's real
+                # total is fetched separately via the dedicated `_count` route.
+                paginated = ordered.offset(pagination.offset).limit(pagination.per_page + 1)
+                rows = list((await session.execute(paginated)).scalars().all())
+                has_next = len(rows) > pagination.per_page
+                items = tuple(rows[: pagination.per_page])
+                total_count = None
 
         return PageResult(
-            items=tuple(items),
-            page=query.pagination.page,
-            per_page=query.pagination.per_page,
-            has_previous=has_previous,
+            items=items,
+            page=pagination.page,
+            per_page=pagination.per_page,
+            has_previous=pagination.page > 1,
             has_next=has_next,
             total_count=total_count,
         )
+
+    async def count(self, query: ResourceQuery) -> int:
+        """Run the EXACT count for a query, ignoring pagination and ordering.
+
+        Backs the deferred-count route: it re-derives the same filter/search
+        predicates as `list()` so a deferred total matches the filtered list it
+        annotates, rather than counting the whole table.
+        """
+        filtered = self._filtered_statement(query)
+        async with self._session_factory() as session:
+            return await self._count(session, filtered)
 
     async def detail(self, identity: RecordIdentity) -> object | None:
         column = getattr(self._model, self._metadata.identity_field)

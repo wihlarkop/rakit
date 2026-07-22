@@ -102,6 +102,12 @@ class ResourceQuery(BaseModel):
         allowed = set(allowed_sort_fields)
         sort_items = cls._parse_sort(sort, allowed)
 
+        # A blank/whitespace-only free-text search is equivalent to "no search":
+        # normalise it to None so downstream layers never build an empty
+        # `contains("")` predicate (which would match every row) from it.
+        if search is not None:
+            search = search.strip() or None
+
         sorted_fields = {item.field for item in sort_items}
         for field in identity_fields:
             if field not in sorted_fields:

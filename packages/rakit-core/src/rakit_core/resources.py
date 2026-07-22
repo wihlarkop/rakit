@@ -22,6 +22,9 @@ class ResourceService:
     async def list(self, query: ResourceQuery) -> PageResult:
         return await self._data_source.list(query)
 
+    async def count(self, query: ResourceQuery) -> int:
+        return await self._data_source.count(query)
+
     async def detail(self, identity: RecordIdentity) -> object:
         record = await self._data_source.detail(identity)
         if record is None:
