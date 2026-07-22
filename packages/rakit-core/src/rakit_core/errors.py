@@ -34,6 +34,7 @@ class ErrorCode(StrEnum):
     CONFIG_ALREADY_COMPILED = "config.already_compiled"
     CONFIG_COMPILE_DURING_PLUGIN_INSTALL = "config.compile_during_plugin_install"
     CONFIG_PLUGIN_FROZE_REGISTRY = "config.plugin_froze_registry"
+    CONFIG_DUPLICATE_ADAPTER = "config.duplicate_adapter"
 
 
 class ErrorDetail(BaseModel):

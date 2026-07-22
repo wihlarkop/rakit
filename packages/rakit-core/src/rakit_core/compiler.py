@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -32,6 +33,7 @@ class ApplicationBuilder:
     _plugin_ids: list[str] = field(default_factory=list)
     _registry: ServiceRegistry = field(default_factory=ServiceRegistry)
     _plugin_conflicts: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    _adapters: dict[str, Callable[[type], object | None]] = field(default_factory=dict)
     _compiled: bool = field(default=False, init=False)
     _install_depth: int = field(default=0, init=False)
 
@@ -62,6 +64,17 @@ class ApplicationBuilder:
     def add_route(self, route: RouteDefinition) -> None:
         self._check_not_compiled()
         self._routes.append(route)
+
+    def register_adapter(self, name: str, claim: Callable[[type], object | None]) -> None:
+        self._check_not_compiled()
+        if name in self._adapters:
+            raise RakitError(
+                code=ErrorCode.CONFIG_DUPLICATE_ADAPTER,
+                message=f'Adapter "{name}" is already registered.',
+                status_code=500,
+                details={"adapter": name},
+            )
+        self._adapters[name] = claim
 
     def install(self, plugin: Plugin) -> None:
         self._check_not_compiled()
@@ -139,6 +152,7 @@ class _InstallSnapshot:
     routes: list[RouteDefinition]
     plugin_ids: list[str]
     plugin_conflicts: dict[str, tuple[str, ...]]
+    adapters: dict[str, Callable[[type], object | None]]
     compiled: bool
     registry: _RegistrySnapshot
 
@@ -148,6 +162,7 @@ class _InstallSnapshot:
             routes=list(builder._routes),
             plugin_ids=list(builder._plugin_ids),
             plugin_conflicts=dict(builder._plugin_conflicts),
+            adapters=dict(builder._adapters),
             compiled=builder._compiled,
             registry=builder.registry._snapshot(),
         )
@@ -157,6 +172,8 @@ class _InstallSnapshot:
         builder._plugin_ids[:] = self.plugin_ids
         builder._plugin_conflicts.clear()
         builder._plugin_conflicts.update(self.plugin_conflicts)
+        builder._adapters.clear()
+        builder._adapters.update(self.adapters)
         builder._compiled = self.compiled
         builder.registry._restore(self.registry)
 
