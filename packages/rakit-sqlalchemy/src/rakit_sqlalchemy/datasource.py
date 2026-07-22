@@ -36,6 +36,14 @@ class SQLAlchemyDataSource:
         self._session_factory = session_factory
         self._metadata: ModelMetadata = inspect_model(model)
 
+    @property
+    def fields(self) -> tuple[str, ...]:
+        return self._metadata.fields
+
+    @property
+    def identity_fields(self) -> tuple[str, ...]:
+        return (self._metadata.identity_field,)
+
     def _base_statement(self) -> Select:
         return select(self._model)
 

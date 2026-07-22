@@ -19,6 +19,15 @@ class DataSourceCapabilities(BaseModel):
 class DataSource(Protocol):
     capabilities: DataSourceCapabilities
 
+    # Read-only (property) members so implementers may satisfy them with either a
+    # plain class attribute (test doubles) or a computed property (SQLAlchemy), and
+    # so narrower literal tuple types match covariantly.
+    @property
+    def fields(self) -> tuple[str, ...]: ...
+
+    @property
+    def identity_fields(self) -> tuple[str, ...]: ...
+
     async def list(self, query: ResourceQuery) -> PageResult: ...
 
     async def detail(self, identity: RecordIdentity) -> object: ...

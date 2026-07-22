@@ -15,6 +15,10 @@ class ResourceService:
     def __init__(self, data_source: DataSource) -> None:
         self._data_source = data_source
 
+    @property
+    def data_source(self) -> DataSource:
+        return self._data_source
+
     async def list(self, query: ResourceQuery) -> PageResult:
         return await self._data_source.list(query)
 

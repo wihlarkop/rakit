@@ -8,6 +8,8 @@ from rakit_core.resources import ResourceService
 
 class FakeDataSource:
     capabilities = DataSourceCapabilities(read=True)
+    fields = ("id", "name")
+    identity_fields = ("id",)
 
     async def list(self, query: ResourceQuery) -> PageResult:
         return PageResult(
@@ -25,6 +27,8 @@ class FakeDataSource:
 
 class MissingDataSource:
     capabilities = DataSourceCapabilities(read=True)
+    fields = ("id", "name")
+    identity_fields = ("id",)
 
     async def list(self, query: ResourceQuery) -> PageResult:
         return PageResult(

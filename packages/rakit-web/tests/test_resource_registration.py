@@ -38,6 +38,8 @@ class IncompleteAdmin(ModelAdmin):
 
 class FakeDataSource:
     capabilities = DataSourceCapabilities(read=True)
+    fields = ("id", "name")
+    identity_fields = ("id",)
 
     async def list(self, query: ResourceQuery) -> PageResult:
         return PageResult(
