@@ -1,4 +1,5 @@
 <div data-rakit-resource-controls="{{ resource.resource_id }}">
+  {% if search_enabled %}
   <form method="get" data-rakit-search action="{{ resource_path }}">
     {% for filter_value in filter_values %}
     <input type="hidden" name="filter" value="{{ filter_value }}" />
@@ -18,6 +19,7 @@
     {% endif %}
     <button type="submit">Search</button>
   </form>
+  {% endif %}
 
   <p data-rakit-total>
     {% if query.count_policy.value == "deferred" %}
@@ -40,7 +42,11 @@
     <tr>
       {% for header in sort_headers %}
       <th scope="col" aria-sort="{{ header.aria_sort }}">
+        {% if header.url %}
         <a href="{{ header.url }}">{{ header.field }}</a>
+        {% else %}
+        {{ header.field }}
+        {% endif %}
       </th>
       {% endfor %}
     </tr>

@@ -39,6 +39,8 @@ class ErrorCode(StrEnum):
     CONFIG_ADAPTER_NOT_FOUND = "config.adapter_not_found"
     CONFIG_ADAPTER_AMBIGUOUS = "config.adapter_ambiguous"
     CONFIG_RESOURCE_MISSING_DATA_SOURCE = "config.resource_missing_data_source"
+    CONFIG_INVALID_RESOURCE_POLICY = "config.invalid_resource_policy"
+    CONFIG_INVALID_DATASOURCE = "config.invalid_datasource"
 
 
 class ErrorDetail(BaseModel):

@@ -100,6 +100,11 @@ class ProductAdmin(ResourceAdmin):
     label = "Products"
     singular_label = "Product"
     data_source = ProductDataSource()
+    list_fields = ("id", "name", "category")
+    detail_fields = ("id", "name", "category")
+    filter_fields = ("id", "name", "category")
+    search_fields = ("name",)
+    sort_fields = ("id", "name", "category")
 
 
 admin = Admin(

@@ -11,6 +11,11 @@ class ResourceAdmin:
     path: str
     label: str
     singular_label: str
+    list_fields: tuple[str, ...]
+    detail_fields: tuple[str, ...]
+    filter_fields: tuple[str, ...] = ()
+    search_fields: tuple[str, ...] = ()
+    sort_fields: tuple[str, ...] = ()
     data_source: "DataSource | None" = None
 
 

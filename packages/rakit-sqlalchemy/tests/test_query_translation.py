@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator
 
 import pytest
+from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.query import (
     CountPolicy,
     Filter,
@@ -34,6 +35,20 @@ class RankedRecord(Base):
     rank: Mapped[int]
 
 
+USER_POLICY = ResourceFieldPolicy(
+    list_fields=("id", "name", "email"),
+    detail_fields=("id", "name", "email"),
+    filter_fields=("id", "name", "email"),
+    search_fields=("name", "email"),
+    sort_fields=("id", "name", "email"),
+)
+RANKED_POLICY = ResourceFieldPolicy(
+    list_fields=("id", "rank"),
+    detail_fields=("id", "rank"),
+    sort_fields=("id", "rank"),
+)
+
+
 @pytest.fixture
 async def datasource() -> AsyncIterator[SQLAlchemyDataSource]:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -50,7 +65,7 @@ async def datasource() -> AsyncIterator[SQLAlchemyDataSource]:
         )
         await session.commit()
 
-    yield SQLAlchemyDataSource(model=User, session_factory=factory)
+    yield SQLAlchemyDataSource(model=User, session_factory=factory, field_policy=USER_POLICY)
     await engine.dispose()
 
 
@@ -86,7 +101,14 @@ async def stable_datasource() -> AsyncIterator[tuple[SQLAlchemyDataSource, list[
         if "ranked_records" in statement and "ORDER BY" in statement:
             statements.append(statement)
 
-    yield SQLAlchemyDataSource(model=RankedRecord, session_factory=factory), statements
+    yield (
+        SQLAlchemyDataSource(
+            model=RankedRecord,
+            session_factory=factory,
+            field_policy=RANKED_POLICY,
+        ),
+        statements,
+    )
     await engine.dispose()
 
 

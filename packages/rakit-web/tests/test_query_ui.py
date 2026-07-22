@@ -41,6 +41,11 @@ class UserAdmin(ModelAdmin):
     path = "/users"
     label = "Users"
     singular_label = "User"
+    list_fields = ("id", "name", "email")
+    detail_fields = ("id", "name", "email")
+    filter_fields = ("id", "name", "email")
+    search_fields = ("name", "email")
+    sort_fields = ("id", "name", "email")
 
 
 async def _seeded_factory() -> tuple[async_sessionmaker[AsyncSession], AsyncEngine]:

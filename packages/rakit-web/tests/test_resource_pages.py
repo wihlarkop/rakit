@@ -46,12 +46,26 @@ class UUIDRecord(Base):
     name: Mapped[str]
 
 
+class CredentialRecord(Base):
+    __tablename__ = "credential_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str]
+    password_hash: Mapped[str]
+    api_token: Mapped[str]
+
+
 class UserAdmin(ModelAdmin):
     model = User
     resource_id = "users"
     path = "/users"
     label = "Users"
     singular_label = "User"
+    list_fields = ("id", "name")
+    detail_fields = ("id", "name")
+    filter_fields = ("id", "name")
+    search_fields = ("name",)
+    sort_fields = ("id", "name")
 
 
 class SlugAdmin(ModelAdmin):
@@ -60,6 +74,11 @@ class SlugAdmin(ModelAdmin):
     path = "/slugs"
     label = "Slugs"
     singular_label = "Slug"
+    list_fields = ("id", "name")
+    detail_fields = ("id", "name")
+    filter_fields = ("id", "name")
+    search_fields = ("name",)
+    sort_fields = ("id", "name")
 
 
 class UUIDAdmin(ModelAdmin):
@@ -68,6 +87,24 @@ class UUIDAdmin(ModelAdmin):
     path = "/uuid-records"
     label = "UUID Records"
     singular_label = "UUID Record"
+    list_fields = ("id", "name")
+    detail_fields = ("id", "name")
+    filter_fields = ("id", "name")
+    search_fields = ("name",)
+    sort_fields = ("id", "name")
+
+
+class CredentialAdmin(ModelAdmin):
+    model = CredentialRecord
+    resource_id = "credentials"
+    path = "/credentials"
+    label = "Credentials"
+    singular_label = "Credential"
+    list_fields = ("id", "email")
+    detail_fields = ("id", "email")
+    filter_fields = ("email",)
+    search_fields = ("email",)
+    sort_fields = ("email",)
 
 
 async def _seeded_session_factory() -> tuple[async_sessionmaker[AsyncSession], AsyncEngine]:
@@ -85,6 +122,12 @@ async def _seeded_session_factory() -> tuple[async_sessionmaker[AsyncSession], A
                 UUIDRecord(
                     id=UUID("a0ebc21a-7334-4ab2-8f01-01e5af6d8a24"),
                     name="UUID One",
+                ),
+                CredentialRecord(
+                    id=1,
+                    email="ada@example.com",
+                    password_hash="sensitive-password-hash",
+                    api_token="sensitive-api-token",
                 ),
             ]
         )
@@ -165,6 +208,35 @@ async def test_detail_page_renders_record(resource_client) -> None:
     assert "<html" in response.text
     assert "Ada" in response.text
     assert response.headers["cache-control"] == "no-store"
+
+
+async def test_explicit_field_policy_hides_sensitive_fields_from_pages_and_errors() -> None:
+    factory, engine = await _seeded_session_factory()
+    admin = _build_admin(factory, admin_classes=(CredentialAdmin,))
+    async with _client_for(admin) as client:
+        listed = await client.get(
+            "/credentials",
+            params=[
+                ("filter", "password_hash:eq:sensitive-password-hash"),
+                ("sort", "password_hash"),
+                ("search", "example.com"),
+            ],
+        )
+        encoded = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+        detailed = await client.get(f"/credentials/{encoded}")
+        malformed_forbidden_filter = await client.get(
+            "/credentials",
+            params={"filter": "password_hash:is_null:maybe"},
+        )
+    await engine.dispose()
+
+    for response in (listed, detailed, malformed_forbidden_filter):
+        assert response.status_code == 200
+        assert "ada@example.com" in response.text
+        assert "password_hash" not in response.text
+        assert "api_token" not in response.text
+        assert "sensitive-password-hash" not in response.text
+        assert "sensitive-api-token" not in response.text
 
 
 async def test_detail_page_unknown_identity_returns_404(resource_client) -> None:

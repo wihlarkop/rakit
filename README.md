@@ -62,6 +62,8 @@ class UserAdmin(ModelAdmin):
     path = "/users"
     label = "Users"
     singular_label = "User"
+    list_fields = ("id",)
+    detail_fields = ("id",)
 
 
 admin.register(UserAdmin)

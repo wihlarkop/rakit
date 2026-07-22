@@ -4,7 +4,7 @@ from typing import Protocol
 
 from .compatibility import validate_official_package_versions
 from .datasource import DataSource
-from .definitions import ResourceDefinition, RouteDefinition
+from .definitions import ResourceDefinition, ResourceFieldPolicy, RouteDefinition
 from .di import ServiceRegistry, _RegistrySnapshot
 from .errors import ErrorCode, RakitError
 
@@ -26,6 +26,9 @@ class Plugin(Protocol):
     plugin_id: str
 
     def configure(self, builder: "ApplicationBuilder") -> None: ...
+
+
+type AdapterClaim = Callable[[type, ResourceFieldPolicy], DataSource | None]
 
 
 def _is_path_parameter(segment: str) -> bool:
@@ -74,7 +77,8 @@ class ApplicationBuilder:
     _plugin_ids: list[str] = field(default_factory=list)
     _registry: ServiceRegistry = field(default_factory=ServiceRegistry)
     _plugin_conflicts: dict[str, tuple[str, ...]] = field(default_factory=dict)
-    _adapters: dict[str, Callable[[type], DataSource | None]] = field(default_factory=dict)
+    _adapters: dict[str, AdapterClaim] = field(default_factory=dict)
+    _resource_data_sources: dict[str, DataSource] = field(default_factory=dict)
     _compiled: bool = field(default=False, init=False)
     _install_depth: int = field(default=0, init=False)
 
@@ -110,7 +114,7 @@ class ApplicationBuilder:
         self._check_not_compiled()
         self._routes.append(route)
 
-    def add_resource(self, definition: ResourceDefinition) -> None:
+    def add_resource(self, definition: ResourceDefinition, data_source: DataSource) -> None:
         self._check_not_compiled()
         if any(existing.resource_id == definition.resource_id for existing in self._resources):
             raise RakitError(
@@ -120,8 +124,9 @@ class ApplicationBuilder:
                 details={"resource_id": definition.resource_id},
             )
         self._resources.append(definition)
+        self._resource_data_sources[definition.resource_id] = data_source
 
-    def register_adapter(self, name: str, claim: Callable[[type], DataSource | None]) -> None:
+    def register_adapter(self, name: str, claim: AdapterClaim) -> None:
         self._check_not_compiled()
         if name in self._adapters:
             raise RakitError(
@@ -209,7 +214,8 @@ class _InstallSnapshot:
     resources: list[ResourceDefinition]
     plugin_ids: list[str]
     plugin_conflicts: dict[str, tuple[str, ...]]
-    adapters: dict[str, Callable[[type], DataSource | None]]
+    adapters: dict[str, AdapterClaim]
+    resource_data_sources: dict[str, DataSource]
     compiled: bool
     registry: _RegistrySnapshot
 
@@ -221,6 +227,7 @@ class _InstallSnapshot:
             plugin_ids=list(builder._plugin_ids),
             plugin_conflicts=dict(builder._plugin_conflicts),
             adapters=dict(builder._adapters),
+            resource_data_sources=dict(builder._resource_data_sources),
             compiled=builder._compiled,
             registry=builder.registry._snapshot(),
         )
@@ -233,6 +240,8 @@ class _InstallSnapshot:
         builder._plugin_conflicts.update(self.plugin_conflicts)
         builder._adapters.clear()
         builder._adapters.update(self.adapters)
+        builder._resource_data_sources.clear()
+        builder._resource_data_sources.update(self.resource_data_sources)
         builder._compiled = self.compiled
         builder.registry._restore(self.registry)
 
@@ -244,6 +253,76 @@ class CompiledApplication:
     resources: tuple[ResourceDefinition, ...]
 
 
+def _invalid_datasource(resource_id: str, reason: str) -> RakitError:
+    return RakitError(
+        code=ErrorCode.CONFIG_INVALID_DATASOURCE,
+        message=f'Resource "{resource_id}" has an invalid read data source.',
+        status_code=500,
+        details={"resource_id": resource_id, "reason": reason},
+    )
+
+
+def _invalid_policy(resource_id: str, policy: str, reason: str) -> RakitError:
+    return RakitError(
+        code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+        message=f'Resource "{resource_id}" has an invalid field policy.',
+        status_code=500,
+        details={"resource_id": resource_id, "policy": policy, "reason": reason},
+    )
+
+
+def _validate_resource_contract(
+    definition: ResourceDefinition,
+    data_source: DataSource,
+) -> None:
+    resource_id = definition.resource_id
+    capabilities = getattr(data_source, "capabilities", None)
+    if capabilities is None or getattr(capabilities, "read", False) is not True:
+        raise _invalid_datasource(resource_id, "read_not_supported")
+
+    for method_name in ("list", "count", "detail"):
+        if not callable(getattr(data_source, method_name, None)):
+            raise _invalid_datasource(resource_id, f"missing_{method_name}")
+
+    try:
+        fields = tuple(data_source.fields)
+        identity_fields = tuple(data_source.identity_fields)
+    except (AttributeError, TypeError) as exc:
+        raise _invalid_datasource(resource_id, "field_metadata_unavailable") from exc
+
+    if not fields:
+        raise _invalid_datasource(resource_id, "fields_empty")
+    if any(not isinstance(field_name, str) or not field_name for field_name in fields):
+        raise _invalid_datasource(resource_id, "fields_invalid")
+    if len(set(fields)) != len(fields):
+        raise _invalid_datasource(resource_id, "fields_not_unique")
+    if not identity_fields:
+        raise _invalid_datasource(resource_id, "identity_fields_empty")
+    if any(not isinstance(field_name, str) or not field_name for field_name in identity_fields):
+        raise _invalid_datasource(resource_id, "identity_fields_invalid")
+    if len(set(identity_fields)) != len(identity_fields):
+        raise _invalid_datasource(resource_id, "identity_fields_not_unique")
+    if not set(identity_fields) <= set(fields):
+        raise _invalid_datasource(resource_id, "identity_fields_unknown")
+
+    known_fields = set(fields)
+    policy = definition.field_policy
+    for policy_name in (
+        "list_fields",
+        "detail_fields",
+        "filter_fields",
+        "search_fields",
+        "sort_fields",
+    ):
+        policy_fields = getattr(policy, policy_name)
+        if policy_name in {"list_fields", "detail_fields"} and not policy_fields:
+            raise _invalid_policy(resource_id, policy_name, "fields_empty")
+        if len(set(policy_fields)) != len(policy_fields):
+            raise _invalid_policy(resource_id, policy_name, "fields_not_unique")
+        if not set(policy_fields) <= known_fields:
+            raise _invalid_policy(resource_id, policy_name, "unknown_field")
+
+
 def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
     if builder._install_depth > 0:
         raise RakitError(
@@ -253,6 +332,12 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
         )
 
     validate_official_package_versions(OFFICIAL_PACKAGE_NAMES)
+
+    for resource in builder.resources:
+        data_source = builder._resource_data_sources.get(resource.resource_id)
+        if data_source is None:
+            raise _invalid_datasource(resource.resource_id, "missing_registration")
+        _validate_resource_contract(resource, data_source)
 
     seen: dict[str, list[tuple[str, str, str]]] = {}
     seen_route_names: dict[str, RouteDefinition] = {}

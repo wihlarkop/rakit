@@ -8,7 +8,7 @@ import structlog
 from rakit_core.admin_types import ModelAdmin, ResourceAdmin
 from rakit_core.compiler import ApplicationBuilder, CompiledApplication, Plugin, compile_application
 from rakit_core.config import RakitConfig, SecretValue
-from rakit_core.definitions import ResourceDefinition, RouteDefinition
+from rakit_core.definitions import ResourceDefinition, ResourceFieldPolicy, RouteDefinition
 from rakit_core.di import ServiceRegistry, ServiceResolver
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.resources import ResourceService
@@ -122,11 +122,19 @@ class Admin:
                     details={"admin_class": admin_cls.__name__, "attribute": attribute_name},
                 )
 
+        field_policy = ResourceFieldPolicy(
+            list_fields=tuple(getattr(admin_cls, "list_fields", ())),
+            detail_fields=tuple(getattr(admin_cls, "detail_fields", ())),
+            filter_fields=tuple(getattr(admin_cls, "filter_fields", ())),
+            search_fields=tuple(getattr(admin_cls, "search_fields", ())),
+            sort_fields=tuple(getattr(admin_cls, "sort_fields", ())),
+        )
+
         if issubclass(admin_cls, ModelAdmin):
             claims = [
                 result
                 for claim in self._builder._adapters.values()
-                if (result := claim(admin_cls.model)) is not None
+                if (result := claim(admin_cls.model, field_policy)) is not None
             ]
             if len(claims) == 0:
                 raise RakitError(
@@ -167,8 +175,9 @@ class Admin:
             path=admin_cls.path,
             label=admin_cls.label,
             singular_label=admin_cls.singular_label,
+            field_policy=field_policy,
         )
-        self._builder.add_resource(definition)
+        self._builder.add_resource(definition, data_source)
         self._builder.add_route(
             RouteDefinition(
                 route_name=f"resource:{definition.resource_id}:list",

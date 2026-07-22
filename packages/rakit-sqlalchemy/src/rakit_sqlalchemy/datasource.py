@@ -6,6 +6,7 @@ from typing import Any
 from uuid import UUID
 
 from rakit_core.datasource import DataSourceCapabilities
+from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.identity import RecordIdentity
 from rakit_core.query import (
@@ -80,6 +81,14 @@ def _invalid_identity(
         status_code=400,
         details={"field": field},
         cause=cause,
+    )
+
+
+def _query_field_not_allowed() -> RakitError:
+    return RakitError(
+        code=ErrorCode.VALIDATION_FAILED,
+        message="Query field is not allowed",
+        status_code=400,
     )
 
 
@@ -231,10 +240,12 @@ class SQLAlchemyDataSource:
         *,
         model: type[object],
         session_factory: async_sessionmaker[AsyncSession],
+        field_policy: ResourceFieldPolicy,
     ) -> None:
         self._model = model
         self._session_factory = session_factory
         self._metadata: ModelMetadata = inspect_model(model)
+        self._field_policy = field_policy
 
     @property
     def fields(self) -> tuple[str, ...]:
@@ -268,7 +279,7 @@ class SQLAlchemyDataSource:
         operator), rather than inventing a separate behaviour for search.
         """
         predicates: list[ColumnElement[bool]] = []
-        for field_name in self.fields:
+        for field_name in self._field_policy.search_fields:
             column = getattr(self._model, field_name)
             if _is_string_type(column.type):
                 predicates.append(column.contains(search))
@@ -288,6 +299,26 @@ class SQLAlchemyDataSource:
         if query.search:
             statement = self._apply_search(statement, query.search)
         return statement
+
+    def _validate_query_policy(self, query: ResourceQuery) -> None:
+        known_fields = set(self.fields)
+        allowed_sort_fields = set(self._field_policy.sort_fields) | set(self.identity_fields)
+        if any(
+            sort.field not in known_fields or sort.field not in allowed_sort_fields
+            for sort in query.sorting
+        ):
+            raise _query_field_not_allowed()
+        allowed_filter_fields = set(self._field_policy.filter_fields)
+        if any(
+            filter_.field not in known_fields or filter_.field not in allowed_filter_fields
+            for filter_ in query.filters
+        ):
+            raise _query_field_not_allowed()
+        if query.search and (
+            not self._field_policy.search_fields
+            or not set(self._field_policy.search_fields) <= known_fields
+        ):
+            raise _query_field_not_allowed()
 
     async def _count(self, session: AsyncSession, statement: Select) -> int:
         count_statement = select(func.count()).select_from(statement.subquery())
@@ -312,6 +343,7 @@ class SQLAlchemyDataSource:
         return tuple(sorting)
 
     async def list(self, query: ResourceQuery) -> PageResult:
+        self._validate_query_policy(query)
         filtered = self._filtered_statement(query)
         ordered = filtered
         for sort in self._effective_sorting(query):
@@ -351,6 +383,7 @@ class SQLAlchemyDataSource:
         predicates as `list()` so a deferred total matches the filtered list it
         annotates, rather than counting the whole table.
         """
+        self._validate_query_policy(query)
         filtered = self._filtered_statement(query)
         async with self._session_factory() as session:
             return await self._count(session, filtered)

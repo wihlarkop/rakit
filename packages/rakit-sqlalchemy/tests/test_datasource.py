@@ -1,8 +1,10 @@
 from collections.abc import AsyncIterator
 
 import pytest
+from rakit_core.definitions import ResourceFieldPolicy
+from rakit_core.errors import RakitError
 from rakit_core.identity import RecordIdentity
-from rakit_core.query import Filter, FilterOperator, ResourceQuery
+from rakit_core.query import Filter, FilterOperator, ResourceQuery, Sort
 from rakit_sqlalchemy.datasource import SQLAlchemyDataSource
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -17,6 +19,15 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str]
+
+
+USER_POLICY = ResourceFieldPolicy(
+    list_fields=("id", "name"),
+    detail_fields=("id", "name"),
+    filter_fields=("id", "name"),
+    search_fields=("name",),
+    sort_fields=("id", "name"),
+)
 
 
 @pytest.fixture
@@ -37,7 +48,9 @@ async def session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
 
 
 async def test_sqlalchemy_datasource_lists_and_loads(session_factory) -> None:
-    datasource = SQLAlchemyDataSource(model=User, session_factory=session_factory)
+    datasource = SQLAlchemyDataSource(
+        model=User, session_factory=session_factory, field_policy=USER_POLICY
+    )
     page = await datasource.list(
         ResourceQuery.from_params(
             sort="name",
@@ -55,7 +68,9 @@ async def test_sqlalchemy_datasource_lists_and_loads(session_factory) -> None:
 
 
 async def test_sqlalchemy_datasource_applies_eq_filter(session_factory) -> None:
-    datasource = SQLAlchemyDataSource(model=User, session_factory=session_factory)
+    datasource = SQLAlchemyDataSource(
+        model=User, session_factory=session_factory, field_policy=USER_POLICY
+    )
     page = await datasource.list(
         ResourceQuery.from_params(
             sort="name",
@@ -69,13 +84,17 @@ async def test_sqlalchemy_datasource_applies_eq_filter(session_factory) -> None:
 
 
 async def test_sqlalchemy_datasource_detail_not_found_returns_none(session_factory) -> None:
-    datasource = SQLAlchemyDataSource(model=User, session_factory=session_factory)
+    datasource = SQLAlchemyDataSource(
+        model=User, session_factory=session_factory, field_policy=USER_POLICY
+    )
     record = await datasource.detail(RecordIdentity(values={"id": 999}))
     assert record is None
 
 
 async def test_sqlalchemy_datasource_pagination(session_factory) -> None:
-    datasource = SQLAlchemyDataSource(model=User, session_factory=session_factory)
+    datasource = SQLAlchemyDataSource(
+        model=User, session_factory=session_factory, field_policy=USER_POLICY
+    )
     page = await datasource.list(
         ResourceQuery.from_params(
             sort="name",
@@ -102,3 +121,33 @@ async def test_sqlalchemy_datasource_pagination(session_factory) -> None:
     assert [item.name for item in second_page.items] == ["Grace"]
     assert second_page.has_previous is True
     assert second_page.has_next is False
+
+
+@pytest.mark.parametrize(
+    "query",
+    (
+        ResourceQuery(filters=(Filter(field="name", operator=FilterOperator.EQ, value="Ada"),)),
+        ResourceQuery(sorting=(Sort(field="name"),)),
+        ResourceQuery(search="Ada"),
+    ),
+)
+async def test_sqlalchemy_datasource_rejects_direct_query_policy_bypass(
+    session_factory,
+    query: ResourceQuery,
+) -> None:
+    datasource = SQLAlchemyDataSource(
+        model=User,
+        session_factory=session_factory,
+        field_policy=ResourceFieldPolicy(
+            list_fields=("id", "name"),
+            detail_fields=("id", "name"),
+        ),
+    )
+
+    with pytest.raises(RakitError) as exc_info:
+        await datasource.list(query)
+
+    assert exc_info.value.to_public_dict() == {
+        "code": "validation.failed",
+        "message": "Query field is not allowed",
+    }

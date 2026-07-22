@@ -1,5 +1,6 @@
 import pytest
 from rakit_core.compiler import ApplicationBuilder
+from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.di import ServiceScope
 from rakit_sqlalchemy.datasource import SQLAlchemyDataSource
 from rakit_sqlalchemy.plugin import SQLAlchemyPlugin
@@ -49,7 +50,10 @@ def test_claim_returns_datasource_for_mapped_model(session_factory) -> None:
     plugin.configure(builder)
 
     claim = builder._adapters["sqlalchemy"]
-    datasource = claim(User)
+    datasource = claim(
+        User,
+        ResourceFieldPolicy(list_fields=("id", "name"), detail_fields=("id", "name")),
+    )
 
     assert isinstance(datasource, SQLAlchemyDataSource)
 
@@ -61,4 +65,10 @@ def test_claim_returns_none_for_non_mapped_class(session_factory) -> None:
 
     claim = builder._adapters["sqlalchemy"]
 
-    assert claim(NotAModel) is None
+    assert (
+        claim(
+            NotAModel,
+            ResourceFieldPolicy(list_fields=("id",), detail_fields=("id",)),
+        )
+        is None
+    )

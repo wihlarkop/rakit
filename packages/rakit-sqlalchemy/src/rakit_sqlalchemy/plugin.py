@@ -1,5 +1,6 @@
 from rakit_core.compiler import ApplicationBuilder
 from rakit_core.datasource import DataSource
+from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.di import ServiceScope
 from sqlalchemy.exc import NoInspectionAvailable
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -20,9 +21,17 @@ class SQLAlchemyPlugin:
         )
         builder.register_adapter("sqlalchemy", self._claim)
 
-    def _claim(self, model: type[object]) -> DataSource | None:
+    def _claim(
+        self,
+        model: type[object],
+        field_policy: ResourceFieldPolicy,
+    ) -> DataSource | None:
         try:
             inspect_model(model)
         except (ValueError, NoInspectionAvailable):
             return None
-        return SQLAlchemyDataSource(model=model, session_factory=self._session_factory)
+        return SQLAlchemyDataSource(
+            model=model,
+            session_factory=self._session_factory,
+            field_policy=field_policy,
+        )

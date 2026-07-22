@@ -7,6 +7,18 @@ from .config import MachineId
 AbsolutePath = Annotated[str, Field(pattern=r"^/")]
 
 
+class ResourceFieldPolicy(BaseModel):
+    """Immutable, backend-neutral read-field policy for one resource."""
+
+    model_config = ConfigDict(frozen=True)
+
+    list_fields: tuple[str, ...] = ()
+    detail_fields: tuple[str, ...] = ()
+    filter_fields: tuple[str, ...] = ()
+    search_fields: tuple[str, ...] = ()
+    sort_fields: tuple[str, ...] = ()
+
+
 class ResourceDefinition(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -14,6 +26,7 @@ class ResourceDefinition(BaseModel):
     path: AbsolutePath
     label: str
     singular_label: str
+    field_policy: ResourceFieldPolicy = Field(default_factory=ResourceFieldPolicy)
 
 
 class PageDefinition(BaseModel):

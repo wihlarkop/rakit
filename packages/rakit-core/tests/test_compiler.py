@@ -730,7 +730,7 @@ def test_post_compile_mutation_still_raises_registry_frozen() -> None:
 def test_register_adapter_stores_claim_callback() -> None:
     builder = ApplicationBuilder()
 
-    def claim(model: type) -> DataSource | None:
+    def claim(model: type, policy: object) -> DataSource | None:
         return None
 
     builder.register_adapter("sqlalchemy", claim)
@@ -739,9 +739,9 @@ def test_register_adapter_stores_claim_callback() -> None:
 
 def test_register_duplicate_adapter_fails() -> None:
     builder = ApplicationBuilder()
-    builder.register_adapter("sqlalchemy", lambda model: None)
+    builder.register_adapter("sqlalchemy", lambda model, policy: None)
     with pytest.raises(RakitError) as caught:
-        builder.register_adapter("sqlalchemy", lambda model: None)
+        builder.register_adapter("sqlalchemy", lambda model, policy: None)
     assert caught.value.code == "config.duplicate_adapter"
 
 
@@ -749,7 +749,7 @@ def test_register_adapter_after_successful_compile_fails() -> None:
     builder = ApplicationBuilder()
     compile_application(builder)
     with pytest.raises(RakitError) as caught:
-        builder.register_adapter("sqlalchemy", lambda model: None)
+        builder.register_adapter("sqlalchemy", lambda model, policy: None)
     assert caught.value.code == "config.already_compiled"
 
 
@@ -757,7 +757,7 @@ class _PluginRegistersAdapterThenFails:
     plugin_id = "adapter-flaky"
 
     def configure(self, builder: ApplicationBuilder) -> None:
-        builder.register_adapter("sqlalchemy", lambda model: None)
+        builder.register_adapter("sqlalchemy", lambda model, policy: None)
         raise RuntimeError("adapter boom")
 
 
@@ -771,4 +771,4 @@ def test_failed_install_rolls_back_registered_adapters() -> None:
     assert "sqlalchemy" not in builder._adapters
 
     # Proves the registration was genuinely removed, not just hidden from view.
-    builder.register_adapter("sqlalchemy", lambda model: None)
+    builder.register_adapter("sqlalchemy", lambda model, policy: None)

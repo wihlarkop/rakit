@@ -143,20 +143,36 @@ class ResourceBinding:
 
     @property
     def fields(self) -> tuple[str, ...]:
-        return self.service.data_source.fields
+        return self.definition.field_policy.list_fields
+
+    @property
+    def detail_fields(self) -> tuple[str, ...]:
+        return self.definition.field_policy.detail_fields
+
+    @property
+    def filter_fields(self) -> tuple[str, ...]:
+        return self.definition.field_policy.filter_fields
+
+    @property
+    def search_fields(self) -> tuple[str, ...]:
+        return self.definition.field_policy.search_fields
+
+    @property
+    def sort_fields(self) -> tuple[str, ...]:
+        return self.definition.field_policy.sort_fields
 
     @property
     def identity_fields(self) -> tuple[str, ...]:
         return self.service.data_source.identity_fields
 
     def parse_query(self, params: QueryParams) -> ResourceQuery:
-        allowed_sort_fields = set(self.fields)
+        allowed_sort_fields = set(self.sort_fields)
         identity_fields = self.identity_fields
         page = _parse_int(params.get("page"), _PAGINATION_DEFAULTS.page)
         per_page = _parse_int(params.get("per_page"), _PAGINATION_DEFAULTS.per_page)
         sort = params.get("sort")
-        search = params.get("search")
-        filters = _parse_filters(params, allowed_sort_fields)
+        search = params.get("search") if self.search_fields else None
+        filters = _parse_filters(params, set(self.filter_fields))
         count_policy = _parse_count_policy(params.get("count_policy"))
         try:
             return ResourceQuery.from_params(
@@ -329,6 +345,7 @@ def _sort_headers(
     query: ResourceQuery,
     path: str,
     explicit_sorting: Sequence[Sort],
+    allowed_sort_fields: set[str],
 ) -> list[dict[str, str]]:
     """Build per-column sort-toggle links for the table header.
 
@@ -347,6 +364,9 @@ def _sort_headers(
         preserved_params.append(("count_policy", query.count_policy.value))
     headers: list[dict[str, str]] = []
     for field_name in fields:
+        if field_name not in allowed_sort_fields:
+            headers.append({"field": field_name, "url": "", "aria_sort": "none"})
+            continue
         # Toggle this column in place without discarding the other explicit
         # user sorts. A newly clicked field is appended to that sequence.
         next_sort = _toggle_explicit_sort(explicit_sorting, field_name)
@@ -400,7 +420,7 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
         logical_name = (
             table_template if _is_htmx(request) else binding.resolve_template("list.html")
         )
-        explicit_sorting = _explicit_sorting(request.query_params.get("sort"), fields)
+        explicit_sorting = _explicit_sorting(request.query_params.get("sort"), binding.sort_fields)
         filter_values = [_serialize_filter(filter_) for filter_ in query.filters]
         context = {
             "resource": binding.definition,
@@ -415,8 +435,10 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
                 query,
                 resource_path,
                 explicit_sorting,
+                set(binding.sort_fields),
             ),
             "search_value": query.search or "",
+            "search_enabled": bool(binding.search_fields),
             "filter_values": filter_values,
             "sort_value": _sort_parameter(explicit_sorting),
             "per_page_value": str(query.pagination.per_page),
@@ -456,7 +478,7 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
                 status_code=400,
             )
         record = await binding.service.detail(identity)
-        fields = binding.fields
+        fields = binding.detail_fields
         context = {
             "resource": binding.definition,
             "record": record,

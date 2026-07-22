@@ -7,6 +7,7 @@ from typing import Any, cast
 from uuid import UUID
 
 import pytest
+from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.identity import RecordIdentity
 from rakit_core.query import Filter, FilterOperator, ResourceQuery
@@ -84,11 +85,22 @@ class SessionFactorySpy:
         raise AssertionError("invalid filters must fail before session creation")
 
 
+TYPED_FIELDS = tuple(property_.key for property_ in TypedRecord.__mapper__.column_attrs)
+TYPED_POLICY = ResourceFieldPolicy(
+    list_fields=("id", "name"),
+    detail_fields=("id", "name"),
+    filter_fields=TYPED_FIELDS,
+    search_fields=("name",),
+    sort_fields=TYPED_FIELDS,
+)
+
+
 def _datasource(session_factory: object | None = None) -> SQLAlchemyDataSource:
     factory = session_factory or SessionFactorySpy()
     return SQLAlchemyDataSource(
         model=TypedRecord,
         session_factory=cast(Any, factory),
+        field_policy=TYPED_POLICY,
     )
 
 
@@ -114,6 +126,7 @@ def _detail_bound_value(model: type[object], raw: int | str | UUID) -> object:
     datasource = SQLAlchemyDataSource(
         model=model,
         session_factory=cast(Any, SessionFactorySpy()),
+        field_policy=ResourceFieldPolicy(list_fields=("id",), detail_fields=("id",)),
     )
     statement = datasource._detail_statement(RecordIdentity(values={"id": raw}))
     compiled = statement.compile(dialect=postgresql.dialect())
@@ -302,6 +315,7 @@ async def test_invalid_detail_identity_is_safe_before_session_creation(
     datasource = SQLAlchemyDataSource(
         model=UUIDRecord,
         session_factory=cast(Any, factory),
+        field_policy=ResourceFieldPolicy(list_fields=("id",), detail_fields=("id",)),
     )
 
     with pytest.raises(RakitError) as exc_info:
