@@ -9,12 +9,19 @@ templates via `ResourceService`, the query parser, and the identity codec.
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlencode
 
 from jinja2 import ChoiceLoader, FileSystemLoader, PackageLoader, select_autoescape
 from jinja2 import Environment as JinjaEnvironment
 from rakit_core.definitions import ResourceDefinition
 from rakit_core.identity import IdentityCodec, RecordIdentity
-from rakit_core.query import OffsetPagination, ResourceQuery
+from rakit_core.query import (
+    CountPolicy,
+    Filter,
+    FilterOperator,
+    OffsetPagination,
+    ResourceQuery,
+)
 from rakit_core.resources import ResourceService
 from starlette.datastructures import QueryParams
 from starlette.requests import Request
@@ -81,6 +88,14 @@ class ResourceBinding:
         return f"resource:{self.resource_id}:detail"
 
     @property
+    def count_route_name(self) -> str:
+        return f"resource:{self.resource_id}:count"
+
+    @property
+    def count_path(self) -> str:
+        return f"{self.definition.path}/_count"
+
+    @property
     def detail_path(self) -> str:
         return f"{self.definition.path}/{{identity}}"
 
@@ -113,6 +128,9 @@ class ResourceBinding:
         page = _parse_int(params.get("page"), _PAGINATION_DEFAULTS.page)
         per_page = _parse_int(params.get("per_page"), _PAGINATION_DEFAULTS.per_page)
         sort = params.get("sort")
+        search = params.get("search")
+        filters = _parse_filters(params, allowed_sort_fields)
+        count_policy = _parse_count_policy(params.get("count_policy"))
         try:
             return ResourceQuery.from_params(
                 sort=sort,
@@ -120,16 +138,24 @@ class ResourceBinding:
                 per_page=per_page,
                 allowed_sort_fields=allowed_sort_fields,
                 identity_fields=identity_fields,
+                filters=filters,
+                search=search,
+                count_policy=count_policy,
             )
         except ValueError:
             # A malformed query string (bad sort field, out-of-range pagination)
             # falls back to a default query for this read-only slice; strict
-            # validation-to-HTTP translation is a later task's concern.
+            # validation-to-HTTP translation is a later task's concern. Filters,
+            # search and count policy are already individually sanitised above,
+            # so they are safe to carry into the fallback.
             return ResourceQuery.from_params(
                 page=_PAGINATION_DEFAULTS.page,
                 per_page=_PAGINATION_DEFAULTS.per_page,
                 allowed_sort_fields=allowed_sort_fields,
                 identity_fields=identity_fields,
+                filters=filters,
+                search=search,
+                count_policy=count_policy,
             )
 
 
@@ -140,6 +166,90 @@ def _parse_int(value: str | None, fallback: int) -> int:
         return int(value)
     except ValueError:
         return fallback
+
+
+def _parse_count_policy(value: str | None) -> CountPolicy:
+    if value is None:
+        return CountPolicy.EXACT
+    try:
+        return CountPolicy(value.strip().lower())
+    except ValueError:
+        # Unknown policy in the URL falls back to the safe default rather than
+        # erroring -- consistent with page/per_page/sort's lenient parsing.
+        return CountPolicy.EXACT
+
+
+def _parse_filters(params: QueryParams, allowed_fields: set[str]) -> tuple[Filter, ...]:
+    """Parse repeatable ``filter=<field>:<operator>:<value>`` query params.
+
+    Bookmarkable URL contract for 0.1: each filter is a single ``filter`` param
+    whose value is three colon-delimited parts -- the field name, the operator
+    token (one of ``FilterOperator``'s values), and the raw value (which may
+    itself contain colons; only the first two colons are treated as delimiters).
+    The param is repeatable and every filter is AND-combined downstream.
+
+    Special value handling:
+    - ``in``: the value is split on commas into a list.
+    - ``is_null``: the value is interpreted as a boolean (``true``/``1``/``yes``).
+
+    Any filter naming a field outside the whitelist, or using an unknown
+    operator, is silently dropped -- same lenient philosophy as sort parsing.
+    """
+    filters: list[Filter] = []
+    for raw in params.getlist("filter"):
+        parts = raw.split(":", 2)
+        if len(parts) != 3:
+            continue
+        field_name, operator_token, raw_value = parts
+        if field_name not in allowed_fields:
+            continue
+        try:
+            operator = FilterOperator(operator_token.strip().lower())
+        except ValueError:
+            continue
+        value: object
+        if operator is FilterOperator.IN:
+            value = [part for part in raw_value.split(",") if part]
+        elif operator is FilterOperator.IS_NULL:
+            value = raw_value.strip().lower() in {"true", "1", "yes"}
+        else:
+            value = raw_value
+        filters.append(Filter(field=field_name, operator=operator, value=value))
+    return tuple(filters)
+
+
+def _sort_headers(fields: Sequence[str], query: ResourceQuery, path: str) -> list[dict[str, str]]:
+    """Build per-column sort-toggle links for the table header.
+
+    Each link deliberately omits any ``page`` param: changing the sort resets to
+    the first page (a stale page number may not exist in the re-sorted result
+    set). The current free-text search and count policy are preserved so sorting
+    does not silently discard them.
+    """
+    primary = query.sorting[0] if query.sorting else None
+    headers: list[dict[str, str]] = []
+    for field_name in fields:
+        is_primary_asc = (
+            primary is not None and primary.field == field_name and primary.direction.value == "asc"
+        )
+        # Toggle: an already-ascending primary column flips to descending.
+        next_sort = f"-{field_name}" if is_primary_asc else field_name
+        params: list[tuple[str, str]] = [("sort", next_sort)]
+        if query.search:
+            params.append(("search", query.search))
+        if query.count_policy.value != "exact":
+            params.append(("count_policy", query.count_policy.value))
+        current = ""
+        if primary is not None and primary.field == field_name:
+            current = primary.direction.value
+        headers.append(
+            {
+                "field": field_name,
+                "url": f"{path}?{urlencode(params)}",
+                "direction": current,
+            }
+        )
+    return headers
 
 
 def build_resource_routes(binding: ResourceBinding) -> list[Route]:
@@ -162,6 +272,12 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
                 }
             )
 
+        count_url = str(request.url_for(binding.count_route_name))
+        if request.url.query:
+            # Carry the current filters/search into the deferred-count fetch so
+            # the total matches the list it annotates, not the whole table.
+            count_url = f"{count_url}?{request.url.query}"
+
         logical_name = "_table.html" if _is_htmx(request) else "list.html"
         context = {
             "resource": binding.definition,
@@ -169,11 +285,24 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
             "query": query,
             "fields": fields,
             "rows": rows,
+            "count_url": count_url,
+            "sort_headers": _sort_headers(fields, query, binding.definition.path),
+            "search_value": query.search or "",
         }
         return binding.templates.TemplateResponse(
             request,
             binding.resolve_template(logical_name),
             context,
+            headers={"Cache-Control": "no-store"},
+        )
+
+    async def resource_count(request: Request) -> Response:
+        query = binding.parse_query(request.query_params)
+        total = await binding.service.count(query)
+        return binding.templates.TemplateResponse(
+            request,
+            binding.resolve_template("_count.html"),
+            {"resource": binding.definition, "total": total},
             headers={"Cache-Control": "no-store"},
         )
 
@@ -194,11 +323,20 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
             headers={"Cache-Control": "no-store"},
         )
 
+    # `_count` is registered before the detail route so a request for
+    # `{path}/_count` matches the count handler rather than being captured by
+    # the detail route's `{identity}` path parameter.
     return [
         Route(
             binding.definition.path,
             resource_list,
             name=binding.list_route_name,
+            methods=["GET"],
+        ),
+        Route(
+            binding.count_path,
+            resource_count,
+            name=binding.count_route_name,
             methods=["GET"],
         ),
         Route(

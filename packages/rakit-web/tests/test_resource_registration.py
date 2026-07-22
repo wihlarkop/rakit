@@ -51,6 +51,9 @@ class FakeDataSource:
             total_count=1,
         )
 
+    async def count(self, query: ResourceQuery) -> int:
+        return 1
+
     async def detail(self, identity: RecordIdentity):
         return {"id": identity.values["id"], "name": "Ada"}
 

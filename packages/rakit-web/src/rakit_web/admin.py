@@ -170,6 +170,14 @@ class Admin:
         )
         self._builder.add_route(
             RouteDefinition(
+                route_name=f"resource:{definition.resource_id}:count",
+                methods=("GET",),
+                path=f"{definition.path}/_count",
+                owner_id=definition.resource_id,
+            )
+        )
+        self._builder.add_route(
+            RouteDefinition(
                 route_name=f"resource:{definition.resource_id}:detail",
                 methods=("GET",),
                 path=f"{definition.path}/{{identity}}",

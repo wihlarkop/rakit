@@ -1,8 +1,40 @@
+<div data-rakit-resource-controls="{{ resource.resource_id }}">
+  <form method="get" data-rakit-search action="{{ resource.path }}">
+    <input
+      type="search"
+      name="search"
+      value="{{ search_value }}"
+      aria-label="Search {{ resource.label }}"
+    />
+    {% if query.count_policy.value != "exact" %}
+    <input type="hidden" name="count_policy" value="{{ query.count_policy.value }}" />
+    {% endif %}
+    <button type="submit">Search</button>
+  </form>
+
+  <p data-rakit-total>
+    {% if query.count_policy.value == "deferred" %}
+    <span
+      data-rakit-total-deferred
+      hx-get="{{ count_url }}"
+      hx-trigger="load"
+      hx-swap="outerHTML"
+    >Calculating total…</span>
+    {% elif query.count_policy.value == "disabled" %}
+    Total unknown
+    {% else %}
+    {{ page.total_count }} total
+    {% endif %}
+  </p>
+</div>
+
 <table data-rakit-resource="{{ resource.resource_id }}">
   <thead>
     <tr>
-      {% for field_name in fields %}
-      <th scope="col">{{ field_name }}</th>
+      {% for header in sort_headers %}
+      <th scope="col" aria-sort="{{ header.direction if header.direction else 'none' }}">
+        <a href="{{ header.url }}">{{ header.field }}</a>
+      </th>
       {% endfor %}
     </tr>
   </thead>
