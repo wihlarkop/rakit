@@ -35,10 +35,23 @@ SENSITIVE_KEYS = {
 }
 
 
-#: Beyond this nesting depth, redaction stops recursing and returns values
-#: as-is (never redacted deeper, never crashes). Guards against pathologically
+#: Beyond this nesting depth, redaction stops recursing and substitutes
+#: ``_TRUNCATED_SENTINEL`` instead of the original (possibly still-deep,
+#: possibly still secret-bearing) container. Guards against pathologically
 #: deep -- but non-cyclic -- structures blowing the call stack.
 _MAX_REDACT_DEPTH = 10
+
+#: Substituted for a container that is already on the current recursion
+#: ancestor path (i.e. a genuine self-reference), instead of returning the
+#: original -- still-cyclic -- object. Returning the original would both
+#: leave any secrets nested inside it fully reachable and hand a circular
+#: object back to structlog's ``JSONRenderer``, which raises on it.
+_CIRCULAR_SENTINEL = "[CIRCULAR]"
+
+#: Substituted for a container at the ``_MAX_REDACT_DEPTH`` boundary,
+#: instead of returning the original (unredacted-beyond-this-point)
+#: container.
+_TRUNCATED_SENTINEL = "[TRUNCATED]"
 
 
 def redact_event(logger: Any, method_name: str, event_dict: EventDict) -> EventDict:
@@ -51,7 +64,11 @@ def redact_event(logger: Any, method_name: str, event_dict: EventDict) -> EventD
     against self-referential containers via ancestor-path tracking (``seen``
     holds the ids of containers on the current recursion path only, so
     unrelated reuse of the same object in sibling branches is never mistaken
-    for a cycle).
+    for a cycle). Fails closed: a detected cycle is replaced with
+    ``_CIRCULAR_SENTINEL`` and a container past ``_MAX_REDACT_DEPTH`` is
+    replaced with ``_TRUNCATED_SENTINEL`` -- the original object is never
+    returned in either case, so no nested secret can leak back out and no
+    circular object can reach (and crash) the renderer.
     """
     seen: frozenset[int] = frozenset({id(event_dict)})
     for key in tuple(event_dict):
@@ -66,19 +83,23 @@ def _redact_field(key: object, value: Any, *, depth: int, seen: frozenset[int]) 
 
 
 def _redact_value(value: Any, *, depth: int, seen: frozenset[int]) -> Any:
-    if depth >= _MAX_REDACT_DEPTH:
-        return value
-    if isinstance(value, Mapping):
+    if isinstance(value, Mapping | list | tuple):
         value_id = id(value)
         if value_id in seen:
-            return value
+            # Cycle detected: return a safe scalar sentinel, never the
+            # original (still-cyclic) object. Checked before the depth
+            # boundary since cycle detection is the more specific case.
+            return _CIRCULAR_SENTINEL
+        if depth >= _MAX_REDACT_DEPTH:
+            # Depth boundary reached: return a safe scalar sentinel, never
+            # the original (possibly still-deep, possibly secret-bearing)
+            # container.
+            return _TRUNCATED_SENTINEL
         child_seen = seen | {value_id}
-        return {k: _redact_field(k, v, depth=depth + 1, seen=child_seen) for k, v in value.items()}
-    if isinstance(value, list | tuple):
-        value_id = id(value)
-        if value_id in seen:
-            return value
-        child_seen = seen | {value_id}
+        if isinstance(value, Mapping):
+            return {
+                k: _redact_field(k, v, depth=depth + 1, seen=child_seen) for k, v in value.items()
+            }
         redacted_items = [_redact_value(item, depth=depth + 1, seen=child_seen) for item in value]
         return tuple(redacted_items) if isinstance(value, tuple) else redacted_items
     return value

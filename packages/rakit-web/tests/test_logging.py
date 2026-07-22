@@ -335,9 +335,9 @@ def test_redact_event_handles_self_referential_dict_without_recursion_error() ->
     event = redact_event(object(), "info", {"data": cyclic})
 
     assert event["data"]["password"] == "[REDACTED]"
-    # The cycle is left as-is beyond detection, not redacted further -- the
-    # important thing is that this call returned at all.
-    assert event["data"]["self"] is cyclic or isinstance(event["data"]["self"], dict)
+    # Fail closed: the cycle is replaced with a scalar sentinel, never the
+    # original (still-cyclic) object.
+    assert event["data"]["self"] == "[CIRCULAR]"
 
 
 def test_redact_event_handles_self_referential_list_without_recursion_error() -> None:
@@ -347,6 +347,41 @@ def test_redact_event_handles_self_referential_list_without_recursion_error() ->
     event = redact_event(object(), "info", {"data": cyclic})
 
     assert isinstance(event["data"], list)
+    assert event["data"][0] == "[CIRCULAR]"
+
+
+def test_redact_event_sibling_reuse_of_same_object_is_not_treated_as_cycle() -> None:
+    """The ancestor-path (not global-seen) design must not mistake the SAME
+    object appearing twice in unrelated branches for a cycle -- both
+    branches must be fully, independently redacted.
+    """
+    shared = {"password": "secret", "id": 1}
+
+    event = redact_event(object(), "info", {"branch_a": shared, "branch_b": shared})
+
+    assert event["branch_a"]["password"] == "[REDACTED]"
+    assert event["branch_a"]["id"] == 1
+    assert event["branch_b"]["password"] == "[REDACTED]"
+    assert event["branch_b"]["id"] == 1
+    # Neither branch was mistaken for a cycle.
+    assert event["branch_a"] != "[CIRCULAR]"
+    assert event["branch_b"] != "[CIRCULAR]"
+
+
+def test_redact_event_truncates_structure_deeper_than_max_depth() -> None:
+    from rakit_web.logging import _MAX_REDACT_DEPTH
+
+    deep: dict = {"password": "too-deep-secret"}
+    for _ in range(_MAX_REDACT_DEPTH + 5):
+        deep = {"nested": deep}
+
+    event = redact_event(object(), "info", {"data": deep})
+
+    # Serialize to a string to confirm the deep secret is nowhere present,
+    # and the sentinel appears instead of the raw remaining structure.
+    rendered = repr(event)
+    assert "too-deep-secret" not in rendered
+    assert "[TRUNCATED]" in rendered
 
 
 def test_nested_secret_value_absent_from_rendered_output(capsys) -> None:
@@ -360,3 +395,89 @@ def test_nested_secret_value_absent_from_rendered_output(capsys) -> None:
 
     assert "hunter2-secret-value" not in output
     assert "[REDACTED]" in output
+
+
+def test_self_referential_dict_renders_through_real_json_pipeline(capsys) -> None:
+    """A self-referential dict must not crash structlog's real JSONRenderer
+    (which raises "Circular reference detected" on a still-cyclic object)
+    and must render the "[CIRCULAR]" sentinel instead of the raw object.
+    """
+    configure_logging(debug=False)
+
+    cyclic: dict = {}
+    cyclic["self"] = cyclic
+
+    logger = structlog.get_logger()
+    # Must not raise.
+    logger.info("cyclic.dict", data=cyclic)
+
+    captured = capsys.readouterr()
+    output = captured.err or captured.out
+
+    assert "cyclic.dict" in output
+    assert "[CIRCULAR]" in output
+
+
+def test_self_referential_list_renders_through_real_json_pipeline(capsys) -> None:
+    """A self-referential list must not crash structlog's real JSONRenderer
+    and must render the "[CIRCULAR]" sentinel instead of the raw object.
+    """
+    configure_logging(debug=False)
+
+    cyclic: list = []
+    cyclic.append(cyclic)
+
+    logger = structlog.get_logger()
+    # Must not raise.
+    logger.info("cyclic.list", data=cyclic)
+
+    captured = capsys.readouterr()
+    output = captured.err or captured.out
+
+    assert "cyclic.list" in output
+    assert "[CIRCULAR]" in output
+
+
+def test_secret_in_cyclic_structure_absent_from_rendered_output(capsys) -> None:
+    """A sensitive key alongside a cycle elsewhere in the same structure must
+    still be redacted -- the cycle in one branch must not prevent redaction
+    of a sibling secret.
+    """
+    configure_logging(debug=False)
+
+    cyclic: dict = {"password": "hunter2"}
+    cyclic["self"] = cyclic
+
+    logger = structlog.get_logger()
+    logger.info("cyclic.with_secret", data=cyclic)
+
+    captured = capsys.readouterr()
+    output = captured.err or captured.out
+
+    assert "hunter2" not in output
+    assert "[REDACTED]" in output
+    assert "[CIRCULAR]" in output
+
+
+def test_structure_deeper_than_max_depth_renders_through_real_pipeline(capsys) -> None:
+    """A non-cyclic but pathologically deep structure must not crash the real
+    JSONRenderer and must render the "[TRUNCATED]" sentinel instead of the
+    raw remaining structure once the depth boundary is hit.
+    """
+    from rakit_web.logging import _MAX_REDACT_DEPTH
+
+    configure_logging(debug=False)
+
+    deep: dict = {"end": "unreachable-deep-value"}
+    for _ in range(_MAX_REDACT_DEPTH + 5):
+        deep = {"nested": deep}
+
+    logger = structlog.get_logger()
+    # Must not raise.
+    logger.info("deep.structure", data=deep)
+
+    captured = capsys.readouterr()
+    output = captured.err or captured.out
+
+    assert "deep.structure" in output
+    assert "[TRUNCATED]" in output
