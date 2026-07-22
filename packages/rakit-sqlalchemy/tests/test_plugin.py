@@ -1,13 +1,18 @@
+from enum import Enum as PythonEnum
+from typing import Any, cast
+
 import pytest
 from rakit_core.compiler import ApplicationBuilder
 from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.di import ServiceScope
 from rakit_core.errors import ErrorCode, RakitError
+from rakit_core.identity import RecordIdentity
 from rakit_core.query import Filter, FilterOperator, ResourceQuery, Sort
 from rakit_sqlalchemy.datasource import SQLAlchemyDataSource
 from rakit_sqlalchemy.introspection import inspect_model
 from rakit_sqlalchemy.plugin import SQLAlchemyPlugin
 from sqlalchemy import BigInteger, Boolean, Date, Numeric, String, Uuid
+from sqlalchemy import Enum as SQLAlchemyEnum
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -90,6 +95,82 @@ class CompositeIdentity(Base):
     local_id: Mapped[int] = mapped_column(primary_key=True)
 
 
+class Status(PythonEnum):
+    ACTIVE = "active"
+    DISABLED = "disabled"
+
+
+class PythonEnumIdentity(Base):
+    """Enum primary key backed by a Python `enum.Enum` class."""
+
+    __tablename__ = "python_enum_identities"
+
+    id: Mapped[Status] = mapped_column(SQLAlchemyEnum(Status), primary_key=True)
+
+
+class PlainStringEnumIdentity(Base):
+    """Enum primary key with no Python `enum.Enum` class -- just a fixed
+    string-value whitelist (`sqlalchemy.Enum(*values)`)."""
+
+    __tablename__ = "plain_string_enum_identities"
+
+    id: Mapped[str] = mapped_column(SQLAlchemyEnum("active", "disabled"), primary_key=True)
+
+
+class Money:
+    """A custom domain object a misbehaving `TypeDecorator` might return --
+    not one of int/str/UUID, and therefore not encodable by `RecordIdentity`
+    or the web identity codec."""
+
+    def __init__(self, cents: int) -> None:
+        self.cents = cents
+
+
+class UnsafeMoneyType(TypeDecorator[Money]):
+    """Wraps `String` but hands back a custom domain object, not a `str` --
+    exactly the "same problem" a `TypeDecorator` can reintroduce even when
+    its declared `impl` unwraps to a supported base type."""
+
+    impl = String
+    cache_ok = True
+
+    @property
+    def python_type(self) -> type:
+        return Money
+
+
+class UnsafeMoneyIdentity(Base):
+    __tablename__ = "unsafe_money_identities"
+
+    id: Mapped[object] = mapped_column(UnsafeMoneyType, primary_key=True)
+
+
+class ExplicitIdentityCodec:
+    def decode(self, raw: object) -> Money:
+        assert isinstance(raw, str)
+        return Money(int(raw))
+
+
+class CodecBackedMoneyType(TypeDecorator[Money]):
+    """An otherwise-unsafe custom identity type made safe by an explicit,
+    opt-in Rakit identity codec -- the only sanctioned way to support a
+    genuinely custom identity value type."""
+
+    impl = String
+    cache_ok = True
+    rakit_identity_codec = ExplicitIdentityCodec()
+
+    @property
+    def python_type(self) -> type:
+        return Money
+
+
+class CodecBackedIdentity(Base):
+    __tablename__ = "codec_backed_identities"
+
+    id: Mapped[object] = mapped_column(CodecBackedMoneyType, primary_key=True)
+
+
 @pytest.fixture
 def session_factory() -> async_sessionmaker[AsyncSession]:
     # Engine creation is lazy (no connection opened) -- these tests only
@@ -160,6 +241,7 @@ def test_introspection_uses_mapper_attributes_and_retains_database_names() -> No
         (StringIdentity, "id"),
         (UUIDIdentity, "id"),
         (DecoratedIdentity, "id"),
+        (CodecBackedIdentity, "id"),
     ),
 )
 def test_claim_accepts_supported_identity_types(
@@ -185,6 +267,9 @@ def test_claim_accepts_supported_identity_types(
         (BooleanIdentity, "unsupported_type"),
         (NumericIdentity, "unsupported_type"),
         (CompositeIdentity, "composite_identity"),
+        (PythonEnumIdentity, "unsupported_type"),
+        (PlainStringEnumIdentity, "unsupported_type"),
+        (UnsafeMoneyIdentity, "unsupported_type"),
     ),
 )
 def test_claim_rejects_unsupported_identity_with_stable_error(
@@ -200,6 +285,55 @@ def test_claim_rejects_unsupported_identity_with_stable_error(
 
     assert exc_info.value.code == ErrorCode.CONFIG_UNSUPPORTED_IDENTITY
     assert exc_info.value.details == {"model": model.__name__, "reason": reason}
+
+
+def test_codec_backed_identity_uses_explicit_hook_before_strict_backend_binding(
+    session_factory,
+) -> None:
+    """An accepted custom identity type must actually route through its
+    explicit `rakit_identity_codec` hook (not `rakit_coerce_filter_value`,
+    and not silent inference) to produce its bound query value."""
+    datasource = SQLAlchemyDataSource(
+        model=CodecBackedIdentity,
+        session_factory=session_factory,
+        field_policy=ResourceFieldPolicy(list_fields=("id",), detail_fields=("id",)),
+    )
+
+    statement = datasource._detail_statement(RecordIdentity(values={"id": "500"}))
+    compiled = statement.compile(dialect=postgresql.dialect())
+
+    assert len(compiled.params) == 1
+    bound_value = next(iter(compiled.params.values()))
+    assert isinstance(bound_value, Money)
+    assert bound_value.cents == 500
+
+
+class _IdentitySessionFactorySpy:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __call__(self) -> Any:
+        self.calls += 1
+        raise AssertionError("invalid identities must fail before session creation")
+
+
+async def test_invalid_codec_backed_identity_is_safe_before_session_creation() -> None:
+    factory = _IdentitySessionFactorySpy()
+    datasource = SQLAlchemyDataSource(
+        model=CodecBackedIdentity,
+        session_factory=cast(Any, factory),
+        field_policy=ResourceFieldPolicy(list_fields=("id",), detail_fields=("id",)),
+    )
+
+    with pytest.raises(RakitError) as exc_info:
+        await datasource.detail(RecordIdentity(values={"id": "not-an-integer"}))
+
+    assert exc_info.value.to_public_dict() == {
+        "code": "validation.failed",
+        "message": "Invalid resource identity",
+        "details": {"field": "id"},
+    }
+    assert factory.calls == 0
 
 
 def test_renamed_attributes_compile_database_column_names_for_postgresql(

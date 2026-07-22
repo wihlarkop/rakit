@@ -393,6 +393,65 @@ identity, query, policy, and resource-service contracts. Importing it must not i
 SQLAlchemy support. The facade is typed through the `rakit` distribution's `py.typed` marker and is
 verified from an ordinary isolated wheel installation.
 
+## 24. `ResourceQuery.identity_tie_breakers` (external review round 3)
+
+`ResourceQuery.from_params(identity_fields=(...))`'s public composition contract conflicted with
+the SQLAlchemy adapter's `sort_fields`-policy validation of `query.sorting`: an identity field
+that is not itself user-sortable would fail policy validation purely because it had been folded
+into `.sorting` as an internal tie-breaker. Fixed by adding a separate, immutable
+`identity_tie_breakers: tuple[Sort, ...]` member to `ResourceQuery`. `from_params()` now records
+tie-breakers there instead of merging them into `.sorting`; `.sorting` holds only explicit,
+user-requested (and therefore policy-validated) sorting. `SQLAlchemyDataSource._validate_query_policy`
+validates `.sorting` against `sort_fields` exactly as before (unaffected -- a directly constructed
+explicit sort on an unlisted identity field is still rejected) and separately checks that every
+`identity_tie_breakers` field names a real column (defence against an unchecked `getattr`), but
+never against the `sort_fields` whitelist. `_effective_sorting` combines, in order and each only
+if not already present: explicit `.sorting`, then `.identity_tie_breakers`, then the adapter's own
+`self.identity_fields` invariant (unconditional, for queries built by direct `ResourceQuery(...)`
+construction that never went through `from_params()` at all) -- so identity ordering is appended
+after explicit sorting, appears exactly once, and is never exposed as selected UI sorting (the web
+layer already derived selected-sort state from the URL/explicit `.sorting`, not from any merged
+list, so no web-layer change was needed).
+
+## 25. Effective-Python-type identity acceptance (external review round 3)
+
+`sqlalchemy.Enum` is a `String` subclass, so `_validate_identity_type`'s `isinstance(type_,
+String)` check wrongly accepted an Enum primary key -- its persisted Python value (an
+`enum.Enum` member, or a plain string with no stable case mapping) cannot be encoded into a
+`RecordIdentity`/URL token. Fixed by rejecting `Enum` unconditionally (both Python-Enum-backed
+and plain-string-enum) before the base-type check, for both direct types and `TypeDecorator`-
+unwrapped implementations. A `TypeDecorator` gets one further check: even when its `impl`
+unwraps to a supported base type, an explicit `python_type` override to something other than
+int/str/UUID (a genuine custom domain object, e.g. a `TypeDecorator[String]` returning a `Money`
+value) is also rejected -- checked via the decorator's *own* effective `python_type` (a
+`NotImplementedError` from an unoverridden `python_type` is treated as "no override claimed" and
+falls back to trusting the unwrapped `impl`, since SQLAlchemy does not implicitly delegate
+`TypeDecorator.python_type` to `impl`). A `TypeDecorator` may opt out of all of the above via an
+explicit `rakit_identity_codec` attribute (mirroring `rakit_coerce_filter_value`'s shape, but a
+distinct name and boundary) -- a deliberate, explicit contract for a genuine custom identity type,
+never inferred. `_detail_statement`'s identity-value coercion was moved off the shared
+`_coerce_filter_item` (which checks the *filter*-specific `rakit_coerce_filter_value` hook) onto a
+new dedicated `_coerce_identity_component` (checks `rakit_identity_codec` instead), so identity
+decoding has its own boundary rather than silently inheriting filter semantics.
+
+## 26. Fail-closed `search_fields`/`filter_fields` semantics (external review round 3)
+
+`SQLAlchemyDataSource._apply_search()` silently skipped any declared `search_fields` entry that
+wasn't string-typed, so a policy like `search_fields=("id",)` for an integer column accepted
+`?search=...` input but applied no predicate, returning the whole table -- indistinguishable from
+"matched everything." Fixed by validating `search_fields`/`filter_fields` semantics once, at
+`SQLAlchemyDataSource.__init__` (i.e. at adapter-claim/registration time, before any resource
+compiles or serves a request): every `search_fields` entry must be string-typed (excluding
+`Enum`, matching the existing search-vs-Enum exclusion); every `filter_fields` entry must have a
+supported coercion path (the same type dispatch `_coerce_known_value` already handles, or an
+explicit `rakit_coerce_filter_value` hook) -- anything else (e.g. `LargeBinary`) now fails
+registration instead of only failing at the first request that happens to filter on it. A mixed
+valid+invalid declaration rejects the whole policy (the first invalid field raises, nothing is
+partially applied); a resource with no `search_fields` remains valid. `SQLAlchemyPlugin._claim`
+catches the new `UnsupportedFieldPolicyError` and raises a stable `RakitError` (`config.
+unsupported_field_policy`) naming only the resource/model/field/policy -- no SQL, column names,
+or values.
+
 ## 23. Canonical accessible pagination URLs (external review round 2)
 
 Previous and Next controls are ordinary full-page links inside a labelled pagination `nav`, with

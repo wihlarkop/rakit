@@ -38,7 +38,12 @@ from sqlalchemy.sql import ColumnElement, Select
 from sqlalchemy.sql.type_api import TypeEngine
 from sqlalchemy.types import TypeDecorator
 
-from .introspection import ModelMetadata, inspect_model
+from .introspection import (
+    FieldMetadata,
+    ModelMetadata,
+    UnsupportedFieldPolicyError,
+    inspect_model,
+)
 
 _OPERATOR_HANDLERS = {
     FilterOperator.EQ: lambda column, value: column == value,
@@ -232,6 +237,75 @@ def _is_string_type(type_: TypeEngine[Any]) -> bool:
     return isinstance(type_, String | Text) and not isinstance(type_, Enum)
 
 
+def _is_filterable_type(type_: TypeEngine[Any]) -> bool:
+    """Whether this mapped type has a supported filter-value coercion path.
+
+    Mirrors `_coerce_known_value`'s type dispatch: any type it can actually
+    convert (plus a type with an explicit `rakit_coerce_filter_value` hook,
+    which bypasses that dispatch entirely) is filterable. Anything else
+    (e.g. `LargeBinary`, `JSON`, `PickleType`) would only fail with a bare
+    `ValueError` at the first request that tries to filter on it -- this
+    check exists so that failure surfaces at compile/claim time instead.
+    """
+    if getattr(type_, "rakit_coerce_filter_value", None) is not None:
+        return True
+    unwrapped = _unwrap_type(type_)
+    return isinstance(
+        unwrapped,
+        Enum | Boolean | DateTime | Date | Uuid | Integer | Float | Numeric | String | Text,
+    )
+
+
+def _validate_field_policy_semantics(
+    field_policy: ResourceFieldPolicy,
+    field_metadata: tuple[FieldMetadata, ...],
+) -> None:
+    """Fail closed at claim time rather than silently no-op at request time.
+
+    `search_fields` must name only string-searchable columns: a declared
+    search field this adapter cannot actually search on (e.g. an integer or
+    Enum column) must not compile successfully, since silently skipping it
+    at request time would make `?search=...` accept input and return the
+    whole table -- indistinguishable from "matched everything". `filter_fields`
+    gets the analogous check against `_is_filterable_type`, so an
+    unsupported filter field fails at registration instead of the first
+    request that happens to use it. A resource with no declared
+    `search_fields` is valid (no search control is rendered for it); this
+    only rejects a field that *was* declared but cannot be honoured.
+    """
+    types_by_field = {meta.attribute_name: meta.column_type for meta in field_metadata}
+    for field_name in field_policy.search_fields:
+        column_type = types_by_field.get(field_name)
+        if column_type is None or not _is_string_type(column_type):
+            raise UnsupportedFieldPolicyError(field_name, "search_fields", "unsupported_search")
+    for field_name in field_policy.filter_fields:
+        column_type = types_by_field.get(field_name)
+        if column_type is None or not _is_filterable_type(column_type):
+            raise UnsupportedFieldPolicyError(field_name, "filter_fields", "unsupported_filter")
+
+
+def _coerce_identity_component(type_: TypeEngine[Any], raw_value: object) -> object:
+    """Convert one decoded identity component to its mapped column's value.
+
+    Deliberately separate from `_coerce_filter_item`: identity decoding has
+    its own explicit opt-in hook, `rakit_identity_codec`, rather than reusing
+    `rakit_coerce_filter_value` -- a type author may want different (or no)
+    behaviour for "a URL identity component" versus "a URL filter value", and
+    conflating the two would let a filter-only hook silently govern identity
+    decoding it was never written for. Only types that
+    `introspection._validate_identity_type` already accepted as identities
+    reach this function, so no further type-acceptance check is needed here.
+    """
+    identity_codec = getattr(type_, "rakit_identity_codec", None)
+    if identity_codec is not None:
+        decode = getattr(identity_codec, "decode", None)
+        if not callable(decode) or not isinstance(raw_value, str | int):
+            raise ValueError
+        return decode(raw_value)
+
+    return _coerce_known_value(_unwrap_type(type_), raw_value)
+
+
 class SQLAlchemyDataSource:
     capabilities = DataSourceCapabilities(read=True)
 
@@ -246,6 +320,7 @@ class SQLAlchemyDataSource:
         self._session_factory = session_factory
         self._metadata: ModelMetadata = inspect_model(model)
         self._field_policy = field_policy
+        _validate_field_policy_semantics(field_policy, self._metadata.field_metadata)
 
     @property
     def fields(self) -> tuple[str, ...]:
@@ -308,6 +383,16 @@ class SQLAlchemyDataSource:
             for sort in query.sorting
         ):
             raise _query_field_not_allowed()
+        # `identity_tie_breakers` are internal, adapter-required stable ordering,
+        # not user-requested sorting: they are exempt from the `sort_fields`
+        # whitelist (that's the whole point -- an identity column need not be
+        # user-sortable for the tie-breaker composition to work), but must
+        # still name a real field on this model rather than reaching an
+        # unchecked `getattr` with caller-supplied text.
+        if any(
+            tie_breaker.field not in known_fields for tie_breaker in query.identity_tie_breakers
+        ):
+            raise _query_field_not_allowed()
         allowed_filter_fields = set(self._field_policy.filter_fields)
         if any(
             filter_.field not in known_fields or filter_.field not in allowed_filter_fields
@@ -334,8 +419,25 @@ class SQLAlchemyDataSource:
         return statement.order_by(ordering)
 
     def _effective_sorting(self, query: ResourceQuery) -> tuple[Sort, ...]:
+        """Combine explicit sorting with stable identity ordering.
+
+        Priority, each added only if its field isn't already present (so
+        identity ordering appears exactly once, after explicit sorting):
+        1. `query.sorting` -- explicit, policy-validated user sort;
+        2. `query.identity_tie_breakers` -- the caller-declared identity
+           ordering from `ResourceQuery.from_params(identity_fields=...)`;
+        3. `self.identity_fields` -- this adapter's own mapped identity
+           column. Stable pagination is an adapter invariant: it is appended
+           unconditionally so a query built by direct `ResourceQuery(...)`
+           construction (bypassing `from_params()` entirely) still gets a
+           stable, deterministic order.
+        """
         sorting = list(query.sorting)
         sorted_fields = {sort.field for sort in sorting}
+        for tie_breaker in query.identity_tie_breakers:
+            if tie_breaker.field not in sorted_fields:
+                sorting.append(tie_breaker)
+                sorted_fields.add(tie_breaker.field)
         for field_name in self.identity_fields:
             if field_name not in sorted_fields:
                 sorting.append(Sort(field=field_name))
@@ -395,7 +497,7 @@ class SQLAlchemyDataSource:
 
         column = getattr(self._model, identity_field)
         try:
-            value = _coerce_filter_item(column.type, identity.values[identity_field])
+            value = _coerce_identity_component(column.type, identity.values[identity_field])
         except (ArithmeticError, TypeError, ValueError) as exc:
             raise _invalid_identity(identity_field, cause=exc) from exc
         return self._base_statement().where(column == value)

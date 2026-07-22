@@ -7,7 +7,7 @@ from sqlalchemy.exc import NoInspectionAvailable
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .datasource import SQLAlchemyDataSource
-from .introspection import UnsupportedIdentityError, inspect_model
+from .introspection import UnsupportedFieldPolicyError, UnsupportedIdentityError, inspect_model
 
 
 class SQLAlchemyPlugin:
@@ -41,8 +41,21 @@ class SQLAlchemyPlugin:
                 details={"model": model.__name__, "reason": exc.reason},
                 cause=exc,
             ) from exc
-        return SQLAlchemyDataSource(
-            model=model,
-            session_factory=self._session_factory,
-            field_policy=field_policy,
-        )
+
+        try:
+            return SQLAlchemyDataSource(
+                model=model,
+                session_factory=self._session_factory,
+                field_policy=field_policy,
+            )
+        except UnsupportedFieldPolicyError as exc:
+            raise RakitError(
+                code=ErrorCode.CONFIG_UNSUPPORTED_FIELD_POLICY,
+                message=(
+                    f'Field "{exc.field}" declared in "{exc.policy}" has no supported query '
+                    "semantics for that purpose."
+                ),
+                status_code=500,
+                details={"model": model.__name__, "field": exc.field, "policy": exc.policy},
+                cause=exc,
+            ) from exc

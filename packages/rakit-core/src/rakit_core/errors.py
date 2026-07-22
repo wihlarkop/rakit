@@ -42,6 +42,7 @@ class ErrorCode(StrEnum):
     CONFIG_INVALID_RESOURCE_POLICY = "config.invalid_resource_policy"
     CONFIG_INVALID_DATASOURCE = "config.invalid_datasource"
     CONFIG_UNSUPPORTED_IDENTITY = "config.unsupported_identity"
+    CONFIG_UNSUPPORTED_FIELD_POLICY = "config.unsupported_field_policy"
 
 
 class ErrorDetail(BaseModel):

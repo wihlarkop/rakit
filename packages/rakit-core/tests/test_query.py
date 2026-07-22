@@ -22,9 +22,29 @@ def test_query_appends_identity_tie_breaker() -> None:
     assert [(item.field, item.direction) for item in query.sorting] == [
         ("created_at", SortDirection.DESC),
         ("status", SortDirection.ASC),
+    ]
+    assert [(item.field, item.direction) for item in query.identity_tie_breakers] == [
         ("id", SortDirection.ASC),
     ]
     assert query.pagination.offset == 25
+
+
+def test_identity_tie_breaker_composes_with_narrower_sort_whitelist() -> None:
+    """Regression: identity tie-breakers must not require the identity field
+    to be in `allowed_sort_fields` -- they are internal stable ordering, not
+    user-requested sorting, and a datasource may validate `sorting` (but not
+    `identity_tie_breakers`) against a narrower `sort_fields` policy."""
+    query = ResourceQuery.from_params(
+        sort="name",
+        allowed_sort_fields={"name"},
+        identity_fields=("id",),
+    )
+    assert [(item.field, item.direction) for item in query.sorting] == [
+        ("name", SortDirection.ASC),
+    ]
+    assert [(item.field, item.direction) for item in query.identity_tie_breakers] == [
+        ("id", SortDirection.ASC),
+    ]
 
 
 def test_unlisted_sort_is_rejected() -> None:
@@ -39,6 +59,7 @@ def test_unlisted_sort_is_rejected() -> None:
 def test_default_query_has_sensible_defaults() -> None:
     query = ResourceQuery()
     assert query.sorting == ()
+    assert query.identity_tie_breakers == ()
     assert query.filters == ()
     assert query.search is None
     assert query.pagination.page == 1
@@ -56,6 +77,7 @@ def test_identity_tie_breaker_not_duplicated_when_already_sorted() -> None:
         ("id", SortDirection.ASC),
         ("created_at", SortDirection.DESC),
     ]
+    assert query.identity_tie_breakers == ()
 
 
 def test_empty_sort_still_appends_identity_tie_breakers() -> None:
@@ -64,7 +86,8 @@ def test_empty_sort_still_appends_identity_tie_breakers() -> None:
         allowed_sort_fields={"id"},
         identity_fields=("id",),
     )
-    assert [(item.field, item.direction) for item in query.sorting] == [
+    assert query.sorting == ()
+    assert [(item.field, item.direction) for item in query.identity_tie_breakers] == [
         ("id", SortDirection.ASC),
     ]
 
@@ -127,6 +150,8 @@ def test_duplicate_sort_field_with_same_direction_is_deduplicated() -> None:
 
     assert [(item.field, item.direction) for item in query.sorting] == [
         ("name", SortDirection.ASC),
+    ]
+    assert [(item.field, item.direction) for item in query.identity_tie_breakers] == [
         ("id", SortDirection.ASC),
     ]
 

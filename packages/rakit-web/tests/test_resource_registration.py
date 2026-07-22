@@ -148,6 +148,36 @@ def test_model_admin_registration_rejects_unsupported_identity_type(session_fact
     }
 
 
+def test_model_admin_registration_rejects_unsupported_search_field(session_factory) -> None:
+    """`rakit check` (which calls `compile()`, and here `register()` before
+    it) must catch an integer search field before any request is served --
+    not silently accept a search control that would then no-op at runtime
+    and return the whole table."""
+
+    class UnsearchableAdmin(ModelAdmin):
+        model = User
+        resource_id = "unsearchable"
+        path = "/unsearchable"
+        label = "Unsearchable"
+        singular_label = "Unsearchable"
+        list_fields = ("id", "name")
+        detail_fields = ("id", "name")
+        search_fields = ("id",)
+
+    admin = _make_admin()
+    admin.install(SQLAlchemyPlugin(session_factory=session_factory))
+
+    with pytest.raises(RakitError) as exc_info:
+        admin.register(UnsearchableAdmin)
+
+    assert exc_info.value.code == ErrorCode.CONFIG_UNSUPPORTED_FIELD_POLICY
+    assert exc_info.value.details == {
+        "model": "User",
+        "field": "id",
+        "policy": "search_fields",
+    }
+
+
 def test_register_after_compile_raises() -> None:
     admin = _make_admin()
     admin.compile()

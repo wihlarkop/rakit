@@ -72,11 +72,22 @@ class ResourceQuery(BaseModel):
     query-string-shaped input (e.g. `sort="-created_at,status"`) and enforces
     the allowed-sort-fields whitelist. Direct construction (`ResourceQuery()`)
     is also supported and yields an unfiltered, unsorted, first-page query.
+
+    `sorting` holds only explicit, user-requested sort columns -- the ones a
+    data-source adapter validates against its resource's `sort_fields` policy.
+    `identity_tie_breakers` is a separate, backend-neutral record of the
+    stable identity ordering `from_params()` derived from `identity_fields`;
+    adapters append it to the SQL `ORDER BY` after explicit sorting but never
+    validate it against the user-sort whitelist and never expose it as
+    selected UI sorting. Keeping the two lists apart lets a datasource enforce
+    "only whitelisted fields may be explicitly sorted on" without rejecting
+    the very tie-breaker composition this contract promises.
     """
 
     model_config = ConfigDict(frozen=True)
 
     sorting: tuple[Sort, ...] = ()
+    identity_tie_breakers: tuple[Sort, ...] = ()
     filters: tuple[Filter, ...] = ()
     search: str | None = None
     pagination: OffsetPagination = Field(default_factory=OffsetPagination)
@@ -101,10 +112,16 @@ class ResourceQuery(BaseModel):
         with `-` for descending order (e.g. "-created_at,status"). Every
         parsed field must be present in `allowed_sort_fields`, otherwise a
         `ValueError` is raised before any `ResourceQuery` is constructed.
+        These parsed fields become `sorting` -- the explicit, policy-checked
+        sort the caller asked for.
 
-        After parsing explicit sort items, an ascending `Sort` is appended
-        for each field in `identity_fields` not already present among the
-        parsed sort fields, acting as a stable tie-breaker.
+        After parsing explicit sort items, an ascending `Sort` is recorded in
+        `identity_tie_breakers` for each field in `identity_fields` not
+        already present among the parsed sort fields. Tie-breakers are kept
+        out of `sorting` deliberately: a datasource that validates `sorting`
+        against a resource's `sort_fields` policy must not reject a query
+        just because an internal stable-ordering field (e.g. the primary
+        key) isn't itself a user-sortable column.
         """
         allowed = set(allowed_sort_fields)
         sort_items = cls._parse_sort(sort, allowed)
@@ -116,13 +133,15 @@ class ResourceQuery(BaseModel):
             search = search.strip() or None
 
         sorted_fields = {item.field for item in sort_items}
+        tie_breakers: list[Sort] = []
         for field in identity_fields:
             if field not in sorted_fields:
-                sort_items.append(Sort(field=field, direction=SortDirection.ASC))
+                tie_breakers.append(Sort(field=field, direction=SortDirection.ASC))
                 sorted_fields.add(field)
 
         return cls(
             sorting=tuple(sort_items),
+            identity_tie_breakers=tuple(tie_breakers),
             filters=filters,
             search=search,
             pagination=OffsetPagination(page=page, per_page=per_page),

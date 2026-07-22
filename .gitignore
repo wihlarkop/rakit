@@ -52,6 +52,9 @@ wheels/
 pip-wheel-metadata/
 MANIFEST
 
+# Worktree-local uv cache (used when the shared user cache is inaccessible).
+.uv-cache/
+
 # Keep the committed uv lockfile.
 !uv.lock
 
