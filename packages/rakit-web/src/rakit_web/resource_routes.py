@@ -278,6 +278,7 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
         query = binding.parse_query(request.query_params)
         page = await binding.service.list(query)
         fields = binding.fields
+        resource_path = _mounted_path(request, binding.definition.path)
 
         rows: list[dict[str, object]] = []
         for item in page.items:
@@ -309,8 +310,9 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
             "query": query,
             "fields": fields,
             "rows": rows,
+            "resource_path": resource_path,
             "count_url": count_url,
-            "sort_headers": _sort_headers(fields, query, binding.definition.path),
+            "sort_headers": _sort_headers(fields, query, resource_path),
             "search_value": query.search or "",
         }
         return binding.templates.TemplateResponse(

@@ -1,4 +1,6 @@
+import html
 import importlib
+import os
 import re
 import subprocess
 import sys
@@ -7,8 +9,24 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
+import pytest
 
 repository = Path(__file__).resolve().parents[2]
+
+
+def _example_environment() -> dict[str, str]:
+    environment = os.environ.copy()
+    existing = environment.get("PYTHONPATH")
+    entries = [str(repository)]
+    if existing:
+        entries.append(existing)
+    environment["PYTHONPATH"] = os.pathsep.join(entries)
+    return environment
+
+
+@pytest.fixture(autouse=True)
+def _private_example_import_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.syspath_prepend(str(repository))
 
 
 def test_minimal_example_compiles_without_optional_integrations() -> None:
@@ -26,6 +44,7 @@ def test_minimal_example_compiles_without_optional_integrations() -> None:
         check=False,
         capture_output=True,
         text=True,
+        env=_example_environment(),
     )
 
     assert result.returncode == 0, result.stderr
@@ -135,6 +154,18 @@ async def test_fastapi_sqlalchemy_example_mount_serves_full_and_htmx_reads() -> 
         asset_paths = re.findall(r'(?:href|src)="(/admin/_system/static/[^"]+)"', full.text)
         asset_responses = [await client.get(path) for path in asset_paths]
 
+        search_action_match = re.search(
+            r'<form[^>]+data-rakit-search[^>]+action="([^"]+)"', full.text
+        )
+        assert search_action_match is not None
+        search_action = html.unescape(search_action_match.group(1))
+        search_response = await client.get(search_action, params={"search": "Ada"})
+
+        sort_href_match = re.search(r'<th[^>]*>\s*<a href="([^"]+)"', full.text)
+        assert sort_href_match is not None
+        sort_href = html.unescape(sort_href_match.group(1))
+        sort_response = await client.get(sort_href)
+
         detail_path = re.search(r'href="(/admin/users/[^"]+)"', full.text)
         assert detail_path is not None
         detail = await client.get(detail_path.group(1))
@@ -144,6 +175,10 @@ async def test_fastapi_sqlalchemy_example_mount_serves_full_and_htmx_reads() -> 
     assert "Grace" in full.text
     assert len(asset_paths) == 2
     assert all(response.status_code == 200 for response in asset_responses)
+    assert search_action == "/admin/users"
+    assert search_response.status_code == 200
+    assert sort_href.startswith("/admin/users?")
+    assert sort_response.status_code == 200
     assert fragment.status_code == 200
     assert "<html" not in fragment.text
     assert "Total unknown" in fragment.text
@@ -164,6 +199,7 @@ def test_cli_check_and_routes_accept_both_examples() -> None:
             check=False,
             capture_output=True,
             text=True,
+            env=_example_environment(),
         )
         routes = subprocess.run(
             ["rakit", "routes", target],
@@ -171,6 +207,7 @@ def test_cli_check_and_routes_accept_both_examples() -> None:
             check=False,
             capture_output=True,
             text=True,
+            env=_example_environment(),
         )
 
         assert checked.returncode == 0, checked.stderr
@@ -178,3 +215,31 @@ def test_cli_check_and_routes_accept_both_examples() -> None:
         assert routes.returncode == 0, routes.stderr
         assert ":list" in routes.stdout
         assert ":detail" in routes.stdout
+
+
+def test_all_packages_builds_exactly_the_eight_official_distributions(tmp_path: Path) -> None:
+    output = tmp_path / "all-distributions"
+    subprocess.run(
+        ["uv", "build", "--all-packages", "--out-dir", str(output)],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    expected = {
+        "rakit",
+        "rakit_auth_sqlalchemy",
+        "rakit_core",
+        "rakit_server_uvicorn",
+        "rakit_sqlalchemy",
+        "rakit_storage",
+        "rakit_storage_local",
+        "rakit_web",
+    }
+    wheels = {path.name.split("-", 1)[0] for path in output.glob("*.whl")}
+    sdists = {path.name.split("-", 1)[0] for path in output.glob("*.tar.gz")}
+
+    assert wheels == expected
+    assert sdists == expected
+    assert not any(path.name.startswith("rakit_workspace-") for path in output.iterdir())

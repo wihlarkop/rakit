@@ -80,6 +80,9 @@ def test_rakit_web_artifacts_include_runtime_resources(tmp_path: Path) -> None:
         "rakit_web/static/HTMX_LICENSE.txt",
         "rakit_web/static/HTMX_PROVENANCE.md",
         "rakit_web/templates/base.html",
+        "rakit_web/templates/resources/_count.html",
+        "rakit_web/templates/resources/_table.html",
+        "rakit_web/templates/resources/detail.html",
         "rakit_web/templates/resources/list.html",
     }
 
