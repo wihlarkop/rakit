@@ -72,6 +72,14 @@ class Admin:
             security={"secret_key": secret_key},
         )
         self._builder = ApplicationBuilder()
+        self._builder.add_route(
+            RouteDefinition(
+                route_name="rakit.home",
+                methods=("GET",),
+                path="/",
+                owner_id="rakit",
+            )
+        )
         self.compiled: CompiledApplication | None = None
         self._compiled_registry: ServiceRegistry | None = None
         self._application_resolver: ServiceResolver | None = None

@@ -147,3 +147,49 @@ def test_resource_admin_without_data_source_or_model_raises() -> None:
         admin.register(BrokenAdmin)
 
     assert exc_info.value.code == ErrorCode.CONFIG_RESOURCE_MISSING_DATA_SOURCE
+
+
+def test_root_resource_collides_with_compiled_builtin_home_route() -> None:
+    class RootAdmin(ResourceAdmin):
+        resource_id = "root_records"
+        path = "/"
+        label = "Root Records"
+        singular_label = "Root Record"
+        data_source = FakeDataSource()
+
+    admin = _make_admin()
+    admin.register(RootAdmin)
+
+    with pytest.raises(RakitError) as exc_info:
+        admin.compile()
+
+    assert exc_info.value.code == ErrorCode.CONFIG_ROUTE_COLLISION
+
+
+@pytest.mark.parametrize("reverse_registration", (False, True))
+def test_overlapping_resource_routes_fail_independent_of_registration_order(
+    reverse_registration: bool,
+) -> None:
+    class ParentAdmin(ResourceAdmin):
+        resource_id = "parents"
+        path = "/users"
+        label = "Parents"
+        singular_label = "Parent"
+        data_source = FakeDataSource()
+
+    class SettingsAdmin(ResourceAdmin):
+        resource_id = "settings"
+        path = "/users/settings"
+        label = "Settings"
+        singular_label = "Setting"
+        data_source = FakeDataSource()
+
+    classes = (SettingsAdmin, ParentAdmin) if reverse_registration else (ParentAdmin, SettingsAdmin)
+    admin = _make_admin()
+    for admin_class in classes:
+        admin.register(admin_class)
+
+    with pytest.raises(RakitError) as exc_info:
+        admin.compile()
+
+    assert exc_info.value.code == ErrorCode.CONFIG_ROUTE_COLLISION

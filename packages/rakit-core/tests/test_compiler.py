@@ -5,7 +5,7 @@ from rakit_core.compiler import ApplicationBuilder, compile_application
 from rakit_core.datasource import DataSource
 from rakit_core.definitions import RouteDefinition
 from rakit_core.di import ServiceRegistry, ServiceScope
-from rakit_core.errors import RakitError
+from rakit_core.errors import ErrorCode, RakitError
 
 
 def test_duplicate_method_and_path_fail() -> None:
@@ -29,6 +29,55 @@ def test_duplicate_method_and_path_fail() -> None:
     with pytest.raises(RakitError) as caught:
         compile_application(builder)
     assert caught.value.code == "config.route_collision"
+
+
+@pytest.mark.parametrize(
+    "paths",
+    (
+        ("/users/{identity}", "/users/settings"),
+        ("/users/settings", "/users/{identity}"),
+        ("/teams/{team_id}/users", "/teams/{slug}/users"),
+    ),
+)
+def test_runtime_equivalent_path_patterns_fail_in_either_order(
+    paths: tuple[str, str],
+) -> None:
+    builder = ApplicationBuilder()
+    for index, path in enumerate(paths):
+        builder.add_route(
+            RouteDefinition(
+                route_name=f"app.route_{index}",
+                methods=("GET",),
+                path=path,
+                owner_id=f"owner_{index}",
+            )
+        )
+
+    with pytest.raises(RakitError) as caught:
+        compile_application(builder)
+
+    assert caught.value.code == ErrorCode.CONFIG_ROUTE_COLLISION
+    assert caught.value.details == {"first": "app.route_0", "second": "app.route_1"}
+
+
+def test_static_paths_with_different_segments_do_not_collide() -> None:
+    builder = ApplicationBuilder()
+    for index, path in enumerate(("/users/settings", "/users/profile")):
+        builder.add_route(
+            RouteDefinition(
+                route_name=f"app.route_{index}",
+                methods=("GET",),
+                path=path,
+                owner_id=f"owner_{index}",
+            )
+        )
+
+    compiled = compile_application(builder)
+
+    assert tuple(route.path for route in compiled.routes) == (
+        "/users/settings",
+        "/users/profile",
+    )
 
 
 class _PluginWithMissingDependency:

@@ -28,6 +28,45 @@ class Plugin(Protocol):
     def configure(self, builder: "ApplicationBuilder") -> None: ...
 
 
+def _is_path_parameter(segment: str) -> bool:
+    return len(segment) > 2 and segment.startswith("{") and segment.endswith("}")
+
+
+def _path_patterns_overlap(first: str, second: str) -> bool:
+    """Return whether two backend-neutral route patterns can match one URL path."""
+
+    first_segments = () if first == "/" else tuple(first.removeprefix("/").split("/"))
+    second_segments = () if second == "/" else tuple(second.removeprefix("/").split("/"))
+    if len(first_segments) != len(second_segments):
+        return False
+    return all(
+        first_segment == second_segment
+        or _is_path_parameter(first_segment)
+        or _is_path_parameter(second_segment)
+        for first_segment, second_segment in zip(first_segments, second_segments, strict=True)
+    )
+
+
+def _has_path_parameter(path: str) -> bool:
+    return any(_is_path_parameter(segment) for segment in path.split("/"))
+
+
+def _is_safe_owned_static_precedence(
+    first_path: str,
+    first_owner: str,
+    second_path: str,
+    second_owner: str,
+) -> bool:
+    """Allow a same-owner static route to precede its dynamic fallback route."""
+
+    return (
+        first_owner == second_owner
+        and first_path != second_path
+        and not _has_path_parameter(first_path)
+        and _has_path_parameter(second_path)
+    )
+
+
 @dataclass
 class ApplicationBuilder:
     _routes: list[RouteDefinition] = field(default_factory=list)
@@ -215,7 +254,7 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
 
     validate_official_package_versions(OFFICIAL_PACKAGE_NAMES)
 
-    seen: dict[tuple[str, str], str] = {}
+    seen: dict[str, list[tuple[str, str, str]]] = {}
     seen_route_names: dict[str, RouteDefinition] = {}
     for route in builder.routes:
         if any(
@@ -239,15 +278,25 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
         seen_route_names[route.route_name] = route
 
         for method in route.methods:
-            key = (method.upper(), route.path)
-            if key in seen:
-                raise RakitError(
-                    code=ErrorCode.CONFIG_ROUTE_COLLISION,
-                    message=f"Route collision for {method.upper()} {route.path}.",
-                    status_code=500,
-                    details={"first": seen[key], "second": route.route_name},
-                )
-            seen[key] = route.route_name
+            normalized_method = method.upper()
+            for first_path, first_name, first_owner in seen.get(normalized_method, []):
+                if _path_patterns_overlap(first_path, route.path) and not (
+                    _is_safe_owned_static_precedence(
+                        first_path,
+                        first_owner,
+                        route.path,
+                        route.owner_id,
+                    )
+                ):
+                    raise RakitError(
+                        code=ErrorCode.CONFIG_ROUTE_COLLISION,
+                        message=f"Route collision for {normalized_method} {route.path}.",
+                        status_code=500,
+                        details={"first": first_name, "second": route.route_name},
+                    )
+            seen.setdefault(normalized_method, []).append(
+                (route.path, route.route_name, route.owner_id)
+            )
 
     builder._mark_compiled()
     return CompiledApplication(builder.routes, builder.plugins, builder.resources)
