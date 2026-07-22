@@ -1,6 +1,8 @@
 import logging
 
+import pytest
 import structlog
+from rakit_core.errors import ErrorCode, RakitError
 from rakit_web.logging import (
     _RakitBridgeHandler,
     bind_request_context,
@@ -248,3 +250,113 @@ def test_bridge_additional_logger_namespace_does_not_duplicate_handlers() -> Non
     std_logger = logging.getLogger("repeated_third_party_lib")
     rakit_handlers = [h for h in std_logger.handlers if isinstance(h, _RakitBridgeHandler)]
     assert len(rakit_handlers) == 1
+
+
+def test_bridge_additional_logger_namespace_rejects_empty_name() -> None:
+    """An empty namespace must never be forwarded to logging.getLogger(), which
+    would resolve to the ROOT logger and silently attach the bridge handler
+    there.
+    """
+    with pytest.raises(RakitError) as exc_info:
+        bridge_additional_logger_namespace("", debug=False)
+    assert exc_info.value.code == ErrorCode.CONFIG_INVALID.value
+
+
+def test_bridge_additional_logger_namespace_rejects_whitespace_only_name() -> None:
+    """A whitespace-only namespace is just as dangerous as an empty string --
+    ``"   ".strip()`` is falsy, but the raw string is still truthy, so a naive
+    ``if not name`` guard would miss it.
+    """
+    with pytest.raises(RakitError) as exc_info:
+        bridge_additional_logger_namespace("   ", debug=False)
+    assert exc_info.value.code == ErrorCode.CONFIG_INVALID.value
+
+
+def test_bridge_additional_logger_namespace_blank_rejection_never_touches_root() -> None:
+    """The guard must reject blank namespaces BEFORE any root-logger mutation
+    happens -- not merely raise an exception for an unrelated reason after
+    already touching root.
+    """
+    root_logger = logging.getLogger()
+    original_propagate = root_logger.propagate
+    original_level = root_logger.level
+    original_filters = list(root_logger.filters)
+
+    with pytest.raises(RakitError):
+        bridge_additional_logger_namespace("", debug=False)
+    with pytest.raises(RakitError):
+        bridge_additional_logger_namespace("   ", debug=False)
+
+    root_handlers = [h for h in root_logger.handlers if isinstance(h, _RakitBridgeHandler)]
+    assert root_handlers == []
+    assert root_logger.propagate == original_propagate
+    assert root_logger.level == original_level
+    assert list(root_logger.filters) == original_filters
+
+
+def test_nested_sensitive_keys_are_redacted_through_real_pipeline(capsys) -> None:
+    """Finding: redaction must recurse into nested Mapping/sequence values, not
+    just event_dict's own top-level keys. Exercises the real configured
+    structlog pipeline (JSON renderer + redact_event), not redact_event()
+    called in isolation.
+    """
+    configure_logging(debug=False)
+
+    logger = structlog.get_logger()
+    logger.info(
+        "user.updated",
+        user={"id": 1, "password": "hunter2", "authorization": "Bearer abc123"},
+    )
+
+    captured = capsys.readouterr()
+    output = captured.err or captured.out
+
+    assert "user.updated" in output
+    assert "[REDACTED]" in output
+    assert output.count("[REDACTED]") == 2
+    assert "hunter2" not in output
+    assert "Bearer abc123" not in output
+
+
+def test_nested_non_sensitive_values_are_preserved() -> None:
+    event = redact_event(
+        object(),
+        "info",
+        {"event": "user.viewed", "user": {"id": 42, "name": "Ada"}},
+    )
+    assert event["user"]["id"] == 42
+    assert event["user"]["name"] == "Ada"
+
+
+def test_redact_event_handles_self_referential_dict_without_recursion_error() -> None:
+    cyclic: dict = {"password": "secret"}
+    cyclic["self"] = cyclic
+
+    event = redact_event(object(), "info", {"data": cyclic})
+
+    assert event["data"]["password"] == "[REDACTED]"
+    # The cycle is left as-is beyond detection, not redacted further -- the
+    # important thing is that this call returned at all.
+    assert event["data"]["self"] is cyclic or isinstance(event["data"]["self"], dict)
+
+
+def test_redact_event_handles_self_referential_list_without_recursion_error() -> None:
+    cyclic: list = []
+    cyclic.append(cyclic)
+
+    event = redact_event(object(), "info", {"data": cyclic})
+
+    assert isinstance(event["data"], list)
+
+
+def test_nested_secret_value_absent_from_rendered_output(capsys) -> None:
+    configure_logging(debug=False)
+
+    logger = structlog.get_logger()
+    logger.info("user.updated", user={"id": 1, "password": "hunter2-secret-value"})
+
+    captured = capsys.readouterr()
+    output = captured.err or captured.out
+
+    assert "hunter2-secret-value" not in output
+    assert "[REDACTED]" in output

@@ -5,6 +5,7 @@ from contextvars import Token
 from typing import Any
 
 import structlog
+from rakit_core.errors import ErrorCode, RakitError
 from structlog.types import EventDict, Processor
 
 #: Logger namespaces owned by Rakit that should be bridged into the
@@ -34,11 +35,53 @@ SENSITIVE_KEYS = {
 }
 
 
+#: Beyond this nesting depth, redaction stops recursing and returns values
+#: as-is (never redacted deeper, never crashes). Guards against pathologically
+#: deep -- but non-cyclic -- structures blowing the call stack.
+_MAX_REDACT_DEPTH = 10
+
+
 def redact_event(logger: Any, method_name: str, event_dict: EventDict) -> EventDict:
+    """Redact sensitive keys anywhere in ``event_dict``, not just its
+    top-level keys.
+
+    Recurses into nested ``Mapping`` and ``list``/``tuple`` values so that,
+    e.g., ``logger.info("user.updated", user={"password": "..."})`` redacts
+    the nested ``password`` too. Bounded by ``_MAX_REDACT_DEPTH`` and guarded
+    against self-referential containers via ancestor-path tracking (``seen``
+    holds the ids of containers on the current recursion path only, so
+    unrelated reuse of the same object in sibling branches is never mistaken
+    for a cycle).
+    """
+    seen: frozenset[int] = frozenset({id(event_dict)})
     for key in tuple(event_dict):
-        if key.lower() in SENSITIVE_KEYS:
-            event_dict[key] = "[REDACTED]"
+        event_dict[key] = _redact_field(key, event_dict[key], depth=0, seen=seen)
     return event_dict
+
+
+def _redact_field(key: object, value: Any, *, depth: int, seen: frozenset[int]) -> Any:
+    if isinstance(key, str) and key.lower() in SENSITIVE_KEYS:
+        return "[REDACTED]"
+    return _redact_value(value, depth=depth, seen=seen)
+
+
+def _redact_value(value: Any, *, depth: int, seen: frozenset[int]) -> Any:
+    if depth >= _MAX_REDACT_DEPTH:
+        return value
+    if isinstance(value, Mapping):
+        value_id = id(value)
+        if value_id in seen:
+            return value
+        child_seen = seen | {value_id}
+        return {k: _redact_field(k, v, depth=depth + 1, seen=child_seen) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        value_id = id(value)
+        if value_id in seen:
+            return value
+        child_seen = seen | {value_id}
+        redacted_items = [_redact_value(item, depth=depth + 1, seen=child_seen) for item in value]
+        return tuple(redacted_items) if isinstance(value, tuple) else redacted_items
+    return value
 
 
 def configure_logging(*, debug: bool) -> None:
@@ -80,8 +123,17 @@ def _attach_bridge_handler(name: str, *, renderer: Processor, level: int) -> Non
     ``bridge_additional_logger_namespace`` (for opt-in third-party
     namespaces) so there is exactly one implementation of "how to bridge a
     namespace into the structured pipeline." Never touches the root logger --
-    callers are responsible for passing a specific, non-empty namespace.
+    an empty or whitespace-only ``name`` is rejected up front, since
+    ``logging.getLogger("")`` resolves to the ROOT logger.
     """
+    if not name or not name.strip():
+        raise RakitError(
+            code=ErrorCode.CONFIG_INVALID,
+            message="Logger namespace must be a non-empty, non-whitespace string.",
+            status_code=500,
+            details={"name": repr(name)},
+        )
+
     formatter = structlog.stdlib.ProcessorFormatter(
         foreign_pre_chain=[
             structlog.contextvars.merge_contextvars,
