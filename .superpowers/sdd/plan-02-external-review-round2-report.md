@@ -67,4 +67,27 @@ Pagination and deferred-count URLs now share a canonical serializer whose inputs
 
 ## 5. Final verification
 
-Final HEAD and exact full-gate results are recorded after the documentation commit and final rerun.
+The complete required sequence was run from committed documentation HEAD
+`091cd9beb791f62e4471b0d1695dea85b9029288`:
+
+| Gate | Result |
+| --- | --- |
+| `uv sync --all-packages --dev --locked` | success; 40 resolved, 39 checked |
+| `uv run ruff format --check .` | success; 69 files formatted |
+| `uv run ruff check .` | success |
+| `uv run ty check` | success |
+| `uv run pytest -p no:cacheprovider` | **348 passed in 19.96s** |
+| fresh `uv build --all-packages` | success |
+| artifact enumeration | exactly 8 wheels + 8 sdists, all `0.1.0a1` |
+| facade typing marker | `rakit/py.typed` present in the `rakit` wheel |
+| web runtime resources | all 10 required files present in the `rakit-web` wheel |
+| minimal example `rakit check` / `rakit routes` | both exit 0; 4 routes, 0 plugins |
+| FastAPI example `rakit check` / `rakit routes` | both exit 0; 4 routes, 1 plugin |
+| isolated ordinary-wheel install | 16 packages installed offline; full facade imports passed |
+| optional adapter isolation | `rakit_sqlalchemy` absent from `sys.modules` after facade import |
+| `git diff 25304bc..HEAD -- uv.lock` | empty |
+| worktree diff check/status before this report update | clean |
+
+The fresh artifacts were written to `C:\tmp\rakit-plan02-round2-091cd9b`; the isolated install
+used a separately verified-new `C:\tmp\rakit-plan02-round2-install-091cd9b` environment with
+CPython 3.12.12. No push, merge, tag, or publish action was performed.
