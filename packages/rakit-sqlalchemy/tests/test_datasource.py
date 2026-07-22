@@ -4,7 +4,7 @@ import pytest
 from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.errors import RakitError
 from rakit_core.identity import RecordIdentity
-from rakit_core.query import Filter, FilterOperator, ResourceQuery, Sort
+from rakit_core.query import Filter, FilterOperator, ResourceQuery, Sort, SortDirection
 from rakit_sqlalchemy.datasource import SQLAlchemyDataSource
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -151,3 +151,56 @@ async def test_sqlalchemy_datasource_rejects_direct_query_policy_bypass(
         "code": "validation.failed",
         "message": "Query field is not allowed",
     }
+
+
+async def test_direct_identity_sort_requires_explicit_policy(session_factory) -> None:
+    datasource = SQLAlchemyDataSource(
+        model=User,
+        session_factory=session_factory,
+        field_policy=ResourceFieldPolicy(
+            list_fields=("id", "name"),
+            detail_fields=("id", "name"),
+        ),
+    )
+
+    with pytest.raises(RakitError) as exc_info:
+        await datasource.list(
+            ResourceQuery(sorting=(Sort(field="id", direction=SortDirection.DESC),))
+        )
+
+    assert exc_info.value.to_public_dict() == {
+        "code": "validation.failed",
+        "message": "Query field is not allowed",
+    }
+
+
+async def test_direct_identity_sort_is_allowed_when_explicitly_declared(session_factory) -> None:
+    datasource = SQLAlchemyDataSource(
+        model=User,
+        session_factory=session_factory,
+        field_policy=ResourceFieldPolicy(
+            list_fields=("id", "name"),
+            detail_fields=("id", "name"),
+            sort_fields=("id",),
+        ),
+    )
+
+    page = await datasource.list(
+        ResourceQuery(sorting=(Sort(field="id", direction=SortDirection.DESC),))
+    )
+
+    assert [item.id for item in page.items] == [2, 1]
+
+
+async def test_internal_identity_tie_breaker_is_appended_exactly_once(session_factory) -> None:
+    datasource = SQLAlchemyDataSource(
+        model=User,
+        session_factory=session_factory,
+        field_policy=USER_POLICY,
+    )
+
+    sorting = datasource._effective_sorting(
+        ResourceQuery(sorting=(Sort(field="name"), Sort(field="id")))
+    )
+
+    assert [sort.field for sort in sorting] == ["name", "id"]

@@ -302,7 +302,7 @@ class SQLAlchemyDataSource:
 
     def _validate_query_policy(self, query: ResourceQuery) -> None:
         known_fields = set(self.fields)
-        allowed_sort_fields = set(self._field_policy.sort_fields) | set(self.identity_fields)
+        allowed_sort_fields = set(self._field_policy.sort_fields)
         if any(
             sort.field not in known_fields or sort.field not in allowed_sort_fields
             for sort in query.sorting
