@@ -83,3 +83,11 @@ Plan 02 final Important multi-column-sort follow-up: implementation complete in 
   file was 24 passed. Final rerun: query-UI 24 passed, full suite 304 passed, Ruff format/check and
   ty passed, and whole-branch diff-check/status were clean. Exact evidence is in the final-review
   report.
+Plan 02 exact locked-development gate follow-up: complete. Added `fastapi>=0.116` only to the
+  root workspace `dev` dependency group, preserved the user-facing `examples` extra, and refreshed
+  only the corresponding root dev entries in `uv.lock`. TDD RED was 1 intended missing-dev-
+  dependency failure with the official-runtime-dependency boundary already passing; focused GREEN
+  was 2 passed. The exact `uv sync --all-packages --dev --locked` sequence now passes without
+  `--extra`, followed by Ruff, ty, and 306 tests. A fresh ordinary-wheel install resolved 16
+  packages with FastAPI absent, every official wheel's `Requires-Dist` excluded FastAPI, and no
+  official package `pyproject.toml` changed.

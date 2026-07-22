@@ -97,6 +97,21 @@ def test_example_dependencies_are_declared_as_optional() -> None:
     assert any(dependency.startswith("uvicorn") for dependency in dependencies)
 
 
+def test_fastapi_example_is_type_checkable_in_the_locked_development_environment() -> None:
+    configuration = tomllib.loads((repository / "pyproject.toml").read_text(encoding="utf-8"))
+    development_dependencies = configuration["dependency-groups"]["dev"]
+
+    assert any(dependency.startswith("fastapi") for dependency in development_dependencies)
+
+
+def test_fastapi_is_not_an_official_package_runtime_dependency() -> None:
+    for package_configuration in (repository / "packages").glob("*/pyproject.toml"):
+        configuration = tomllib.loads(package_configuration.read_text(encoding="utf-8"))
+        runtime_dependencies = configuration["project"].get("dependencies", [])
+
+        assert not any(dependency.startswith("fastapi") for dependency in runtime_dependencies)
+
+
 @asynccontextmanager
 async def _started_client(app, *, base_url: str = "http://testserver"):
     async with app.router.lifespan_context(app):

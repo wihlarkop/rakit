@@ -616,6 +616,7 @@ examples = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "fastapi" },
     { name = "httpx" },
     { name = "pytest" },
     { name = "pytest-anyio" },
@@ -634,6 +635,7 @@ provides-extras = ["examples"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "fastapi", specifier = ">=0.116" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pytest", specifier = ">=8.3,<9" },
     { name = "pytest-anyio", specifier = ">=0.0.0" },

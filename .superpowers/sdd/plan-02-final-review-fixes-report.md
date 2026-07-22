@@ -217,3 +217,51 @@ boundary changed.
 - `ty check`: **All checks passed**.
 - `git diff --check 7de96c0..HEAD`: clean after the evidence commit.
 - final tracked worktree status: clean on `worktree-plan-02-read-only-resources-ui`.
+
+## Exact locked-development gate follow-up: FastAPI type-check dependency
+
+### Finding and root cause
+
+`examples/fastapi_sqlalchemy/main.py` is part of repository-wide `ty check`, but FastAPI was
+declared only in the root `examples` extra. After the exact clean-development command
+`uv sync --all-packages --dev --locked`, `uv run ty check` could not resolve `fastapi` unless an
+earlier environment happened to retain the optional extra.
+
+### Resolution and boundary
+
+The root workspace `[dependency-groups].dev` now also declares `fastapi>=0.116`. The existing
+user-facing `project.optional-dependencies.examples` declaration remains intact because users who
+run the FastAPI example still need that explicit install contract. `uv lock --offline` updated only
+the two corresponding `rakit-workspace` dev metadata entries; it did not change the already locked
+FastAPI version or any resolved package artifact.
+
+No official package runtime dependencies changed. A regression test reads every
+`packages/*/pyproject.toml` and rejects FastAPI in an official package's `project.dependencies`.
+This is development tooling only, not a public wheel or Plan 03 dependency.
+
+### TDD evidence
+
+- RED:
+  `uv run pytest tests/examples/test_read_examples.py -k "locked_development_environment or official_package_runtime_dependency" -v`
+  -> **1 failed, 1 passed, 8 deselected**. The missing root dev declaration failed while the
+  official-runtime-dependency boundary already passed.
+- GREEN after the root declaration and intentional lock refresh: **2 passed, 8 deselected**.
+
+### Exact clean-development sequence
+
+- `uv sync --all-packages --dev --locked`: success; **40 packages resolved, 39 checked**.
+- `uv run ruff format --check .`: **69 files already formatted**.
+- `uv run ruff check .`: **All checks passed**.
+- `uv run ty check`: **All checks passed**, without `--extra`.
+- `uv run pytest -p no:cacheprovider`: **306 passed in 16.67s**, without `--extra`.
+
+### Ordinary-wheel isolation proof
+
+- Built all packages into a newly verified-absent temporary output directory: exactly the eight
+  official wheels and eight sdists succeeded.
+- Created a fresh isolated Python 3.12 environment and performed a normal dependency-resolving,
+  offline install of `rakit-0.1.0a1-py3-none-any.whl` using the local official wheels. The install
+  resolved **16 packages**; `rakit==0.1.0a1` imported and `fastapi` was absent.
+- Inspected `METADATA` in all eight wheels: none contains FastAPI in `Requires-Dist`.
+- `git diff 35814df -- packages/*/pyproject.toml` was empty, independently confirming that official
+  package dependency declarations did not change.
