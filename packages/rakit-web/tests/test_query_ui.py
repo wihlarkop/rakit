@@ -1,11 +1,17 @@
+import html
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from urllib.parse import parse_qsl, urlsplit
 
 import httpx
 import pytest
 from conftest import LifespanDriver
 from rakit import Admin, ModelAdmin, SecretValue
+from rakit_core.errors import RakitError
+from rakit_core.query import Filter, FilterOperator
 from rakit_sqlalchemy.plugin import SQLAlchemyPlugin
+from rakit_web.resource_routes import _serialize_filter
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -13,6 +19,8 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from starlette.applications import Starlette
+from starlette.routing import Mount
 
 
 class Base(DeclarativeBase):
@@ -61,6 +69,78 @@ async def _client_for(admin: Admin) -> AsyncIterator[httpx.AsyncClient]:
         httpx.AsyncClient(transport=transport, base_url="http://testserver") as http_client,
     ):
         yield http_client
+
+
+def _sort_link(document: str, field: str) -> tuple[str, list[tuple[str, str]]]:
+    match = re.search(rf'<a href="([^"]+)">{re.escape(field)}</a>', document)
+    assert match is not None
+    url = html.unescape(match.group(1))
+    return url, parse_qsl(urlsplit(url).query, keep_blank_values=True)
+
+
+def _search_form(document: str) -> tuple[str, list[tuple[str, str]]]:
+    action_match = re.search(r'<form[^>]+data-rakit-search[^>]+action="([^"]+)"', document)
+    assert action_match is not None
+    hidden = re.findall(
+        r'<input\s+type="hidden"\s+name="([^"]+)"\s+value="([^"]*)"\s*/?>',
+        document,
+    )
+    return html.unescape(action_match.group(1)), [
+        (html.unescape(name), html.unescape(value)) for name, value in hidden
+    ]
+
+
+def _table_cell_texts(document: str) -> list[str]:
+    return [
+        html.unescape(re.sub(r"<[^>]+>", "", cell)).strip()
+        for cell in re.findall(r"<td[^>]*>(.*?)</td>", document, flags=re.DOTALL)
+    ]
+
+
+async def _assert_controls_preserve_active_query(
+    client: httpx.AsyncClient,
+    *,
+    prefix: str,
+) -> None:
+    filters = ("name:contains:a", "email:contains:example.com")
+    response = await client.get(
+        f"{prefix}/users",
+        params=[
+            ("filter", filters[0]),
+            ("filter", filters[1]),
+            ("sort", "-name"),
+            ("search", "a"),
+            ("page", "2"),
+            ("per_page", "1"),
+            ("count_policy", "disabled"),
+        ],
+    )
+
+    sort_url, sort_pairs = _sort_link(response.text, "email")
+    assert sort_url.startswith(f"{prefix}/users?")
+    assert [value for key, value in sort_pairs if key == "filter"] == list(filters)
+    assert ("search", "a") in sort_pairs
+    assert ("per_page", "1") in sort_pairs
+    assert ("count_policy", "disabled") in sort_pairs
+    assert not any(key == "page" for key, _value in sort_pairs)
+
+    sorted_response = await client.get(sort_url)
+    assert sorted_response.status_code == 200
+    assert "Ada" in sorted_response.text
+    assert "Grace" not in sorted_response.text
+
+    action, hidden_pairs = _search_form(response.text)
+    assert action == f"{prefix}/users"
+    assert [value for key, value in hidden_pairs if key == "filter"] == list(filters)
+    assert ("sort", "-name") in hidden_pairs
+    assert ("per_page", "1") in hidden_pairs
+    assert ("count_policy", "disabled") in hidden_pairs
+    assert not any(key == "page" for key, _value in hidden_pairs)
+
+    searched_response = await client.get(action, params=[*hidden_pairs, ("search", "Grace")])
+    assert searched_response.status_code == 200
+    assert "Ada" not in _table_cell_texts(searched_response.text)
+    assert "Grace" not in _table_cell_texts(searched_response.text)
 
 
 @pytest.fixture
@@ -116,6 +196,7 @@ async def test_invalid_typed_filter_returns_safe_client_error(client: httpx.Asyn
         "message": "Invalid filter value",
         "details": {"field": "id", "operator": "gte"},
     }
+    assert response.headers["cache-control"] == "no-store"
 
 
 @pytest.mark.parametrize(
@@ -158,4 +239,106 @@ async def test_sort_header_link_omits_page(client: httpx.AsyncClient) -> None:
     response = await client.get("/users", params={"page": "1", "sort": "name"})
     # Sort-toggle links reset pagination: they never carry a page param forward.
     assert "sort=-name" in response.text
-    assert "page=" not in response.text
+    hrefs = [html.unescape(value) for value in re.findall(r'href="([^"]+)"', response.text)]
+    assert all(
+        not any(key == "page" for key, _value in parse_qsl(urlsplit(href).query)) for href in hrefs
+    )
+
+
+async def test_sort_and_search_controls_preserve_active_query_standalone(
+    client: httpx.AsyncClient,
+) -> None:
+    await _assert_controls_preserve_active_query(client, prefix="")
+
+
+async def test_sort_and_search_controls_preserve_active_query_when_mounted() -> None:
+    factory, engine = await _seeded_factory()
+    admin = Admin(
+        admin_id="operations",
+        title="Operations",
+        debug=False,
+        secret_key=SecretValue("x" * 32),
+    )
+    admin.install(SQLAlchemyPlugin(session_factory=factory))
+    admin.register(UserAdmin)
+    child_app = admin.asgi()
+    mounted_app = Starlette(routes=[Mount("/admin", app=child_app)])
+    transport = httpx.ASGITransport(app=mounted_app)
+    async with (
+        LifespanDriver(child_app),
+        httpx.AsyncClient(transport=transport, base_url="http://testserver") as mounted_client,
+    ):
+        await _assert_controls_preserve_active_query(mounted_client, prefix="/admin")
+    await engine.dispose()
+
+
+async def test_sort_headers_render_only_valid_exact_aria_sort_values(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.get("/users", params={"sort": "-name,email"})
+
+    values = re.findall(r'aria-sort="([^"]+)"', response.text)
+    assert set(values) <= {"ascending", "descending", "none", "other"}
+    assert re.search(r'aria-sort="descending"[^>]*>\s*<a[^>]*>name</a>', response.text)
+    assert re.search(r'aria-sort="other"[^>]*>\s*<a[^>]*>email</a>', response.text)
+    assert re.search(r'aria-sort="none"[^>]*>\s*<a[^>]*>id</a>', response.text)
+
+    default_response = await client.get("/users")
+    assert set(re.findall(r'aria-sort="([^"]+)"', default_response.text)) == {"none"}
+
+
+async def test_contradictory_duplicate_sort_is_safe_client_error(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.get("/users", params={"sort": "id,-id"})
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "code": "validation.failed",
+        "message": "Invalid sort query",
+    }
+    assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize("raw_value", ("1", "yes", "maybe", ""))
+async def test_is_null_rejects_non_boolean_vocabulary_before_query_execution(
+    client: httpx.AsyncClient,
+    raw_value: str,
+) -> None:
+    response = await client.get("/users", params={"filter": f"name:is_null:{raw_value}"})
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "code": "validation.failed",
+        "message": "Invalid filter value",
+        "details": {"field": "name", "operator": "is_null"},
+    }
+    assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize(("raw_value", "has_records"), (("true", False), ("false", True)))
+async def test_is_null_accepts_explicit_true_false(
+    client: httpx.AsyncClient,
+    raw_value: str,
+    has_records: bool,
+) -> None:
+    response = await client.get("/users", params={"filter": f"name:is_null:{raw_value}"})
+
+    assert response.status_code == 200
+    assert ("Ada" in response.text) is has_records
+
+
+def test_query_control_serialization_rejects_unsafe_filter_shapes() -> None:
+    filter_ = Filter(
+        field="name",
+        operator=FilterOperator.EQ,
+        value={"unexpected": "mapping"},
+    )
+
+    with pytest.raises(RakitError) as exc_info:
+        _serialize_filter(filter_)
+
+    assert exc_info.value.to_public_dict() == {
+        "code": "validation.failed",
+        "message": "Cannot safely render query controls",
+    }

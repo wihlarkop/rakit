@@ -1,5 +1,12 @@
 <div data-rakit-resource-controls="{{ resource.resource_id }}">
   <form method="get" data-rakit-search action="{{ resource_path }}">
+    {% for filter_value in filter_values %}
+    <input type="hidden" name="filter" value="{{ filter_value }}" />
+    {% endfor %}
+    {% if sort_value %}
+    <input type="hidden" name="sort" value="{{ sort_value }}" />
+    {% endif %}
+    <input type="hidden" name="per_page" value="{{ per_page_value }}" />
     <input
       type="search"
       name="search"
@@ -32,7 +39,7 @@
   <thead>
     <tr>
       {% for header in sort_headers %}
-      <th scope="col" aria-sort="{{ header.direction if header.direction else 'none' }}">
+      <th scope="col" aria-sort="{{ header.aria_sort }}">
         <a href="{{ header.url }}">{{ header.field }}</a>
       </th>
       {% endfor %}

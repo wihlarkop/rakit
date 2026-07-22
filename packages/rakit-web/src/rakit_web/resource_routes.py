@@ -11,11 +11,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlencode
+from uuid import UUID
 
 from jinja2 import ChoiceLoader, FileSystemLoader, PackageLoader, pass_context, select_autoescape
 from jinja2 import Environment as JinjaEnvironment
 from jinja2.runtime import Context
 from rakit_core.definitions import ResourceDefinition
+from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_core.query import (
     CountPolicy,
@@ -23,6 +25,8 @@ from rakit_core.query import (
     FilterOperator,
     OffsetPagination,
     ResourceQuery,
+    Sort,
+    SortDirection,
 )
 from rakit_core.resources import ResourceService
 from starlette.datastructures import QueryParams
@@ -75,7 +79,9 @@ def _identity_values(item: object, identity_fields: Sequence[str]) -> dict[str, 
     values: dict[str, int | str] = {}
     for field_name in identity_fields:
         raw = _field_value(item, field_name)
-        if isinstance(raw, int | str):
+        if isinstance(raw, UUID):
+            values[field_name] = str(raw)
+        elif isinstance(raw, int | str) and not isinstance(raw, bool):
             values[field_name] = raw
     return values
 
@@ -163,12 +169,18 @@ class ResourceBinding:
                 search=search,
                 count_policy=count_policy,
             )
-        except ValueError:
+        except ValueError as exc:
             # A malformed query string (bad sort field, out-of-range pagination)
             # falls back to a default query for this read-only slice; strict
             # validation-to-HTTP translation is a later task's concern. Filters,
             # search and count policy are already individually sanitised above,
             # so they are safe to carry into the fallback.
+            if "Contradictory sort field" in str(exc):
+                raise RakitError(
+                    code=ErrorCode.VALIDATION_FAILED,
+                    message="Invalid sort query",
+                    status_code=400,
+                ) from None
             return ResourceQuery.from_params(
                 page=_PAGINATION_DEFAULTS.page,
                 per_page=_PAGINATION_DEFAULTS.per_page,
@@ -211,7 +223,7 @@ def _parse_filters(params: QueryParams, allowed_fields: set[str]) -> tuple[Filte
 
     Special value handling:
     - ``in``: the value is split on commas into a list.
-    - ``is_null``: the value is interpreted as a boolean (``true``/``1``/``yes``).
+    - ``is_null``: the value must be the explicit boolean token ``true`` or ``false``.
 
     Any filter naming a field outside the whitelist, or using an unknown
     operator, is silently dropped -- same lenient philosophy as sort parsing.
@@ -232,14 +244,79 @@ def _parse_filters(params: QueryParams, allowed_fields: set[str]) -> tuple[Filte
         if operator is FilterOperator.IN:
             value = [part for part in raw_value.split(",") if part]
         elif operator is FilterOperator.IS_NULL:
-            value = raw_value.strip().lower() in {"true", "1", "yes"}
+            normalized_value = raw_value.strip().lower()
+            if normalized_value == "true":
+                value = True
+            elif normalized_value == "false":
+                value = False
+            else:
+                raise RakitError(
+                    code=ErrorCode.VALIDATION_FAILED,
+                    message="Invalid filter value",
+                    status_code=400,
+                    details={"field": field_name, "operator": operator.value},
+                )
         else:
             value = raw_value
         filters.append(Filter(field=field_name, operator=operator, value=value))
     return tuple(filters)
 
 
-def _sort_headers(fields: Sequence[str], query: ResourceQuery, path: str) -> list[dict[str, str]]:
+def _serialize_filter(filter_: Filter) -> str:
+    if filter_.operator is FilterOperator.IN:
+        if not isinstance(filter_.value, tuple) or not all(
+            isinstance(item, str) for item in filter_.value
+        ):
+            raise RakitError(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="Cannot safely render query controls",
+                status_code=400,
+            )
+        raw_value = ",".join(cast(tuple[str, ...], filter_.value))
+    elif filter_.operator is FilterOperator.IS_NULL:
+        if not isinstance(filter_.value, bool):
+            raise RakitError(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="Cannot safely render query controls",
+                status_code=400,
+            )
+        raw_value = "true" if filter_.value else "false"
+    else:
+        if not isinstance(filter_.value, str):
+            raise RakitError(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="Cannot safely render query controls",
+                status_code=400,
+            )
+        raw_value = filter_.value
+    return f"{filter_.field}:{filter_.operator.value}:{raw_value}"
+
+
+def _explicit_sorting(raw_sort: str | None, fields: Sequence[str]) -> tuple[Sort, ...]:
+    if raw_sort is None:
+        return ()
+    try:
+        return ResourceQuery.from_params(
+            sort=raw_sort,
+            allowed_sort_fields=set(fields),
+            identity_fields=(),
+        ).sorting
+    except ValueError:
+        return ()
+
+
+def _sort_parameter(sorting: Sequence[Sort]) -> str:
+    return ",".join(
+        f"-{sort.field}" if sort.direction is SortDirection.DESC else sort.field for sort in sorting
+    )
+
+
+def _sort_headers(
+    fields: Sequence[str],
+    query: ResourceQuery,
+    path: str,
+    explicit_sorting: Sequence[Sort],
+) -> list[dict[str, str]]:
     """Build per-column sort-toggle links for the table header.
 
     Each link deliberately omits any ``page`` param: changing the sort resets to
@@ -247,7 +324,14 @@ def _sort_headers(fields: Sequence[str], query: ResourceQuery, path: str) -> lis
     set). The current free-text search and count policy are preserved so sorting
     does not silently discard them.
     """
-    primary = query.sorting[0] if query.sorting else None
+    primary = explicit_sorting[0] if explicit_sorting else None
+    explicit_fields = {sort.field for sort in explicit_sorting}
+    preserved_params = [("filter", _serialize_filter(filter_)) for filter_ in query.filters]
+    if query.search:
+        preserved_params.append(("search", query.search))
+    preserved_params.append(("per_page", str(query.pagination.per_page)))
+    if query.count_policy is not CountPolicy.EXACT:
+        preserved_params.append(("count_policy", query.count_policy.value))
     headers: list[dict[str, str]] = []
     for field_name in fields:
         is_primary_asc = (
@@ -255,19 +339,17 @@ def _sort_headers(fields: Sequence[str], query: ResourceQuery, path: str) -> lis
         )
         # Toggle: an already-ascending primary column flips to descending.
         next_sort = f"-{field_name}" if is_primary_asc else field_name
-        params: list[tuple[str, str]] = [("sort", next_sort)]
-        if query.search:
-            params.append(("search", query.search))
-        if query.count_policy.value != "exact":
-            params.append(("count_policy", query.count_policy.value))
-        current = ""
+        params: list[tuple[str, str]] = [("sort", next_sort), *preserved_params]
+        aria_sort = "none"
         if primary is not None and primary.field == field_name:
-            current = primary.direction.value
+            aria_sort = "ascending" if primary.direction is SortDirection.ASC else "descending"
+        elif field_name in explicit_fields:
+            aria_sort = "other"
         headers.append(
             {
                 "field": field_name,
                 "url": f"{path}?{urlencode(params)}",
-                "direction": current,
+                "aria_sort": aria_sort,
             }
         )
     return headers
@@ -303,7 +385,12 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
             # the total matches the list it annotates, not the whole table.
             count_url = f"{count_url}?{request.url.query}"
 
-        logical_name = "_table.html" if _is_htmx(request) else "list.html"
+        table_template = binding.resolve_template("_table.html")
+        logical_name = (
+            table_template if _is_htmx(request) else binding.resolve_template("list.html")
+        )
+        explicit_sorting = _explicit_sorting(request.query_params.get("sort"), fields)
+        filter_values = [_serialize_filter(filter_) for filter_ in query.filters]
         context = {
             "resource": binding.definition,
             "page": page,
@@ -312,12 +399,21 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
             "rows": rows,
             "resource_path": resource_path,
             "count_url": count_url,
-            "sort_headers": _sort_headers(fields, query, resource_path),
+            "sort_headers": _sort_headers(
+                fields,
+                query,
+                resource_path,
+                explicit_sorting,
+            ),
             "search_value": query.search or "",
+            "filter_values": filter_values,
+            "sort_value": _sort_parameter(explicit_sorting),
+            "per_page_value": str(query.pagination.per_page),
+            "table_template": table_template,
         }
         return binding.templates.TemplateResponse(
             request,
-            binding.resolve_template(logical_name),
+            logical_name,
             context,
             headers={"Cache-Control": "no-store"},
         )
@@ -333,7 +429,21 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
         )
 
     async def resource_detail(request: Request) -> Response:
-        identity = binding.codec.decode(request.path_params["identity"])
+        try:
+            identity = binding.codec.decode(request.path_params["identity"])
+        except ValueError as exc:
+            raise RakitError(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="Invalid resource identity",
+                status_code=400,
+                cause=exc,
+            ) from exc
+        if set(identity.values) != set(binding.identity_fields):
+            raise RakitError(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="Invalid resource identity",
+                status_code=400,
+            )
         record = await binding.service.detail(identity)
         fields = binding.fields
         context = {

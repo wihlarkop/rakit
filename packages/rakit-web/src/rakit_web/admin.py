@@ -233,7 +233,11 @@ class Admin:
             # HTTP status it intends (e.g. RESOURCE_NOT_FOUND -> 404), so honour it
             # rather than letting it surface as an unhandled 500.
             assert isinstance(exc, RakitError)
-            return JSONResponse(exc.to_public_dict(), status_code=exc.status_code)
+            return JSONResponse(
+                exc.to_public_dict(),
+                status_code=exc.status_code,
+                headers={"Cache-Control": "no-store"},
+            )
 
         @asynccontextmanager
         async def lifespan(_app: Starlette) -> AsyncIterator[None]:
