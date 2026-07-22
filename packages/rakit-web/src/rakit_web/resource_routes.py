@@ -327,6 +327,43 @@ def _sort_parameter(sorting: Sequence[Sort]) -> str:
     )
 
 
+def _validated_query_params(
+    query: ResourceQuery,
+    explicit_sorting: Sequence[Sort],
+) -> list[tuple[str, str]]:
+    """Serialize only query state that survived resource-policy validation."""
+
+    params = [("filter", _serialize_filter(filter_)) for filter_ in query.filters]
+    if query.search:
+        params.append(("search", query.search))
+    if explicit_sorting:
+        params.append(("sort", _sort_parameter(explicit_sorting)))
+    params.append(("per_page", str(query.pagination.per_page)))
+    params.append(("count_policy", query.count_policy.value))
+    return params
+
+
+def _page_url(path: str, params: Sequence[tuple[str, str]], page: int) -> str:
+    return f"{path}?{urlencode([*params, ('page', str(page))])}"
+
+
+def _pagination_controls(
+    query: ResourceQuery,
+    path: str,
+    explicit_sorting: Sequence[Sort],
+    *,
+    has_previous: bool,
+    has_next: bool,
+) -> dict[str, str | int]:
+    params = _validated_query_params(query, explicit_sorting)
+    current_page = query.pagination.page
+    return {
+        "current_page": current_page,
+        "previous_url": (_page_url(path, params, current_page - 1) if has_previous else ""),
+        "next_url": _page_url(path, params, current_page + 1) if has_next else "",
+    }
+
+
 def _toggle_explicit_sort(sorting: Sequence[Sort], field_name: str) -> str:
     updated = list(sorting)
     for index, sort in enumerate(updated):
@@ -410,17 +447,17 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
                 }
             )
 
-        count_url = _mounted_path(request, binding.count_path)
-        if request.url.query:
-            # Carry the current filters/search into the deferred-count fetch so
-            # the total matches the list it annotates, not the whole table.
-            count_url = f"{count_url}?{request.url.query}"
-
         table_template = binding.resolve_template("_table.html")
         logical_name = (
             table_template if _is_htmx(request) else binding.resolve_template("list.html")
         )
         explicit_sorting = _explicit_sorting(request.query_params.get("sort"), binding.sort_fields)
+        validated_params = _validated_query_params(query, explicit_sorting)
+        count_url = _mounted_path(request, binding.count_path)
+        if validated_params:
+            # Deferred counts inherit only validated state; rejected raw query
+            # fields are never reflected into generated controls.
+            count_url = f"{count_url}?{urlencode(validated_params)}"
         filter_values = [_serialize_filter(filter_) for filter_ in query.filters]
         context = {
             "resource": binding.definition,
@@ -436,6 +473,13 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
                 resource_path,
                 explicit_sorting,
                 set(binding.sort_fields),
+            ),
+            "pagination": _pagination_controls(
+                query,
+                resource_path,
+                explicit_sorting,
+                has_previous=page.has_previous,
+                has_next=page.has_next,
             ),
             "search_value": query.search or "",
             "search_enabled": bool(binding.search_fields),

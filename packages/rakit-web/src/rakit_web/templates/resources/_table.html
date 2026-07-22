@@ -71,3 +71,13 @@
     {% endfor %}
   </tbody>
 </table>
+
+<nav aria-label="Resource pagination" data-rakit-pagination>
+  {% if pagination.previous_url %}
+  <a aria-label="Previous page" href="{{ pagination.previous_url }}" rel="prev">Previous</a>
+  {% endif %}
+  <span aria-current="page">Page {{ pagination.current_page }}</span>
+  {% if pagination.next_url %}
+  <a aria-label="Next page" href="{{ pagination.next_url }}" rel="next">Next</a>
+  {% endif %}
+</nav>

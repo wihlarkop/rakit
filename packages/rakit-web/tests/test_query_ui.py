@@ -48,19 +48,22 @@ class UserAdmin(ModelAdmin):
     sort_fields = ("id", "name", "email")
 
 
-async def _seeded_factory() -> tuple[async_sessionmaker[AsyncSession], AsyncEngine]:
+async def _seeded_factory(
+    *, include_third: bool = False
+) -> tuple[async_sessionmaker[AsyncSession], AsyncEngine]:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as session:
-        session.add_all(
-            [
-                User(id=1, name="Ada", email="ada@example.com"),
-                User(id=2, name="Grace", email="grace@work.test"),
-            ]
-        )
+        users = [
+            User(id=1, name="Ada", email="ada@example.com"),
+            User(id=2, name="Grace", email="grace@work.test"),
+        ]
+        if include_third:
+            users.append(User(id=3, name="Linus", email="linus@kernel.test"))
+        session.add_all(users)
         await session.commit()
     return factory, engine
 
@@ -100,6 +103,63 @@ def _table_cell_texts(document: str) -> list[str]:
         html.unescape(re.sub(r"<[^>]+>", "", cell)).strip()
         for cell in re.findall(r"<td[^>]*>(.*?)</td>", document, flags=re.DOTALL)
     ]
+
+
+def _pagination_link(document: str, label: str) -> tuple[str, list[tuple[str, str]]] | None:
+    match = re.search(rf'<a[^>]+aria-label="{re.escape(label)}"[^>]+href="([^"]+)"', document)
+    if match is None:
+        return None
+    url = html.unescape(match.group(1))
+    return url, parse_qsl(urlsplit(url).query, keep_blank_values=True)
+
+
+async def _assert_pagination_controls(
+    client: httpx.AsyncClient,
+    *,
+    prefix: str,
+    count_policy: str,
+) -> None:
+    params: list[tuple[str, str | int | float | None]] = [
+        ("filter", "id:gte:1"),
+        ("filter", "email:contains:."),
+        ("search", "e"),
+        ("sort", "-name,email"),
+        ("per_page", "1"),
+        ("count_policy", count_policy),
+    ]
+
+    first = await client.get(f"{prefix}/users", params=params)
+    assert first.status_code == 200
+    assert 'nav aria-label="Resource pagination"' in first.text
+    assert ">Page 1<" in first.text
+    assert _pagination_link(first.text, "Previous page") is None
+    first_next = _pagination_link(first.text, "Next page")
+    assert first_next is not None
+
+    middle = await client.get(f"{prefix}/users", params=[*params, ("page", "2")])
+    assert middle.status_code == 200
+    assert ">Page 2<" in middle.text
+    previous = _pagination_link(middle.text, "Previous page")
+    next_ = _pagination_link(middle.text, "Next page")
+    assert previous is not None
+    assert next_ is not None
+
+    expected_without_page = params
+    for url, pairs, expected_page in (
+        (*previous, "1"),
+        (*next_, "3"),
+    ):
+        assert url.startswith(f"{prefix}/users?")
+        assert [(key, value) for key, value in pairs if key != "page"] == expected_without_page
+        assert [value for key, value in pairs if key == "page"] == [expected_page]
+        followed = await client.get(url)
+        assert followed.status_code == 200
+
+    last = await client.get(f"{prefix}/users", params=[*params, ("page", "3")])
+    assert last.status_code == 200
+    assert ">Page 3<" in last.text
+    assert _pagination_link(last.text, "Previous page") is not None
+    assert _pagination_link(last.text, "Next page") is None
 
 
 async def _assert_controls_preserve_active_query(
@@ -340,6 +400,50 @@ async def test_multi_column_sort_links_preserve_sequence_when_mounted() -> None:
         httpx.AsyncClient(transport=transport, base_url="http://testserver") as mounted_client,
     ):
         await _assert_multi_column_sort_links(mounted_client, prefix="/admin")
+    await engine.dispose()
+
+
+@pytest.mark.parametrize("count_policy", ("exact", "deferred", "disabled"))
+async def test_pagination_controls_preserve_validated_query_standalone(
+    count_policy: str,
+) -> None:
+    factory, engine = await _seeded_factory(include_third=True)
+    admin = Admin(
+        admin_id="operations",
+        title="Operations",
+        debug=False,
+        secret_key=SecretValue("x" * 32),
+    )
+    admin.install(SQLAlchemyPlugin(session_factory=factory))
+    admin.register(UserAdmin)
+    async with _client_for(admin) as standalone_client:
+        await _assert_pagination_controls(standalone_client, prefix="", count_policy=count_policy)
+    await engine.dispose()
+
+
+@pytest.mark.parametrize("count_policy", ("exact", "deferred", "disabled"))
+async def test_pagination_controls_preserve_validated_query_when_mounted(
+    count_policy: str,
+) -> None:
+    factory, engine = await _seeded_factory(include_third=True)
+    admin = Admin(
+        admin_id="operations",
+        title="Operations",
+        debug=False,
+        secret_key=SecretValue("x" * 32),
+    )
+    admin.install(SQLAlchemyPlugin(session_factory=factory))
+    admin.register(UserAdmin)
+    child_app = admin.asgi()
+    mounted_app = Starlette(routes=[Mount("/admin", app=child_app)])
+    transport = httpx.ASGITransport(app=mounted_app)
+    async with (
+        LifespanDriver(child_app),
+        httpx.AsyncClient(transport=transport, base_url="http://testserver") as mounted_client,
+    ):
+        await _assert_pagination_controls(
+            mounted_client, prefix="/admin", count_policy=count_policy
+        )
     await engine.dispose()
 
 
