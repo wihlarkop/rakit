@@ -8,6 +8,7 @@ from uuid import UUID
 
 import pytest
 from rakit_core.errors import ErrorCode, RakitError
+from rakit_core.identity import RecordIdentity
 from rakit_core.query import Filter, FilterOperator, ResourceQuery
 from rakit_sqlalchemy.datasource import SQLAlchemyDataSource
 from sqlalchemy import Boolean, DateTime, Float, Integer, Numeric, String, Uuid
@@ -62,6 +63,18 @@ class TypedRecord(Base):
     custom_number: Mapped[int] = mapped_column(HexInteger)
 
 
+class StringRecord(Base):
+    __tablename__ = "string_records"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+
+
+class UUIDRecord(Base):
+    __tablename__ = "uuid_records"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+
+
 class SessionFactorySpy:
     def __init__(self) -> None:
         self.calls = 0
@@ -95,6 +108,17 @@ def _bound_params(query: ResourceQuery) -> dict[str, object]:
 def _compile(query: ResourceQuery) -> Any:
     statement = _datasource()._filtered_statement(query)
     return statement.compile(dialect=postgresql.dialect())
+
+
+def _detail_bound_value(model: type[object], raw: int | str | UUID) -> object:
+    datasource = SQLAlchemyDataSource(
+        model=model,
+        session_factory=cast(Any, SessionFactorySpy()),
+    )
+    statement = datasource._detail_statement(RecordIdentity(values={"id": raw}))
+    compiled = statement.compile(dialect=postgresql.dialect())
+    assert len(compiled.params) == 1
+    return next(iter(compiled.params.values()))
 
 
 def _single_bound_value(field: str, operator: FilterOperator, value: object) -> object:
@@ -195,7 +219,8 @@ def test_in_converts_each_item_without_mutating_input_query() -> None:
 
     assert next(iter(params.values())) == [1, 2]
     assert query.model_dump(mode="python") == before
-    assert query.filters[0].value is raw_values
+    assert query.filters[0].value == ("1", "2")
+    assert query.filters[0].value is not raw_values
 
 
 def test_multiple_filters_use_field_specific_converters() -> None:
@@ -240,3 +265,67 @@ def test_is_null_keeps_existing_boolean_semantics_without_bound_value() -> None:
 
     assert compiled.params == {}
     assert "typed_records.name IS NULL" in str(compiled)
+
+
+@pytest.mark.parametrize(
+    ("model", "raw", "expected"),
+    [
+        (TypedRecord, "42", 42),
+        (StringRecord, "record-42", "record-42"),
+        (
+            UUIDRecord,
+            UUID("a0ebc21a-7334-4ab2-8f01-01e5af6d8a24"),
+            UUID("a0ebc21a-7334-4ab2-8f01-01e5af6d8a24"),
+        ),
+    ],
+)
+def test_detail_identity_uses_mapped_type_before_strict_backend_binding(
+    model: type[object], raw: int | str | UUID, expected: object
+) -> None:
+    value = _detail_bound_value(model, raw)
+
+    assert value == expected
+    assert type(value) is type(expected)
+
+
+@pytest.mark.parametrize(
+    "identity",
+    (
+        RecordIdentity(values={"id": "not-a-uuid"}),
+        RecordIdentity(values={"wrong_field": "a0ebc21a-7334-4ab2-8f01-01e5af6d8a24"}),
+    ),
+)
+async def test_invalid_detail_identity_is_safe_before_session_creation(
+    identity: RecordIdentity,
+) -> None:
+    factory = SessionFactorySpy()
+    datasource = SQLAlchemyDataSource(
+        model=UUIDRecord,
+        session_factory=cast(Any, factory),
+    )
+
+    with pytest.raises(RakitError) as exc_info:
+        await datasource.detail(identity)
+
+    assert exc_info.value.to_public_dict() == {
+        "code": "validation.failed",
+        "message": "Invalid resource identity",
+        "details": {"field": "id"},
+    }
+    assert factory.calls == 0
+
+
+def test_free_text_search_excludes_sqlalchemy_enum_on_strict_dialect() -> None:
+    statement = _datasource()._filtered_statement(
+        ResourceQuery.from_params(
+            allowed_sort_fields=set(TypedRecord.__table__.columns.keys()),
+            identity_fields=("id",),
+            search="active",
+        )
+    )
+
+    sql = str(statement.compile(dialect=postgresql.dialect()))
+
+    assert sql.count(" LIKE ") == 1
+    assert "typed_records.name LIKE" in sql
+    assert "typed_records.status LIKE" not in sql

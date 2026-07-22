@@ -7,8 +7,10 @@ from rakit_core.query import (
     FilterOperator,
     OffsetPagination,
     ResourceQuery,
+    Sort,
 )
 from rakit_sqlalchemy.datasource import SQLAlchemyDataSource
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -23,6 +25,13 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str]
     email: Mapped[str]
+
+
+class RankedRecord(Base):
+    __tablename__ = "ranked_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rank: Mapped[int]
 
 
 @pytest.fixture
@@ -42,6 +51,42 @@ async def datasource() -> AsyncIterator[SQLAlchemyDataSource]:
         await session.commit()
 
     yield SQLAlchemyDataSource(model=User, session_factory=factory)
+    await engine.dispose()
+
+
+@pytest.fixture
+async def stable_datasource() -> AsyncIterator[tuple[SQLAlchemyDataSource, list[str]]]:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    factory: async_sessionmaker[AsyncSession] = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as session:
+        session.add_all(
+            [
+                RankedRecord(id=4, rank=1),
+                RankedRecord(id=2, rank=1),
+                RankedRecord(id=3, rank=1),
+                RankedRecord(id=1, rank=1),
+            ]
+        )
+        await session.commit()
+
+    statements: list[str] = []
+
+    @event.listens_for(engine.sync_engine, "before_cursor_execute")
+    def capture_statement(
+        _connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        if "ranked_records" in statement and "ORDER BY" in statement:
+            statements.append(statement)
+
+    yield SQLAlchemyDataSource(model=RankedRecord, session_factory=factory), statements
     await engine.dispose()
 
 
@@ -135,3 +180,45 @@ async def test_search_and_filter_combine(datasource: SQLAlchemyDataSource) -> No
         )
     )
     assert empty.items == ()
+
+
+@pytest.mark.parametrize("count_policy", tuple(CountPolicy))
+async def test_direct_query_appends_stable_identity_order_across_pages(
+    stable_datasource: tuple[SQLAlchemyDataSource, list[str]],
+    count_policy: CountPolicy,
+) -> None:
+    datasource, statements = stable_datasource
+    pages = []
+    queries = []
+    for page_number in (1, 2):
+        query = ResourceQuery(
+            sorting=(Sort(field="rank"),),
+            pagination=OffsetPagination(page=page_number, per_page=2),
+            count_policy=count_policy,
+        )
+        queries.append(query)
+        pages.append(await datasource.list(query))
+
+    ids = [record.id for page in pages for record in page.items]
+
+    assert ids == [1, 2, 3, 4]
+    assert len(ids) == len(set(ids))
+    assert all(query.sorting == (Sort(field="rank"),) for query in queries)
+    assert statements
+    assert all(statement.count("ranked_records.id ASC") == 1 for statement in statements)
+
+
+async def test_existing_identity_sort_is_not_duplicated(
+    stable_datasource: tuple[SQLAlchemyDataSource, list[str]],
+) -> None:
+    datasource, statements = stable_datasource
+
+    await datasource.list(
+        ResourceQuery(
+            sorting=(Sort(field="rank"), Sort(field="id")),
+            count_policy=CountPolicy.DISABLED,
+        )
+    )
+
+    assert len(statements) == 1
+    assert statements[0].count("ranked_records.id ASC") == 1

@@ -69,6 +69,20 @@ def _invalid_filter(
     )
 
 
+def _invalid_identity(
+    field: str,
+    *,
+    cause: BaseException | None = None,
+) -> RakitError:
+    return RakitError(
+        code=ErrorCode.VALIDATION_FAILED,
+        message="Invalid resource identity",
+        status_code=400,
+        details={"field": field},
+        cause=cause,
+    )
+
+
 def _enum_value(type_: Enum, value: object) -> object:
     if not isinstance(value, str):
         if type_.enum_class is not None and isinstance(value, type_.enum_class):
@@ -256,7 +270,7 @@ class SQLAlchemyDataSource:
         predicates: list[ColumnElement[bool]] = []
         for field_name in self.fields:
             column = getattr(self._model, field_name)
-            if isinstance(column.type, String | Text):
+            if _is_string_type(column.type):
                 predicates.append(column.contains(search))
         if predicates:
             statement = statement.where(or_(*predicates))
@@ -288,10 +302,19 @@ class SQLAlchemyDataSource:
             ordering = ordering.nulls_last()
         return statement.order_by(ordering)
 
+    def _effective_sorting(self, query: ResourceQuery) -> tuple[Sort, ...]:
+        sorting = list(query.sorting)
+        sorted_fields = {sort.field for sort in sorting}
+        for field_name in self.identity_fields:
+            if field_name not in sorted_fields:
+                sorting.append(Sort(field=field_name))
+                sorted_fields.add(field_name)
+        return tuple(sorting)
+
     async def list(self, query: ResourceQuery) -> PageResult:
         filtered = self._filtered_statement(query)
         ordered = filtered
-        for sort in query.sorting:
+        for sort in self._effective_sorting(query):
             ordered = self._apply_sort(ordered, sort)
 
         pagination = query.pagination
@@ -332,11 +355,20 @@ class SQLAlchemyDataSource:
         async with self._session_factory() as session:
             return await self._count(session, filtered)
 
+    def _detail_statement(self, identity: RecordIdentity) -> Select:
+        identity_field = self._metadata.identity_field
+        if set(identity.values) != {identity_field}:
+            raise _invalid_identity(identity_field)
+
+        column = getattr(self._model, identity_field)
+        try:
+            value = _coerce_filter_item(column.type, identity.values[identity_field])
+        except (ArithmeticError, TypeError, ValueError) as exc:
+            raise _invalid_identity(identity_field, cause=exc) from exc
+        return self._base_statement().where(column == value)
+
     async def detail(self, identity: RecordIdentity) -> object | None:
-        column = getattr(self._model, self._metadata.identity_field)
-        statement = self._base_statement().where(
-            column == identity.values[self._metadata.identity_field]
-        )
+        statement = self._detail_statement(identity)
         async with self._session_factory() as session:
             result = await session.execute(statement)
             return result.scalar_one_or_none()
