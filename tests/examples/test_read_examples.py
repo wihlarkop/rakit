@@ -293,6 +293,16 @@ def test_all_packages_builds_exactly_the_eight_official_distributions(tmp_path: 
     with zipfile.ZipFile(rakit_wheel) as archive:
         assert "rakit/py.typed" in archive.namelist()
 
+    auth_sqlalchemy_wheel = next(output.glob("rakit_auth_sqlalchemy-*.whl"))
+    with zipfile.ZipFile(auth_sqlalchemy_wheel) as archive:
+        names = archive.namelist()
+        # The Alembic migration files must ship inside the installed wheel,
+        # not only the sdist -- a `pip install rakit-auth-sqlalchemy` from a
+        # wheel (the common case) must be able to run its own migrations.
+        assert "rakit_auth_sqlalchemy/alembic.ini" in names
+        assert "rakit_auth_sqlalchemy/alembic/env.py" in names
+        assert "rakit_auth_sqlalchemy/alembic/versions/0001_initial_auth.py" in names
+
     installed = tmp_path / "installed-rakit"
     subprocess.run(
         ["uv", "venv", str(installed), "--python", sys.executable],

@@ -6,7 +6,8 @@ from rakit_auth_sqlalchemy.models import Base
 from sqlalchemy import engine_from_config, pool
 
 # This file is only ever executed by the `alembic` CLI (e.g.
-# `alembic -c packages/rakit-auth-sqlalchemy/alembic.ini upgrade head`),
+# `alembic -c packages/rakit-auth-sqlalchemy/src/rakit_auth_sqlalchemy/alembic.ini
+# upgrade head`),
 # never imported by rakit_auth_sqlalchemy's runtime package -- migrations
 # are always an explicit, manual operation, never applied automatically at
 # application startup.
