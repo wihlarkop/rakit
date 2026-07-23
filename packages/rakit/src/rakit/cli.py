@@ -1,8 +1,12 @@
+import asyncio
 import importlib
-from typing import Protocol
+from typing import Any, Protocol, cast
 
 import click
 from rakit_core.compiler import CompiledApplication
+from rakit_core.di import ServiceRegistry
+
+from ._optional import optional_import
 
 
 class Compilable(Protocol):
@@ -19,9 +23,41 @@ class Compilable(Protocol):
     def compile(self) -> CompiledApplication: ...
 
 
+class AdminLike(Compilable, Protocol):
+    """The subset of `Admin`'s surface the auth commands need beyond plain
+    `Compilable`: access to the compiled `builder.registry` (to resolve the
+    installed `async_sessionmaker`) and to the compiled application's
+    resources (to generate the permission catalogue)."""
+
+    @property
+    def builder(self) -> Any: ...
+
+    @property
+    def compiled(self) -> CompiledApplication | None: ...
+
+    @property
+    def config(self) -> Any: ...
+
+
 def load_object(spec: str) -> Compilable:
     module_name, attribute = spec.split(":", 1)
     return getattr(importlib.import_module(module_name), attribute)
+
+
+def _load_admin(target: str) -> AdminLike:
+    admin = load_object(target)
+    admin.compile()
+    return cast(AdminLike, admin)
+
+
+async def _resolve_session_factory(registry: ServiceRegistry) -> Any:
+    """Resolve the `async_sessionmaker` an installed `SQLAlchemyPlugin`
+    registered -- the same DI value both app resources and the built-in
+    auth schema share, so no separate auth-specific plugin is needed."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    async with registry.application_scope() as resolver:
+        return resolver.require(async_sessionmaker)
 
 
 @click.group()
@@ -43,3 +79,117 @@ def check(target: str) -> None:
 def routes(target: str) -> None:
     for route in load_object(target).compile().routes:
         click.echo(f"{','.join(route.methods):8} {route.path:30} {route.route_name}")
+
+
+@cli.command()
+@click.argument("target")
+@click.option("--email", required=True, help="Login identifier for the new superuser.")
+@click.option("--username", default=None, help="Optional separate username.")
+def createsuperuser(target: str, email: str, username: str | None) -> None:
+    """Create a superuser account against TARGET's installed SQLAlchemy plugin.
+
+    Requires the optional ``rakit[auth-sqlalchemy]`` distribution.
+    """
+    with optional_import("rakit_auth_sqlalchemy", extra="auth-sqlalchemy"):
+        from rakit_auth_sqlalchemy.models import User
+        from rakit_auth_sqlalchemy.passwords import Argon2PasswordHasher
+
+    from sqlalchemy import select
+    from sqlalchemy.exc import OperationalError, ProgrammingError
+
+    admin = _load_admin(target)
+    password = click.prompt("Password", hide_input=True, confirmation_prompt=True)
+
+    async def _run() -> int:
+        try:
+            session_factory = await _resolve_session_factory(admin.builder.registry)
+        except KeyError:
+            click.echo(
+                "No SQLAlchemy plugin is installed on this admin. createsuperuser "
+                "requires an installed SQLAlchemyPlugin with a session factory.",
+                err=True,
+            )
+            return 1
+
+        hasher = Argon2PasswordHasher()
+        password_hash = await hasher.hash(password)
+
+        try:
+            async with session_factory() as session:
+                existing = await session.scalar(select(User).where(User.email == email))
+                if existing is not None:
+                    click.echo(f"A user with email {email!r} already exists.", err=True)
+                    return 1
+                session.add(
+                    User(
+                        email=email,
+                        username=username,
+                        password_hash=password_hash,
+                        is_superuser=True,
+                    )
+                )
+                await session.commit()
+        except (OperationalError, ProgrammingError) as exc:
+            click.echo(
+                f"Database schema error -- has the auth migration been applied? ({exc})",
+                err=True,
+            )
+            return 1
+
+        click.echo(f"Superuser {email!r} created.")
+        return 0
+
+    exit_code = asyncio.run(_run())
+    if exit_code != 0:
+        raise SystemExit(exit_code)
+
+
+@cli.group()
+def permissions() -> None:
+    pass
+
+
+@permissions.command("sync")
+@click.argument("target")
+def permissions_sync(target: str) -> None:
+    """Synchronize TARGET's generated permission catalogue into storage.
+
+    Adds and updates permission rows; never deletes one -- a definition no
+    longer generated is marked orphaned instead. Requires the optional
+    ``rakit[auth-sqlalchemy]`` distribution.
+    """
+    with optional_import("rakit_auth_sqlalchemy", extra="auth-sqlalchemy"):
+        from rakit_auth_sqlalchemy.rbac import sync_permissions
+
+    from rakit_core.permission_catalogue import generate_permission_catalogue
+
+    admin = _load_admin(target)
+    compiled = admin.compiled
+    assert compiled is not None
+    catalogue = generate_permission_catalogue(
+        admin_id=admin.config.admin_id,
+        admin_label=admin.config.title,
+        resources=tuple(compiled.resources),
+    )
+
+    async def _run() -> int:
+        try:
+            session_factory = await _resolve_session_factory(admin.builder.registry)
+        except KeyError:
+            click.echo(
+                "No SQLAlchemy plugin is installed on this admin. permissions sync "
+                "requires an installed SQLAlchemyPlugin with a session factory.",
+                err=True,
+            )
+            return 1
+
+        async with session_factory() as session:
+            result = await sync_permissions(session, catalogue)
+            await session.commit()
+
+        click.echo(f"added={result.added} updated={result.updated} orphaned={result.orphaned}")
+        return 0
+
+    exit_code = asyncio.run(_run())
+    if exit_code != 0:
+        raise SystemExit(exit_code)

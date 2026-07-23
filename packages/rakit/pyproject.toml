@@ -15,6 +15,7 @@ dependencies = [
 [project.optional-dependencies]
 server-uvicorn = ["rakit-server-uvicorn==0.1.0a1"]
 sqlalchemy = ["rakit-sqlalchemy==0.1.0a1"]
+auth-sqlalchemy = ["rakit-auth-sqlalchemy==0.1.0a1"]
 
 [project.scripts]
 rakit = "rakit.cli:cli"
@@ -23,6 +24,7 @@ rakit = "rakit.cli:cli"
 rakit-core = { workspace = true }
 rakit-server-uvicorn = { workspace = true }
 rakit-sqlalchemy = { workspace = true }
+rakit-auth-sqlalchemy = { workspace = true }
 rakit-web = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
