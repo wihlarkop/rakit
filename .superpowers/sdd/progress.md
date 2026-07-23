@@ -181,3 +181,88 @@ Plan 02 external review round 5: fixes for two remaining CHANGES-REQUESTED findi
   trips (not just compiled-statement inspection) for both findings, full suite 400/400 passing,
   ruff format/check and ty check clean (0 real diagnostics; only pre-existing io-access-denied
   entries on git-invisible locked scratch dirs). Fix commit: cb8e6e8.
+
+# Plan 03 progress ledger
+
+Plan 03 (Authentication, Authorization, and Security) started 2026-07-23 on branch
+`worktree-plan-03-authentication-authorization-security` from approved main HEAD
+`81a24b56b95454b960ea4a239dd8d684f7be807c` (Plan 02, merged and closed out).
+
+Task 1 (`225ee05`): `TokenService`/`KeyRing`/`SigningKey` in `rakit_core.crypto` --
+purpose/admin/version-separated HKDF-SHA256 key derivation, HMAC-SHA256 signing,
+constant-time verification. Fails closed on purpose mismatch, version mismatch,
+unknown key ID, expiry, and signature tampering. 10 new tests. Adds `cryptography`
+as a rakit-core runtime dependency.
+
+Task 2 (`4818a72`): `Principal`/`SessionRecord`/`AuthBackend`/`SessionStore` in
+`rakit_core.auth`; `PermissionRequirement`/`AuthorizationDecision`/
+`AuthorizationPolicy` in `rakit_core.permissions`. 6 new tests.
+
+Fix (`7e83c6a`, found by automated security review immediately after Task 2):
+`PermissionRequirement.permissions` rejected empty at construction --
+`all(())`/`any(())` are Python-truthy, so an empty requirement would have
+vacuously matched every principal. See plan-03-design-decisions.md section 4.
+
+Fix (`24e22bb`): dropped `SessionRecord.csrf_token` before any consumer depended
+on it -- a CSRF token is a `TokenService`-derived value bound to `session_id`,
+not stored session state. See plan-03-design-decisions.md section 2.
+
+Task 3 (`4811380`): `User`/`Role`/`Permission`/`Session` models (own
+`DeclarativeBase`) plus the forward-only initial Alembic migration
+(`0001_initial_auth`) in `rakit-auth-sqlalchemy`. `User`/`Permission` gained
+explicit `__init__` overrides so secure defaults are visible immediately at
+construction (`mapped_column(default=...)` alone only applies at INSERT time).
+7 new tests; alembic upgrade smoke check passes against `sqlite:///:memory:`.
+Adds `alembic`/`argon2-cffi` as rakit-auth-sqlalchemy dependencies.
+
+Task 4 (`b243882`): `Argon2PasswordHasher` (argon2-cffi, off-loop via
+`anyio.to_thread.run_sync` bounded by a `CapacityLimiter`) and
+`SQLAlchemySessionStore` (opaque tokens, only `sha256(token)` persisted,
+idle/absolute expiry enforced on every resolve, rotate/revoke). 17 new tests.
+
+Task 5 (`2f23243`): `generate_permission_catalogue()` (rakit-core) derives
+`{admin_id}.access` and unconditional per-resource CRUD keys from compiled
+resources; `sync_permissions()`/`BuiltinAuthorizationPolicy` (rakit-auth-sqlalchemy)
+implement allow-only RBAC with orphan-preserving sync (never deletes). 12 new
+tests.
+
+Fix (`cd8341a`): `sync_permissions()` returns `PermissionSyncResult(added,
+updated, orphaned)` instead of `None`, for the Task 8 CLI to report.
+
+Task 6 (`36dc1f8`): `/auth/login` (GET+POST) and `/auth/logout` (POST), wired
+into `Admin.asgi()` only when both `auth_backend` and `session_store` are
+configured. Non-enumerating 401 for unknown-identifier/wrong-password.
+HttpOnly+Secure(unless debug)+SameSite=Lax session cookie; non-HttpOnly
+double-submit CSRF cookie. Per-(admin,identifier-hash,IP) login rate limiting
+(in-memory, documented development-only). 16 new tests. Adds
+`python-multipart` as a rakit-web dependency.
+
+Task 7 (`f68f4a4`): `SecurityMiddleware` applied unconditionally to every
+`Admin.asgi()` -- trusted-host validation (400), mutation Origin/Referer
+validation (403), declared-Content-Length body-size limit (413, chunked
+requests documented as not yet bounded), and response security headers
+(CSP, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, COOP,
+X-Frame-Options, Cache-Control: no-store) without overriding route-set
+headers. `resolve_client_ip()` only trusts X-Forwarded-For from a configured
+trusted-proxy CIDR. `validate_production_config()` fails closed on a
+wildcard allowed-host, disabled CSP, or overbroad trusted-proxy CIDR
+whenever `debug=False`. 14 new tests. Required migrating every rakit-web
+test fixture's Host header from httpx's `testserver` convention to
+`localhost` (already the existing default `allowed_hosts` entry) -- a
+test-fixture change, not a product behavior change; see
+plan-03-design-decisions.md section 14.
+
+Task 8 (`c73a617`): `rakit createsuperuser <target> --email ... [--username
+...]` (hidden/confirmed password prompt, Argon2id hash, resolves the
+target's installed `SQLAlchemyPlugin` session factory from the compiled DI
+registry -- no separate auth plugin needed) and `rakit permissions sync
+<target>` (generates the catalogue from compiled resources, reports
+added/updated/orphaned). Both exit non-zero with a clear stderr message for
+a duplicate email, missing SQLAlchemy plugin, or schema mismatch. 4 new
+tests. Adds the optional `rakit[auth-sqlalchemy]` extra, lazily imported.
+
+All eight Plan 03 tasks complete. Full suite 488/488 passing, ruff
+format/check and ty check clean across the whole workspace after each task.
+
+Next: fresh independent whole-branch review, clean-filesystem verification
+in a detached worktree, review package generation, stop for external review.
