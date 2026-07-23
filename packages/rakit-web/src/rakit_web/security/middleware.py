@@ -15,6 +15,19 @@ def _host_from_url(value: str) -> str | None:
     return urlsplit(value).hostname
 
 
+def _host_without_port(raw_host: str) -> str:
+    """Strip a trailing `:port` from a `Host` header value, without
+    mangling a bracketed IPv6 literal (`[::1]` or `[::1]:8000`) -- a naive
+    `.split(":")[0]` truncates `[::1]` to `[`, which can never match an
+    allowed-hosts entry of `"[::1]"`."""
+    if raw_host.startswith("["):
+        closing_bracket = raw_host.find("]")
+        if closing_bracket != -1:
+            return raw_host[: closing_bracket + 1]
+        return raw_host
+    return raw_host.split(":", 1)[0]
+
+
 def resolve_client_ip(request: Request, trusted_proxies: tuple[str, ...]) -> str:
     """Return the real client IP, honouring `X-Forwarded-For` only when the
     directly-connecting peer is inside a configured trusted-proxy CIDR.
@@ -80,7 +93,7 @@ class SecurityMiddleware:
 
         request = Request(scope, receive=receive)
 
-        host = (request.headers.get("host") or "").split(":")[0]
+        host = _host_without_port(request.headers.get("host") or "")
         if host not in self._allowed_hosts:
             await PlainTextResponse("Invalid host header", status_code=400)(scope, receive, send)
             return
@@ -88,8 +101,15 @@ class SecurityMiddleware:
         if request.method in _UNSAFE_METHODS:
             source = request.headers.get("origin") or request.headers.get("referer")
             if source is not None:
+                # A *present* Origin/Referer that doesn't resolve to a
+                # hostname at all (a literal "null" from a sandboxed
+                # iframe, or a malformed/scheme-less value) is exactly the
+                # shape of value a cross-origin attacker would send --
+                # treat it as a mismatch, not as "nothing to check."
+                # Absence of both headers entirely is handled separately
+                # above and is not rejected.
                 source_host = _host_from_url(source)
-                if source_host is not None and source_host not in self._allowed_hosts:
+                if source_host not in self._allowed_hosts:
                     await PlainTextResponse("Invalid request origin", status_code=403)(
                         scope, receive, send
                     )

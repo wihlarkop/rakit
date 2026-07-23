@@ -192,3 +192,62 @@ async def test_mutation_with_no_origin_or_referer_is_accepted(client) -> None:
         headers={"content-type": "application/x-www-form-urlencoded"},
     )
     assert response.status_code != 403
+
+
+async def test_null_origin_mutation_is_rejected() -> None:
+    """A sandboxed cross-origin iframe (or some redirected requests) sends a
+    literal `Origin: null` header -- `urlsplit("null").hostname` is `None`,
+    which must NOT be treated the same as "no Origin/Referer sent at all."
+    A *present but unresolvable* source is exactly the shape of value an
+    attacker-controlled cross-origin request would send; it must be
+    rejected, not silently passed through."""
+    admin = _auth_admin()
+    app = admin.asgi()
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        _LifespanDriver(app),
+        httpx.AsyncClient(transport=transport, base_url="http://localhost") as http_client,
+    ):
+        response = await http_client.post(
+            "/auth/login",
+            data={"identifier": "admin@example.com", "password": "wrong"},
+            headers={"origin": "null"},
+        )
+        assert response.status_code == 403
+
+
+async def test_scheme_less_origin_mutation_is_rejected() -> None:
+    """A malformed/scheme-less Origin value also resolves to `hostname is
+    None` -- same rejection requirement as the null-origin case above."""
+    admin = _auth_admin()
+    app = admin.asgi()
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        _LifespanDriver(app),
+        httpx.AsyncClient(transport=transport, base_url="http://localhost") as http_client,
+    ):
+        response = await http_client.post(
+            "/auth/login",
+            data={"identifier": "admin@example.com", "password": "wrong"},
+            headers={"origin": "not-a-valid-origin"},
+        )
+        assert response.status_code == 403
+
+
+async def test_ipv6_loopback_host_is_trusted_by_default() -> None:
+    """`SecurityConfig.allowed_hosts` defaults to including `"[::1]"`, but a
+    naive `host.split(":")[0]` on the `Host` header turns `[::1]` into `[`,
+    which never matches -- the bracketed IPv6-literal form must be preserved
+    when stripping only an actual port suffix."""
+    admin = Admin(title="Operations", debug=True)
+    app = admin.asgi()
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        _LifespanDriver(app),
+        httpx.AsyncClient(transport=transport, base_url="http://localhost") as http_client,
+    ):
+        response = await http_client.get("/", headers={"host": "[::1]"})
+        assert response.status_code == 200
+
+        response_with_port = await http_client.get("/", headers={"host": "[::1]:8000"})
+        assert response_with_port.status_code == 200
