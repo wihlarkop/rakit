@@ -275,5 +275,14 @@ correct scope observation matching the plan's own task list -- documented
 prominently in design-decisions.md section 19 so it is never misread as
 "the admin is now protected." Full suite 491/491 passing after the fix.
 
-Next: clean-filesystem verification in a detached worktree, review package
-generation, stop for external review.
+Fix (`f82a7fb`, found during the first clean-worktree packaging
+verification pass, not by the independent review): the Alembic migration
+files lived at the package root, outside `src/`, so hatchling's wheel
+target silently excluded them from a real `pip install
+rakit-auth-sqlalchemy` -- only the sdist happened to include them. Moved
+both under `src/rakit_auth_sqlalchemy/`; added a regression test asserting
+the *built wheel* (not just the sdist) contains them. Full suite 491/491
+passing after the fix.
+
+Next: re-run clean-filesystem verification at the new HEAD, regenerate
+the review package, stop for external review.

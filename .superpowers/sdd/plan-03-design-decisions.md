@@ -368,3 +368,22 @@ identifiers are not case-normalized (email uniqueness is case-sensitive);
 `SecurityMiddleware`'s `max_body_size` is not yet exposed as an `Admin`
 constructor parameter (only its documented 10 MiB default is used). Both
 are cheap to add later and neither is a live vulnerability.
+
+## 20. Alembic migrations were missing from the installed wheel (found during packaging verification)
+
+`alembic.ini` and `alembic/` originally lived at the package root
+(`packages/rakit-auth-sqlalchemy/`), outside `src/`. hatchling's wheel
+target only packages `src/rakit_auth_sqlalchemy`, so a real `pip install
+rakit-auth-sqlalchemy` from the built wheel silently lacked both files --
+the sdist happened to include them (it bundles the whole source tree by
+default), masking the gap in every test that ran `alembic` directly
+against the source tree rather than an installed wheel. Neither the plan's
+own required tests nor the independent code review caught this, since
+inspecting *built artifact contents* is a packaging-verification concern,
+not a code-review one.
+
+Fixed by moving both under `src/rakit_auth_sqlalchemy/` (Alembic's
+`%(here)s/alembic` `script_location` needed no change, since it's already
+relative to `alembic.ini`'s own location). Added a regression test
+asserting the *built wheel* -- not just the sdist -- contains
+`alembic.ini`, `alembic/env.py`, and the initial migration.
