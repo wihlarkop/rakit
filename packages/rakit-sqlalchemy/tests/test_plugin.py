@@ -1,5 +1,6 @@
 from enum import Enum as PythonEnum
 from typing import Any, cast
+from uuid import UUID
 
 import pytest
 from rakit_core.compiler import ApplicationBuilder
@@ -8,7 +9,7 @@ from rakit_core.di import ServiceScope
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.identity import RecordIdentity
 from rakit_core.query import Filter, FilterOperator, ResourceQuery, Sort
-from rakit_sqlalchemy.datasource import SQLAlchemyDataSource
+from rakit_sqlalchemy.datasource import SQLAlchemyDataSource, _coerce_identity_component
 from rakit_sqlalchemy.introspection import inspect_model
 from rakit_sqlalchemy.plugin import SQLAlchemyPlugin
 from sqlalchemy import BigInteger, Boolean, Date, Numeric, String, Uuid
@@ -92,6 +93,68 @@ class NoPythonTypeOverrideIdentity(Base):
     __tablename__ = "no_python_type_override_identities"
 
     id: Mapped[str] = mapped_column(NoPythonTypeOverrideImpl, primary_key=True)
+
+
+class UUIDStoredAsString(TypeDecorator[UUID]):
+    """Backed by `String` (`impl`) but declares an effective Python type of
+    `UUID` -- a legitimate wrapper that stores a UUID as text. Identity
+    coercion must parse URL text to `UUID` (matching `python_type`), not to
+    `str` (matching the unwrapped `impl`): `process_bind_param` below raises
+    if it ever receives anything but a `UUID`, so this also proves the bind
+    processor gets the value it expects."""
+
+    impl = String
+    cache_ok = True
+
+    @property
+    def python_type(self) -> type:
+        return UUID
+
+    def process_bind_param(self, value: object, dialect: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, UUID):
+            raise TypeError(f"expected UUID, got {type(value)!r}")
+        return str(value)
+
+    def process_result_value(self, value: str | None, dialect: object) -> UUID | None:
+        return UUID(value) if value is not None else None
+
+
+class UUIDStoredAsStringIdentity(Base):
+    __tablename__ = "uuid_stored_as_string_identities"
+
+    id: Mapped[object] = mapped_column(UUIDStoredAsString, primary_key=True)
+
+
+class IntStoredAsString(TypeDecorator[int]):
+    """Backed by `String` but declares an effective Python type of `int`.
+    `process_bind_param` rejects anything that isn't exactly `int`, proving
+    identity coercion parses URL text to `int` rather than leaving it as the
+    raw string the unwrapped `impl` would suggest."""
+
+    impl = String
+    cache_ok = True
+
+    @property
+    def python_type(self) -> type:
+        return int
+
+    def process_bind_param(self, value: object, dialect: object) -> str | None:
+        if value is None:
+            return None
+        if type(value) is not int:
+            raise TypeError(f"expected int, got {type(value)!r}")
+        return str(value)
+
+    def process_result_value(self, value: str | None, dialect: object) -> int | None:
+        return int(value) if value is not None else None
+
+
+class IntStoredAsStringIdentity(Base):
+    __tablename__ = "int_stored_as_string_identities"
+
+    id: Mapped[object] = mapped_column(IntStoredAsString, primary_key=True)
 
 
 class DateIdentity(Base):
@@ -263,6 +326,8 @@ def test_introspection_uses_mapper_attributes_and_retains_database_names() -> No
         (StringIdentity, "id"),
         (UUIDIdentity, "id"),
         (DecoratedIdentity, "id"),
+        (UUIDStoredAsStringIdentity, "id"),
+        (IntStoredAsStringIdentity, "id"),
     ),
 )
 def test_claim_accepts_supported_identity_types(
@@ -325,6 +390,12 @@ class _IdentitySessionFactorySpy:
         (BigIntegerIdentity, "42", 42),
         (StringIdentity, "record-42", "record-42"),
         (DecoratedIdentity, "record-42", "record-42"),
+        (
+            UUIDStoredAsStringIdentity,
+            "a0ebc21a-7334-4ab2-8f01-01e5af6d8a24",
+            UUID("a0ebc21a-7334-4ab2-8f01-01e5af6d8a24"),
+        ),
+        (IntStoredAsStringIdentity, "42", 42),
     ),
 )
 def test_accepted_identity_kinds_produce_a_working_detail_predicate(
@@ -332,9 +403,14 @@ def test_accepted_identity_kinds_produce_a_working_detail_predicate(
     raw: str,
     expected: object,
 ) -> None:
-    """Every accepted identity kind (plain Integer/String and a safe
-    `TypeDecorator` wrapper) must actually produce a working, correctly
-    bound detail query -- not merely pass claim-time validation."""
+    """Every accepted identity kind (plain Integer/String/UUID and a
+    `TypeDecorator` wrapper, whether it stores its value as its own effective
+    Python type or under a different storage `impl`) must actually produce a
+    working, correctly bound detail query -- not merely pass claim-time
+    validation. `type(...) is type(expected)` matters here, not just `==`:
+    for the `TypeDecorator` wrappers it is the difference between coercing to
+    the declared `python_type` (correct) and to the unwrapped `impl`'s type
+    (the bug finding #1 identified)."""
     datasource = SQLAlchemyDataSource(
         model=model,
         session_factory=cast(Any, _IdentitySessionFactorySpy()),
@@ -345,7 +421,26 @@ def test_accepted_identity_kinds_produce_a_working_detail_predicate(
     compiled = statement.compile(dialect=postgresql.dialect())
 
     assert len(compiled.params) == 1
-    assert next(iter(compiled.params.values())) == expected
+    bound_value = next(iter(compiled.params.values()))
+    assert bound_value == expected
+    assert type(bound_value) is type(expected)
+
+
+def test_typedecorator_identity_coerces_to_effective_python_type_not_impl() -> None:
+    """Direct unit-level proof that `_coerce_identity_component` parses
+    according to the `TypeDecorator`'s validated `python_type`, then hands
+    that value to the decorator's own `process_bind_param` -- not the
+    unwrapped `impl`'s coercion. `process_bind_param` on `UUIDStoredAsString`
+    raises `TypeError` if given anything but a `UUID`, so successfully
+    invoking it here is proof the decorator receives what it expects."""
+    column_type = UUIDStoredAsStringIdentity.id.type
+
+    coerced = _coerce_identity_component(column_type, "a0ebc21a-7334-4ab2-8f01-01e5af6d8a24")
+
+    assert type(coerced) is UUID
+    bind_processor = column_type.bind_processor(postgresql.dialect())
+    assert bind_processor is not None
+    assert bind_processor(coerced) == "a0ebc21a-7334-4ab2-8f01-01e5af6d8a24"
 
 
 async def test_invalid_identity_is_safe_before_session_creation() -> None:

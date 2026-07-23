@@ -499,6 +499,10 @@ codec (`encode(domain_value) -> int | str | UUID` and `decode(url_scalar) -> dom
 propagated through both the datasource *and* the web layer's `_identity_values()`/detail-URL
 construction, not a decode-only hook -- that is explicitly out of Plan 02's scope.
 
+**Refined in round 5 (section 30):** this section correctly gated *which* `TypeDecorator`s are
+accepted as identities, but the coercion boundary that converts decoded URL text into a Python
+value for an accepted `TypeDecorator` was still wrong -- see section 30.
+
 ## 28. Identity tie-breakers are restricted to the datasource's actual identity fields, ascending,
     with no null-placement override (external review round 4)
 
@@ -530,3 +534,49 @@ mirror it). Fixed: `_is_filterable_type` now checks `callable(custom_coercer)`, 
 `config.unsupported_field_policy` error as any other unsupported `filter_fields` declaration,
 before any resource compiles or serves a request. Since section 27 removes the identity codec
 hook entirely, there is no analogous identity-side hook left to validate.
+
+**Refined in round 5 (section 31):** `callable(...)` alone doesn't prove the hook can actually be
+invoked as `rakit_coerce_filter_value(value: str)` -- a callable with an incompatible arity was
+still accepted here and only failed on the first request. See section 31.
+
+## 30. `TypeDecorator` identity coercion parses to the declared effective `python_type`, never the
+    unwrapped `impl`'s type (external review round 5)
+
+Section 27 tightened *which* `TypeDecorator`s may be an identity (their `python_type` must be
+exactly `int`, `str`, or `UUID`), but `_coerce_identity_component` still converted decoded URL text
+via `_coerce_known_value(_unwrap_type(type_), raw_value)` -- i.e. according to the decorator's
+storage `impl`, not its declared `python_type`. For a legitimate wrapper whose storage
+representation differs from its effective Python type (e.g. `TypeDecorator[UUID]` with `impl =
+String`, storing a UUID as text), this handed the decorator's `process_bind_param` a `str` when it
+expected a `UUID` (or an `int`-typed wrapper backed by `String` a raw string instead of an `int`),
+failing at execution time despite passing claim-time validation.
+
+Fixed: `_coerce_identity_component` now branches on `isinstance(type_, TypeDecorator)`. For a
+`TypeDecorator`, a new `_coerce_by_effective_python_type(type_.python_type, raw_value)` parses the
+decoded URL text according to the already-validated `python_type` (`int` excluding `bool`, `str`,
+or `UUID`) and returns a value of that Python type -- SQLAlchemy's own `TypeDecorator.
+process_bind_param` then converts that Python value into the storage representation, exactly as the
+decorator author wrote it. A non-decorator column is unaffected: its own type *is* its storage
+type, so `_coerce_known_value(type_, raw_value)` still applies directly, with no `_unwrap_type`
+step needed (there is nothing to unwrap).
+
+## 31. Explicit `rakit_coerce_filter_value` hooks are validated for call-signature compatibility at
+    claim time, not merely `callable(...)` (external review round 5)
+
+Section 29's `callable(custom_coercer)` check rejected non-callable hooks (e.g. `= object()`) but
+still accepted any callable regardless of arity -- a hook declared as `def
+rakit_coerce_filter_value(self): ...` (zero args) or `def rakit_coerce_filter_value(self, value,
+extra): ...` (two required args) passed registration and only failed with a confusing `TypeError`
+on the first request that tried to filter on that field, since the documented contract is exactly
+`rakit_coerce_filter_value(value: str) -> object`.
+
+Fixed: a new `_accepts_one_positional_argument(candidate)` helper uses
+`inspect.signature(candidate).bind("probe")` -- which validates arity/parameter-kind compatibility
+without ever calling `candidate`, so claim-time validation still causes no side effects -- wrapped
+in `callable(candidate)` first (a non-callable has no signature to bind). Any `TypeError` or
+`ValueError` from either step (including a callable whose signature genuinely can't be introspected,
+e.g. some C extensions) is treated as fail-closed: rejected, not assumed safe. `_is_filterable_type`
+now calls this helper instead of the bare `callable(...)` check. A variadic hook (`*args`) is
+accepted, since it genuinely can be called with exactly one positional argument, matching the
+documented contract's actual call site. A unary bound method and a unary callable object (an
+instance whose `__call__` takes one argument) are both accepted, as before.

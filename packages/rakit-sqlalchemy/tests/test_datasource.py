@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 from enum import Enum as PythonEnum
+from uuid import UUID
 
 import pytest
 from rakit_core.definitions import ResourceFieldPolicy
@@ -69,6 +70,144 @@ class MalformedHookRecord(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     code: Mapped[str] = mapped_column(MalformedHookType)
+
+
+class ZeroArgHookType(TypeDecorator):
+    """`rakit_coerce_filter_value` is callable (a bound method), but cannot
+    accept the required URL-string argument -- it must be rejected at claim
+    time on signature grounds, not merely on `callable()`."""
+
+    impl = String
+    cache_ok = True
+
+    def rakit_coerce_filter_value(self) -> str:
+        return "unreachable"
+
+
+class ZeroArgHookRecord(Base):
+    __tablename__ = "zero_arg_hook_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(ZeroArgHookType)
+
+
+class TwoArgHookType(TypeDecorator):
+    """Requires a second positional argument beyond the documented
+    `(value: str)` contract -- must be rejected at claim time."""
+
+    impl = String
+    cache_ok = True
+
+    def rakit_coerce_filter_value(self, value: str, extra: str) -> str:
+        return value + extra
+
+
+class TwoArgHookRecord(Base):
+    __tablename__ = "two_arg_hook_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(TwoArgHookType)
+
+
+class VariadicHookType(TypeDecorator):
+    """A `*args`-style hook: can be called with exactly one positional
+    argument, so it conforms to the documented contract and must be
+    accepted."""
+
+    impl = String
+    cache_ok = True
+
+    def rakit_coerce_filter_value(self, *args: str) -> str:
+        return args[0] if args else ""
+
+
+class VariadicHookRecord(Base):
+    __tablename__ = "variadic_hook_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(VariadicHookType)
+
+
+class _CallableObjectHook:
+    def __call__(self, value: str) -> str:
+        return value
+
+
+class CallableObjectHookType(TypeDecorator):
+    """`rakit_coerce_filter_value` is a callable object (not a function or
+    bound method) accepting exactly one positional argument -- a unary
+    callable object, which must be accepted."""
+
+    impl = String
+    cache_ok = True
+    rakit_coerce_filter_value = _CallableObjectHook()
+
+
+class CallableObjectHookRecord(Base):
+    __tablename__ = "callable_object_hook_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(CallableObjectHookType)
+
+
+class UUIDStoredAsString(TypeDecorator[UUID]):
+    """A legitimate wrapper storing a UUID as text: `impl` is `String`, but
+    the effective Python type is `UUID`. `process_bind_param` raises if it
+    ever receives anything but a `UUID`, so a successful real end-to-end
+    list/detail round trip through this type proves identity coercion
+    produces the value the decorator actually expects."""
+
+    impl = String
+    cache_ok = True
+
+    @property
+    def python_type(self) -> type:
+        return UUID
+
+    def process_bind_param(self, value: object, dialect: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, UUID):
+            raise TypeError(f"expected UUID, got {type(value)!r}")
+        return str(value)
+
+    def process_result_value(self, value: str | None, dialect: object) -> UUID | None:
+        return UUID(value) if value is not None else None
+
+
+class UUIDStoredAsStringRecord(Base):
+    __tablename__ = "uuid_stored_as_string_records"
+
+    id: Mapped[object] = mapped_column(UUIDStoredAsString, primary_key=True)
+    name: Mapped[str]
+
+
+class IntStoredAsString(TypeDecorator[int]):
+    """Backed by `String` but declares an effective Python type of `int`."""
+
+    impl = String
+    cache_ok = True
+
+    @property
+    def python_type(self) -> type:
+        return int
+
+    def process_bind_param(self, value: object, dialect: object) -> str | None:
+        if value is None:
+            return None
+        if type(value) is not int:
+            raise TypeError(f"expected int, got {type(value)!r}")
+        return str(value)
+
+    def process_result_value(self, value: str | None, dialect: object) -> int | None:
+        return int(value) if value is not None else None
+
+
+class IntStoredAsStringRecord(Base):
+    __tablename__ = "int_stored_as_string_records"
+
+    id: Mapped[object] = mapped_column(IntStoredAsString, primary_key=True)
+    name: Mapped[str]
 
 
 USER_POLICY = ResourceFieldPolicy(
@@ -532,3 +671,134 @@ async def test_claim_rejects_malformed_filter_hook_with_stable_error(session_fac
         "field": "code",
         "policy": "filter_fields",
     }
+
+
+@pytest.mark.parametrize(
+    "model",
+    (ZeroArgHookRecord, TwoArgHookRecord),
+)
+async def test_incompatible_filter_hook_signature_fails_before_registration(
+    session_factory,
+    model: type[object],
+) -> None:
+    """A `rakit_coerce_filter_value` that is callable but cannot accept the
+    documented `(value: str)` call -- zero required arguments, or more than
+    one -- must be rejected at claim/registration time, not merely on the
+    first request that discovers the mismatch."""
+    with pytest.raises(UnsupportedFieldPolicyError) as exc_info:
+        SQLAlchemyDataSource(
+            model=model,
+            session_factory=session_factory,
+            field_policy=ResourceFieldPolicy(
+                list_fields=("id",),
+                detail_fields=("id",),
+                filter_fields=("code",),
+            ),
+        )
+    assert exc_info.value.field == "code"
+    assert exc_info.value.policy == "filter_fields"
+
+
+async def test_variadic_filter_hook_is_accepted(session_factory) -> None:
+    """A `*args`-style hook can be called with exactly one positional
+    argument, so it conforms to the documented contract and must not be
+    rejected merely for being variadic."""
+    datasource = SQLAlchemyDataSource(
+        model=VariadicHookRecord,
+        session_factory=session_factory,
+        field_policy=ResourceFieldPolicy(
+            list_fields=("id",),
+            detail_fields=("id",),
+            filter_fields=("code",),
+        ),
+    )
+    assert isinstance(datasource, SQLAlchemyDataSource)
+
+
+async def test_unary_callable_object_filter_hook_is_accepted(session_factory) -> None:
+    """`rakit_coerce_filter_value` need not be a function or bound method --
+    any object whose `__call__` accepts exactly one positional argument must
+    be accepted."""
+    datasource = SQLAlchemyDataSource(
+        model=CallableObjectHookRecord,
+        session_factory=session_factory,
+        field_policy=ResourceFieldPolicy(
+            list_fields=("id",),
+            detail_fields=("id",),
+            filter_fields=("code",),
+        ),
+    )
+    assert isinstance(datasource, SQLAlchemyDataSource)
+
+
+async def test_claim_rejects_incompatible_filter_hook_signature_with_stable_error(
+    session_factory,
+) -> None:
+    plugin = SQLAlchemyPlugin(session_factory=session_factory)
+    policy = ResourceFieldPolicy(
+        list_fields=("id",),
+        detail_fields=("id",),
+        filter_fields=("code",),
+    )
+
+    with pytest.raises(RakitError) as exc_info:
+        plugin._claim(ZeroArgHookRecord, policy)
+
+    assert exc_info.value.code == ErrorCode.CONFIG_UNSUPPORTED_FIELD_POLICY
+    assert exc_info.value.details == {
+        "model": "ZeroArgHookRecord",
+        "field": "code",
+        "policy": "filter_fields",
+    }
+
+
+async def test_uuid_stored_as_string_identity_round_trips_through_real_execution(
+    session_factory,
+) -> None:
+    """End-to-end proof (real SQLite execution, not just compiled-statement
+    inspection) that a `TypeDecorator[UUID]` backed by `String` works for the
+    full list -> identity text -> detail flow: `process_bind_param` raises if
+    it ever receives a non-`UUID`, so a successful `detail()` here proves the
+    coercion boundary hands it the right type."""
+    record_id = UUID("a0ebc21a-7334-4ab2-8f01-01e5af6d8a24")
+    async with session_factory() as session:
+        session.add(UUIDStoredAsStringRecord(id=record_id, name="Widget"))
+        await session.commit()
+
+    datasource = SQLAlchemyDataSource(
+        model=UUIDStoredAsStringRecord,
+        session_factory=session_factory,
+        field_policy=ResourceFieldPolicy(list_fields=("id", "name"), detail_fields=("id", "name")),
+    )
+
+    page = await datasource.list(ResourceQuery())
+    assert [item.name for item in page.items] == ["Widget"]
+
+    identity_text = str(page.items[0].id)
+    record = await datasource.detail(RecordIdentity(values={"id": identity_text}))
+    assert isinstance(record, UUIDStoredAsStringRecord)
+    assert record.name == "Widget"
+
+
+async def test_int_stored_as_string_identity_round_trips_through_real_execution(
+    session_factory,
+) -> None:
+    """Same real-execution round trip as above, for a `TypeDecorator[int]`
+    backed by `String`."""
+    async with session_factory() as session:
+        session.add(IntStoredAsStringRecord(id=7, name="Gadget"))
+        await session.commit()
+
+    datasource = SQLAlchemyDataSource(
+        model=IntStoredAsStringRecord,
+        session_factory=session_factory,
+        field_policy=ResourceFieldPolicy(list_fields=("id", "name"), detail_fields=("id", "name")),
+    )
+
+    page = await datasource.list(ResourceQuery())
+    assert [item.name for item in page.items] == ["Gadget"]
+
+    identity_text = str(page.items[0].id)
+    record = await datasource.detail(RecordIdentity(values={"id": identity_text}))
+    assert isinstance(record, IntStoredAsStringRecord)
+    assert record.name == "Gadget"

@@ -1,3 +1,4 @@
+import inspect
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum as PythonEnum
@@ -238,23 +239,45 @@ def _is_string_type(type_: TypeEngine[Any]) -> bool:
     return isinstance(type_, String | Text) and not isinstance(type_, Enum)
 
 
+def _accepts_one_positional_argument(candidate: object) -> bool:
+    """Whether `candidate` can be called with exactly one positional
+    argument, i.e. conforms to the documented
+    `rakit_coerce_filter_value(value: str) -> object` contract.
+
+    `inspect.signature(...).bind("probe")` only checks arity/parameter kinds
+    against a probe value -- it never calls `candidate`, so this stays a pure
+    claim-time check with no application side effects. A callable whose
+    signature cannot be determined at all (e.g. some C extensions) is treated
+    as non-conforming: fail closed rather than assume safety.
+    """
+    if not callable(candidate):
+        return False
+    try:
+        inspect.signature(candidate).bind("probe")
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
 def _is_filterable_type(type_: TypeEngine[Any]) -> bool:
     """Whether this mapped type has a supported filter-value coercion path.
 
     Mirrors `_coerce_known_value`'s type dispatch: any type it can actually
     convert (plus a type with an explicit, genuinely *callable*
-    `rakit_coerce_filter_value` hook, which bypasses that dispatch entirely)
-    is filterable. Anything else (e.g. `LargeBinary`, `JSON`, `PickleType`, or
-    a malformed hook such as `rakit_coerce_filter_value = object()`) would
-    otherwise only fail at the first request that tries to use it -- this
-    check exists so that failure surfaces at compile/claim time instead. A
-    hook attribute that is merely non-`None` but not callable is treated as
-    unsupported here (not "safe by presence"), matching the runtime check
-    `_coerce_filter_item` already performs before invoking it.
+    `rakit_coerce_filter_value` hook that also accepts the documented
+    single-argument call, which bypasses that dispatch entirely) is
+    filterable. Anything else (e.g. `LargeBinary`, `JSON`, `PickleType`, a
+    malformed hook such as `rakit_coerce_filter_value = object()`, or a hook
+    whose call signature can't accept `(value)`) would otherwise only fail at
+    the first request that tries to use it -- this check exists so that
+    failure surfaces at compile/claim time instead. A hook attribute that is
+    merely non-`None` but not callable, or callable but arity-incompatible,
+    is treated as unsupported here (not "safe by presence"), matching the
+    runtime check `_coerce_filter_item` already performs before invoking it.
     """
     custom_coercer = getattr(type_, "rakit_coerce_filter_value", None)
     if custom_coercer is not None:
-        return callable(custom_coercer)
+        return _accepts_one_positional_argument(custom_coercer)
     unwrapped = _unwrap_type(type_)
     return isinstance(
         unwrapped,
@@ -290,6 +313,27 @@ def _validate_field_policy_semantics(
             raise UnsupportedFieldPolicyError(field_name, "filter_fields", "unsupported_filter")
 
 
+def _coerce_by_effective_python_type(effective_type: type, raw_value: object) -> object:
+    """Convert a decoded identity URL segment to a `TypeDecorator`'s declared
+    effective `python_type` (exactly `int`, `str`, or `UUID` -- the only
+    values `introspection._validate_identity_type` ever accepts), so the
+    decorator's own `process_bind_param` receives the Python value it
+    actually expects, not a value shaped for its storage `impl`."""
+    if effective_type is int:
+        if isinstance(raw_value, bool) or not isinstance(raw_value, str | int):
+            raise ValueError
+        return int(raw_value)
+    if effective_type is str:
+        if not isinstance(raw_value, str):
+            raise ValueError
+        return raw_value
+    if effective_type is UUID:
+        if not isinstance(raw_value, str | UUID):
+            raise ValueError
+        return raw_value if isinstance(raw_value, UUID) else UUID(raw_value)
+    raise ValueError
+
+
 def _coerce_identity_component(type_: TypeEngine[Any], raw_value: object) -> object:
     """Convert one decoded identity component to its mapped column's value.
 
@@ -301,8 +345,18 @@ def _coerce_identity_component(type_: TypeEngine[Any], raw_value: object) -> obj
     decoding in mind. Only types that `_validate_identity_type` already
     accepted as identities reach this function, so no further type-acceptance
     check is needed here.
+
+    A `TypeDecorator` is coerced according to its own validated `python_type`
+    -- never its unwrapped `impl` -- because a decorator may legitimately
+    store its value under a different storage representation (e.g. a `UUID`
+    persisted as a `String`). Coercing to the `impl`'s type instead would
+    hand the decorator's `process_bind_param` a value of the wrong Python
+    type. A non-decorator column has no such distinction: its own type *is*
+    its storage type, so the existing dispatch applies directly.
     """
-    return _coerce_known_value(_unwrap_type(type_), raw_value)
+    if isinstance(type_, TypeDecorator):
+        return _coerce_by_effective_python_type(type_.python_type, raw_value)
+    return _coerce_known_value(type_, raw_value)
 
 
 class SQLAlchemyDataSource:
