@@ -6,8 +6,10 @@ from types import SimpleNamespace
 
 import structlog
 from rakit_core.admin_types import ModelAdmin, ResourceAdmin
+from rakit_core.auth import AuthBackend, SessionStore
 from rakit_core.compiler import ApplicationBuilder, CompiledApplication, Plugin, compile_application
 from rakit_core.config import RakitConfig, SecretValue
+from rakit_core.crypto import TokenService
 from rakit_core.definitions import ResourceDefinition, ResourceFieldPolicy, RouteDefinition
 from rakit_core.di import ServiceRegistry, ServiceResolver
 from rakit_core.errors import ErrorCode, RakitError
@@ -19,9 +21,12 @@ from starlette.routing import Mount, Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .assets import static_files
+from .auth_routes import build_auth_routes
 from .lifecycle import LifecycleManager
 from .logging import bind_request_context, configure_logging, reset_request_context
 from .resource_routes import ResourceBinding, build_resource_routes, build_templates
+from .security.csrf import CsrfService
+from .security.rate_limit import LoginRateLimiter
 
 _FIELD_POLICY_NAMES = (
     "list_fields",
@@ -104,6 +109,9 @@ class Admin:
         debug: bool = False,
         secret_key: SecretValue | None = None,
         template_dirs: tuple[Path, ...] = (),
+        auth_backend: AuthBackend | None = None,
+        session_store: SessionStore | None = None,
+        login_rate_limiter: LoginRateLimiter | None = None,
     ) -> None:
         self.config = RakitConfig(
             admin_id=admin_id,
@@ -111,6 +119,9 @@ class Admin:
             debug=debug,
             security={"secret_key": secret_key},
         )
+        self._auth_backend = auth_backend
+        self._session_store = session_store
+        self._login_rate_limiter = login_rate_limiter or LoginRateLimiter()
         self._builder = ApplicationBuilder()
         self._builder.add_route(
             RouteDefinition(
@@ -318,5 +329,32 @@ class Admin:
         app.routes.append(Mount("/_system/static", app=static_files(), name="rakit-static"))
         for route in resource_routes:
             app.routes.append(route)
+        if self._auth_backend is not None and self._session_store is not None:
+            if self.config.security.secret_key is None:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID,
+                    message=(
+                        "A security.secret_key is required to enable authentication "
+                        "(it derives the CSRF/session token signing key)."
+                    ),
+                    status_code=500,
+                )
+            token_service = TokenService.single_key(
+                key_id="primary",
+                value=self.config.security.secret_key,
+                admin_id=self.config.admin_id,
+            )
+            csrf_service = CsrfService(token_service)
+            auth_routes = build_auth_routes(
+                auth_backend=self._auth_backend,
+                session_store=self._session_store,
+                csrf_service=csrf_service,
+                rate_limiter=self._login_rate_limiter,
+                templates=templates,
+                admin_id=self.config.admin_id,
+                secure_cookies=not self.config.debug,
+            )
+            for route in auth_routes:
+                app.routes.append(route)
         app.state.rakit = SimpleNamespace(resources=bindings)
         return RequestContextMiddleware(app, admin_id=self.config.admin_id)
