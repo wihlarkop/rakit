@@ -163,3 +163,21 @@ Plan 02 external review round 4: fixes for three CHANGES-REQUESTED findings agai
   value instead of raising, currently unreachable since only int/str/UUID identities are
   accepted, but inconsistent with the fail-closed philosophy applied elsewhere -- noted, not
   fixed (no live vulnerability, cosmetic consistency only).
+Plan 02 external review round 5: fixes for two remaining CHANGES-REQUESTED findings against the
+  round-4 commit (dfa5e4b), independently reproduced against the actual implementation. (1)
+  `_coerce_identity_component` still converted decoded identity URL text via a TypeDecorator's
+  unwrapped storage `impl`, not its round-4-validated `python_type` -- a legitimate wrapper
+  whose storage representation differs from its effective Python type (e.g. TypeDecorator[UUID]
+  backed by String) got a str where its own process_bind_param expects a UUID, failing at
+  execution despite passing claim-time validation. Fixed via a new
+  `_coerce_by_effective_python_type`, keyed on the already-validated python_type; non-decorator
+  columns unaffected; rakit_identity_codec remains removed. (2) `_is_filterable_type` accepted
+  any `rakit_coerce_filter_value` hook that was merely `callable(...)`, regardless of call-
+  signature compatibility with the documented `(value: str) -> object` contract -- a zero-arg or
+  two-required-arg hook passed registration and only failed on the first request. Fixed via a
+  new `_accepts_one_positional_argument` helper using `inspect.signature(...).bind("probe")`
+  (never invokes the hook), fail-closed on TypeError/ValueError. See design-decisions.md
+  sections 30-31 (refining 27 and 29). TDD: 10 new/changed tests including real-execution round
+  trips (not just compiled-statement inspection) for both findings, full suite 400/400 passing,
+  ruff format/check and ty check clean (0 real diagnostics; only pre-existing io-access-denied
+  entries on git-invisible locked scratch dirs). Fix commit: cb8e6e8.
