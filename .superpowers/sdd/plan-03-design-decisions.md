@@ -327,3 +327,44 @@ plan's required negative-path coverage for both failure modes.
 No Critical or Important security finding remains open as of this
 checkpoint; the one Important finding (empty `PermissionRequirement`) was
 fixed immediately (see #4).
+
+## 19. Fresh independent whole-branch review findings and fixes
+
+A fresh reviewer with no prior context on this branch (given the full
+diff, the plan document, the design doc's auth/security sections, and this
+document) found zero Critical findings and two Important findings:
+
+1. **Origin/Referer null-hostname bypass** -- `_host_from_url()` returned
+   `None` for a literal `Origin: null` (sent by sandboxed cross-origin
+   iframes) or a malformed/scheme-less value, and the guard
+   `source_host is not None and source_host not in allowed_hosts` then
+   *skipped* rejection for exactly that value shape -- the one a
+   cross-origin attacker's request would actually carry. Fixed: a present
+   source that doesn't resolve to a hostname is now treated as a mismatch
+   (absence of both headers remains accepted, unchanged). 3 new regression
+   tests (null origin, scheme-less origin, plus an unrelated IPv6
+   host-matching bug the same review pass surfaced -- `[::1]` was silently
+   unreachable because `.split(":")[0]` truncated it to `"["`). All three
+   fail against the pre-fix code. See commit `df604cb`.
+
+2. **The auth stack is built but not enforced anywhere -- by design, not by
+   omission.** This is an explicit scope finding, not a code defect: no
+   concrete `AuthBackend` implementation exists in this plan (only the core
+   `Protocol`), and no middleware resolves the session cookie into a
+   `Principal` or gates any route. The home route and every Plan 02
+   resource route remain fully public after this plan. This matches
+   Plan 03's own task list precisely -- Task 6 says login "Consumes: auth
+   backend" (an app-supplied implementation, not one this plan ships), and
+   no task in this plan's scope adds route-level permission enforcement.
+   **This is stated here explicitly so it is never read as "the admin is
+   now protected" by anyone integrating this plan.** Wiring a concrete
+   `AuthBackend` (e.g. one backed by `rakit-auth-sqlalchemy`'s `User` model
+   and `Argon2PasswordHasher`) and enforcing `PermissionRequirement`s per
+   route is deferred to a later plan, consistent with "do not invent
+   later-plan functionality."
+
+Minor findings (accepted as-is, not fixed): login/`createsuperuser`
+identifiers are not case-normalized (email uniqueness is case-sensitive);
+`SecurityMiddleware`'s `max_body_size` is not yet exposed as an `Admin`
+constructor parameter (only its documented 10 MiB default is used). Both
+are cheap to add later and neither is a live vulnerability.

@@ -264,5 +264,16 @@ tests. Adds the optional `rakit[auth-sqlalchemy]` extra, lazily imported.
 All eight Plan 03 tasks complete. Full suite 488/488 passing, ruff
 format/check and ty check clean across the whole workspace after each task.
 
-Next: fresh independent whole-branch review, clean-filesystem verification
-in a detached worktree, review package generation, stop for external review.
+Fresh independent whole-branch review (`041b258`..HEAD): zero Critical,
+two Important findings. Fix (`df604cb`): closed an Origin/Referer
+null-hostname bypass (a literal `Origin: null` or scheme-less value was
+silently accepted instead of rejected) and fixed IPv6 loopback host
+matching (`[::1]` was silently unreachable in the default `allowed_hosts`).
+3 new regression tests, all failing against pre-fix code. Second finding
+("the auth stack is built but not enforced anywhere") is an explicit,
+correct scope observation matching the plan's own task list -- documented
+prominently in design-decisions.md section 19 so it is never misread as
+"the admin is now protected." Full suite 491/491 passing after the fix.
+
+Next: clean-filesystem verification in a detached worktree, review package
+generation, stop for external review.
