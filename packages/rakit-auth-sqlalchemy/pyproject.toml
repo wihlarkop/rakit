@@ -6,7 +6,15 @@ build-backend = "hatchling.build"
 name = "rakit-auth-sqlalchemy"
 version = "0.1.0a1"
 requires-python = ">=3.12"
-dependencies = ["rakit-sqlalchemy==0.1.0a1", "rakit-core==0.1.0a1"]
+dependencies = [
+    "rakit-sqlalchemy==0.1.0a1",
+    "rakit-core==0.1.0a1",
+    "alembic>=1.13",
+    "argon2-cffi>=23",
+]
+
+[dependency-groups]
+dev = ["aiosqlite>=0.20", "pytest>=8.3,<9", "pytest-anyio>=0.0.0"]
 
 [tool.uv.sources]
 rakit-sqlalchemy = { workspace = true }
