@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 from rakit_core.auth import Principal
 from rakit_core.errors import ErrorCode
 from rakit_core.permission_catalogue import PermissionCatalogue
@@ -8,7 +10,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .models import Permission
 
 
-async def sync_permissions(session: AsyncSession, catalogue: PermissionCatalogue) -> None:
+@dataclass(frozen=True)
+class PermissionSyncResult:
+    """Counts from one `sync_permissions()` call, for CLI/operator reporting."""
+
+    added: int
+    updated: int
+    orphaned: int
+
+
+async def sync_permissions(
+    session: AsyncSession, catalogue: PermissionCatalogue
+) -> PermissionSyncResult:
     """Add/update permission rows for every definition in `catalogue`, and
     mark any existing row whose key is no longer present as orphaned.
 
@@ -21,20 +34,28 @@ async def sync_permissions(session: AsyncSession, catalogue: PermissionCatalogue
     catalogue_keys = {definition.key for definition in catalogue.definitions}
     existing = {row.key: row for row in (await session.execute(select(Permission))).scalars().all()}
 
+    added = 0
+    updated = 0
     for definition in catalogue.definitions:
         row = existing.get(definition.key)
         if row is None:
             session.add(
                 Permission(key=definition.key, label=definition.label, group=definition.group)
             )
+            added += 1
         else:
             row.label = definition.label
             row.group = definition.group
             row.orphaned = False
+            updated += 1
 
+    orphaned = 0
     for key, row in existing.items():
         if key not in catalogue_keys:
             row.orphaned = True
+            orphaned += 1
+
+    return PermissionSyncResult(added=added, updated=updated, orphaned=orphaned)
 
 
 class BuiltinAuthorizationPolicy:

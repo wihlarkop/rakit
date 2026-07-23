@@ -29,14 +29,49 @@ async def test_sync_permissions_adds_new_definitions(session_factory) -> None:
         )
     )
     async with session_factory() as session:
-        await sync_permissions(session, catalogue)
+        result = await sync_permissions(session, catalogue)
         await session.commit()
+
+    assert result.added == 1
+    assert result.updated == 0
+    assert result.orphaned == 0
 
     async with session_factory() as session:
         permission = (await session.execute(select(Permission))).scalar_one()
         assert permission.key == "operations.resources.users.read"
         assert permission.label == "View Users"
         assert permission.orphaned is False
+
+
+async def test_sync_result_counts_updated_and_orphaned(session_factory) -> None:
+    async with session_factory() as session:
+        await sync_permissions(
+            session,
+            PermissionCatalogue(
+                definitions=(
+                    PermissionDefinition(key="operations.access", label="Old", group="Old"),
+                    PermissionDefinition(
+                        key="operations.resources.users.read", label="Read", group="Users"
+                    ),
+                )
+            ),
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        result = await sync_permissions(
+            session,
+            PermissionCatalogue(
+                definitions=(
+                    PermissionDefinition(key="operations.access", label="New", group="New"),
+                )
+            ),
+        )
+        await session.commit()
+
+    assert result.added == 0
+    assert result.updated == 1
+    assert result.orphaned == 1
 
 
 async def test_removed_permission_is_marked_orphaned(session_factory) -> None:
