@@ -114,7 +114,7 @@ def test_fastapi_is_not_an_official_package_runtime_dependency() -> None:
 
 
 @asynccontextmanager
-async def _started_client(app, *, base_url: str = "http://testserver"):
+async def _started_client(app, *, base_url: str = "http://localhost"):
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url=base_url) as client:
@@ -124,7 +124,7 @@ async def _started_client(app, *, base_url: str = "http://testserver"):
 async def test_minimal_example_serves_read_routes_and_actual_query_contract() -> None:
     module = importlib.import_module("examples.minimal.main")
     transport = httpx.ASGITransport(app=module.app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
         full = await client.get(
             "/products",
             params={

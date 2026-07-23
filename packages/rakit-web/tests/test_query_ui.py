@@ -74,7 +74,7 @@ async def _client_for(admin: Admin) -> AsyncIterator[httpx.AsyncClient]:
     transport = httpx.ASGITransport(app=app)
     async with (
         LifespanDriver(app),
-        httpx.AsyncClient(transport=transport, base_url="http://testserver") as http_client,
+        httpx.AsyncClient(transport=transport, base_url="http://localhost") as http_client,
     ):
         yield http_client
 
@@ -370,7 +370,7 @@ async def test_sort_and_search_controls_preserve_active_query_when_mounted() -> 
     transport = httpx.ASGITransport(app=mounted_app)
     async with (
         LifespanDriver(child_app),
-        httpx.AsyncClient(transport=transport, base_url="http://testserver") as mounted_client,
+        httpx.AsyncClient(transport=transport, base_url="http://localhost") as mounted_client,
     ):
         await _assert_controls_preserve_active_query(mounted_client, prefix="/admin")
     await engine.dispose()
@@ -397,7 +397,7 @@ async def test_multi_column_sort_links_preserve_sequence_when_mounted() -> None:
     transport = httpx.ASGITransport(app=mounted_app)
     async with (
         LifespanDriver(child_app),
-        httpx.AsyncClient(transport=transport, base_url="http://testserver") as mounted_client,
+        httpx.AsyncClient(transport=transport, base_url="http://localhost") as mounted_client,
     ):
         await _assert_multi_column_sort_links(mounted_client, prefix="/admin")
     await engine.dispose()
@@ -439,7 +439,7 @@ async def test_pagination_controls_preserve_validated_query_when_mounted(
     transport = httpx.ASGITransport(app=mounted_app)
     async with (
         LifespanDriver(child_app),
-        httpx.AsyncClient(transport=transport, base_url="http://testserver") as mounted_client,
+        httpx.AsyncClient(transport=transport, base_url="http://localhost") as mounted_client,
     ):
         await _assert_pagination_controls(
             mounted_client, prefix="/admin", count_policy=count_policy

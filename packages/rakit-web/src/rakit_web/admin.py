@@ -26,7 +26,9 @@ from .lifecycle import LifecycleManager
 from .logging import bind_request_context, configure_logging, reset_request_context
 from .resource_routes import ResourceBinding, build_resource_routes, build_templates
 from .security.csrf import CsrfService
+from .security.middleware import SecurityMiddleware
 from .security.rate_limit import LoginRateLimiter
+from .security.validation import validate_production_config
 
 _FIELD_POLICY_NAMES = (
     "list_fields",
@@ -112,13 +114,24 @@ class Admin:
         auth_backend: AuthBackend | None = None,
         session_store: SessionStore | None = None,
         login_rate_limiter: LoginRateLimiter | None = None,
+        allowed_hosts: tuple[str, ...] | None = None,
+        content_security_policy_enabled: bool = True,
+        trusted_proxies: tuple[str, ...] = (),
     ) -> None:
+        security_config: dict[str, object] = {
+            "secret_key": secret_key,
+            "content_security_policy_enabled": content_security_policy_enabled,
+            "trusted_proxies": trusted_proxies,
+        }
+        if allowed_hosts is not None:
+            security_config["allowed_hosts"] = allowed_hosts
         self.config = RakitConfig(
             admin_id=admin_id,
             title=title,
             debug=debug,
-            security={"secret_key": secret_key},
+            security=security_config,
         )
+        validate_production_config(self.config)
         self._auth_backend = auth_backend
         self._session_store = session_store
         self._login_rate_limiter = login_rate_limiter or LoginRateLimiter()
@@ -353,8 +366,14 @@ class Admin:
                 templates=templates,
                 admin_id=self.config.admin_id,
                 secure_cookies=not self.config.debug,
+                trusted_proxies=self.config.security.trusted_proxies,
             )
             for route in auth_routes:
                 app.routes.append(route)
         app.state.rakit = SimpleNamespace(resources=bindings)
-        return RequestContextMiddleware(app, admin_id=self.config.admin_id)
+        secured_app = SecurityMiddleware(
+            app,
+            allowed_hosts=self.config.security.allowed_hosts,
+            content_security_policy_enabled=self.config.security.content_security_policy_enabled,
+        )
+        return RequestContextMiddleware(secured_app, admin_id=self.config.admin_id)

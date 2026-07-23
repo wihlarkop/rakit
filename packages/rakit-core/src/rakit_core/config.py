@@ -15,6 +15,7 @@ class SecurityConfig(BaseModel):
     secret_key: SecretValue | None = None
     allowed_hosts: tuple[str, ...] = ("localhost", "127.0.0.1", "[::1]")
     content_security_policy_enabled: bool = True
+    trusted_proxies: tuple[str, ...] = ()
 
 
 class LifecycleConfig(BaseModel):

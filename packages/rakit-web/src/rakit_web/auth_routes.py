@@ -11,6 +11,7 @@ from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 
 from .security.csrf import CsrfService
+from .security.middleware import resolve_client_ip
 from .security.rate_limit import LoginRateLimiter
 
 SESSION_COOKIE_NAME = "rakit_session"
@@ -31,6 +32,7 @@ def build_auth_routes(
     templates: Jinja2Templates,
     admin_id: str,
     secure_cookies: bool,
+    trusted_proxies: tuple[str, ...] = (),
 ) -> list[Route]:
     async def login_get(request: Request) -> Response:
         return templates.TemplateResponse(
@@ -44,7 +46,7 @@ def build_auth_routes(
         form = await request.form()
         identifier = str(form.get("identifier", "")).strip()
         password = str(form.get("password", ""))
-        client_ip = request.client.host if request.client else "unknown"
+        client_ip = resolve_client_ip(request, trusted_proxies)
         login_url = _mounted_path(request, "/auth/login")
 
         if not rate_limiter.check(admin_id=admin_id, identifier=identifier, client_ip=client_ip):

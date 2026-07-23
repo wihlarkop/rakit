@@ -130,7 +130,7 @@ async def auth_client() -> AsyncIterator[httpx.AsyncClient]:
     transport = httpx.ASGITransport(app=app)
     async with (
         _LifespanDriver(app),
-        httpx.AsyncClient(transport=transport, base_url="http://testserver") as http_client,
+        httpx.AsyncClient(transport=transport, base_url="http://localhost") as http_client,
     ):
         yield http_client
 
@@ -203,7 +203,7 @@ async def test_login_response_is_not_cached() -> None:
     transport = httpx.ASGITransport(app=app)
     async with (
         _LifespanDriver(app),
-        httpx.AsyncClient(transport=transport, base_url="http://testserver") as http_client,
+        httpx.AsyncClient(transport=transport, base_url="http://localhost") as http_client,
     ):
         response = await http_client.get("/auth/login")
         assert response.headers.get("cache-control") == "no-store"

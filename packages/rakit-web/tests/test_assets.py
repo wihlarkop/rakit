@@ -41,7 +41,7 @@ async def test_admin_serves_only_hashed_immutable_assets() -> None:
     app = admin.asgi()
     transport = httpx.ASGITransport(app=app)
 
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
         css = await client.get(assets.static_url("rakit.css"))
         javascript = await client.get(assets.static_url("htmx.min.js"))
         raw = await client.get("/_system/static/htmx.min.js")

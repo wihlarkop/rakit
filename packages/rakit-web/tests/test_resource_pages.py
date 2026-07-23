@@ -185,7 +185,7 @@ async def _client_for(admin: Admin) -> AsyncIterator[httpx.AsyncClient]:
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
     async with (
         LifespanDriver(app),
-        httpx.AsyncClient(transport=transport, base_url="http://testserver") as http_client,
+        httpx.AsyncClient(transport=transport, base_url="http://localhost") as http_client,
     ):
         yield http_client
 

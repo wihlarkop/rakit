@@ -41,7 +41,7 @@ async def test_ready_endpoint_returns_503_via_admin_before_startup() -> None:
     )
     app = admin.asgi()
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as http_client:
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as http_client:
         # No lifespan driven here on purpose: LifecycleManager never left
         # CREATED, so readiness must be 503 while health is still 200.
         health = await http_client.get("/_system/health")
@@ -136,7 +136,7 @@ async def test_health_endpoint_returns_503_when_lifecycle_failed() -> None:
         assert admin.lifecycle.state is RuntimeState.READY
         admin.lifecycle.state = RuntimeState.FAILED
         async with httpx.AsyncClient(
-            transport=transport, base_url="http://testserver"
+            transport=transport, base_url="http://localhost"
         ) as http_client:
             response = await http_client.get("/_system/health")
         assert response.status_code == 503
