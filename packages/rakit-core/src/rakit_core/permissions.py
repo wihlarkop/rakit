@@ -1,6 +1,6 @@
 from typing import Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from rakit_core.auth import Principal
 
@@ -8,12 +8,25 @@ from rakit_core.auth import Principal
 class PermissionRequirement(BaseModel):
     """An allow-only permission check: either all named permissions must be
     present (`mode="all"`) or at least one must be present (`mode="any"`).
-    There is no deny mode -- explicit deny is a roadmap item."""
+    There is no deny mode -- explicit deny is a roadmap item.
+
+    `permissions` must be non-empty: `all(())` and `any(())` both evaluate
+    to Python truthy values, so an accidentally-empty requirement would
+    otherwise vacuously match every principal (including an anonymous one)
+    -- fail closed by rejecting that shape at construction time instead.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     mode: Literal["all", "any"]
     permissions: tuple[str, ...]
+
+    @field_validator("permissions")
+    @classmethod
+    def _require_at_least_one_permission(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not value:
+            raise ValueError("PermissionRequirement.permissions must not be empty")
+        return value
 
     @classmethod
     def all_of(cls, *permissions: str) -> "PermissionRequirement":

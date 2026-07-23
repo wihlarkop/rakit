@@ -1,3 +1,5 @@
+import pytest
+from pydantic import ValidationError
 from rakit_core.auth import Principal
 from rakit_core.permissions import AuthorizationDecision, PermissionRequirement
 
@@ -37,6 +39,16 @@ def test_any_of_with_no_matching_permission_is_rejected() -> None:
         subject_id="u-1", authenticated=True, permissions=frozenset({"orders.read"})
     )
     assert not PermissionRequirement.any_of("orders.delete", "orders.approve").matches(principal)
+
+
+def test_empty_permission_requirement_is_rejected_at_construction() -> None:
+    """`all(())` and `any(())` are both truthy in Python -- an empty
+    requirement must never be constructible, since it would otherwise
+    vacuously match every principal, including an unauthenticated one."""
+    with pytest.raises(ValidationError):
+        PermissionRequirement(mode="all", permissions=())
+    with pytest.raises(ValidationError):
+        PermissionRequirement.any_of()
 
 
 def test_authorization_decision_carries_stable_code_and_optional_reason() -> None:
