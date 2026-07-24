@@ -4,7 +4,18 @@ from datetime import UTC, datetime, timedelta
 import httpx
 from rakit import Admin, SecretValue
 from rakit_core.auth import Principal, SessionRecord
+from rakit_web.security.rate_limit import LoginRateLimiter
 from starlette.types import ASGIApp
+
+
+class _ProductionSafeRateLimiter(LoginRateLimiter):
+    """Real `LoginRateLimiter` behavior, self-declared `production_safe =
+    True` -- these tests construct `Admin(debug=False, auth_backend=...)`
+    and need a limiter Admin actually accepts in that mode. A real
+    production deployment would use a genuinely shared-store
+    implementation instead."""
+
+    production_safe = True
 
 
 class _LifespanDriver:
@@ -105,6 +116,7 @@ def _auth_admin() -> Admin:
         secret_key=SecretValue("x" * 32),
         auth_backend=_FakeAuthBackend(),
         session_store=_FakeSessionStore(),
+        login_rate_limiter=_ProductionSafeRateLimiter(),
     )
 
 

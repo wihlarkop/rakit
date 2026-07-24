@@ -6,9 +6,24 @@ import httpx
 import pytest
 from rakit import Admin, SecretValue
 from rakit_core.auth import Principal, SessionRecord
+from rakit_web.security.rate_limit import LoginRateLimiter
 from starlette.types import ASGIApp
 
 _KNOWN_USERS = {"admin@example.com": "correct-password"}
+
+
+class _TestRateLimiter(LoginRateLimiter):
+    """Real rate-limiting behavior (inherited unchanged from
+    `LoginRateLimiter`), but self-declared `production_safe = True` --
+    these tests intentionally construct `Admin(debug=False,
+    auth_backend=...)` to exercise production-like secure-cookie behavior
+    and (in `test_repeated_failed_logins_are_rate_limited`) real rate
+    limiting, so they need a limiter `Admin` actually accepts in that mode.
+    A real production deployment would use a genuinely shared-store
+    implementation instead; this subclass exists only to satisfy the
+    production-safety check in a single-process test."""
+
+    production_safe = True
 
 
 class _LifespanDriver:
@@ -125,6 +140,7 @@ async def auth_client() -> AsyncIterator[httpx.AsyncClient]:
         secret_key=SecretValue("x" * 32),
         auth_backend=FakeAuthBackend(),
         session_store=FakeSessionStore(),
+        login_rate_limiter=_TestRateLimiter(),
     )
     app = admin.asgi()
     transport = httpx.ASGITransport(app=app)
@@ -198,6 +214,7 @@ async def test_login_response_is_not_cached() -> None:
         secret_key=SecretValue("x" * 32),
         auth_backend=FakeAuthBackend(),
         session_store=FakeSessionStore(),
+        login_rate_limiter=_TestRateLimiter(),
     )
     app = admin.asgi()
     transport = httpx.ASGITransport(app=app)
@@ -207,3 +224,64 @@ async def test_login_response_is_not_cached() -> None:
     ):
         response = await http_client.get("/auth/login")
         assert response.headers.get("cache-control") == "no-store"
+
+
+def test_admin_rejects_development_rate_limiter_in_production_with_auth() -> None:
+    """Integration-level proof (not just the unit-level validation
+    function) that Admin itself refuses to construct with the bundled
+    in-memory LoginRateLimiter when debug=False and auth is configured --
+    the default limiter must never be silently accepted in that mode."""
+    from rakit_core.errors import RakitError
+
+    with pytest.raises(RakitError) as exc_info:
+        Admin(
+            admin_id="operations",
+            title="Operations",
+            debug=False,
+            secret_key=SecretValue("x" * 32),
+            auth_backend=FakeAuthBackend(),
+            session_store=FakeSessionStore(),
+            # No login_rate_limiter override -- Admin's own default
+            # (the development-only LoginRateLimiter) must be rejected.
+        )
+    assert exc_info.value.details["reason"] == "development_only_rate_limiter"
+
+
+def test_admin_rejects_auth_backend_without_session_store() -> None:
+    from rakit_core.errors import RakitError
+
+    with pytest.raises(RakitError):
+        Admin(
+            admin_id="operations",
+            title="Operations",
+            debug=True,
+            auth_backend=FakeAuthBackend(),
+        )
+
+
+def test_admin_rejects_session_store_without_auth_backend() -> None:
+    from rakit_core.errors import RakitError
+
+    with pytest.raises(RakitError):
+        Admin(
+            admin_id="operations",
+            title="Operations",
+            debug=True,
+            session_store=FakeSessionStore(),
+        )
+
+
+def test_admin_rejects_weak_production_secret_when_auth_is_configured() -> None:
+    from rakit_core.errors import RakitError
+
+    with pytest.raises(RakitError) as exc_info:
+        Admin(
+            admin_id="operations",
+            title="Operations",
+            debug=False,
+            secret_key=SecretValue("too-short"),
+            auth_backend=FakeAuthBackend(),
+            session_store=FakeSessionStore(),
+            login_rate_limiter=_TestRateLimiter(),
+        )
+    assert exc_info.value.details["reason"] == "weak_secret_key"

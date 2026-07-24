@@ -8,6 +8,12 @@ from rakit_core.errors import ErrorCode, RakitError
 # it rather than silently trusting X-Forwarded-For from arbitrary peers.
 _MAX_TRUSTED_PROXY_ADDRESSES = 2**16
 
+# 32 raw bytes of a persistent root secret is the same floor HKDF-SHA256
+# derivation implicitly assumes for a well-distributed key (the KDF's
+# output length in rakit_core.crypto). A shorter secret has less entropy
+# than every key derived from it can actually provide.
+_MIN_SECRET_BYTES = 32
+
 
 def _invalid_production_config(reason: str, **details: object) -> RakitError:
     return RakitError(
@@ -37,3 +43,27 @@ def validate_production_config(config: RakitConfig) -> None:
         network = ipaddress.ip_network(cidr, strict=False)
         if network.num_addresses > _MAX_TRUSTED_PROXY_ADDRESSES:
             raise _invalid_production_config("overbroad_trusted_proxy", cidr=cidr)
+    # `RakitConfig.require_production_secret` already guarantees a secret is
+    # present when debug=False; this adds the strength check on top of that
+    # presence check.
+    secret_key = config.security.secret_key
+    if secret_key is not None and len(secret_key.get_secret_value().encode()) < _MIN_SECRET_BYTES:
+        raise _invalid_production_config("weak_secret_key")
+
+
+def validate_rate_limiter_for_production(
+    rate_limiter: object, *, debug: bool, auth_enabled: bool
+) -> None:
+    """Fail closed at `Admin` construction time when a non-production-safe
+    rate limiter (the bundled in-memory `LoginRateLimiter`, or any other
+    object that hasn't explicitly declared `production_safe = True`) would
+    be used to gate login attempts in production.
+
+    Only applies when both `debug=False` and authentication is actually
+    configured -- an in-memory limiter is harmless in local development, and
+    irrelevant if there's no login route to rate-limit in the first place.
+    """
+    if debug or not auth_enabled:
+        return
+    if not getattr(rate_limiter, "production_safe", False):
+        raise _invalid_production_config("development_only_rate_limiter")

@@ -28,7 +28,7 @@ from .resource_routes import ResourceBinding, build_resource_routes, build_templ
 from .security.csrf import CsrfService
 from .security.middleware import SecurityMiddleware
 from .security.rate_limit import LoginRateLimiter
-from .security.validation import validate_production_config
+from .security.validation import validate_production_config, validate_rate_limiter_for_production
 
 _FIELD_POLICY_NAMES = (
     "list_fields",
@@ -132,9 +132,24 @@ class Admin:
             security=security_config,
         )
         validate_production_config(self.config)
+        if (auth_backend is None) != (session_store is None):
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message=(
+                    "auth_backend and session_store must both be supplied together, or "
+                    "both omitted -- a partial auth configuration would silently leave "
+                    "the admin unauthenticated rather than failing closed."
+                ),
+                status_code=500,
+            )
         self._auth_backend = auth_backend
         self._session_store = session_store
         self._login_rate_limiter = login_rate_limiter or LoginRateLimiter()
+        validate_rate_limiter_for_production(
+            self._login_rate_limiter,
+            debug=debug,
+            auth_enabled=auth_backend is not None,
+        )
         self._builder = ApplicationBuilder()
         self._builder.add_route(
             RouteDefinition(
