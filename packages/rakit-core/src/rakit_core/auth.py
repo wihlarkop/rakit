@@ -57,6 +57,19 @@ class AuthBackend(Protocol):
 
     async def authenticate(self, identifier: str, password: str) -> Principal | None: ...
 
+    async def resolve_principal(self, subject_id: str) -> Principal | None:
+        """Re-resolve a `Principal` from a durable `subject_id` (a resolved
+        `SessionRecord.subject_id`), independent of any password.
+
+        Called on every authenticated request -- not just at login -- so a
+        request always reflects the subject's *current* active/permission
+        state rather than whatever was true when the session was created.
+        Returns `None` if the subject no longer exists or is no longer
+        active; a caller resolving a request's `Principal` this way must
+        treat that as "unauthenticated," not merely "no permissions."
+        """
+        ...
+
 
 class SessionStore(Protocol):
     """Server-side opaque session storage. Implementations persist only a

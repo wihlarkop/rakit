@@ -57,7 +57,11 @@ class User(Base):
         # to read secure defaults immediately, before any flush/commit.
         kwargs.setdefault("is_active", True)
         kwargs.setdefault("is_superuser", False)
-        super().__init__(email=email, password_hash=password_hash, **kwargs)
+        # Normalized the same way login-time identifiers are normalized
+        # (see SQLAlchemyAuthBackend) -- stored normalized so the unique
+        # constraint on `email` actually prevents case-variant duplicates
+        # ("Ada@x" and "ada@x") and lookup at login always matches.
+        super().__init__(email=email.strip().lower(), password_hash=password_hash, **kwargs)
 
 
 class Role(Base):

@@ -86,7 +86,20 @@ class FakeAuthBackend:
         expected = _KNOWN_USERS.get(identifier)
         if expected is None or expected != password:
             return None
-        return Principal(subject_id="1", authenticated=True, permissions=frozenset())
+        return Principal(
+            subject_id="1",
+            authenticated=True,
+            permissions=frozenset({"operations.access"}),
+        )
+
+    async def resolve_principal(self, subject_id: str) -> Principal | None:
+        if subject_id != "1":
+            return None
+        return Principal(
+            subject_id="1",
+            authenticated=True,
+            permissions=frozenset({"operations.access"}),
+        )
 
 
 class FakeSessionStore:

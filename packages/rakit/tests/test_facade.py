@@ -173,3 +173,107 @@ def test_server_uvicorn_facade_raises_friendly_error_when_missing(monkeypatch) -
         import rakit.server.uvicorn  # noqa: F401
 
     assert 'uv add "rakit[server-uvicorn]"' in str(caught.value)
+
+
+def test_auth_sqlalchemy_facade_reexports_real_class() -> None:
+    from rakit.auth.sqlalchemy import SQLAlchemyAuthPlugin
+    from rakit_auth_sqlalchemy.plugin import SQLAlchemyAuthPlugin as RealSQLAlchemyAuthPlugin
+
+    assert SQLAlchemyAuthPlugin is RealSQLAlchemyAuthPlugin
+
+
+def test_auth_sqlalchemy_facade_raises_friendly_error_when_missing(monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "rakit_auth_sqlalchemy", None)
+    sys.modules.pop("rakit.auth.sqlalchemy", None)
+
+    with pytest.raises(RakitOptionalDependencyError) as caught:
+        import rakit.auth.sqlalchemy  # noqa: F401
+
+    assert 'uv add "rakit[auth-sqlalchemy]"' in str(caught.value)
+
+
+def test_importing_rakit_does_not_eagerly_import_auth_sqlalchemy() -> None:
+    import subprocess
+    import sys as _sys
+
+    result = subprocess.run(
+        [
+            _sys.executable,
+            "-c",
+            "import rakit; import sys; "
+            "assert 'rakit_auth_sqlalchemy' not in sys.modules; "
+            "assert 'argon2' not in sys.modules; "
+            "assert 'alembic' not in sys.modules",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_plan03_core_auth_types_are_reexported_with_preserved_identity() -> None:
+    from rakit.core import (
+        ANONYMOUS_PRINCIPAL,
+        AuthBackend,
+        AuthorizationDecision,
+        AuthorizationPolicy,
+        KeyRing,
+        PermissionCatalogue,
+        PermissionDefinition,
+        PermissionRequirement,
+        Principal,
+        SessionRecord,
+        SessionStore,
+        SigningKey,
+        TokenService,
+    )
+    from rakit_core.auth import ANONYMOUS_PRINCIPAL as REAL_ANONYMOUS_PRINCIPAL
+    from rakit_core.auth import AuthBackend as RealAuthBackend
+    from rakit_core.auth import Principal as RealPrincipal
+    from rakit_core.auth import SessionRecord as RealSessionRecord
+    from rakit_core.auth import SessionStore as RealSessionStore
+    from rakit_core.crypto import KeyRing as RealKeyRing
+    from rakit_core.crypto import SigningKey as RealSigningKey
+    from rakit_core.crypto import TokenService as RealTokenService
+    from rakit_core.permission_catalogue import PermissionCatalogue as RealPermissionCatalogue
+    from rakit_core.permission_catalogue import PermissionDefinition as RealPermissionDefinition
+    from rakit_core.permissions import AuthorizationDecision as RealAuthorizationDecision
+    from rakit_core.permissions import AuthorizationPolicy as RealAuthorizationPolicy
+    from rakit_core.permissions import PermissionRequirement as RealPermissionRequirement
+
+    assert Principal is RealPrincipal
+    assert SessionRecord is RealSessionRecord
+    assert AuthBackend is RealAuthBackend
+    assert SessionStore is RealSessionStore
+    assert ANONYMOUS_PRINCIPAL is REAL_ANONYMOUS_PRINCIPAL
+    assert PermissionRequirement is RealPermissionRequirement
+    assert AuthorizationDecision is RealAuthorizationDecision
+    assert AuthorizationPolicy is RealAuthorizationPolicy
+    assert PermissionDefinition is RealPermissionDefinition
+    assert PermissionCatalogue is RealPermissionCatalogue
+    assert TokenService is RealTokenService
+    assert KeyRing is RealKeyRing
+    assert SigningKey is RealSigningKey
+    assert Principal.__module__ == "rakit_core.auth"
+    assert TokenService.__module__ == "rakit_core.crypto"
+
+
+def test_importing_core_plan03_facade_does_not_load_optional_sqlalchemy() -> None:
+    import subprocess
+    import sys as _sys
+
+    result = subprocess.run(
+        [
+            _sys.executable,
+            "-c",
+            "import rakit.core; import sys; "
+            "assert 'rakit_auth_sqlalchemy' not in sys.modules; "
+            "assert 'argon2' not in sys.modules; "
+            "assert 'sqlalchemy' not in sys.modules",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr

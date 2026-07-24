@@ -12,6 +12,11 @@ def test_user_defaults_are_secure() -> None:
     assert user.is_superuser is False
 
 
+def test_user_email_is_normalized_to_lowercase_and_stripped() -> None:
+    user = User(email="  Ada@Example.COM  ", password_hash="hash")
+    assert user.email == "ada@example.com"
+
+
 def test_role_collects_allow_only_permissions() -> None:
     role = Role(name="editor")
     role.permissions.append(Permission(key="operations.resources.orders.read"))

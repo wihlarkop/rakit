@@ -69,8 +69,21 @@ class _LifespanDriver:
 class _FakeAuthBackend:
     async def authenticate(self, identifier: str, password: str) -> Principal | None:
         if identifier == "admin@example.com" and password == "correct-password":
-            return Principal(subject_id="1", authenticated=True, permissions=frozenset())
+            return Principal(
+                subject_id="1",
+                authenticated=True,
+                permissions=frozenset({"operations.access"}),
+            )
         return None
+
+    async def resolve_principal(self, subject_id: str) -> Principal | None:
+        if subject_id != "1":
+            return None
+        return Principal(
+            subject_id="1",
+            authenticated=True,
+            permissions=frozenset({"operations.access"}),
+        )
 
 
 class _FakeSessionStore:
