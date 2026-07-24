@@ -348,3 +348,120 @@ def test_all_packages_builds_exactly_the_eight_official_distributions(tmp_path: 
         text=True,
     )
     assert imported.returncode == 0, imported.stderr
+
+
+def test_auth_migration_history_coexists_with_a_host_alembic_version_table(
+    tmp_path: Path,
+) -> None:
+    """Rakit's own Alembic revision history must never share a version
+    table with a host application's own Alembic history -- sharing
+    "alembic_version" would make an upgrade for either history fail
+    trying to locate a revision ID that belongs to the other's history
+    entirely. Runs the migration from a real installed wheel, not the
+    source tree, since that's what a deployment actually does."""
+    import sqlite3
+
+    output = tmp_path / "auth-migration-distributions"
+    subprocess.run(
+        ["uv", "build", "--all-packages", "--out-dir", str(output)],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    installed = tmp_path / "installed-auth-sqlalchemy"
+    subprocess.run(
+        ["uv", "venv", str(installed), "--python", sys.executable],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    installed_python = installed / "Scripts" / "python.exe"
+    subprocess.run(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            str(installed_python),
+            "--find-links",
+            str(output),
+            "rakit-auth-sqlalchemy",
+            "--offline",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    ini_path = installed / "Lib" / "site-packages" / "rakit_auth_sqlalchemy" / "alembic.ini"
+    assert ini_path.exists()
+
+    # 1. Seed a host alembic_version table with an unrelated revision --
+    # simulating a host application that already runs its own Alembic
+    # migrations against this same database.
+    db_path = tmp_path / "host-coexist.sqlite3"
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)")
+    conn.execute("INSERT INTO alembic_version (version_num) VALUES ('host_0001')")
+    conn.commit()
+    conn.close()
+
+    isolated_environment = os.environ.copy()
+    isolated_environment.pop("PYTHONPATH", None)
+    isolated_environment["RAKIT_AUTH_SQLALCHEMY_URL"] = f"sqlite:///{db_path.as_posix()}"
+
+    # 2. Run the Rakit auth upgrade from the installed wheel.
+    upgrade = subprocess.run(
+        [str(installed_python), "-m", "alembic", "-c", str(ini_path), "upgrade", "head"],
+        env=isolated_environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert upgrade.returncode == 0, upgrade.stderr
+
+    conn = sqlite3.connect(db_path)
+    table_names = {
+        row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+
+    # 3. rakit_auth_alembic_version reaches Rakit head.
+    assert "rakit_auth_alembic_version" in table_names
+    assert conn.execute("SELECT version_num FROM rakit_auth_alembic_version").fetchall() == [
+        ("0001",)
+    ]
+
+    # 4. The host's own version table is unchanged.
+    assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [("host_0001",)]
+    conn.close()
+
+    # 5. Rerunning the upgrade succeeds (idempotent no-op at head).
+    rerun = subprocess.run(
+        [str(installed_python), "-m", "alembic", "-c", str(ini_path), "upgrade", "head"],
+        env=isolated_environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert rerun.returncode == 0, rerun.stderr
+
+    # 6. Only Rakit-owned tables were affected: every expected auth table
+    # exists, and the host's alembic_version table/row are byte-identical
+    # to what was seeded.
+    conn = sqlite3.connect(db_path)
+    final_tables = {
+        row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    expected_rakit_tables = {
+        "rakit_auth_alembic_version",
+        "rakit_auth_users",
+        "rakit_auth_roles",
+        "rakit_auth_permissions",
+        "rakit_auth_user_roles",
+        "rakit_auth_role_permissions",
+        "rakit_auth_sessions",
+    }
+    assert expected_rakit_tables <= final_tables
+    assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [("host_0001",)]
+    conn.close()
