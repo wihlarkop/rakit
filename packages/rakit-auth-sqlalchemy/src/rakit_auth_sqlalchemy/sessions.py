@@ -95,18 +95,41 @@ class SQLAlchemySessionStore:
             return _to_record(row)
 
     async def rotate(self, session_id: str) -> tuple[str, SessionRecord]:
+        """Issue a genuinely new session (new session_id, new raw token),
+        preserving the original absolute-expiry boundary, and revoke the
+        previous session_id.
+
+        A new session_id -- not just a new raw token on the same row -- is
+        required so any CSRF token already issued (bound to session_id, not
+        to the raw token) stops matching once the caller starts using the
+        rotated session; reusing the old session_id would let a pre-rotation
+        CSRF token remain valid forever. Preserving `absolute_expires_at`
+        (rather than resetting it from "now") keeps rotation from being a
+        way to keep a session alive indefinitely past its original absolute
+        boundary.
+        """
         numeric_id = _parse_session_id(session_id)
         if numeric_id is None:
             raise ValueError(f"unknown session_id: {session_id}")
         raw_token = secrets.token_urlsafe(32)
+        now = datetime.now(UTC)
         async with self._session_factory() as session:
-            row = await session.get(SessionRow, numeric_id)
-            if row is None:
+            old_row = await session.get(SessionRow, numeric_id)
+            if old_row is None:
                 raise ValueError(f"unknown session_id: {session_id}")
-            row.token_hash = _hash_token(raw_token)
+            new_row = SessionRow(
+                token_hash=_hash_token(raw_token),
+                user_id=old_row.user_id,
+                created_at=now,
+                last_seen_at=now,
+                idle_expires_at=now + self._idle_timeout,
+                absolute_expires_at=old_row.absolute_expires_at,
+            )
+            session.add(new_row)
+            old_row.revoked_at = now
             await session.commit()
-            await session.refresh(row)
-        return raw_token, _to_record(row)
+            await session.refresh(new_row)
+        return raw_token, _to_record(new_row)
 
     async def revoke(self, session_id: str) -> None:
         numeric_id = _parse_session_id(session_id)

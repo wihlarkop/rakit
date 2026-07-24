@@ -120,11 +120,23 @@ class FakeSessionStore:
         return self._sessions.get(session_id)
 
     async def rotate(self, session_id: str) -> tuple[str, SessionRecord]:
-        record = self._sessions[session_id]
-        new_token = f"token-{session_id}-rotated"
-        self._tokens = {t: sid for t, sid in self._tokens.items() if sid != session_id}
-        self._tokens[new_token] = session_id
-        return new_token, record
+        old_record = self._sessions[session_id]
+        new_session_id = str(self._next_id)
+        self._next_id += 1
+        new_token = f"token-{new_session_id}"
+        now = datetime.now(UTC)
+        new_record = SessionRecord(
+            session_id=new_session_id,
+            subject_id=old_record.subject_id,
+            created_at=now,
+            last_seen_at=now,
+            idle_expires_at=now + timedelta(hours=1),
+            absolute_expires_at=old_record.absolute_expires_at,
+        )
+        self._sessions[new_session_id] = new_record
+        self._tokens[new_token] = new_session_id
+        await self.revoke(session_id)
+        return new_token, new_record
 
     async def revoke(self, session_id: str) -> None:
         self._sessions.pop(session_id, None)
@@ -187,11 +199,111 @@ async def test_logout_revokes_the_session(auth_client) -> None:
         follow_redirects=False,
     )
     raw_token = login.cookies["rakit_session"]
+    csrf_token = login.cookies["rakit_csrf"]
     auth_client.cookies.set("rakit_session", raw_token)
+    auth_client.cookies.set("rakit_csrf", csrf_token)
 
-    logout = await auth_client.post("/auth/logout", follow_redirects=False)
+    logout = await auth_client.post(
+        "/auth/logout", data={"csrf_token": csrf_token}, follow_redirects=False
+    )
     assert logout.status_code == 303
     assert logout.cookies.get("rakit_session") in (None, "")
+
+
+async def test_logout_with_csrf_token_in_header_succeeds(auth_client) -> None:
+    login = await auth_client.post(
+        "/auth/login",
+        data={"identifier": "admin@example.com", "password": "correct-password"},
+        follow_redirects=False,
+    )
+    raw_token = login.cookies["rakit_session"]
+    csrf_token = login.cookies["rakit_csrf"]
+    auth_client.cookies.set("rakit_session", raw_token)
+    auth_client.cookies.set("rakit_csrf", csrf_token)
+
+    logout = await auth_client.post(
+        "/auth/logout", headers={"X-CSRF-Token": csrf_token}, follow_redirects=False
+    )
+    assert logout.status_code == 303
+
+
+async def test_logout_without_a_csrf_token_is_rejected(auth_client) -> None:
+    login = await auth_client.post(
+        "/auth/login",
+        data={"identifier": "admin@example.com", "password": "correct-password"},
+        follow_redirects=False,
+    )
+    raw_token = login.cookies["rakit_session"]
+    csrf_token = login.cookies["rakit_csrf"]
+    auth_client.cookies.set("rakit_session", raw_token)
+    auth_client.cookies.set("rakit_csrf", csrf_token)
+
+    logout = await auth_client.post("/auth/logout", follow_redirects=False)
+    assert logout.status_code == 403
+
+    # The session must still be active -- a rejected logout must not have
+    # revoked anything. Proven by successfully logging out afterward with
+    # the correct CSRF token, which only works against a still-live session.
+    real_logout = await auth_client.post(
+        "/auth/logout", data={"csrf_token": csrf_token}, follow_redirects=False
+    )
+    assert real_logout.status_code == 303
+
+
+async def test_logout_with_a_mismatched_csrf_token_is_rejected(auth_client) -> None:
+    login = await auth_client.post(
+        "/auth/login",
+        data={"identifier": "admin@example.com", "password": "correct-password"},
+        follow_redirects=False,
+    )
+    raw_token = login.cookies["rakit_session"]
+    csrf_token = login.cookies["rakit_csrf"]
+    auth_client.cookies.set("rakit_session", raw_token)
+    auth_client.cookies.set("rakit_csrf", csrf_token)
+
+    logout = await auth_client.post(
+        "/auth/logout", data={"csrf_token": "not-the-real-token"}, follow_redirects=False
+    )
+    assert logout.status_code == 403
+
+
+async def test_logout_with_a_csrf_token_from_a_different_session_is_rejected(auth_client) -> None:
+    """The submitted/cookie CSRF token pair might match each other exactly
+    (a forged double-submit pair from a different, attacker-controlled
+    session) while still not being bound to *this* session -- CsrfService
+    binds a token to the session_id it was issued for, so this must fail
+    even though the double-submit values match one another."""
+    first_login = await auth_client.post(
+        "/auth/login",
+        data={"identifier": "admin@example.com", "password": "correct-password"},
+        follow_redirects=False,
+    )
+    foreign_csrf_token = first_login.cookies["rakit_csrf"]
+
+    second_login = await auth_client.post(
+        "/auth/login",
+        data={"identifier": "admin@example.com", "password": "correct-password"},
+        follow_redirects=False,
+    )
+    real_session_token = second_login.cookies["rakit_session"]
+    auth_client.cookies.set("rakit_session", real_session_token)
+    # Attacker submits a token bound to a *different* session, but sets it
+    # as both the cookie and the submitted value so the double-submit
+    # comparison alone would pass.
+    auth_client.cookies.set("rakit_csrf", foreign_csrf_token)
+
+    logout = await auth_client.post(
+        "/auth/logout", data={"csrf_token": foreign_csrf_token}, follow_redirects=False
+    )
+    assert logout.status_code == 403
+
+
+async def test_logout_without_any_active_session_is_a_safe_no_op(auth_client) -> None:
+    """Logging out with no session cookie at all (already logged out, or
+    never logged in) must not require a CSRF token -- there's no
+    authenticated action to protect."""
+    logout = await auth_client.post("/auth/logout", follow_redirects=False)
+    assert logout.status_code == 303
 
 
 async def test_repeated_failed_logins_are_rate_limited(auth_client) -> None:
@@ -285,3 +397,79 @@ def test_admin_rejects_weak_production_secret_when_auth_is_configured() -> None:
             login_rate_limiter=_TestRateLimiter(),
         )
     assert exc_info.value.details["reason"] == "weak_secret_key"
+
+
+async def test_csrf_token_is_invalidated_after_session_rotation() -> None:
+    """A CSRF token issued for a session must stop being valid for that
+    same logical session's identity once the session is rotated -- since
+    rotate() now issues a genuinely new session_id (see
+    rakit_auth_sqlalchemy.sessions.rotate's docstring for the full
+    rationale), CsrfService.verify() correctly rejects a pre-rotation token
+    when checked against the post-rotation session_id."""
+    from rakit_core.config import SecretValue
+    from rakit_core.crypto import TokenService
+    from rakit_web.security.csrf import CsrfService
+
+    store = FakeSessionStore()
+    principal = Principal(subject_id="1", authenticated=True)
+    _raw_token, created = await store.create(principal)
+
+    token_service = TokenService.single_key(
+        key_id="k1", value=SecretValue("x" * 32), admin_id="operations"
+    )
+    csrf_service = CsrfService(token_service)
+    pre_rotation_csrf = csrf_service.issue(created.session_id)
+
+    _new_raw_token, rotated = await store.rotate(created.session_id)
+
+    assert rotated.session_id != created.session_id
+    assert csrf_service.verify(pre_rotation_csrf, session_id=created.session_id)
+    assert not csrf_service.verify(pre_rotation_csrf, session_id=rotated.session_id)
+
+    # A freshly issued token for the *new* session_id works correctly.
+    post_rotation_csrf = csrf_service.issue(rotated.session_id)
+    assert csrf_service.verify(post_rotation_csrf, session_id=rotated.session_id)
+
+
+async def test_mounted_admin_login_logout_csrf_and_redirects_use_the_mount_prefix() -> None:
+    """Cookie paths, redirect targets, and CSRF validation must all keep
+    working correctly when Admin.asgi() is mounted under a path prefix
+    (e.g. FastAPI's app.mount("/admin", admin.asgi())) -- not just at the
+    application root."""
+    from starlette.applications import Starlette
+    from starlette.routing import Mount
+
+    admin = Admin(
+        admin_id="operations",
+        title="Operations",
+        debug=False,
+        secret_key=SecretValue("x" * 32),
+        auth_backend=FakeAuthBackend(),
+        session_store=FakeSessionStore(),
+        login_rate_limiter=_TestRateLimiter(),
+    )
+    child_app = admin.asgi()
+    mounted_app = Starlette(routes=[Mount("/admin", app=child_app)])
+    transport = httpx.ASGITransport(app=mounted_app)
+    async with (
+        _LifespanDriver(child_app),
+        httpx.AsyncClient(transport=transport, base_url="http://localhost") as mounted_client,
+    ):
+        login = await mounted_client.post(
+            "/admin/auth/login",
+            data={"identifier": "admin@example.com", "password": "correct-password"},
+            follow_redirects=False,
+        )
+        assert login.status_code == 303
+        assert login.headers["location"] == "/admin/"
+        raw_token = login.cookies["rakit_session"]
+        csrf_token = login.cookies["rakit_csrf"]
+
+        mounted_client.cookies.set("rakit_session", raw_token)
+        mounted_client.cookies.set("rakit_csrf", csrf_token)
+
+        logout = await mounted_client.post(
+            "/admin/auth/logout", data={"csrf_token": csrf_token}, follow_redirects=False
+        )
+        assert logout.status_code == 303
+        assert logout.headers["location"] == "/admin/auth/login"

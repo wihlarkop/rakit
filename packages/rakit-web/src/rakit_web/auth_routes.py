@@ -4,9 +4,11 @@ login rate limiting. Wired into `Admin.asgi()` only when both an
 neither remains exactly as unauthenticated as before this module existed.
 """
 
+import hmac
+
 from rakit_core.auth import AuthBackend, SessionStore
 from starlette.requests import Request
-from starlette.responses import RedirectResponse, Response
+from starlette.responses import PlainTextResponse, RedirectResponse, Response
 from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 
@@ -16,6 +18,35 @@ from .security.rate_limit import LoginRateLimiter
 
 SESSION_COOKIE_NAME = "rakit_session"
 CSRF_COOKIE_NAME = "rakit_csrf"
+CSRF_HEADER_NAME = "x-csrf-token"
+CSRF_FORM_FIELD = "csrf_token"
+
+
+async def _submitted_csrf_token(request: Request) -> str | None:
+    header_value = request.headers.get(CSRF_HEADER_NAME)
+    if header_value is not None:
+        return header_value
+    form = await request.form()
+    field_value = form.get(CSRF_FORM_FIELD)
+    return str(field_value) if field_value is not None else None
+
+
+async def _verify_csrf(request: Request, csrf_service: CsrfService, *, session_id: str) -> bool:
+    """Double-submit CSRF validation: the cookie value and the
+    submitted (form field or header) value must match byte-for-byte
+    (constant-time compare, since both are secrets an attacker
+    shouldn't be able to learn via timing), *and* the token itself must
+    be a genuine, unexpired CsrfService token bound to this exact
+    `session_id` -- matching cookie/submitted values alone would also
+    accept a forged pair copied from a different session.
+    """
+    cookie_value = request.cookies.get(CSRF_COOKIE_NAME)
+    submitted_value = await _submitted_csrf_token(request)
+    if cookie_value is None or submitted_value is None:
+        return False
+    if not hmac.compare_digest(cookie_value, submitted_value):
+        return False
+    return csrf_service.verify(cookie_value, session_id=session_id)
 
 
 def _mounted_path(request: Request, path: str) -> str:
@@ -98,10 +129,19 @@ def build_auth_routes(
 
     async def logout_post(request: Request) -> Response:
         raw_token = request.cookies.get(SESSION_COOKIE_NAME)
-        if raw_token:
-            record = await session_store.resolve(raw_token)
-            if record is not None:
-                await session_store.revoke(record.session_id)
+        record = await session_store.resolve(raw_token) if raw_token else None
+
+        # CSRF is only enforced when there's an active, authenticated
+        # session to protect -- logging out with no session at all (already
+        # logged out, or never logged in) is a safe no-op with nothing for
+        # CSRF to defend.
+        if record is not None:
+            if not await _verify_csrf(request, csrf_service, session_id=record.session_id):
+                return PlainTextResponse(
+                    "Invalid CSRF token", status_code=403, headers={"Cache-Control": "no-store"}
+                )
+            await session_store.revoke(record.session_id)
+
         response = RedirectResponse(url=_mounted_path(request, "/auth/login"), status_code=303)
         cookie_path = _mounted_path(request, "/") or "/"
         response.delete_cookie(SESSION_COOKIE_NAME, path=cookie_path)

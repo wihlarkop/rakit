@@ -11,8 +11,36 @@ _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 _DEFAULT_MAX_BODY_SIZE = 10 * 1024 * 1024
 
 
-def _host_from_url(value: str) -> str | None:
-    return urlsplit(value).hostname
+def _effective_port(scheme: str, port: int | None) -> int:
+    if port is not None:
+        return port
+    return 443 if scheme == "https" else 80
+
+
+def _canonical_origin(
+    scheme: str, host: str | None, port: int | None
+) -> tuple[str, str, int] | None:
+    """Canonicalize scheme + host + effective port for exact same-origin
+    comparison -- deliberately distinct from allowed-host validation
+    (which only ever checks the hostname). A request's own scheme/host/port
+    is compared against a submitted Origin/Referer's scheme/host/port with
+    this same function, so the two are never accidentally conflated.
+    """
+    if not host:
+        return None
+    return (scheme.lower(), host.lower(), _effective_port(scheme, port))
+
+
+def _parse_origin(value: str) -> tuple[str, str, int] | None:
+    """Parse an Origin/Referer header value into a canonical origin tuple,
+    or `None` if it doesn't resolve to one at all (a literal `"null"`, a
+    scheme-less/malformed value) -- callers must treat `None` as a
+    mismatch, never as "nothing to check."
+    """
+    parsed = urlsplit(value)
+    if not parsed.scheme or not parsed.hostname:
+        return None
+    return _canonical_origin(parsed.scheme, parsed.hostname, parsed.port)
 
 
 def _host_without_port(raw_host: str) -> str:
@@ -102,14 +130,25 @@ class SecurityMiddleware:
             source = request.headers.get("origin") or request.headers.get("referer")
             if source is not None:
                 # A *present* Origin/Referer that doesn't resolve to a
-                # hostname at all (a literal "null" from a sandboxed
-                # iframe, or a malformed/scheme-less value) is exactly the
-                # shape of value a cross-origin attacker would send --
-                # treat it as a mismatch, not as "nothing to check."
-                # Absence of both headers entirely is handled separately
-                # above and is not rejected.
-                source_host = _host_from_url(source)
-                if source_host not in self._allowed_hosts:
+                # canonical origin at all (a literal "null" from a
+                # sandboxed iframe, or a malformed/scheme-less value) is
+                # exactly the shape of value a cross-origin attacker would
+                # send -- treat it as a mismatch, not as "nothing to
+                # check." Absence of both headers entirely is handled
+                # separately above and is not rejected.
+                #
+                # This compares against the *request's own* scheme/host/
+                # port, not against `allowed_hosts` -- same-origin
+                # validation and trusted-host validation are deliberately
+                # separate checks. Hostname alone is not enough: an Origin
+                # matching the hostname but differing in scheme or port
+                # (e.g. https://localhost:4443 against a plain
+                # http://localhost request) must still be rejected.
+                source_origin = _parse_origin(source)
+                request_origin = _canonical_origin(
+                    request.url.scheme, request.url.hostname, request.url.port
+                )
+                if source_origin is None or source_origin != request_origin:
                     await PlainTextResponse("Invalid request origin", status_code=403)(
                         scope, receive, send
                     )

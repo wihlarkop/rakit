@@ -246,6 +246,97 @@ async def test_scheme_less_origin_mutation_is_rejected() -> None:
         assert response.status_code == 403
 
 
+async def _login_with_headers(headers: dict[str, str]) -> httpx.Response:
+    admin = _auth_admin()
+    app = admin.asgi()
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        _LifespanDriver(app),
+        httpx.AsyncClient(transport=transport, base_url="http://localhost") as http_client,
+    ):
+        return await http_client.post(
+            "/auth/login",
+            data={"identifier": "admin@example.com", "password": "wrong"},
+            headers=headers,
+        )
+
+
+async def test_different_scheme_origin_is_rejected() -> None:
+    """The request itself arrives over http://localhost (default port 80);
+    an Origin claiming https on the same hostname must still be rejected --
+    allowed-host validation only checks the *hostname*, but same-origin
+    validation must also match scheme and effective port exactly."""
+    response = await _login_with_headers({"origin": "https://localhost"})
+    assert response.status_code == 403
+
+
+async def test_different_explicit_port_origin_is_rejected() -> None:
+    response = await _login_with_headers({"origin": "http://localhost:9999"})
+    assert response.status_code == 403
+
+
+async def test_different_scheme_and_port_origin_is_rejected() -> None:
+    response = await _login_with_headers({"origin": "https://localhost:4443"})
+    assert response.status_code == 403
+
+
+async def test_exact_same_scheme_host_and_default_port_origin_is_accepted() -> None:
+    response = await _login_with_headers({"origin": "http://localhost"})
+    assert response.status_code == 401  # rejected for wrong password, not CSRF/origin
+
+
+async def test_explicit_default_port_origin_is_accepted() -> None:
+    """http://localhost:80 is the same effective origin as http://localhost
+    -- an explicit default port must not be treated as a mismatch."""
+    response = await _login_with_headers({"origin": "http://localhost:80"})
+    assert response.status_code == 401
+
+
+async def test_origin_case_is_normalized() -> None:
+    response = await _login_with_headers({"origin": "HTTP://LOCALHOST"})
+    assert response.status_code == 401
+
+
+async def test_ipv4_host_origin_mismatch_is_rejected() -> None:
+    """Same-origin validation compares against the request's own Host
+    header, not just allowed_hosts -- a request that arrives with an IPv4
+    Host must reject an Origin claiming a different IPv4 host."""
+    admin = _auth_admin()
+    app = admin.asgi()
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        _LifespanDriver(app),
+        httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as http_client,
+    ):
+        response = await http_client.post(
+            "/auth/login",
+            data={"identifier": "admin@example.com", "password": "wrong"},
+            headers={"origin": "http://127.0.0.2"},
+        )
+        assert response.status_code == 403
+
+
+async def test_bracketed_ipv6_origin_matching_the_request_host_is_accepted() -> None:
+    admin = _auth_admin()
+    app = admin.asgi()
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        _LifespanDriver(app),
+        httpx.AsyncClient(transport=transport, base_url="http://[::1]") as http_client,
+    ):
+        response = await http_client.post(
+            "/auth/login",
+            data={"identifier": "admin@example.com", "password": "wrong"},
+            headers={"origin": "http://[::1]"},
+        )
+        assert response.status_code == 401
+
+
+async def test_referer_uses_the_same_canonical_comparison_as_origin() -> None:
+    response = await _login_with_headers({"referer": "https://localhost:4443/auth/login"})
+    assert response.status_code == 403
+
+
 async def test_ipv6_loopback_host_is_trusted_by_default() -> None:
     """`SecurityConfig.allowed_hosts` defaults to including `"[::1]"`, but a
     naive `host.split(":")[0]` on the `Host` header turns `[::1]` into `[`,

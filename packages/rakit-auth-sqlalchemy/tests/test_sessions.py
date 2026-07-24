@@ -113,8 +113,57 @@ async def test_rotate_invalidates_previous_raw_token(session_factory) -> None:
     new_token, rotated = await store.rotate(created.session_id)
 
     assert new_token != old_token
-    assert rotated.session_id == created.session_id
     assert await store.resolve(old_token) is None
+    assert await store.resolve(new_token) is not None
+
+
+async def test_rotate_issues_a_new_session_id(session_factory) -> None:
+    """A rotated session must not merely swap the raw token while keeping
+    the same session_id -- any CSRF token already issued (bound to the
+    session_id, not the raw token) would otherwise remain valid forever
+    even after rotation. A genuinely new session_id is required so a stale
+    CSRF token from before rotation stops matching the current session."""
+    store = SQLAlchemySessionStore(session_factory)
+    principal = Principal(subject_id="1", authenticated=True)
+    _old_token, created = await store.create(principal)
+
+    _new_token, rotated = await store.rotate(created.session_id)
+
+    assert rotated.session_id != created.session_id
+
+
+async def test_rotate_preserves_the_original_absolute_expiry_boundary(session_factory) -> None:
+    """Rotation must not reset the absolute-expiry clock -- otherwise a
+    session could be kept alive indefinitely by rotating it just before
+    each absolute-expiry deadline, defeating the point of an absolute
+    boundary entirely."""
+    store = SQLAlchemySessionStore(session_factory)
+    principal = Principal(subject_id="1", authenticated=True)
+    _old_token, created = await store.create(principal)
+
+    _new_token, rotated = await store.rotate(created.session_id)
+
+    assert rotated.absolute_expires_at == created.absolute_expires_at
+
+
+async def test_rotate_revokes_the_previous_session_id(session_factory) -> None:
+    """The old session_id must stop resolving entirely after rotation, not
+    merely have its raw token swapped out -- resolving by the (impossible
+    to obtain without the raw token, but conceptually) old identity must
+    not succeed."""
+    store = SQLAlchemySessionStore(session_factory)
+    principal = Principal(subject_id="1", authenticated=True)
+    old_token, created = await store.create(principal)
+
+    new_token, rotated = await store.rotate(created.session_id)
+
+    assert rotated.session_id != created.session_id
+    resolved_new = await store.resolve(new_token)
+    assert resolved_new is not None
+    assert resolved_new.session_id == rotated.session_id
+    # Revoking the *old* session_id again must be a safe no-op (it no
+    # longer has a live row to revoke, but that's not an error).
+    await store.revoke(created.session_id)
     assert await store.resolve(new_token) is not None
 
 

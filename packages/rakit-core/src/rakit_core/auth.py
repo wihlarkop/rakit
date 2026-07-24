@@ -72,9 +72,18 @@ class SessionStore(Protocol):
         ...
 
     async def rotate(self, session_id: str) -> tuple[str, SessionRecord]:
-        """Issue a new raw token for an existing session, invalidating the
-        previous raw token. Used on privilege change; callers must also
-        reissue a CSRF token bound to the (unchanged) `session_id`."""
+        """Issue a genuinely new session (new `session_id`, new raw token)
+        for the same principal, preserving the original absolute-expiry
+        boundary, and revoke the previous `session_id`. Used on privilege
+        change.
+
+        The returned record's `session_id` MUST differ from the one passed
+        in -- a CSRF token is bound to `session_id`, not to the raw token
+        (see `rakit_web`'s `CsrfService`), so reusing the same `session_id`
+        would leave any CSRF token issued before rotation valid forever
+        after it. Callers must reissue a CSRF token bound to the *new*
+        `session_id` after calling this.
+        """
         ...
 
     async def revoke(self, session_id: str) -> None:
