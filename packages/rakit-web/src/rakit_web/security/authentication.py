@@ -15,6 +15,7 @@ downstream app.
 """
 
 from collections.abc import Callable
+from urllib.parse import unquote
 
 from rakit_core.auth import ANONYMOUS_PRINCIPAL, AuthBackend, Principal, SessionStore
 from rakit_core.permissions import PermissionRequirement
@@ -33,11 +34,38 @@ LOGOUT_PATH = "/auth/logout"
 # to a route that itself redirects). System health/readiness and bundled
 # static assets carry no resource data and are needed by probes and by the
 # login page itself.
-_PUBLIC_PATH_PREFIXES = (LOGIN_PATH, LOGOUT_PATH, "/_system/")
+# Exactly-public paths, and roots whose descendants are public.
+_PUBLIC_EXACT_PATHS = (LOGIN_PATH, LOGOUT_PATH)
+_PUBLIC_SUBTREE_ROOTS = ("/_system",)
 
 
 def is_public_path(path: str) -> bool:
-    return any(path == prefix or path.startswith(prefix) for prefix in _PUBLIC_PATH_PREFIXES)
+    """Whether `path` is explicitly public.
+
+    Deliberately *not* a bare `startswith`: that would make any path merely
+    beginning with a public root public too, so `/auth/loginX`,
+    `/auth/login-and-more`, or a future route under `/_systemfoo` would
+    bypass authorization entirely. Login/logout match exactly; only
+    `/_system` has public descendants (health, readiness, bundled static
+    assets), matched at a `/` segment boundary.
+
+    A path carrying any dot segment -- literal or percent-encoded -- is
+    never public. An un-normalized traversal like `/auth/login/../widgets`
+    begins with a public root but does not *resolve* under one, so it fails
+    closed rather than being classified from its literal prefix.
+    """
+    if _has_dot_segment(path):
+        return False
+    if path in _PUBLIC_EXACT_PATHS:
+        return True
+    return any(path.startswith(f"{root}/") for root in _PUBLIC_SUBTREE_ROOTS)
+
+
+def _has_dot_segment(path: str) -> bool:
+    # Percent-decode first so an encoded separator (%2f) or encoded dot
+    # (%2e) can't hide a traversal from the segment check.
+    decoded = unquote(path)
+    return any(segment in (".", "..") for segment in decoded.split("/"))
 
 
 def admin_relative_path(request: Request) -> str:

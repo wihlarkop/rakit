@@ -439,3 +439,39 @@ async def test_login_page_itself_never_redirects_to_itself(session_factory) -> N
     async with _LifespanDriver(app), client:
         response = await client.get("/auth/login", follow_redirects=False)
         assert response.status_code == 200
+
+
+# --- Public-path matching must not be a loose prefix match ---------------
+
+
+def test_public_path_matching_uses_segment_boundaries_not_bare_prefixes() -> None:
+    """A bare `startswith` would treat any path merely *beginning with* a
+    public path as public -- so `/auth/loginX`, `/auth/login-and-more`, or a
+    future route under `/_systemfoo` would bypass authorization entirely.
+    Matching must be exact or at a `/` segment boundary."""
+    from rakit_web.security.authentication import is_public_path
+
+    # Genuinely public.
+    assert is_public_path("/auth/login")
+    assert is_public_path("/auth/logout")
+    assert is_public_path("/_system/health")
+    assert is_public_path("/_system/static/rakit.css")
+
+    # Must NOT be treated as public.
+    assert not is_public_path("/auth/loginX")
+    assert not is_public_path("/auth/login-and-more")
+    assert not is_public_path("/auth/logoutXYZ")
+    assert not is_public_path("/_systemfoo")
+    assert not is_public_path("/_system")
+    assert not is_public_path("/widgets")
+    assert not is_public_path("/")
+
+
+def test_dot_segment_paths_are_never_treated_as_public() -> None:
+    """Even if a client sends an un-normalized path, a `..` traversal that
+    starts with a public prefix must not be classified public."""
+    from rakit_web.security.authentication import is_public_path
+
+    assert not is_public_path("/auth/login/../widgets")
+    assert not is_public_path("/auth/login/..%2fwidgets")
+    assert not is_public_path("/_system/../widgets")
