@@ -350,3 +350,47 @@ Plan 03 external review round 2 (CHANGES REQUESTED): five findings, all fixed.
 
   See plan-03-design-decisions.md sections 21-26. Full suite 636/636 passing,
   ruff format/check and ty check clean across the whole workspace.
+
+Plan 03 round-2 independent review: "Ready to merge: Yes", zero Critical at
+  the tip, all five round-2 findings confirmed genuinely fixed with
+  revert-failing regression tests. Three Important and two latent-fail-open
+  Minor findings fixed on top.
+
+  Self-found Critical (`3124866`, fixed before the review reported it): my
+  own bypass-probing of the new enforcement middleware found `is_public_path`
+  using a bare `startswith`, so any path merely beginning with a public root
+  (e.g. a resource at `/auth/loginaudit`) skipped authorization entirely.
+  Login/logout now match exactly, only `/_system` has `/`-boundary
+  descendants, and any dot segment -- literal or percent-encoded -- is never
+  public. The reviewer independently reproduced the same defect against the
+  pre-fix HEAD.
+
+  Important fixes (`781932d`): SecurityMiddleware's own 400/403/413
+  rejections went through the raw `send` and so carried none of the security
+  headers the middleware exists to add -- now routed through the header
+  wrapper. The CSRF token's 4h TTL against a 14-day session made logout
+  permanently 403 once it lapsed, with no re-issue path -- DEFAULT_CSRF_TTL
+  is now 14 days and configurable, with a test pinning that tokens still
+  expire. `/auth/login`, the only unauthenticated state-changing endpoint,
+  had no CSRF defence for a client omitting both Origin and Referer -- it
+  now issues a pre-session double-submit token (HttpOnly cookie + hidden
+  field) verified constant-time before credentials are read, so a forged
+  POST never reaches the backend nor burns a rate-limit slot.
+
+  Minor fail-open fixes (`dd1489f`): `PermissionRequirement.matches()`
+  honoured `is_superuser` before checking `authenticated`, and
+  `build_requirement_resolver()` returned the first rather than longest
+  matching resource prefix. Both unreachable today, both wrong-by-default
+  for authorization primitives.
+
+  Accepted Minor findings, each with rationale in design-decisions.md
+  section 27: `BuiltinAuthorizationPolicy` still not invoked by the
+  middleware (deliberate -- becomes load-bearing when a later plan needs the
+  structured decision for audit logging); only `/_system` is
+  compiler-reserved (a Plan 00/01 compiler concern); `createsuperuser`'s
+  duplicate check uses the un-normalized email (CLI ergonomics, unique
+  constraint still holds); no password-strength check, no session revocation
+  on re-login, no audit logging (features the approved plan does not
+  specify).
+
+  Full suite 650/650 passing, ruff format/check and ty check clean.

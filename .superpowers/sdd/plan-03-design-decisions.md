@@ -575,3 +575,132 @@ both now import it from `rakit_web._paths`. Session/CSRF cookie names moved
 to `rakit_web.security.cookies` so the enforcement middleware and the login
 routes cannot drift apart on a cookie name -- a divergence there would
 silently break authentication rather than fail loudly.
+
+## 27. Round-2 independent review: findings and fixes
+
+A fresh reviewer with no prior context on this branch was given the full
+`main...HEAD` diff, the approved plan, the framework design's auth/security
+sections, and this document (explicitly instructed not to trust its
+self-assessment). It ran the suite, `ty`, and `ruff` itself, verified
+optional-dependency isolation empirically, and probed the enforcement
+middleware with a live ASGI client.
+
+Verdict: **Ready to merge: Yes**, zero Critical findings at the tip. All
+five round-2 findings were confirmed **genuinely fixed** (not partially,
+not superficially), each backed by a regression test the reviewer
+confirmed would fail if the fix were reverted.
+
+### Critical: public-path prefix bypass (found and fixed mid-review)
+
+`is_public_path` was a bare `startswith` over `("/auth/login",
+"/auth/logout", "/_system/")`, so any path merely *beginning with* a
+public root was served with no permission check at all -- a resource
+registered at `/auth/loginaudit` would have been fully public. The
+reviewer independently reproduced this against the stated HEAD.
+
+I found and fixed the same defect while probing the new middleware for
+bypasses, before the review reported it (`3124866`). Login/logout now
+match exactly; only `/_system` has public descendants, matched at a `/`
+segment boundary; and any path carrying a dot segment -- literal or
+percent-encoded, decoded before the check so `%2f`/`%2e` cannot hide one
+-- is never public and falls through to the normal permission check.
+
+No data leaked in practice at the time (no route sat under such a path,
+and the ASGI client normalizes `..`), but classifying an authorization
+allowlist by literal prefix is the wrong default regardless of whether a
+route happens to occupy the gap today.
+
+### Important 1: SecurityMiddleware's own rejections skipped every security header
+
+The 400 (untrusted host), 403 (bad origin), and 413 (oversized body)
+responses went through the raw `send`, bypassing
+`send_with_security_headers` -- so the responses this middleware
+*generates itself* were the least-protected the app could emit, missing
+`X-Content-Type-Options`, `X-Frame-Options`, `Cache-Control: no-store`,
+CSP, `Referrer-Policy`, and COOP. `AuthorizationMiddleware`'s own 303/403
+sat inside the wrapper and were unaffected, so the layering in
+`Admin.asgi()` was otherwise correct.
+
+Fixed by defining the header wrapper *before* the checks and routing all
+three rejections through it.
+
+### Important 2: CSRF TTL made logout permanently impossible on long sessions
+
+`_CSRF_TTL` was 4 hours; the token is issued only at login and no code
+path re-issues it; sessions run to 2h idle / 14 days absolute. After four
+hours of continuous use the CSRF cookie was stale and every subsequent
+state-changing request -- logout included -- was rejected 403 forever,
+with no recovery short of clearing cookies. It failed closed, but into an
+unusable state.
+
+`DEFAULT_CSRF_TTL` is now 14 days, matching the default session absolute
+timeout, and the TTL is constructor-configurable. A longer-lived token
+grants no additional power: verification is always scoped to a
+`session_id` whose session the caller has already resolved as live, so
+the session's own idle/absolute expiry remains the real bound. A test
+pins that tokens still genuinely expire.
+
+### Important 3: login POST had no CSRF defence of its own
+
+`/auth/login` is the only unauthenticated state-changing endpoint, and
+`SecurityMiddleware`'s origin check deliberately permits a request
+sending neither `Origin` nor `Referer` (pinned by
+`test_mutation_with_no_origin_or_referer_is_accepted`). Real browsers
+send `Origin` on cross-site form POSTs, so login-CSRF was blocked in
+practice -- but the combination left that endpoint with no second line of
+defence for a client that omits both.
+
+The login page now issues a pre-session double-submit token: an HttpOnly
+cookie plus a matching hidden form field. There is no `session_id` yet to
+bind a `CsrfService` token to, so a random value echoed back is the right
+shape -- an attacker forging a cross-site login POST cannot read the
+victim's cookie to populate the field. Verified with a constant-time
+compare *before* the credentials are looked at, so a forged POST never
+reaches the auth backend and never consumes a rate-limit slot for the
+victim's identifier. A rejected attempt re-renders with a fresh token so
+the user can retry rather than being wedged.
+
+### Minor findings: two fixed, the rest accepted
+
+Two of the reviewer's Minor findings were latent **fail-open** paths --
+unreachable today, but wrong-by-default for authorization primitives, so
+both were fixed:
+
+- `PermissionRequirement.matches()` honoured `is_superuser` *before*
+  checking `principal.authenticated`, so an unauthenticated principal
+  carrying the flag would have matched every requirement.
+  `AuthorizationMiddleware` rejects anonymous requests first, but any
+  future caller that forgets that ordering would have silently granted
+  full access. Now returns `False` for an unauthenticated principal
+  regardless of flags.
+- `build_requirement_resolver()` returned the *first* matching resource
+  prefix rather than the longest, so with nested resource paths
+  (`/orders` and `/orders/lines`) dict ordering decided which permission
+  gated `/orders/lines` -- a user holding only `orders.read` could reach
+  a resource they have no permission for. Prefixes are now checked
+  longest-first.
+
+The remaining Minor findings are accepted as-is, each with rationale:
+
+- **`BuiltinAuthorizationPolicy` is never invoked.** `AuthorizationMiddleware`
+  calls `requirement.matches()` directly, leaving the `AuthorizationPolicy`
+  protocol decorative. Deliberate for now: the middleware needs a boolean,
+  and routing it through an async policy would add an await per request
+  for no behavioural difference. The protocol exists for applications
+  supplying their own policy and becomes load-bearing when a later plan
+  needs the structured `AuthorizationDecision` (code/reason) for audit
+  logging.
+- **Only `/_system` is compiler-reserved.** A resource registered at
+  exactly `/auth/login` would shadow the login route. Worth reserving the
+  auth prefix in the compiler, but that is a Plan 00/01 compiler concern
+  and touching route-reservation rules is outside this plan's boundary.
+- **`createsuperuser` duplicate check uses the raw email** while
+  `User.__init__` normalizes it, so a case-variant duplicate surfaces as
+  an uncaught `IntegrityError` rather than the clean "already exists"
+  message. A CLI ergonomics bug, not a security one -- the unique
+  constraint still holds and no duplicate is created.
+- **No password-strength check in `createsuperuser`**; **login does not
+  revoke a pre-existing session**; **no audit logging** of failed logins,
+  403s, or session creation. All three are genuine gaps but each is a
+  feature the approved plan does not specify, and inventing them here
+  would exceed its stop boundary.
