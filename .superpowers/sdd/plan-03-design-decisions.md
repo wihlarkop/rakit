@@ -387,3 +387,191 @@ Fixed by moving both under `src/rakit_auth_sqlalchemy/` (Alembic's
 relative to `alembic.ini`'s own location). Added a regression test
 asserting the *built wheel* -- not just the sdist -- contains
 `alembic.ini`, `alembic/env.py`, and the initial migration.
+
+---
+
+# External review round 2 (CHANGES REQUESTED)
+
+The external reviewer reconstructed the complete Plan 00-03 repository from
+the actual `main...HEAD` patches and independently reproduced five findings
+against the tip code. Section 19's characterization of "the auth stack is
+built but not enforced" as an acceptable, documented scope note was
+**rejected** -- and correctly so: Plan 04 adds write operations, and no
+later plan in the v0.1 roadmap is dedicated to turning the primitives into
+route protection. Sections 21-26 record the fixes.
+
+## 21. Token trust boundary hardened against malformed input (round 2, finding 4)
+
+`TokenService.verify()` assumed `json.loads` always returns a dict. A
+syntactically valid token whose decoded header was a JSON list, null,
+string, or number raised `AttributeError` (`.get()` on a list) instead of
+a stable `ValueError`. `CsrfService.verify()` caught only `ValueError`, so
+this attacker-controlled shape escaped as an unhandled 500.
+
+Fixed:
+- `_decode_json_object()` rejects any non-dict JSON root for both header
+  and payload, before any field access.
+- `_validate_header()` requires `purpose`/`key_id` to be non-empty
+  strings, `version` to be **exactly** `int` (not `bool`, not `float`),
+  `issued_at`/`expires_at` to be finite non-`bool` numbers with
+  `issued_at <= expires_at` -- all raising the same stable
+  `ValueError("malformed token")`, and all *before* signature comparison.
+- `_b64decode()` now passes `validate=True`. `urlsafe_b64decode`'s default
+  (`validate=False`) silently **discards** out-of-alphabet characters, so
+  `"not-valid-base64!!!"` previously decoded to *something* rather than
+  raising -- a real fail-open in the decode path, not just a cosmetic gap.
+- `issue_in()` validates its own inputs: non-empty purpose, positive TTL
+  bounded to 365 days, JSON-serializable dict claims.
+- `SigningKey` rejects an empty `key_id`; `KeyRing` rejects duplicate key
+  IDs across active+previous.
+
+`peek_header()` shape-validates too, so it never hands back a malformed
+dict to a caller that (per its own docstring) shouldn't trust it as an
+authenticated claim but may still read `key_id` from it.
+
+## 22. Rakit auth Alembic history isolated from the host's (round 2, finding 3)
+
+`env.py` used Alembic's default `alembic_version` table in both offline and
+online contexts. A host application running its own Alembic migrations
+against the same database already owns that table name, so the two revision
+histories would fight over a single "current revision" row -- an upgrade for
+either would fail trying to locate a revision ID belonging to the other.
+
+Fixed: both `context.configure()` calls pass
+`version_table="rakit_auth_alembic_version"`. Verified by an
+installed-wheel integration test that seeds a host `alembic_version` table
+with an unrelated revision, runs the Rakit upgrade, and asserts the host's
+row is untouched while Rakit's own table reaches head (and that a rerun is
+an idempotent no-op).
+
+## 23. Production security validation completed (round 2, finding 5)
+
+Three separate gaps, all fixed:
+
+**Weak root secret.** `SecretValue("x")` passed production validation --
+`RakitConfig` required a secret to be *present* when `debug=False` but never
+checked its strength. Now rejected below 32 encoded bytes, matching the
+HKDF-SHA256 output length every derived key depends on.
+
+**Development limiter silently used in production.** `Admin` created the
+explicitly development-only in-memory `LoginRateLimiter` by default even at
+`debug=False`. A new `runtime_checkable RateLimiter` Protocol carries a
+self-declared `production_safe: bool`; `LoginRateLimiter` declares `False`,
+and `validate_rate_limiter_for_production()` (wired into `Admin.__init__`)
+rejects any limiter not declaring `True` whenever `debug=False` **and** auth
+is configured. A caller supplies their own shared-store limiter to opt in.
+Documenting a limitation is not the same as validating against it.
+
+**Unbounded limiter memory.** The limiter retained every unique key
+forever -- 10,000 distinct identifiers meant 10,000 permanent dict entries.
+Now bounded by `max_tracked_keys` (default 10,000) with LRU eviction via
+`OrderedDict`, plus positive-value constructor validation for
+`max_attempts`/`window_seconds`/`max_tracked_keys`, and a `threading.Lock`
+guarding all mutations so concurrent `check()` calls can't lose counts.
+
+**Partial auth configuration.** `Admin` now rejects exactly one of
+`auth_backend`/`session_store` being supplied. Previously this silently
+disabled auth entirely -- the exact fail-open shape this plan is supposed
+to prevent.
+
+## 24. CSRF and origin protection made real (round 2, finding 2)
+
+**Origin comparison was hostname-only.** `SecurityMiddleware` compared just
+the hostname against `allowed_hosts`, so `https://localhost:4443` and
+`http://localhost:9999` both passed against a plain `http://localhost`
+request -- scheme and port were discarded entirely. Same-origin validation
+now canonicalizes `(scheme, host, effective-port)` for *both* the request
+and the submitted Origin/Referer and compares them exactly. This is
+deliberately a different check from allowed-host validation, which remains
+hostname-only by design; conflating the two was the root cause. Default
+ports (80/443) compare equal to an omitted port; comparison is
+case-insensitive; IPv4, hostname, and bracketed IPv6 forms all work.
+
+**CSRF was never verified anywhere.** `CsrfService.verify()` existed but no
+request path called it -- logout performed no CSRF check at all. Logout now
+requires a submitted token (form field `csrf_token` or `X-CSRF-Token`
+header) that both matches the `rakit_csrf` cookie byte-for-byte
+(`hmac.compare_digest`) **and** independently verifies as a genuine
+`CsrfService` token bound to the current `session_id`. The second check
+matters: a matching cookie/submitted pair alone would also accept a forged
+pair copied wholesale from a different session. CSRF is enforced only when
+an active session exists -- logging out with no session is a safe no-op with
+nothing to protect.
+
+**Rotation didn't rotate.** `SessionStore.rotate()` kept the same
+`session_id` and only swapped the token hash. Since CSRF tokens bind to
+`session_id`, a pre-rotation CSRF token stayed valid forever after
+rotation. `rotate()` now creates a genuinely new session (new `session_id`,
+new raw token), **preserves the original `absolute_expires_at`** so
+rotation can't extend a session past its absolute deadline, and revokes the
+previous row. The `SessionStore` Protocol docstring now states the
+new-`session_id` requirement as a contract, not an implementation detail.
+
+## 25. Authentication and authorization actually enforced (round 2, finding 1)
+
+This is the finding that made round 1's "documented scope note" untenable.
+
+**Concrete backend.** `SQLAlchemyAuthBackend` resolves the normalized
+email identifier, verifies via `Argon2PasswordHasher`, loads role-granted
+non-orphaned permissions, preserves superuser semantics, and updates
+`last_login_at`. A missing *or* inactive user pays the same Argon2 cost as
+a real verification (a lazily-cached dummy hash) before rejecting, so
+response timing doesn't distinguish "no such user" from "wrong password"
+from "inactive" -- the non-enumeration guarantee has to hold in timing, not
+just in the response body. `User.email` is stored normalized (stripped,
+lowercased) so the unique constraint actually prevents case-variant
+duplicates and login lookup always matches.
+
+**Per-request principal resolution.** `AuthBackend` gained a second
+required method, `resolve_principal(subject_id)`. `PrincipalMiddleware`
+calls it on **every** request rather than trusting anything cached in the
+session row, so a deactivated user or a changed permission set takes effect
+on the next request instead of staying frozen at login. Any failure --
+unknown/revoked/expired session, subject no longer active -- yields
+`ANONYMOUS_PRINCIPAL`, never a partially-authenticated state.
+
+**Route authorization.** `AuthorizationMiddleware` gates each request
+against a requirement resolved from its admin-relative path:
+`/auth/login`, `/auth/logout`, and `/_system/*` are explicitly public;
+resource list/detail/count require
+`{admin_id}.resources.{resource_id}.read`; everything else requires
+`{admin_id}.access`. Unauthenticated requests get a 303 to this admin's
+own mounted login path (never an attacker-supplied target, so it can't
+become an open redirect); authenticated-but-forbidden requests get a
+stable 403.
+
+Gating login itself would redirect-loop the admin into unusability, which
+is why the public list is explicit rather than inferred. The mount prefix
+is stripped before matching (`admin_relative_path`), so a mounted admin
+gates the right routes and redirects to its own mounted login path.
+
+**Read-only permission split.** All three resource routes share the single
+`.read` permission. Plan 03 ships read-only resources; there is no
+create/update/delete route to gate differently yet. The permission
+catalogue already generates all four CRUD keys (see section 9) so the key
+space stays stable when Plan 04 adds writes.
+
+**Public facade.** `rakit.auth.sqlalchemy.SQLAlchemyAuthPlugin` composes a
+matching backend + session store + hasher, lazily imported behind the
+`rakit[auth-sqlalchemy]` extra. `rakit.core` now also re-exports the Plan
+03 core contracts with preserved identity (`Principal`,
+`ANONYMOUS_PRINCIPAL`, `SessionRecord`, `AuthBackend`, `SessionStore`,
+`PermissionRequirement`, `AuthorizationDecision`, `AuthorizationPolicy`,
+`PermissionDefinition`, `PermissionCatalogue`,
+`generate_permission_catalogue`, `TokenService`, `KeyRing`, `SigningKey`)
+-- none of which were reachable through the public facade before this
+round. Importing `rakit` or `rakit.core` still never imports
+`rakit_auth_sqlalchemy`, `argon2`, `alembic`, or `sqlalchemy`.
+
+**No-auth mode.** An `Admin` with neither `auth_backend` nor
+`session_store` remains explicitly, unchanged public -- neither middleware
+is installed. That configuration is a supported choice; a *partial* one is
+not (see section 23).
+
+## 26. Shared path and cookie helpers
+
+`mounted_path` was duplicated in `auth_routes.py` and `resource_routes.py`;
+both now import it from `rakit_web._paths`. Session/CSRF cookie names moved
+to `rakit_web.security.cookies` so the enforcement middleware and the login
+routes cannot drift apart on a cookie name -- a divergence there would
+silently break authentication rather than fail loudly.

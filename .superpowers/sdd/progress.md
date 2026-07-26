@@ -286,3 +286,67 @@ passing after the fix.
 
 Next: re-run clean-filesystem verification at the new HEAD, regenerate
 the review package, stop for external review.
+
+Plan 03 external review round 2 (CHANGES REQUESTED): five findings, all fixed.
+  The reviewer rejected round 1's characterization of "auth built but not
+  enforced" as an acceptable documented scope note -- correctly, since Plan 04
+  adds writes and no later v0.1 plan is dedicated to turning the primitives
+  into route protection.
+
+  Finding 4 (`67c62f6`): hardened the token trust boundary. TokenService.verify()
+  assumed json.loads returns a dict; a token whose decoded header was a JSON
+  list/null/string/number raised AttributeError, and CsrfService caught only
+  ValueError -- so attacker-controlled malformed input escaped as a 500. Now
+  every non-dict JSON root is rejected, header fields are shape-validated
+  (non-empty purpose/key_id, exactly-int version, finite issued_at<=expires_at)
+  before signature comparison, and _b64decode uses validate=True (the default
+  silently discarded out-of-alphabet characters). issue_in() validates its own
+  inputs; SigningKey/KeyRing reject empty and duplicate key IDs. 54 new tests.
+
+  Finding 3 (`84d92b8`): isolated Rakit's Alembic revision history into
+  `rakit_auth_alembic_version` in both offline and online contexts, so it no
+  longer collides with a host application's own `alembic_version` table.
+  Installed-wheel integration test seeds a host history, runs the Rakit
+  upgrade, and asserts the host's row is untouched and a rerun is idempotent.
+
+  Finding 5 (`77373e9`): completed production security validation. Minimum
+  32-byte root secret (SecretValue("x") previously passed); a runtime_checkable
+  RateLimiter Protocol with self-declared production_safe, rejected at
+  Admin.__init__ when debug=False and auth is configured (the in-memory
+  development limiter was silently used in production); LRU-bounded limiter
+  storage with a threading.Lock (unique keys were retained forever); positive
+  constructor validation; and rejection of a partial auth configuration
+  (exactly one of auth_backend/session_store), which previously disabled auth
+  silently. 38 new/changed tests.
+
+  Finding 2 (`e6d6e05`): made CSRF and origin protection real. Same-origin
+  validation now canonicalizes scheme+host+effective-port for both the request
+  and the submitted Origin/Referer -- hostname-only comparison had accepted
+  https://localhost:4443 and http://localhost:9999 against a plain
+  http://localhost request. Logout now actually verifies CSRF (constant-time
+  double-submit match plus session-bound token verification; a forged matching
+  pair from another session is rejected). rotate() now issues a genuinely new
+  session_id, preserves the original absolute-expiry boundary, and revokes the
+  previous row, so a pre-rotation CSRF token stops being valid. 37 new/changed
+  tests including adversarial origin cases and mounted-root_path behavior.
+
+  Finding 1 (`d13461a`, `af4fe00`, `93a4478`): implemented full enforcement.
+  SQLAlchemyAuthBackend (normalized identifier, Argon2 verification,
+  role-granted non-orphaned permissions, superuser semantics, last_login_at,
+  and a dummy-hash path so unknown/inactive users cost the same time as a real
+  verification). AuthBackend gained resolve_principal(subject_id);
+  PrincipalMiddleware calls it every request so deactivation and permission
+  changes take effect immediately rather than freezing at login.
+  AuthorizationMiddleware gates each request by admin-relative path:
+  /auth/login, /auth/logout, /_system/* explicitly public; resource routes
+  require {admin_id}.resources.{resource_id}.read; everything else requires
+  {admin_id}.access. Unauthenticated -> 303 to this admin's own mounted login
+  path; authenticated-but-forbidden -> stable 403. Public facade
+  rakit.auth.sqlalchemy.SQLAlchemyAuthPlugin plus the Plan 03 core contracts
+  through rakit.core, all with preserved identity and lazy optional imports.
+  A no-auth Admin stays explicitly public; a partial one is rejected. 60 new
+  tests including a real-database end-to-end createsuperuser -> login ->
+  authenticated request chain.
+
+  See plan-03-design-decisions.md sections 21-26. Full suite 636/636 passing,
+  ruff format/check and ty check clean across the whole workspace.
