@@ -492,3 +492,26 @@ def test_dot_segment_paths_are_never_treated_as_public() -> None:
     assert not is_public_path("/auth/login/../widgets")
     assert not is_public_path("/auth/login/..%2fwidgets")
     assert not is_public_path("/_system/../widgets")
+
+
+def test_nested_resource_paths_resolve_to_the_longest_match() -> None:
+    """With nested resource paths, the *most specific* prefix must win.
+    Returning whichever matched first would gate `/orders/lines` with
+    `/orders`'s permission -- a user holding only `orders.read` would then
+    reach a resource they have no permission for."""
+    from rakit_web.security.authentication import build_requirement_resolver
+
+    resolve = build_requirement_resolver(
+        admin_id="operations",
+        resource_paths={"/orders": "orders", "/orders/lines": "order_lines"},
+    )
+
+    def permissions_for(path: str) -> tuple[str, ...]:
+        requirement = resolve(path)
+        assert requirement is not None
+        return requirement.permissions
+
+    assert permissions_for("/orders") == ("operations.resources.orders.read",)
+    assert permissions_for("/orders/1") == ("operations.resources.orders.read",)
+    assert permissions_for("/orders/lines") == ("operations.resources.order_lines.read",)
+    assert permissions_for("/orders/lines/7") == ("operations.resources.order_lines.read",)

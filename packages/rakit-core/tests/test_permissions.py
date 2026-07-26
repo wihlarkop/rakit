@@ -57,3 +57,15 @@ def test_authorization_decision_carries_stable_code_and_optional_reason() -> Non
     assert denied.allowed is False
     assert denied.reason is None
     assert allowed.reason == "superuser bypass"
+
+
+def test_unauthenticated_principal_never_matches_even_if_flagged_superuser() -> None:
+    """`is_superuser` on an *unauthenticated* principal must not bypass
+    anything. The middleware checks `authenticated` before calling this
+    today, but a requirement that fails open for any caller that forgets
+    that ordering is a latent privilege escalation -- the bypass must be
+    conditional on being authenticated in the first place."""
+    impostor = Principal(subject_id=None, authenticated=False, is_superuser=True)
+
+    assert not PermissionRequirement.all_of("orders.read").matches(impostor)
+    assert not PermissionRequirement.any_of("orders.read").matches(impostor)

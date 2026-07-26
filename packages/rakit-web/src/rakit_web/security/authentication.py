@@ -196,10 +196,19 @@ def build_requirement_resolver(
         for path, resource_id in resource_paths.items()
     }
 
+    # Longest prefix first: with nested resource paths (`/orders` and
+    # `/orders/lines`), the most specific match must win. Returning
+    # whichever happened to be checked first would gate `/orders/lines`
+    # with `/orders`'s permission, letting a user holding only
+    # `orders.read` reach a resource they have no permission for.
+    ordered_requirements = sorted(
+        read_requirements.items(), key=lambda item: len(item[0]), reverse=True
+    )
+
     def resolve(path: str) -> PermissionRequirement | None:
         if is_public_path(path):
             return None
-        for resource_path, requirement in read_requirements.items():
+        for resource_path, requirement in ordered_requirements:
             if path == resource_path or path.startswith(f"{resource_path}/"):
                 return requirement
         return access_requirement

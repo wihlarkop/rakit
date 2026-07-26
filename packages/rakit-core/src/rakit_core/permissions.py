@@ -37,6 +37,13 @@ class PermissionRequirement(BaseModel):
         return cls(mode="any", permissions=permissions)
 
     def matches(self, principal: Principal, *, superuser_bypass: bool = True) -> bool:
+        # An unauthenticated principal never matches, regardless of what
+        # flags it carries. Callers are expected to reject anonymous
+        # requests before reaching here, but a requirement that honours
+        # `is_superuser` on an unauthenticated principal would be a latent
+        # privilege escalation for any caller that forgets that ordering.
+        if not principal.authenticated:
+            return False
         if superuser_bypass and principal.is_superuser:
             return True
         results = [permission in principal.permissions for permission in self.permissions]
