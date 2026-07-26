@@ -35,6 +35,7 @@ from starlette.responses import Response
 from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 
+from ._paths import mounted_path as _mounted_path
 from .assets import static_url
 
 _PAGINATION_DEFAULTS = OffsetPagination()
@@ -84,13 +85,6 @@ def _identity_values(item: object, identity_fields: Sequence[str]) -> dict[str, 
         elif isinstance(raw, int | str) and not isinstance(raw, bool):
             values[field_name] = raw
     return values
-
-
-def _mounted_path(request: Request, path: str) -> str:
-    """Prefix a child-app route with the ASGI mount's root path, if present."""
-
-    root_path = request.scope.get("root_path", "").rstrip("/")
-    return f"{root_path}{path}"
 
 
 @dataclass(frozen=True)

@@ -12,12 +12,12 @@ from starlette.responses import PlainTextResponse, RedirectResponse, Response
 from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 
+from ._paths import mounted_path as _mounted_path
+from .security.cookies import CSRF_COOKIE_NAME, SESSION_COOKIE_NAME
 from .security.csrf import CsrfService
 from .security.middleware import resolve_client_ip
 from .security.rate_limit import LoginRateLimiter
 
-SESSION_COOKIE_NAME = "rakit_session"
-CSRF_COOKIE_NAME = "rakit_csrf"
 CSRF_HEADER_NAME = "x-csrf-token"
 CSRF_FORM_FIELD = "csrf_token"
 
@@ -47,11 +47,6 @@ async def _verify_csrf(request: Request, csrf_service: CsrfService, *, session_i
     if not hmac.compare_digest(cookie_value, submitted_value):
         return False
     return csrf_service.verify(cookie_value, session_id=session_id)
-
-
-def _mounted_path(request: Request, path: str) -> str:
-    root_path = request.scope.get("root_path", "").rstrip("/")
-    return f"{root_path}{path}"
 
 
 def build_auth_routes(

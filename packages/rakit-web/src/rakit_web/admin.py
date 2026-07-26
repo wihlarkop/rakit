@@ -25,6 +25,11 @@ from .auth_routes import build_auth_routes
 from .lifecycle import LifecycleManager
 from .logging import bind_request_context, configure_logging, reset_request_context
 from .resource_routes import ResourceBinding, build_resource_routes, build_templates
+from .security.authentication import (
+    AuthorizationMiddleware,
+    PrincipalMiddleware,
+    build_requirement_resolver,
+)
 from .security.csrf import CsrfService
 from .security.middleware import SecurityMiddleware
 from .security.rate_limit import LoginRateLimiter
@@ -117,6 +122,7 @@ class Admin:
         allowed_hosts: tuple[str, ...] | None = None,
         content_security_policy_enabled: bool = True,
         trusted_proxies: tuple[str, ...] = (),
+        superuser_bypass: bool = True,
     ) -> None:
         security_config: dict[str, object] = {
             "secret_key": secret_key,
@@ -144,6 +150,7 @@ class Admin:
             )
         self._auth_backend = auth_backend
         self._session_store = session_store
+        self._superuser_bypass = superuser_bypass
         self._login_rate_limiter = login_rate_limiter or LoginRateLimiter()
         validate_rate_limiter_for_production(
             self._login_rate_limiter,
@@ -386,8 +393,33 @@ class Admin:
             for route in auth_routes:
                 app.routes.append(route)
         app.state.rakit = SimpleNamespace(resources=bindings)
+
+        # Authentication/authorization wrap the routed app *inside* the
+        # security and request-context layers, so a rejection still gets
+        # security headers and request-scoped logging, and so
+        # PrincipalMiddleware runs before AuthorizationMiddleware reads the
+        # principal it resolved.
+        inner_app: ASGIApp = app
+        if self._auth_backend is not None and self._session_store is not None:
+            inner_app = AuthorizationMiddleware(
+                inner_app,
+                requirement_for=build_requirement_resolver(
+                    admin_id=self.config.admin_id,
+                    resource_paths={
+                        definition.path: resource_id
+                        for resource_id, definition in self._resource_definitions.items()
+                    },
+                ),
+                superuser_bypass=self._superuser_bypass,
+            )
+            inner_app = PrincipalMiddleware(
+                inner_app,
+                auth_backend=self._auth_backend,
+                session_store=self._session_store,
+            )
+
         secured_app = SecurityMiddleware(
-            app,
+            inner_app,
             allowed_hosts=self.config.security.allowed_hosts,
             content_security_policy_enabled=self.config.security.content_security_policy_enabled,
         )
