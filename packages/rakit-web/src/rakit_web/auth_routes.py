@@ -5,6 +5,7 @@ neither remains exactly as unauthenticated as before this module existed.
 """
 
 import hmac
+import secrets
 
 from rakit_core.auth import AuthBackend, SessionStore
 from starlette.requests import Request
@@ -13,13 +14,14 @@ from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 
 from ._paths import mounted_path as _mounted_path
-from .security.cookies import CSRF_COOKIE_NAME, SESSION_COOKIE_NAME
+from .security.cookies import CSRF_COOKIE_NAME, LOGIN_CSRF_COOKIE_NAME, SESSION_COOKIE_NAME
 from .security.csrf import CsrfService
 from .security.middleware import resolve_client_ip
 from .security.rate_limit import LoginRateLimiter
 
 CSRF_HEADER_NAME = "x-csrf-token"
 CSRF_FORM_FIELD = "csrf_token"
+LOGIN_CSRF_FORM_FIELD = "login_csrf_token"
 
 
 async def _submitted_csrf_token(request: Request) -> str | None:
@@ -49,6 +51,24 @@ async def _verify_csrf(request: Request, csrf_service: CsrfService, *, session_i
     return csrf_service.verify(cookie_value, session_id=session_id)
 
 
+def _verify_login_csrf(request: Request, form_value: str | None) -> bool:
+    """Pure double-submit check for the login POST.
+
+    Login is the only unauthenticated state-changing endpoint, so there is
+    no `session_id` yet to bind a `CsrfService` token to. A random value
+    issued with the login page and echoed back in the form is enough: an
+    attacker forging a cross-site login POST cannot read the victim's
+    cookie to populate the field. `SecurityMiddleware`'s Origin check
+    deliberately permits a request that sends neither Origin nor Referer,
+    so without this the login endpoint would have no CSRF defence at all
+    against such a client.
+    """
+    cookie_value = request.cookies.get(LOGIN_CSRF_COOKIE_NAME)
+    if cookie_value is None or form_value is None:
+        return False
+    return hmac.compare_digest(cookie_value, form_value)
+
+
 def build_auth_routes(
     *,
     auth_backend: AuthBackend,
@@ -60,28 +80,57 @@ def build_auth_routes(
     secure_cookies: bool,
     trusted_proxies: tuple[str, ...] = (),
 ) -> list[Route]:
-    async def login_get(request: Request) -> Response:
-        return templates.TemplateResponse(
+    def _render_login(request: Request, *, error: str | None, status_code: int = 200) -> Response:
+        """Render the login page, always issuing a fresh pre-session CSRF
+        token -- including on a rejected attempt, so the user can retry
+        without being stuck holding a token the server no longer accepts."""
+        token = secrets.token_urlsafe(32)
+        response = templates.TemplateResponse(
             request,
             "auth/login.html",
-            {"error": None, "login_url": _mounted_path(request, "/auth/login")},
+            {
+                "error": error,
+                "login_url": _mounted_path(request, "/auth/login"),
+                "login_csrf_token": token,
+                "login_csrf_field": LOGIN_CSRF_FORM_FIELD,
+            },
+            status_code=status_code,
             headers={"Cache-Control": "no-store"},
         )
+        response.set_cookie(
+            LOGIN_CSRF_COOKIE_NAME,
+            token,
+            httponly=True,
+            secure=secure_cookies,
+            samesite="lax",
+            path=_mounted_path(request, "/") or "/",
+        )
+        return response
+
+    async def login_get(request: Request) -> Response:
+        return _render_login(request, error=None)
 
     async def login_post(request: Request) -> Response:
         form = await request.form()
         identifier = str(form.get("identifier", "")).strip()
         password = str(form.get("password", ""))
         client_ip = resolve_client_ip(request, trusted_proxies)
-        login_url = _mounted_path(request, "/auth/login")
+
+        submitted_login_csrf = form.get(LOGIN_CSRF_FORM_FIELD)
+        if not _verify_login_csrf(
+            request, str(submitted_login_csrf) if submitted_login_csrf is not None else None
+        ):
+            # Checked before the credentials are even looked at, so a
+            # forged cross-site login POST never reaches the auth backend
+            # (and never consumes a rate-limit slot for the victim's
+            # identifier).
+            return PlainTextResponse(
+                "Invalid CSRF token", status_code=403, headers={"Cache-Control": "no-store"}
+            )
 
         if not rate_limiter.check(admin_id=admin_id, identifier=identifier, client_ip=client_ip):
-            return templates.TemplateResponse(
-                request,
-                "auth/login.html",
-                {"error": "Too many attempts. Try again later.", "login_url": login_url},
-                status_code=429,
-                headers={"Cache-Control": "no-store"},
+            return _render_login(
+                request, error="Too many attempts. Try again later.", status_code=429
             )
 
         # Deliberately identical response for "no such identifier" and
@@ -89,13 +138,7 @@ def build_auth_routes(
         # would let this endpoint be used to enumerate valid identifiers.
         principal = await auth_backend.authenticate(identifier, password)
         if principal is None or not principal.authenticated:
-            return templates.TemplateResponse(
-                request,
-                "auth/login.html",
-                {"error": "Invalid credentials.", "login_url": login_url},
-                status_code=401,
-                headers={"Cache-Control": "no-store"},
-            )
+            return _render_login(request, error="Invalid credentials.", status_code=401)
 
         raw_token, record = await session_store.create(principal)
         csrf_token = csrf_service.issue(record.session_id)

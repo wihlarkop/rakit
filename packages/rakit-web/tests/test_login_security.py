@@ -156,6 +156,31 @@ class FakeSessionStore:
         self._tokens = {t: sid for t, sid in self._tokens.items() if sid != session_id}
 
 
+async def _login(
+    client: httpx.AsyncClient,
+    *,
+    prefix: str = "",
+    identifier: str = "admin@example.com",
+    password: str = "correct-password",
+) -> httpx.Response:
+    """Fetch the login page to obtain a pre-session CSRF token, then submit
+    it with the credentials -- the flow a real browser performs. Login
+    requires this token (see `_verify_login_csrf`), so tests must not POST
+    to `/auth/login` directly."""
+    page = await client.get(f"{prefix}/auth/login")
+    token = page.cookies["rakit_login_csrf"]
+    client.cookies.set("rakit_login_csrf", token)
+    return await client.post(
+        f"{prefix}/auth/login",
+        data={
+            "identifier": identifier,
+            "password": password,
+            "login_csrf_token": token,
+        },
+        follow_redirects=False,
+    )
+
+
 @pytest.fixture
 async def auth_client() -> AsyncIterator[httpx.AsyncClient]:
     admin = Admin(
@@ -177,23 +202,15 @@ async def auth_client() -> AsyncIterator[httpx.AsyncClient]:
 
 
 async def test_unknown_user_and_wrong_password_share_message(auth_client) -> None:
-    unknown = await auth_client.post(
-        "/auth/login", data={"identifier": "missing@example.com", "password": "wrong"}
-    )
-    wrong = await auth_client.post(
-        "/auth/login", data={"identifier": "admin@example.com", "password": "wrong"}
-    )
+    unknown = await _login(auth_client, identifier="missing@example.com", password="wrong")
+    wrong = await _login(auth_client, identifier="admin@example.com", password="wrong")
     assert unknown.status_code == wrong.status_code == 401
     assert "Invalid credentials." in unknown.text
     assert "Invalid credentials." in wrong.text
 
 
 async def test_successful_login_sets_session_and_csrf_cookies(auth_client) -> None:
-    response = await auth_client.post(
-        "/auth/login",
-        data={"identifier": "admin@example.com", "password": "correct-password"},
-        follow_redirects=False,
-    )
+    response = await _login(auth_client)
     assert response.status_code == 303
     assert "rakit_session" in response.cookies
     assert "rakit_csrf" in response.cookies
@@ -206,11 +223,7 @@ async def test_login_page_renders_without_a_session(auth_client) -> None:
 
 
 async def test_logout_revokes_the_session(auth_client) -> None:
-    login = await auth_client.post(
-        "/auth/login",
-        data={"identifier": "admin@example.com", "password": "correct-password"},
-        follow_redirects=False,
-    )
+    login = await _login(auth_client)
     raw_token = login.cookies["rakit_session"]
     csrf_token = login.cookies["rakit_csrf"]
     auth_client.cookies.set("rakit_session", raw_token)
@@ -224,11 +237,7 @@ async def test_logout_revokes_the_session(auth_client) -> None:
 
 
 async def test_logout_with_csrf_token_in_header_succeeds(auth_client) -> None:
-    login = await auth_client.post(
-        "/auth/login",
-        data={"identifier": "admin@example.com", "password": "correct-password"},
-        follow_redirects=False,
-    )
+    login = await _login(auth_client)
     raw_token = login.cookies["rakit_session"]
     csrf_token = login.cookies["rakit_csrf"]
     auth_client.cookies.set("rakit_session", raw_token)
@@ -241,11 +250,7 @@ async def test_logout_with_csrf_token_in_header_succeeds(auth_client) -> None:
 
 
 async def test_logout_without_a_csrf_token_is_rejected(auth_client) -> None:
-    login = await auth_client.post(
-        "/auth/login",
-        data={"identifier": "admin@example.com", "password": "correct-password"},
-        follow_redirects=False,
-    )
+    login = await _login(auth_client)
     raw_token = login.cookies["rakit_session"]
     csrf_token = login.cookies["rakit_csrf"]
     auth_client.cookies.set("rakit_session", raw_token)
@@ -264,11 +269,7 @@ async def test_logout_without_a_csrf_token_is_rejected(auth_client) -> None:
 
 
 async def test_logout_with_a_mismatched_csrf_token_is_rejected(auth_client) -> None:
-    login = await auth_client.post(
-        "/auth/login",
-        data={"identifier": "admin@example.com", "password": "correct-password"},
-        follow_redirects=False,
-    )
+    login = await _login(auth_client)
     raw_token = login.cookies["rakit_session"]
     csrf_token = login.cookies["rakit_csrf"]
     auth_client.cookies.set("rakit_session", raw_token)
@@ -286,18 +287,10 @@ async def test_logout_with_a_csrf_token_from_a_different_session_is_rejected(aut
     session) while still not being bound to *this* session -- CsrfService
     binds a token to the session_id it was issued for, so this must fail
     even though the double-submit values match one another."""
-    first_login = await auth_client.post(
-        "/auth/login",
-        data={"identifier": "admin@example.com", "password": "correct-password"},
-        follow_redirects=False,
-    )
+    first_login = await _login(auth_client)
     foreign_csrf_token = first_login.cookies["rakit_csrf"]
 
-    second_login = await auth_client.post(
-        "/auth/login",
-        data={"identifier": "admin@example.com", "password": "correct-password"},
-        follow_redirects=False,
-    )
+    second_login = await _login(auth_client)
     real_session_token = second_login.cookies["rakit_session"]
     auth_client.cookies.set("rakit_session", real_session_token)
     # Attacker submits a token bound to a *different* session, but sets it
@@ -321,13 +314,9 @@ async def test_logout_without_any_active_session_is_a_safe_no_op(auth_client) ->
 
 async def test_repeated_failed_logins_are_rate_limited(auth_client) -> None:
     for _ in range(5):
-        await auth_client.post(
-            "/auth/login", data={"identifier": "admin@example.com", "password": "wrong"}
-        )
+        await _login(auth_client, password="wrong")
 
-    limited = await auth_client.post(
-        "/auth/login", data={"identifier": "admin@example.com", "password": "wrong"}
-    )
+    limited = await _login(auth_client, password="wrong")
     assert limited.status_code == 429
 
 
@@ -468,11 +457,7 @@ async def test_mounted_admin_login_logout_csrf_and_redirects_use_the_mount_prefi
         _LifespanDriver(child_app),
         httpx.AsyncClient(transport=transport, base_url="http://localhost") as mounted_client,
     ):
-        login = await mounted_client.post(
-            "/admin/auth/login",
-            data={"identifier": "admin@example.com", "password": "correct-password"},
-            follow_redirects=False,
-        )
+        login = await _login(mounted_client, prefix="/admin")
         assert login.status_code == 303
         assert login.headers["location"] == "/admin/"
         raw_token = login.cookies["rakit_session"]
@@ -486,3 +471,68 @@ async def test_mounted_admin_login_logout_csrf_and_redirects_use_the_mount_prefi
         )
         assert logout.status_code == 303
         assert logout.headers["location"] == "/admin/auth/login"
+
+
+# --- Login POST needs its own CSRF defense ------------------------------
+
+
+async def test_login_post_without_origin_or_csrf_token_is_rejected(auth_client) -> None:
+    """`/auth/login` is the only unauthenticated state-changing endpoint.
+    SecurityMiddleware's origin check deliberately allows a request sending
+    neither Origin nor Referer, so login needs its own pre-session CSRF
+    token as a second line of defence -- otherwise a login-CSRF (forcing a
+    victim into the attacker's session) has nothing stopping it from a
+    client that omits both headers."""
+    # Deliberately a raw POST -- no login page fetched, no token submitted,
+    # no Origin/Referer -- i.e. exactly what a forged cross-site login
+    # request looks like from a client that sends neither header.
+    response = await auth_client.post(
+        "/auth/login",
+        data={"identifier": "admin@example.com", "password": "correct-password"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 403
+    assert "rakit_session" not in response.cookies
+
+
+async def test_login_page_issues_a_pre_session_csrf_token(auth_client) -> None:
+    page = await auth_client.get("/auth/login")
+    assert page.status_code == 200
+    assert "rakit_login_csrf" in page.cookies
+    # The token is embedded in the form so a normal browser submission
+    # carries it back without any JavaScript.
+    assert 'name="login_csrf_token"' in page.text
+
+
+async def test_login_succeeds_with_the_issued_pre_session_token(auth_client) -> None:
+    page = await auth_client.get("/auth/login")
+    token = page.cookies["rakit_login_csrf"]
+    auth_client.cookies.set("rakit_login_csrf", token)
+
+    response = await auth_client.post(
+        "/auth/login",
+        data={
+            "identifier": "admin@example.com",
+            "password": "correct-password",
+            "login_csrf_token": token,
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "rakit_session" in response.cookies
+
+
+async def test_login_with_a_mismatched_pre_session_token_is_rejected(auth_client) -> None:
+    page = await auth_client.get("/auth/login")
+    auth_client.cookies.set("rakit_login_csrf", page.cookies["rakit_login_csrf"])
+
+    response = await auth_client.post(
+        "/auth/login",
+        data={
+            "identifier": "admin@example.com",
+            "password": "correct-password",
+            "login_csrf_token": "not-the-issued-token",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 403

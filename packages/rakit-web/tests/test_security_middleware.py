@@ -198,9 +198,16 @@ async def test_same_origin_mutation_is_accepted() -> None:
         _LifespanDriver(app),
         httpx.AsyncClient(transport=transport, base_url="http://localhost") as http_client,
     ):
+        page = await http_client.get("/auth/login")
+        login_csrf = page.cookies["rakit_login_csrf"]
+        http_client.cookies.set("rakit_login_csrf", login_csrf)
         response = await http_client.post(
             "/auth/login",
-            data={"identifier": "admin@example.com", "password": "wrong"},
+            data={
+                "identifier": "admin@example.com",
+                "password": "wrong",
+                "login_csrf_token": login_csrf,
+            },
             headers={"origin": "http://localhost"},
         )
         assert response.status_code == 401
@@ -260,6 +267,10 @@ async def test_scheme_less_origin_mutation_is_rejected() -> None:
 
 
 async def _login_with_headers(headers: dict[str, str]) -> httpx.Response:
+    """POST to login with the given headers, carrying a valid pre-session
+    CSRF token so the *origin* check is what decides the outcome -- an
+    accepted origin must reach the credential check (401 for the wrong
+    password here), not be rejected 403 for a missing token."""
     admin = _auth_admin()
     app = admin.asgi()
     transport = httpx.ASGITransport(app=app)
@@ -267,9 +278,16 @@ async def _login_with_headers(headers: dict[str, str]) -> httpx.Response:
         _LifespanDriver(app),
         httpx.AsyncClient(transport=transport, base_url="http://localhost") as http_client,
     ):
+        page = await http_client.get("/auth/login")
+        login_csrf = page.cookies["rakit_login_csrf"]
+        http_client.cookies.set("rakit_login_csrf", login_csrf)
         return await http_client.post(
             "/auth/login",
-            data={"identifier": "admin@example.com", "password": "wrong"},
+            data={
+                "identifier": "admin@example.com",
+                "password": "wrong",
+                "login_csrf_token": login_csrf,
+            },
             headers=headers,
         )
 
@@ -337,9 +355,16 @@ async def test_bracketed_ipv6_origin_matching_the_request_host_is_accepted() -> 
         _LifespanDriver(app),
         httpx.AsyncClient(transport=transport, base_url="http://[::1]") as http_client,
     ):
+        page = await http_client.get("/auth/login")
+        login_csrf = page.cookies["rakit_login_csrf"]
+        http_client.cookies.set("rakit_login_csrf", login_csrf)
         response = await http_client.post(
             "/auth/login",
-            data={"identifier": "admin@example.com", "password": "wrong"},
+            data={
+                "identifier": "admin@example.com",
+                "password": "wrong",
+                "login_csrf_token": login_csrf,
+            },
             headers={"origin": "http://[::1]"},
         )
         assert response.status_code == 401
@@ -367,3 +392,40 @@ async def test_ipv6_loopback_host_is_trusted_by_default() -> None:
 
         response_with_port = await http_client.get("/", headers={"host": "[::1]:8000"})
         assert response_with_port.status_code == 200
+
+
+# --- SecurityMiddleware's own rejections must carry security headers -----
+
+
+def _assert_security_headers(response: httpx.Response) -> None:
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["referrer-policy"] == "same-origin"
+    assert response.headers["cross-origin-opener-policy"] == "same-origin"
+    assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+
+
+async def test_untrusted_host_rejection_still_carries_security_headers(client) -> None:
+    """A response SecurityMiddleware generates itself must not skip the very
+    headers that middleware exists to add -- otherwise its own error pages
+    are the least protected responses the app can emit."""
+    response = await client.get("/", headers={"host": "evil.example"})
+    assert response.status_code == 400
+    _assert_security_headers(response)
+
+
+async def test_cross_origin_rejection_still_carries_security_headers() -> None:
+    response = await _login_with_headers({"origin": "https://localhost:4443"})
+    assert response.status_code == 403
+    _assert_security_headers(response)
+
+
+async def test_oversized_body_rejection_still_carries_security_headers(client) -> None:
+    response = await client.post(
+        "/",
+        content=b"x" * (11 * 1024 * 1024),
+        headers={"content-type": "application/x-www-form-urlencoded"},
+    )
+    assert response.status_code == 413
+    _assert_security_headers(response)

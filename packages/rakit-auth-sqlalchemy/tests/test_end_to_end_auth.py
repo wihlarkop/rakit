@@ -122,6 +122,24 @@ async def _create_user_with_permissions(
         await session.commit()
 
 
+async def _login(client: httpx.AsyncClient, *, identifier: str, password: str) -> httpx.Response:
+    """Full browser login flow: fetch the login page for its pre-session
+    CSRF token, then submit it with the credentials. Login requires that
+    token, so a bare POST is rejected 403 by design."""
+    page = await client.get("/auth/login")
+    login_csrf = page.cookies["rakit_login_csrf"]
+    client.cookies.set("rakit_login_csrf", login_csrf)
+    return await client.post(
+        "/auth/login",
+        data={
+            "identifier": identifier,
+            "password": password,
+            "login_csrf_token": login_csrf,
+        },
+        follow_redirects=False,
+    )
+
+
 def _build_admin(session_factory) -> Admin:
     auth = SQLAlchemyAuthPlugin(session_factory)
     admin = Admin(
@@ -153,11 +171,7 @@ async def test_createsuperuser_then_login_then_authenticated_request(session_fac
         assert "Sprocket" not in anonymous.text
 
         # Log in with the credentials createsuperuser would have created.
-        login = await client.post(
-            "/auth/login",
-            data={"identifier": "admin@example.com", "password": "secret-password"},
-            follow_redirects=False,
-        )
+        login = await _login(client, identifier="admin@example.com", password="secret-password")
         assert login.status_code == 303
         client.cookies.set("rakit_session", login.cookies["rakit_session"])
 
@@ -176,11 +190,7 @@ async def test_login_is_case_insensitive_for_the_stored_email(session_factory) -
         _LifespanDriver(app),
         httpx.AsyncClient(transport=transport, base_url="http://localhost") as client,
     ):
-        login = await client.post(
-            "/auth/login",
-            data={"identifier": "admin@example.com", "password": "secret-password"},
-            follow_redirects=False,
-        )
+        login = await _login(client, identifier="admin@example.com", password="secret-password")
         assert login.status_code == 303
 
 
@@ -198,11 +208,7 @@ async def test_role_permission_grants_resource_access(session_factory) -> None:
         _LifespanDriver(app),
         httpx.AsyncClient(transport=transport, base_url="http://localhost") as client,
     ):
-        login = await client.post(
-            "/auth/login",
-            data={"identifier": "operator@example.com", "password": "secret-password"},
-            follow_redirects=False,
-        )
+        login = await _login(client, identifier="operator@example.com", password="secret-password")
         assert login.status_code == 303
         client.cookies.set("rakit_session", login.cookies["rakit_session"])
 
@@ -225,11 +231,7 @@ async def test_missing_resource_permission_returns_403(session_factory) -> None:
         _LifespanDriver(app),
         httpx.AsyncClient(transport=transport, base_url="http://localhost") as client,
     ):
-        login = await client.post(
-            "/auth/login",
-            data={"identifier": "operator@example.com", "password": "secret-password"},
-            follow_redirects=False,
-        )
+        login = await _login(client, identifier="operator@example.com", password="secret-password")
         client.cookies.set("rakit_session", login.cookies["rakit_session"])
 
         response = await client.get("/widgets", follow_redirects=False)
@@ -251,11 +253,7 @@ async def test_inactive_user_cannot_authenticate(session_factory) -> None:
         _LifespanDriver(app),
         httpx.AsyncClient(transport=transport, base_url="http://localhost") as client,
     ):
-        login = await client.post(
-            "/auth/login",
-            data={"identifier": "dormant@example.com", "password": "secret-password"},
-            follow_redirects=False,
-        )
+        login = await _login(client, identifier="dormant@example.com", password="secret-password")
         assert login.status_code == 401
         assert "rakit_session" not in login.cookies
 
@@ -277,11 +275,7 @@ async def test_deactivating_a_user_mid_session_revokes_access(session_factory) -
         _LifespanDriver(app),
         httpx.AsyncClient(transport=transport, base_url="http://localhost") as client,
     ):
-        login = await client.post(
-            "/auth/login",
-            data={"identifier": "operator@example.com", "password": "secret-password"},
-            follow_redirects=False,
-        )
+        login = await _login(client, identifier="operator@example.com", password="secret-password")
         client.cookies.set("rakit_session", login.cookies["rakit_session"])
         assert (await client.get("/widgets")).status_code == 200
 
@@ -312,11 +306,7 @@ async def test_granting_a_permission_mid_session_takes_effect_immediately(
         _LifespanDriver(app),
         httpx.AsyncClient(transport=transport, base_url="http://localhost") as client,
     ):
-        login = await client.post(
-            "/auth/login",
-            data={"identifier": "operator@example.com", "password": "secret-password"},
-            follow_redirects=False,
-        )
+        login = await _login(client, identifier="operator@example.com", password="secret-password")
         client.cookies.set("rakit_session", login.cookies["rakit_session"])
         assert (await client.get("/widgets", follow_redirects=False)).status_code == 403
 

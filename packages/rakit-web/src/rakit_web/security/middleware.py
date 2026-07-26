@@ -121,9 +121,39 @@ class SecurityMiddleware:
 
         request = Request(scope, receive=receive)
 
+        async def send_with_security_headers(message: MutableMapping[str, Any]) -> None:
+            if message["type"] == "http.response.start":
+                existing = {name.decode("latin-1").lower() for name, _ in message["headers"]}
+                extra: list[tuple[bytes, bytes]] = []
+
+                def add(name: str, value: str) -> None:
+                    if name not in existing:
+                        extra.append((name.encode("latin-1"), value.encode("latin-1")))
+
+                add("x-content-type-options", "nosniff")
+                add("referrer-policy", "same-origin")
+                add("permissions-policy", "geolocation=(), camera=(), microphone=()")
+                add("cross-origin-opener-policy", "same-origin")
+                add("x-frame-options", "DENY")
+                add("cache-control", "no-store")
+                if self._csp_enabled:
+                    add(
+                        "content-security-policy",
+                        "default-src 'self'; frame-ancestors 'none'; base-uri 'self'",
+                    )
+                message["headers"] = list(message["headers"]) + extra
+            await send(message)
+
+        # Every rejection below goes through `send_with_security_headers`
+        # too, not the raw `send`. A response this middleware generates
+        # itself must not be the least-protected response the app can emit
+        # -- it would otherwise skip the very headers this middleware
+        # exists to add.
         host = _host_without_port(request.headers.get("host") or "")
         if host not in self._allowed_hosts:
-            await PlainTextResponse("Invalid host header", status_code=400)(scope, receive, send)
+            await PlainTextResponse("Invalid host header", status_code=400)(
+                scope, receive, send_with_security_headers
+            )
             return
 
         if request.method in _UNSAFE_METHODS:
@@ -150,7 +180,7 @@ class SecurityMiddleware:
                 )
                 if source_origin is None or source_origin != request_origin:
                     await PlainTextResponse("Invalid request origin", status_code=403)(
-                        scope, receive, send
+                        scope, receive, send_with_security_headers
                     )
                     return
 
@@ -162,31 +192,8 @@ class SecurityMiddleware:
                 declared_size = None
             if declared_size is not None and declared_size > self._max_body_size:
                 await PlainTextResponse("Request entity too large", status_code=413)(
-                    scope, receive, send
+                    scope, receive, send_with_security_headers
                 )
                 return
-
-        async def send_with_security_headers(message: MutableMapping[str, Any]) -> None:
-            if message["type"] == "http.response.start":
-                existing = {name.decode("latin-1").lower() for name, _ in message["headers"]}
-                extra: list[tuple[bytes, bytes]] = []
-
-                def add(name: str, value: str) -> None:
-                    if name not in existing:
-                        extra.append((name.encode("latin-1"), value.encode("latin-1")))
-
-                add("x-content-type-options", "nosniff")
-                add("referrer-policy", "same-origin")
-                add("permissions-policy", "geolocation=(), camera=(), microphone=()")
-                add("cross-origin-opener-policy", "same-origin")
-                add("x-frame-options", "DENY")
-                add("cache-control", "no-store")
-                if self._csp_enabled:
-                    add(
-                        "content-security-policy",
-                        "default-src 'self'; frame-ancestors 'none'; base-uri 'self'",
-                    )
-                message["headers"] = list(message["headers"]) + extra
-            await send(message)
 
         await self.app(scope, receive, send_with_security_headers)

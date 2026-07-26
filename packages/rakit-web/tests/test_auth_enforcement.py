@@ -187,9 +187,19 @@ async def _client_for(admin: Admin) -> tuple[ASGIApp, httpx.AsyncClient]:
 
 
 async def _login(client: httpx.AsyncClient, prefix: str = "") -> None:
+    """Perform the full browser login flow: fetch the login page for its
+    pre-session CSRF token, then submit it with the credentials. Login
+    requires that token, so a bare POST is rejected 403 by design."""
+    page = await client.get(f"{prefix}/auth/login")
+    login_csrf = page.cookies["rakit_login_csrf"]
+    client.cookies.set("rakit_login_csrf", login_csrf)
     response = await client.post(
         f"{prefix}/auth/login",
-        data={"identifier": "admin@example.com", "password": "correct-password"},
+        data={
+            "identifier": "admin@example.com",
+            "password": "correct-password",
+            "login_csrf_token": login_csrf,
+        },
         follow_redirects=False,
     )
     assert response.status_code == 303
@@ -354,9 +364,16 @@ async def test_revoked_session_is_treated_as_unauthenticated(session_factory) ->
     admin = _build_admin(session_factory, backend)
     app, client = await _client_for(admin)
     async with _LifespanDriver(app), client:
+        page = await client.get("/auth/login")
+        login_csrf = page.cookies["rakit_login_csrf"]
+        client.cookies.set("rakit_login_csrf", login_csrf)
         login = await client.post(
             "/auth/login",
-            data={"identifier": "admin@example.com", "password": "correct-password"},
+            data={
+                "identifier": "admin@example.com",
+                "password": "correct-password",
+                "login_csrf_token": login_csrf,
+            },
             follow_redirects=False,
         )
         raw_token = login.cookies["rakit_session"]

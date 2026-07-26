@@ -72,3 +72,41 @@ def test_empty_string_token_returns_false() -> None:
 
 def test_token_with_wrong_number_of_segments_returns_false() -> None:
     assert _service().verify("only.two", session_id="session-1") is False
+
+
+# --- Token lifetime must not fall short of the session it protects ------
+
+
+def test_default_csrf_lifetime_covers_a_long_lived_session() -> None:
+    """A CSRF token shorter-lived than the session it protects makes logout
+    permanently impossible once it lapses: the cookie is stale, no code path
+    re-issues it, and every subsequent logout POST is rejected 403 forever.
+    The default must therefore cover the default session absolute lifetime
+    (14 days), not expire after 4 hours of continuous use."""
+    from rakit_web.security.csrf import DEFAULT_CSRF_TTL
+
+    assert timedelta(days=14) <= DEFAULT_CSRF_TTL
+
+
+def test_csrf_lifetime_is_configurable() -> None:
+    token_service = TokenService.single_key(
+        key_id="k1", value=SecretValue("x" * 32), admin_id="operations"
+    )
+    service = CsrfService(token_service, ttl=timedelta(minutes=30))
+    token = service.issue("session-1")
+    assert service.verify(token, session_id="session-1")
+
+
+def test_expired_csrf_token_does_not_verify() -> None:
+    """The token still genuinely expires -- a longer default lifetime must
+    not mean tokens never expire at all."""
+    import time
+
+    token_service = TokenService.single_key(
+        key_id="k1", value=SecretValue("x" * 32), admin_id="operations"
+    )
+    service = CsrfService(token_service, ttl=timedelta(seconds=1))
+    token = service.issue("session-1")
+    assert service.verify(token, session_id="session-1")
+    time.sleep(1.1)
+    assert not service.verify(token, session_id="session-1")

@@ -7,6 +7,7 @@
   {% if error %}
   <p role="alert">{{ error }}</p>
   {% endif %}
+  <input type="hidden" name="{{ login_csrf_field }}" value="{{ login_csrf_token }}" />
   <label for="identifier">Email</label>
   <input type="text" id="identifier" name="identifier" autocomplete="username" required />
   <label for="password">Password</label>
