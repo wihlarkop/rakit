@@ -17,7 +17,7 @@ from ._paths import mounted_path as _mounted_path
 from .security.cookies import CSRF_COOKIE_NAME, LOGIN_CSRF_COOKIE_NAME, SESSION_COOKIE_NAME
 from .security.csrf import CsrfService
 from .security.middleware import resolve_client_ip
-from .security.rate_limit import LoginRateLimiter
+from .security.rate_limit import RateLimiter
 
 CSRF_HEADER_NAME = "x-csrf-token"
 CSRF_FORM_FIELD = "csrf_token"
@@ -74,7 +74,7 @@ def build_auth_routes(
     auth_backend: AuthBackend,
     session_store: SessionStore,
     csrf_service: CsrfService,
-    rate_limiter: LoginRateLimiter,
+    rate_limiter: RateLimiter,
     templates: Jinja2Templates,
     admin_id: str,
     secure_cookies: bool,

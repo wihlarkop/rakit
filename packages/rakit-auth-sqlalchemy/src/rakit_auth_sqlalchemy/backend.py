@@ -1,7 +1,7 @@
 import secrets
 from datetime import UTC, datetime
 
-from rakit_core.auth import Principal
+from rakit_core.auth import Principal, normalize_identifier
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
@@ -9,9 +9,10 @@ from sqlalchemy.orm import selectinload
 from .models import Role, User
 from .passwords import Argon2PasswordHasher
 
-
-def _normalize_identifier(identifier: str) -> str:
-    return identifier.strip().lower()
+# Deliberately the shared canonicalization, not a private copy: the login
+# rate limiter keys off the same function, and two subtly different
+# implementations would let one account occupy several limiter buckets.
+_normalize_identifier = normalize_identifier
 
 
 class SQLAlchemyAuthBackend:

@@ -1,7 +1,9 @@
 import threading
 
 import pytest
+from rakit_core.errors import RakitError
 from rakit_web.security.rate_limit import LoginRateLimiter, RateLimiter
+from rakit_web.security.validation import validate_rate_limiter_for_production
 
 
 def test_allows_attempts_under_the_limit() -> None:
@@ -142,3 +144,189 @@ def test_concurrent_checks_do_not_lose_or_corrupt_counts() -> None:
 
     assert len(results) == 200
     assert sum(1 for allowed in results if allowed) == 200
+
+
+# --- Round 3: shared normalization, bounded memory, real validation -----
+
+
+class _ManualClock:
+    def __init__(self) -> None:
+        self._now = 0.0
+
+    def __call__(self) -> float:
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        self._now += seconds
+
+
+def test_identifier_normalization_is_shared_with_the_auth_backend() -> None:
+    """The limiter and the backend must agree on what "the same user" is.
+    If they normalize differently, `Admin@Example.com ` and
+    `admin@example.com` are one account to the backend but distinct keys to
+    the limiter -- so an attacker gets N tries per spelling of one email.
+    """
+    from rakit_auth_sqlalchemy.backend import _normalize_identifier
+    from rakit_core.auth import normalize_identifier
+
+    assert _normalize_identifier is normalize_identifier
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    ["ADMIN@EXAMPLE.COM", " admin@example.com", "admin@example.com ", "\tAdmin@Example.Com\n"],
+)
+def test_case_and_whitespace_variants_share_one_limiter_bucket(spelling: str) -> None:
+    limiter = LoginRateLimiter(max_attempts=2, window_seconds=60.0)
+    assert limiter.check(admin_id="a", identifier="admin@example.com", client_ip="1.1.1.1")
+    assert limiter.check(admin_id="a", identifier="admin@example.com", client_ip="1.1.1.1")
+    assert not limiter.check(admin_id="a", identifier=spelling, client_ip="1.1.1.1")
+
+
+def test_per_key_storage_is_bounded_under_continuous_denied_attempts() -> None:
+    """A denied attempt still counts, so a determined attacker generates an
+    unbounded number of timestamps for a single key. Storage must not grow
+    with the attack.
+    """
+    clock = _ManualClock()
+    limiter = LoginRateLimiter(max_attempts=3, window_seconds=60.0, clock=clock)
+    for _ in range(5_000):
+        limiter.check(admin_id="a", identifier="victim@example.com", client_ip="1.1.1.1")
+        clock.advance(0.01)
+    (attempts,) = limiter._attempts.values()
+    assert len(attempts) <= 3
+
+
+def test_continuous_denied_attempts_never_reopen_the_window() -> None:
+    """Because every attempt counts, hammering past the window boundary must
+    keep the caller locked out rather than letting the bound roll forward.
+    """
+    clock = _ManualClock()
+    limiter = LoginRateLimiter(max_attempts=3, window_seconds=60.0, clock=clock)
+    for _ in range(3):
+        assert limiter.check(admin_id="a", identifier="v@example.com", client_ip="1.1.1.1")
+    for _ in range(600):  # ten window-lengths of continuous hammering
+        clock.advance(1.0)
+        assert not limiter.check(admin_id="a", identifier="v@example.com", client_ip="1.1.1.1")
+
+
+def test_the_window_reopens_once_attempts_actually_stop() -> None:
+    clock = _ManualClock()
+    limiter = LoginRateLimiter(max_attempts=3, window_seconds=60.0, clock=clock)
+    for _ in range(3):
+        assert limiter.check(admin_id="a", identifier="v@example.com", client_ip="1.1.1.1")
+    assert not limiter.check(admin_id="a", identifier="v@example.com", client_ip="1.1.1.1")
+    clock.advance(61.0)
+    assert limiter.check(admin_id="a", identifier="v@example.com", client_ip="1.1.1.1")
+
+
+def test_stale_keys_are_reclaimed_without_waiting_for_the_lru_bound() -> None:
+    """A credential-stuffing sweep across many identifiers leaves keys whose
+    windows have all lapsed. Those must be reclaimed opportunistically, not
+    held until `max_tracked_keys` is reached.
+    """
+    clock = _ManualClock()
+    limiter = LoginRateLimiter(
+        max_attempts=3, window_seconds=60.0, clock=clock, max_tracked_keys=10_000
+    )
+    for index in range(500):
+        limiter.check(admin_id="a", identifier=f"user{index}@example.com", client_ip="1.1.1.1")
+    assert len(limiter._attempts) == 500
+    clock.advance(61.0)
+    for _ in range(600):
+        limiter.check(admin_id="a", identifier="live@example.com", client_ip="1.1.1.1")
+    assert len(limiter._attempts) < 500
+
+
+def test_total_tracked_keys_stay_bounded() -> None:
+    limiter = LoginRateLimiter(max_attempts=3, window_seconds=600.0, max_tracked_keys=64)
+    for index in range(5_000):
+        limiter.check(admin_id="a", identifier=f"user{index}@example.com", client_ip="1.1.1.1")
+    assert len(limiter._attempts) <= 64
+
+
+def test_check_is_thread_safe() -> None:
+    """Under concurrent callers the limiter must grant exactly `max_attempts`
+    -- a lost update would grant more.
+    """
+    limiter = LoginRateLimiter(max_attempts=50, window_seconds=600.0)
+    granted: list[int] = []
+    barrier = threading.Barrier(16)
+
+    def worker() -> None:
+        barrier.wait()
+        for _ in range(25):
+            if limiter.check(admin_id="a", identifier="v@example.com", client_ip="1.1.1.1"):
+                granted.append(1)
+
+    threads = [threading.Thread(target=worker) for _ in range(16)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert sum(granted) == 50
+
+
+def test_login_rate_limiter_satisfies_the_rate_limiter_protocol() -> None:
+    assert isinstance(LoginRateLimiter(), RateLimiter)
+
+
+def test_admin_annotates_the_rate_limiter_as_the_protocol_not_the_concrete_class() -> None:
+    """A custom production limiter is the supported path; the public
+    signature must not name the development-only implementation.
+    """
+    import typing
+
+    from rakit_web.admin import Admin
+
+    hints = typing.get_type_hints(Admin.__init__)
+    assert RateLimiter in typing.get_args(hints["login_rate_limiter"])
+
+
+def test_production_validation_rejects_a_limiter_without_a_callable_check() -> None:
+    """`production_safe = True` is self-declared. An object that declares it
+    but cannot actually be called would blow up at the first login attempt
+    -- in production, on the request path. Reject it at construction.
+    """
+
+    class Broken:
+        production_safe = True
+        check = "not callable"
+
+    with pytest.raises(RakitError) as caught:
+        validate_rate_limiter_for_production(Broken(), debug=False, auth_enabled=True)
+    assert caught.value.details["reason"] == "rate_limiter_not_callable"
+
+
+def test_production_validation_rejects_a_truthy_but_non_true_production_safe() -> None:
+    class Sloppy:
+        production_safe = "yes"
+
+        def check(self, *, admin_id: str, identifier: str, client_ip: str) -> bool:
+            return True
+
+    with pytest.raises(RakitError) as caught:
+        validate_rate_limiter_for_production(Sloppy(), debug=False, auth_enabled=True)
+    assert caught.value.details["reason"] == "development_only_rate_limiter"
+
+
+def test_production_validation_rejects_a_limiter_with_a_wrong_check_signature() -> None:
+    class WrongSignature:
+        production_safe = True
+
+        def check(self, identifier: str) -> bool:
+            return True
+
+    with pytest.raises(RakitError) as caught:
+        validate_rate_limiter_for_production(WrongSignature(), debug=False, auth_enabled=True)
+    assert caught.value.details["reason"] == "rate_limiter_not_callable"
+
+
+def test_production_validation_accepts_a_real_production_limiter() -> None:
+    class Real:
+        production_safe = True
+
+        def check(self, *, admin_id: str, identifier: str, client_ip: str) -> bool:
+            return True
+
+    validate_rate_limiter_for_production(Real(), debug=False, auth_enabled=True)

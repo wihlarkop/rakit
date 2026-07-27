@@ -1,3 +1,4 @@
+import inspect
 import ipaddress
 
 from rakit_core.config import RakitConfig
@@ -65,5 +66,20 @@ def validate_rate_limiter_for_production(
     """
     if debug or not auth_enabled:
         return
-    if not getattr(rate_limiter, "production_safe", False):
+    # `is True`, not truthiness: `production_safe = "yes"` is a mistake, and
+    # accepting it would silently let a development limiter through.
+    if getattr(rate_limiter, "production_safe", False) is not True:
         raise _invalid_production_config("development_only_rate_limiter")
+    # The declaration is self-asserted, so also confirm the object can
+    # actually be called the way `auth_routes` calls it. Otherwise the first
+    # login attempt raises -- in production, on the request path, in the one
+    # code path that is supposed to be holding an attacker back.
+    check = getattr(rate_limiter, "check", None)
+    if not callable(check):
+        raise _invalid_production_config("rate_limiter_not_callable")
+    try:
+        inspect.signature(check).bind(admin_id="", identifier="", client_ip="")
+    except TypeError as error:
+        raise _invalid_production_config(
+            "rate_limiter_not_callable", signature_error=str(error)
+        ) from error

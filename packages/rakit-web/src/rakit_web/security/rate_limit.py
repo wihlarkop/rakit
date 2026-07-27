@@ -1,17 +1,26 @@
 import hashlib
 import threading
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Callable
 from typing import Protocol, runtime_checkable
 
+from rakit_core.auth import normalize_identifier
+
 _DEFAULT_MAX_TRACKED_KEYS = 10_000
+
+# How many lapsed keys to reclaim per call. Bounded so `check()` stays O(1)
+# amortized on the request path -- reclaiming everything at once would make
+# one unlucky login pay for a whole credential-stuffing sweep.
+_STALE_SWEEP_BUDGET = 8
 
 
 def _default_key(*, admin_id: str, identifier: str, client_ip: str) -> str:
-    # The raw identifier (e.g. an email address) is never stored as-is in
-    # the limiter's key space.
-    identifier_hash = hashlib.sha256(identifier.encode()).hexdigest()
+    # The identifier is canonicalized with the *same* function the auth
+    # backend uses, so "Admin@Example.com " and "admin@example.com" share
+    # one bucket rather than granting a fresh allowance per spelling. The
+    # raw identifier is never stored as-is in the limiter's key space.
+    identifier_hash = hashlib.sha256(normalize_identifier(identifier).encode()).hexdigest()
     return f"{admin_id}:{identifier_hash}:{client_ip}"
 
 
@@ -73,7 +82,13 @@ class LoginRateLimiter:
         self._window_seconds = window_seconds
         self._clock = clock
         self._max_tracked_keys = max_tracked_keys
-        self._attempts: OrderedDict[str, list[float]] = OrderedDict()
+        # `maxlen=max_attempts` is the per-key memory bound. A denied attempt
+        # still counts, so an attacker who keeps hammering one key would
+        # otherwise append timestamps forever. Dropping the oldest once the
+        # deque is full loses nothing the decision needs: the limit is
+        # "fewer than max_attempts timestamps inside the window", and a full
+        # deque of in-window timestamps already answers that.
+        self._attempts: OrderedDict[str, deque[float]] = OrderedDict()
         self._lock = threading.Lock()
 
     def check(self, *, admin_id: str, identifier: str, client_ip: str) -> bool:
@@ -88,15 +103,17 @@ class LoginRateLimiter:
         cutoff = now - self._window_seconds
 
         with self._lock:
+            self._reclaim_stale(cutoff)
+
             attempts = self._attempts.get(key)
             if attempts is None:
-                attempts = []
+                attempts = deque(maxlen=self._max_attempts)
                 self._attempts[key] = attempts
             else:
                 self._attempts.move_to_end(key)
 
             while attempts and attempts[0] < cutoff:
-                attempts.pop(0)
+                attempts.popleft()
 
             allowed = len(attempts) < self._max_attempts
             attempts.append(now)
@@ -105,3 +122,23 @@ class LoginRateLimiter:
                 self._attempts.popitem(last=False)
 
             return allowed
+
+    def _reclaim_stale(self, cutoff: float) -> None:
+        """Drop a bounded number of keys whose windows have entirely lapsed.
+
+        Without this, a credential-stuffing sweep across many identifiers
+        leaves every key resident until `max_tracked_keys` forces eviction,
+        so the limiter sits at its ceiling long after the attack stopped.
+        The scan walks from the least-recently-touched end, which is where
+        lapsed keys accumulate, and stops at the first live key -- a
+        recently-touched key is not stale, and neither is anything after it.
+
+        Caller holds `self._lock`.
+        """
+        for _ in range(_STALE_SWEEP_BUDGET):
+            if not self._attempts:
+                return
+            key, attempts = next(iter(self._attempts.items()))
+            if attempts and attempts[-1] >= cutoff:
+                return
+            del self._attempts[key]

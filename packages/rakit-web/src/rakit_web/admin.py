@@ -34,7 +34,7 @@ from .security.authentication import (
 )
 from .security.csrf import CsrfService
 from .security.middleware import SecurityMiddleware
-from .security.rate_limit import LoginRateLimiter
+from .security.rate_limit import LoginRateLimiter, RateLimiter
 from .security.validation import validate_production_config, validate_rate_limiter_for_production
 
 _FIELD_POLICY_NAMES = (
@@ -120,7 +120,7 @@ class Admin:
         template_dirs: tuple[Path, ...] = (),
         auth_backend: AuthBackend | None = None,
         session_store: SessionStore | None = None,
-        login_rate_limiter: LoginRateLimiter | None = None,
+        login_rate_limiter: RateLimiter | None = None,
         allowed_hosts: tuple[str, ...] | None = None,
         content_security_policy_enabled: bool = True,
         trusted_proxies: tuple[str, ...] = (),

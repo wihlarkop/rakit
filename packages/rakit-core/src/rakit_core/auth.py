@@ -4,6 +4,19 @@ from typing import Protocol
 from pydantic import BaseModel, ConfigDict
 
 
+def normalize_identifier(identifier: str) -> str:
+    """Canonicalize a login identifier (an email address, in the built-in
+    backend) into the single spelling everything else keys off.
+
+    This lives in `rakit_core` rather than in either caller because the auth
+    backend and the login rate limiter must agree exactly. If they normalize
+    differently, `Admin@Example.com` and `admin@example.com` are one account
+    to the backend but two buckets to the limiter, so an attacker gets a
+    fresh allowance for every spelling of one email address.
+    """
+    return identifier.strip().lower()
+
+
 class Principal(BaseModel):
     """The authenticated (or anonymous) identity attached to a request.
 
