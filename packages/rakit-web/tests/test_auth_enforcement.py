@@ -515,3 +515,101 @@ def test_nested_resource_paths_resolve_to_the_longest_match() -> None:
     assert permissions_for("/orders/1") == ("operations.resources.orders.read",)
     assert permissions_for("/orders/lines") == ("operations.resources.order_lines.read",)
     assert permissions_for("/orders/lines/7") == ("operations.resources.order_lines.read",)
+
+
+# --- The /auth namespace is framework-owned ------------------------------
+
+
+async def test_resource_cannot_claim_a_path_in_the_reserved_auth_namespace(session_factory) -> None:
+    """A ResourceAdmin at `/auth/login` would be inserted before the real
+    auth routes AND classified public by AuthorizationMiddleware, serving
+    its data to anonymous callers with no permission check. The compiler
+    must reject it."""
+    from rakit.sqlalchemy import SQLAlchemyPlugin
+    from rakit_core.errors import RakitError
+
+    for reserved in ("/auth", "/auth/login", "/auth/logout", "/auth/custom"):
+        evil = type(
+            "EvilAdmin",
+            (ModelAdmin,),
+            {
+                "resource_id": "secrets",
+                "path": reserved,
+                "label": "Secrets",
+                "singular_label": "Secret",
+                "model": Widget,
+                "list_fields": ("id", "name"),
+                "detail_fields": ("id", "name"),
+            },
+        )
+        admin = Admin(admin_id="operations", title="Operations", debug=True)
+        admin.install(SQLAlchemyPlugin(session_factory=session_factory))
+        admin.register(evil)
+        with pytest.raises(RakitError) as caught:
+            admin.compile()
+        assert caught.value.code == "config.reserved_path", reserved
+
+
+async def test_auth_namespace_is_reserved_even_when_auth_is_disabled(session_factory) -> None:
+    """Reservation is a property of the framework's route namespace, not of
+    whether this particular Admin happens to have auth wired up -- otherwise
+    a no-auth deployment would silently accept a path that becomes a bypass
+    the moment auth is enabled."""
+    from rakit.sqlalchemy import SQLAlchemyPlugin
+    from rakit_core.errors import RakitError
+
+    evil = type(
+        "EvilAdmin",
+        (ModelAdmin,),
+        {
+            "resource_id": "secrets",
+            "path": "/auth/login",
+            "label": "Secrets",
+            "singular_label": "Secret",
+            "model": Widget,
+            "list_fields": ("id", "name"),
+            "detail_fields": ("id", "name"),
+        },
+    )
+    admin = Admin(admin_id="operations", title="Operations", debug=True)  # no auth
+    admin.install(SQLAlchemyPlugin(session_factory=session_factory))
+    admin.register(evil)
+    with pytest.raises(RakitError) as caught:
+        admin.compile()
+    assert caught.value.code == "config.reserved_path"
+
+
+async def test_auth_routes_appear_in_the_compiled_route_graph(session_factory) -> None:
+    """`rakit routes` and the collision checker must reflect runtime
+    reality: when auth is enabled, the login/logout routes really exist."""
+    backend = _ConfigurableAuthBackend(permissions=frozenset({"operations.access"}))
+    admin = _build_admin(session_factory, backend)
+    compiled = admin.compile()
+    paths = {(route.path, tuple(sorted(route.methods))) for route in compiled.routes}
+    assert ("/auth/login", ("GET",)) in paths
+    assert ("/auth/login", ("POST",)) in paths
+    assert ("/auth/logout", ("POST",)) in paths
+
+
+async def test_no_auth_admin_has_no_auth_routes_in_the_graph(session_factory) -> None:
+    from rakit.sqlalchemy import SQLAlchemyPlugin
+
+    admin = Admin(admin_id="operations", title="Operations", debug=True)
+    admin.install(SQLAlchemyPlugin(session_factory=session_factory))
+    admin.register(WidgetAdmin)
+    compiled = admin.compile()
+    assert not any(route.path.startswith("/auth") for route in compiled.routes)
+
+
+async def test_ordinary_resources_remain_public_in_no_auth_mode(session_factory) -> None:
+    """Reserving /auth must not disturb the supported no-auth mode."""
+    from rakit.sqlalchemy import SQLAlchemyPlugin
+
+    admin = Admin(admin_id="operations", title="Operations", debug=True)
+    admin.install(SQLAlchemyPlugin(session_factory=session_factory))
+    admin.register(WidgetAdmin)
+    app, client = await _client_for(admin)
+    async with _LifespanDriver(app), client:
+        response = await client.get("/widgets")
+        assert response.status_code == 200
+        assert "Sprocket" in response.text

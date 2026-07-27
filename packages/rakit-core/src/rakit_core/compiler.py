@@ -8,7 +8,13 @@ from .definitions import ResourceDefinition, ResourceFieldPolicy, RouteDefinitio
 from .di import ServiceRegistry, _RegistrySnapshot
 from .errors import ErrorCode, RakitError
 
-RESERVED_PATH_PREFIXES = ("/_system",)
+# Path prefixes Rakit owns. An application route allowed to occupy one of
+# these is an authorization bypass, not merely a collision: `/auth/login`
+# and `/auth/logout` are classified as explicitly public by
+# `rakit_web`'s `AuthorizationMiddleware`, so a resource mounted there
+# would be served to anonymous callers with no permission check at all.
+# Only routes flagged `framework_owned` may live here.
+RESERVED_PATH_PREFIXES = ("/_system", "/auth")
 
 OFFICIAL_PACKAGE_NAMES = (
     "rakit",
@@ -342,7 +348,7 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
     seen: dict[str, list[tuple[str, str, str]]] = {}
     seen_route_names: dict[str, RouteDefinition] = {}
     for route in builder.routes:
-        if any(
+        if not route.framework_owned and any(
             route.path == prefix or route.path.startswith(f"{prefix}/")
             for prefix in RESERVED_PATH_PREFIXES
         ):

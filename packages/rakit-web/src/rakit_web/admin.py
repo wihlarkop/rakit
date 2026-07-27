@@ -26,6 +26,8 @@ from .lifecycle import LifecycleManager
 from .logging import bind_request_context, configure_logging, reset_request_context
 from .resource_routes import ResourceBinding, build_resource_routes, build_templates
 from .security.authentication import (
+    LOGIN_PATH,
+    LOGOUT_PATH,
     AuthorizationMiddleware,
     PrincipalMiddleware,
     build_requirement_resolver,
@@ -164,8 +166,29 @@ class Admin:
                 methods=("GET",),
                 path="/",
                 owner_id="rakit",
+                framework_owned=True,
             )
         )
+        if auth_backend is not None and session_store is not None:
+            # The auth routes are attached to the Starlette app at `asgi()`
+            # time, but they must also exist in the compiled route graph:
+            # otherwise `rakit routes` under-reports what is actually served,
+            # and the compiler's collision checks are blind to routes that
+            # really do occupy those paths at runtime.
+            for route_name, methods, path in (
+                ("rakit.auth.login", ("GET",), LOGIN_PATH),
+                ("rakit.auth.login.submit", ("POST",), LOGIN_PATH),
+                ("rakit.auth.logout", ("POST",), LOGOUT_PATH),
+            ):
+                self._builder.add_route(
+                    RouteDefinition(
+                        route_name=route_name,
+                        methods=methods,
+                        path=path,
+                        owner_id="rakit",
+                        framework_owned=True,
+                    )
+                )
         self.compiled: CompiledApplication | None = None
         self._compiled_registry: ServiceRegistry | None = None
         self._application_resolver: ServiceResolver | None = None

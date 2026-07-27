@@ -772,3 +772,66 @@ def test_failed_install_rolls_back_registered_adapters() -> None:
 
     # Proves the registration was genuinely removed, not just hidden from view.
     builder.register_adapter("sqlalchemy", lambda model, policy: None)
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/auth", "/auth/login", "/auth/logout", "/auth/custom", "/auth/deeply/nested"],
+)
+def test_auth_namespace_is_reserved(path: str) -> None:
+    """`/auth` is framework-owned: the login/logout routes live there, and
+    `AuthorizationMiddleware` classifies `/auth/login` and `/auth/logout` as
+    explicitly public. An application route allowed to occupy that namespace
+    is therefore served to anonymous callers with no permission check -- a
+    direct authorization bypass. Reserve it the same way `/_system` is."""
+    builder = ApplicationBuilder()
+    builder.add_route(
+        RouteDefinition(route_name="app.evil", methods=("GET",), path=path, owner_id="evil")
+    )
+    with pytest.raises(RakitError) as caught:
+        compile_application(builder)
+    assert caught.value.code == "config.reserved_path"
+
+
+@pytest.mark.parametrize("path", ["/authors", "/authentication", "/auth-log"])
+def test_paths_merely_prefixed_by_auth_are_not_reserved(path: str) -> None:
+    """Reservation must match at a segment boundary, not as a bare prefix --
+    `/authors` is an ordinary application resource, not framework-owned."""
+    builder = ApplicationBuilder()
+    builder.add_route(
+        RouteDefinition(route_name="app.ok", methods=("GET",), path=path, owner_id="ok")
+    )
+    compile_application(builder)
+
+
+def test_framework_owned_routes_may_occupy_the_reserved_auth_namespace() -> None:
+    """The framework's own login/logout routes must be representable in the
+    compiled route graph (so `rakit routes` and collision checks reflect
+    runtime reality) despite living under the reserved prefix."""
+    builder = ApplicationBuilder()
+    builder.add_route(
+        RouteDefinition(
+            route_name="rakit.auth.login",
+            methods=("GET",),
+            path="/auth/login",
+            owner_id="rakit",
+            framework_owned=True,
+        )
+    )
+    compiled = compile_application(builder)
+    assert any(route.path == "/auth/login" for route in compiled.routes)
+
+
+def test_framework_owned_flag_cannot_be_forged_by_owner_id_alone() -> None:
+    """Claiming `owner_id="rakit"` must not be enough to occupy a reserved
+    path -- otherwise a ResourceAdmin whose resource_id happens to be
+    "rakit" would slip straight through the reservation."""
+    builder = ApplicationBuilder()
+    builder.add_route(
+        RouteDefinition(
+            route_name="app.pretender", methods=("GET",), path="/auth/login", owner_id="rakit"
+        )
+    )
+    with pytest.raises(RakitError) as caught:
+        compile_application(builder)
+    assert caught.value.code == "config.reserved_path"

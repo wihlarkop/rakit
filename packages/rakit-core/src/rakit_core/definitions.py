@@ -60,3 +60,12 @@ class RouteDefinition(BaseModel):
     methods: tuple[str, ...]
     path: AbsolutePath
     owner_id: MachineId
+    framework_owned: bool = False
+    """Whether Rakit itself owns this route.
+
+    Only framework-owned routes may occupy a reserved path prefix (see
+    `compiler.RESERVED_PATH_PREFIXES`). This is a distinct field rather than
+    an `owner_id == "rakit"` convention precisely so it cannot be forged: a
+    `ResourceAdmin` whose `resource_id` happens to be `"rakit"` would
+    otherwise inherit permission to claim `/auth/login`.
+    """
