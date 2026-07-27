@@ -9,6 +9,7 @@ request, and routes are gated by explicit permission requirements.
 import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import httpx
 import pytest
@@ -613,3 +614,124 @@ async def test_ordinary_resources_remain_public_in_no_auth_mode(session_factory)
         response = await client.get("/widgets")
         assert response.status_code == 200
         assert "Sprocket" in response.text
+
+
+# --- Round 3: an unresolvable subject must end the session --------------
+
+
+async def test_deactivation_revokes_the_session_so_reactivation_does_not_restore_it(
+    session_factory,
+) -> None:
+    """Treating the request as anonymous is not enough: the session row
+    stayed live and the cookie stayed in the browser, so the moment the
+    account was re-enabled the *same* pre-deactivation session was
+    authenticated again. Disabling an account has to actually end its
+    sessions, not pause them.
+    """
+    backend = _ConfigurableAuthBackend(
+        permissions=frozenset({"operations.access", "operations.resources.widgets.read"})
+    )
+    admin = _build_admin(session_factory, backend)
+    store = cast(_FakeSessionStore, admin._session_store)
+    app, client = await _client_for(admin)
+    async with _LifespanDriver(app), client:
+        await _login(client)
+        assert (await client.get("/widgets")).status_code == 200
+        assert store._sessions
+
+        backend.active = False
+        assert (await client.get("/widgets", follow_redirects=False)).status_code == 303
+        assert not store._sessions, "the session must be revoked, not merely ignored"
+
+        backend.active = True
+        response = await client.get("/widgets", follow_redirects=False)
+        assert response.status_code == 303, "reactivation must not restore the old session"
+
+
+async def test_an_unresolvable_subject_clears_the_browser_session_cookie(
+    session_factory,
+) -> None:
+    """Leaving a now-useless cookie in the browser means every subsequent
+    request pays a session lookup and a backend lookup to reach the same
+    anonymous answer, and leaves a credential-shaped value sitting in the
+    client.
+    """
+    backend = _ConfigurableAuthBackend(
+        permissions=frozenset({"operations.access", "operations.resources.widgets.read"})
+    )
+    admin = _build_admin(session_factory, backend)
+    app, client = await _client_for(admin)
+    async with _LifespanDriver(app), client:
+        await _login(client)
+        backend.active = False
+        response = await client.get("/widgets", follow_redirects=False)
+        set_cookie = response.headers.get_list("set-cookie")
+        assert any("rakit_session=" in value for value in set_cookie), set_cookie
+        assert any(
+            'rakit_session=""' in value or "rakit_session=;" in value for value in set_cookie
+        ), set_cookie
+
+
+async def test_a_deleted_subject_also_revokes_the_session(session_factory) -> None:
+    """Deletion and deactivation reach the middleware identically -- both
+    are `resolve_principal` returning None -- and must be handled the same.
+    """
+
+    class _DeletingBackend(_ConfigurableAuthBackend):
+        deleted = False
+
+        async def resolve_principal(self, subject_id: str) -> Principal | None:
+            return None if self.deleted else await super().resolve_principal(subject_id)
+
+    backend = _DeletingBackend(permissions=frozenset({"operations.access"}))
+    backend.deleted = False
+    admin = _build_admin(session_factory, backend)
+    store = cast(_FakeSessionStore, admin._session_store)
+    app, client = await _client_for(admin)
+    async with _LifespanDriver(app), client:
+        await _login(client)
+        backend.deleted = True
+        assert (await client.get("/widgets", follow_redirects=False)).status_code == 303
+        assert not store._sessions
+
+
+async def test_an_unauthenticated_principal_also_revokes_the_session(session_factory) -> None:
+    """A backend returning a Principal with `authenticated=False` is the
+    same failure as returning None, and must not leave the session live.
+    """
+
+    class _DowngradingBackend(_ConfigurableAuthBackend):
+        downgraded = False
+
+        async def resolve_principal(self, subject_id: str) -> Principal | None:
+            if self.downgraded:
+                return Principal(subject_id=subject_id, authenticated=False)
+            return await super().resolve_principal(subject_id)
+
+    backend = _DowngradingBackend(permissions=frozenset({"operations.access"}))
+    backend.downgraded = False
+    admin = _build_admin(session_factory, backend)
+    store = cast(_FakeSessionStore, admin._session_store)
+    app, client = await _client_for(admin)
+    async with _LifespanDriver(app), client:
+        await _login(client)
+        backend.downgraded = True
+        assert (await client.get("/widgets", follow_redirects=False)).status_code == 303
+        assert not store._sessions
+
+
+async def test_no_cookie_at_all_is_not_treated_as_an_invalidated_session(
+    session_factory,
+) -> None:
+    """An anonymous first-time visitor must not be sent a session-clearing
+    Set-Cookie -- there is nothing to clear, and emitting one on every
+    anonymous request would be noise on the hot path.
+    """
+    backend = _ConfigurableAuthBackend(permissions=frozenset({"operations.access"}))
+    app, client = await _client_for(_build_admin(session_factory, backend))
+    async with _LifespanDriver(app), client:
+        response = await client.get("/widgets", follow_redirects=False)
+        assert response.status_code == 303
+        assert not any(
+            "rakit_session=" in value for value in response.headers.get_list("set-cookie")
+        )

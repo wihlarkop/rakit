@@ -21,7 +21,7 @@ from rakit_core.auth import ANONYMOUS_PRINCIPAL, AuthBackend, Principal, Session
 from rakit_core.permissions import PermissionRequirement
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, RedirectResponse
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .._paths import mounted_path
 from .cookies import SESSION_COOKIE_NAME
@@ -68,6 +68,22 @@ def _has_dot_segment(path: str) -> bool:
     return any(segment in (".", "..") for segment in decoded.split("/"))
 
 
+def _session_cookie_deletion(cookie_path: str) -> tuple[bytes, bytes]:
+    """A `Set-Cookie` header that expires the session cookie.
+
+    Built by hand rather than via `Response.delete_cookie` because this
+    middleware is raw ASGI: it appends a header to whatever response the
+    downstream app produced instead of constructing one of its own. The
+    attributes must match how the cookie was set (see `auth_routes`), or the
+    browser keeps the original alongside the deletion.
+    """
+    value = (
+        f"{SESSION_COOKIE_NAME}=; Path={cookie_path}; Max-Age=0; "
+        "Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=lax"
+    )
+    return (b"set-cookie", value.encode("latin-1"))
+
+
 def admin_relative_path(request: Request) -> str:
     """The request path relative to this admin's own mount point.
 
@@ -102,26 +118,54 @@ class PrincipalMiddleware:
         self._auth_backend = auth_backend
         self._session_store = session_store
 
-    async def _resolve(self, request: Request) -> Principal:
+    async def _resolve(self, request: Request) -> tuple[Principal, bool]:
+        """Resolve the request's principal, and report whether a session
+        cookie was present but no longer usable.
+
+        The second element drives cookie clearing. A cookie that resolves to
+        nothing is not merely useless: it costs a session lookup and a
+        backend lookup on every subsequent request to reach the same
+        anonymous answer, and leaves a credential-shaped value sitting in
+        the browser.
+        """
         raw_token = request.cookies.get(SESSION_COOKIE_NAME)
         if not raw_token:
-            return ANONYMOUS_PRINCIPAL
+            return ANONYMOUS_PRINCIPAL, False
         record = await self._session_store.resolve(raw_token)
         if record is None:
-            return ANONYMOUS_PRINCIPAL
+            return ANONYMOUS_PRINCIPAL, True
         principal = await self._auth_backend.resolve_principal(record.subject_id)
         if principal is None or not principal.authenticated:
-            return ANONYMOUS_PRINCIPAL
-        return principal
+            # Revoke, don't just ignore. Treating this as anonymous for the
+            # current request left the session row live and the cookie in
+            # place, so re-enabling a disabled account silently restored the
+            # *same* pre-deactivation session. Disabling an account has to
+            # end its sessions, not pause them.
+            await self._session_store.revoke(record.session_id)
+            return ANONYMOUS_PRINCIPAL, True
+        return principal, False
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        principal = await self._resolve(Request(scope, receive=receive))
+        request = Request(scope, receive=receive)
+        principal, clear_session_cookie = await self._resolve(request)
         scope.setdefault("state", {})
         scope["state"]["principal"] = principal
-        await self.app(scope, receive, send)
+        if not clear_session_cookie:
+            await self.app(scope, receive, send)
+            return
+
+        cookie_path = mounted_path(request, "/") or "/"
+        deletion = _session_cookie_deletion(cookie_path)
+
+        async def send_clearing_session_cookie(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                message["headers"] = [*message["headers"], deletion]
+            await send(message)
+
+        await self.app(scope, receive, send_clearing_session_cookie)
 
 
 class AuthorizationMiddleware:

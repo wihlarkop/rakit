@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import timedelta
 
@@ -176,3 +177,86 @@ async def test_create_rejects_principal_without_subject_id(session_factory) -> N
     store = SQLAlchemySessionStore(session_factory)
     with pytest.raises(ValueError, match="subject_id"):
         await store.create(Principal(authenticated=True))
+
+
+# --- Round 3: rotate() must reject sessions that are no longer live -----
+
+
+async def test_rotate_rejects_a_revoked_session(session_factory) -> None:
+    """Rotation of a revoked session used to mint a brand-new live session
+    from a dead one -- turning logout, or a revocation triggered by a
+    disabled account, back into a valid credential.
+    """
+    store = SQLAlchemySessionStore(session_factory)
+    _raw, record = await store.create(Principal(subject_id="1", authenticated=True))
+    await store.revoke(record.session_id)
+    with pytest.raises(ValueError):
+        await store.rotate(record.session_id)
+
+
+async def test_rotate_rejects_an_idle_expired_session(session_factory) -> None:
+    store = SQLAlchemySessionStore(session_factory, idle_timeout=timedelta(seconds=-1))
+    _raw, record = await store.create(Principal(subject_id="1", authenticated=True))
+    with pytest.raises(ValueError):
+        await store.rotate(record.session_id)
+
+
+async def test_rotate_rejects_an_absolute_expired_session(session_factory) -> None:
+    store = SQLAlchemySessionStore(session_factory, absolute_timeout=timedelta(seconds=-1))
+    _raw, record = await store.create(Principal(subject_id="1", authenticated=True))
+    with pytest.raises(ValueError):
+        await store.rotate(record.session_id)
+
+
+async def test_rotate_rejects_an_unknown_session(session_factory) -> None:
+    store = SQLAlchemySessionStore(session_factory)
+    with pytest.raises(ValueError):
+        await store.rotate("999999")
+    with pytest.raises(ValueError):
+        await store.rotate("not-a-number")
+
+
+async def test_rotate_still_works_for_a_live_session(session_factory) -> None:
+    """The rejections must not have broken the case rotation exists for."""
+    store = SQLAlchemySessionStore(session_factory)
+    raw_token, record = await store.create(Principal(subject_id="1", authenticated=True))
+    new_raw_token, rotated = await store.rotate(record.session_id)
+
+    assert rotated.session_id != record.session_id
+    assert new_raw_token != raw_token
+    # The absolute boundary is preserved, so rotation is not a way to keep a
+    # session alive past its original deadline.
+    assert rotated.absolute_expires_at == record.absolute_expires_at
+    assert await store.resolve(new_raw_token) is not None
+    assert await store.resolve(raw_token) is None
+
+
+async def test_a_rotated_session_cannot_be_rotated_again_from_its_old_id(
+    session_factory,
+) -> None:
+    """Rotation revokes the previous row, so replaying the old session_id --
+    the shape of a stolen-cookie race between two concurrent callers -- must
+    not mint a second live session from it.
+    """
+    store = SQLAlchemySessionStore(session_factory)
+    _raw, record = await store.create(Principal(subject_id="1", authenticated=True))
+    await store.rotate(record.session_id)
+    with pytest.raises(ValueError):
+        await store.rotate(record.session_id)
+
+
+async def test_concurrent_rotations_of_one_session_yield_at_most_one_new_session(
+    session_factory,
+) -> None:
+    """Two requests racing on the same cookie must not both succeed into two
+    independent live sessions.
+    """
+    store = SQLAlchemySessionStore(session_factory)
+    _raw, record = await store.create(Principal(subject_id="1", authenticated=True))
+    results = await asyncio.gather(
+        store.rotate(record.session_id),
+        store.rotate(record.session_id),
+        return_exceptions=True,
+    )
+    succeeded = [result for result in results if not isinstance(result, BaseException)]
+    assert len(succeeded) <= 1, "a revoked session must not rotate again"

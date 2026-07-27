@@ -1,9 +1,11 @@
 import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 from rakit_core.auth import Principal, SessionRecord
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .models import Session as SessionRow
@@ -107,6 +109,13 @@ class SQLAlchemySessionStore:
         (rather than resetting it from "now") keeps rotation from being a
         way to keep a session alive indefinitely past its original absolute
         boundary.
+
+        Only a *live* session rotates. Rotating a revoked or expired one
+        would mint a brand-new valid credential out of a dead session --
+        turning logout, an administrator's revocation, or a lapsed deadline
+        back into access. The old row is revoked in the same transaction as
+        the new row's insert, so a replay of the old session_id (two
+        requests racing on one stolen cookie) cannot mint a second session.
         """
         numeric_id = _parse_session_id(session_id)
         if numeric_id is None:
@@ -117,6 +126,29 @@ class SQLAlchemySessionStore:
             old_row = await session.get(SessionRow, numeric_id)
             if old_row is None:
                 raise ValueError(f"unknown session_id: {session_id}")
+            if old_row.revoked_at is not None:
+                raise ValueError(f"session is revoked: {session_id}")
+            if now > _as_aware(old_row.idle_expires_at):
+                raise ValueError(f"session is idle-expired: {session_id}")
+            if now > _as_aware(old_row.absolute_expires_at):
+                raise ValueError(f"session is expired: {session_id}")
+
+            # Revoking the old row is the atomic claim on this rotation, so
+            # it happens as a conditional UPDATE whose rowcount decides the
+            # winner rather than as an attribute assignment. Two requests
+            # racing on one stolen cookie both pass the checks above -- they
+            # read before either writes -- and `SELECT ... FOR UPDATE` is not
+            # portable (SQLite ignores it entirely). Predicating the write on
+            # `revoked_at IS NULL` makes the database itself pick one winner
+            # on every supported backend.
+            claimed = await session.execute(
+                update(SessionRow)
+                .where(SessionRow.id == numeric_id, SessionRow.revoked_at.is_(None))
+                .values(revoked_at=now)
+            )
+            if cast(CursorResult[Any], claimed).rowcount != 1:
+                raise ValueError(f"session is revoked: {session_id}")
+
             new_row = SessionRow(
                 token_hash=_hash_token(raw_token),
                 user_id=old_row.user_id,
@@ -126,7 +158,6 @@ class SQLAlchemySessionStore:
                 absolute_expires_at=old_row.absolute_expires_at,
             )
             session.add(new_row)
-            old_row.revoked_at = now
             await session.commit()
             await session.refresh(new_row)
         return raw_token, _to_record(new_row)
