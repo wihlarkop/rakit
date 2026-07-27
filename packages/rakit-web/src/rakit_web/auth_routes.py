@@ -141,7 +141,7 @@ def build_auth_routes(
             return _render_login(request, error="Invalid credentials.", status_code=401)
 
         raw_token, record = await session_store.create(principal)
-        csrf_token = csrf_service.issue(record.session_id)
+        csrf_token = csrf_service.issue(record)
 
         response = RedirectResponse(url=_mounted_path(request, "/"), status_code=303)
         cookie_path = _mounted_path(request, "/") or "/"

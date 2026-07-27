@@ -420,7 +420,7 @@ async def test_csrf_token_is_invalidated_after_session_rotation() -> None:
         key_id="k1", value=SecretValue("x" * 32), admin_id="operations"
     )
     csrf_service = CsrfService(token_service)
-    pre_rotation_csrf = csrf_service.issue(created.session_id)
+    pre_rotation_csrf = csrf_service.issue(created)
 
     _new_raw_token, rotated = await store.rotate(created.session_id)
 
@@ -429,7 +429,7 @@ async def test_csrf_token_is_invalidated_after_session_rotation() -> None:
     assert not csrf_service.verify(pre_rotation_csrf, session_id=rotated.session_id)
 
     # A freshly issued token for the *new* session_id works correctly.
-    post_rotation_csrf = csrf_service.issue(rotated.session_id)
+    post_rotation_csrf = csrf_service.issue(rotated)
     assert csrf_service.verify(post_rotation_csrf, session_id=rotated.session_id)
 
 
