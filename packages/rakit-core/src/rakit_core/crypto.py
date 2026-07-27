@@ -15,6 +15,42 @@ from .config import SecretValue
 TOKEN_VERSION = 1
 _MAX_TTL = timedelta(days=365)
 
+# `admin_id` and `purpose` are interpolated into the HKDF info string
+# `rakit:{admin_id}:{purpose}:v{version}`, so ":" must never appear inside
+# either one: admin_id="a"/purpose="b:c" and admin_id="a:b"/purpose="c"
+# would otherwise derive the *same* key, collapsing exactly the purpose
+# separation the info string exists to provide. `key_id` shares the rule
+# because it is written into the token header and compared on the way back
+# in. The allow-list is deliberately narrow -- these are internal
+# identifiers, not display labels.
+_IDENTIFIER_CHARACTERS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_."
+)
+_MAX_IDENTIFIER_LENGTH = 128
+
+
+def _validate_identifier(value: object, field: str) -> str:
+    """Return `value` if it is a clean ASCII identifier, else raise.
+
+    Validating here rather than at the point of use means a bad identifier
+    fails at construction, not at verification time -- a non-string
+    `key_id`, for instance, used to be accepted and then written into the
+    header as a non-string, so every token that key ever signed was
+    unverifiable and nothing said so until a user was already logged in.
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    if not value:
+        raise ValueError(f"{field} must not be empty")
+    if len(value) > _MAX_IDENTIFIER_LENGTH:
+        raise ValueError(f"{field} must be at most {_MAX_IDENTIFIER_LENGTH} characters")
+    if not set(value) <= _IDENTIFIER_CHARACTERS:
+        raise ValueError(
+            f"{field} must contain only ASCII letters, digits, '-', '_', or '.' "
+            f"(no whitespace, no ':')"
+        )
+    return value
+
 
 class SigningKey:
     """A single purpose-agnostic key material entry in a `KeyRing`.
@@ -25,9 +61,7 @@ class SigningKey:
     """
 
     def __init__(self, key_id: str, secret: SecretValue) -> None:
-        if not key_id:
-            raise ValueError("SigningKey.key_id must be a non-empty string")
-        self.key_id = key_id
+        self.key_id = _validate_identifier(key_id, "SigningKey.key_id")
         self._secret = secret
 
     def __repr__(self) -> str:
@@ -160,15 +194,14 @@ class TokenService:
 
     def __init__(self, key_ring: KeyRing, *, admin_id: str) -> None:
         self._key_ring = key_ring
-        self._admin_id = admin_id
+        self._admin_id = _validate_identifier(admin_id, "admin_id")
 
     @classmethod
     def single_key(cls, *, key_id: str, value: SecretValue, admin_id: str) -> "TokenService":
         return cls(KeyRing(active=SigningKey(key_id, value)), admin_id=admin_id)
 
     def issue_in(self, purpose: str, claims: dict[str, Any], ttl: timedelta) -> str:
-        if not isinstance(purpose, str) or not purpose:
-            raise ValueError("purpose must be a non-empty string")
+        _validate_identifier(purpose, "purpose")
         if not isinstance(claims, dict):
             raise ValueError("claims must be a dict")
         if ttl <= timedelta(0):
@@ -214,6 +247,10 @@ class TokenService:
         return header
 
     def verify(self, token: str, *, expected_purpose: str) -> dict[str, Any]:
+        # Validated before anything is decoded: an invalid expected_purpose
+        # would otherwise derive some other key and silently compare the
+        # token against the wrong one.
+        _validate_identifier(expected_purpose, "expected_purpose")
         header_b64, payload_b64, signature_b64 = _split(token)
         header = _decode_json_object(header_b64)
         claims = _decode_json_object(payload_b64)

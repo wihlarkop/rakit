@@ -3,6 +3,7 @@ import hmac
 import json
 from base64 import urlsafe_b64encode
 from datetime import timedelta
+from typing import cast
 
 import pytest
 from rakit_core.config import SecretValue
@@ -358,7 +359,7 @@ def test_duplicate_key_ids_within_previous_are_rejected() -> None:
 
 
 def test_empty_key_id_is_rejected() -> None:
-    with pytest.raises(ValueError, match="non-empty"):
+    with pytest.raises(ValueError, match="must not be empty"):
         SigningKey("", SecretValue("x" * 32))
 
 
@@ -392,3 +393,153 @@ def test_issue_in_rejects_non_serializable_claims() -> None:
     )
     with pytest.raises(ValueError, match="claims"):
         service.issue_in("csrf", {"a": object()}, timedelta(minutes=5))
+
+
+# --- Round 3: strict identifier validation ------------------------------
+
+# `key_id`, `admin_id`, and `purpose` are not free-form labels: `admin_id`
+# and `purpose` are interpolated into the HKDF info string
+# `rakit:{admin_id}:{purpose}:v{version}`, and `key_id` is written into the
+# token header and compared on the way back in. Anything that is not a
+# clean, colon-free ASCII identifier is rejected at construction rather
+# than producing a key or a token that misbehaves later.
+INVALID_IDENTIFIERS = [
+    pytest.param("", id="empty"),
+    pytest.param("   ", id="whitespace-only"),
+    pytest.param("\t", id="tab-only"),
+    pytest.param("\n", id="newline-only"),
+    pytest.param(" k1", id="leading-space"),
+    pytest.param("k1 ", id="trailing-space"),
+    pytest.param("k 1", id="inner-space"),
+    pytest.param("k\t1", id="inner-tab"),
+    pytest.param("k\n1", id="inner-newline"),
+    pytest.param("k1\x00", id="null-byte"),
+    pytest.param("k:1", id="colon"),
+    pytest.param("k/1", id="slash"),
+    pytest.param("k1é", id="non-ascii"),
+    pytest.param("k1​", id="zero-width-space"),
+    pytest.param("k" * 200, id="over-length"),
+]
+
+NON_STRING_IDENTIFIERS = [
+    pytest.param(1, id="int"),
+    pytest.param(True, id="bool"),
+    pytest.param(None, id="none"),
+    pytest.param(b"k1", id="bytes"),
+    pytest.param(["k1"], id="list"),
+]
+
+
+@pytest.mark.parametrize("key_id", INVALID_IDENTIFIERS)
+def test_signing_key_rejects_an_invalid_key_id(key_id: str) -> None:
+    with pytest.raises(ValueError):
+        SigningKey(key_id, SecretValue("x" * 32))
+
+
+@pytest.mark.parametrize("key_id", NON_STRING_IDENTIFIERS)
+def test_signing_key_rejects_a_non_string_key_id(key_id: object) -> None:
+    """A non-string key_id used to be accepted, then written into the token
+    header as a non-string and rejected by header validation on the way back
+    in -- so every token the key ever signed was unverifiable, discovered at
+    verification time rather than at construction.
+    """
+    with pytest.raises(ValueError):
+        SigningKey(cast(str, key_id), SecretValue("x" * 32))
+
+
+@pytest.mark.parametrize("admin_id", INVALID_IDENTIFIERS)
+def test_token_service_rejects_an_invalid_admin_id(admin_id: str) -> None:
+    with pytest.raises(ValueError):
+        TokenService.single_key(key_id="k1", value=SecretValue("x" * 32), admin_id=admin_id)
+
+
+@pytest.mark.parametrize("admin_id", NON_STRING_IDENTIFIERS)
+def test_token_service_rejects_a_non_string_admin_id(admin_id: object) -> None:
+    with pytest.raises(ValueError):
+        TokenService.single_key(
+            key_id="k1", value=SecretValue("x" * 32), admin_id=cast(str, admin_id)
+        )
+
+
+@pytest.mark.parametrize("purpose", INVALID_IDENTIFIERS)
+def test_issue_rejects_an_invalid_purpose(purpose: str) -> None:
+    service = TokenService.single_key(
+        key_id="k1", value=SecretValue("x" * 32), admin_id="operations"
+    )
+    with pytest.raises(ValueError):
+        service.issue_in(purpose, {}, timedelta(minutes=5))
+
+
+@pytest.mark.parametrize("purpose", INVALID_IDENTIFIERS)
+def test_verify_rejects_an_invalid_expected_purpose(purpose: str) -> None:
+    """An invalid `expected_purpose` must fail closed rather than deriving
+    some other key and silently comparing against the wrong one.
+    """
+    service = TokenService.single_key(
+        key_id="k1", value=SecretValue("x" * 32), admin_id="operations"
+    )
+    token = service.issue_in("csrf", {}, timedelta(minutes=5))
+    with pytest.raises(ValueError):
+        service.verify(token, expected_purpose=purpose)
+
+
+def test_colon_in_an_identifier_would_collide_purpose_separation() -> None:
+    """The concrete reason colons are banned. The HKDF info string is
+    `rakit:{admin_id}:{purpose}:v{version}`, so admin_id="a"/purpose="b:c"
+    and admin_id="a:b"/purpose="c" would derive the *same* key -- one
+    admin's session token would verify as another's. Rejecting the colon
+    keeps the separator unambiguous.
+    """
+    with pytest.raises(ValueError):
+        TokenService.single_key(key_id="k1", value=SecretValue("x" * 32), admin_id="a:b")
+    service = TokenService.single_key(key_id="k1", value=SecretValue("x" * 32), admin_id="a")
+    with pytest.raises(ValueError):
+        service.issue_in("b:c", {}, timedelta(minutes=5))
+
+
+def test_key_ring_rejects_duplicate_key_ids_including_the_active_key() -> None:
+    secret = SecretValue("x" * 32)
+    with pytest.raises(ValueError):
+        KeyRing(active=SigningKey("k1", secret), previous=(SigningKey("k1", secret),))
+    with pytest.raises(ValueError):
+        KeyRing(
+            active=SigningKey("k1", secret),
+            previous=(SigningKey("k2", secret), SigningKey("k2", secret)),
+        )
+
+
+VALID_IDENTIFIERS = ["k1", "K1", "key-1", "key_1", "key.1", "a", "0", "k" * 128]
+
+
+@pytest.mark.parametrize("identifier", VALID_IDENTIFIERS)
+def test_valid_identifiers_round_trip_issue_and_verify(identifier: str) -> None:
+    """Validation must not have narrowed the set of identifiers that
+    genuinely work -- each of these still issues and verifies end to end.
+    """
+    service = TokenService.single_key(
+        key_id=identifier, value=SecretValue("x" * 32), admin_id=identifier.lower()
+    )
+    token = service.issue_in(identifier, {"session_id": "s1"}, timedelta(minutes=5))
+    assert service.verify(token, expected_purpose=identifier)["session_id"] == "s1"
+
+
+def test_rotation_round_trips_across_a_previous_key() -> None:
+    secret_a = SecretValue("a" * 32)
+    secret_b = SecretValue("b" * 32)
+    old = TokenService(KeyRing(active=SigningKey("k1", secret_a)), admin_id="operations")
+    token = old.issue_in("csrf", {"session_id": "s1"}, timedelta(minutes=5))
+
+    rotated = TokenService(
+        KeyRing(active=SigningKey("k2", secret_b), previous=(SigningKey("k1", secret_a),)),
+        admin_id="operations",
+    )
+    assert rotated.verify(token, expected_purpose="csrf")["session_id"] == "s1"
+
+
+def test_a_token_from_a_different_admin_id_never_verifies() -> None:
+    secret = SecretValue("x" * 32)
+    one = TokenService.single_key(key_id="k1", value=secret, admin_id="operations")
+    other = TokenService.single_key(key_id="k1", value=secret, admin_id="billing")
+    token = one.issue_in("csrf", {"session_id": "s1"}, timedelta(minutes=5))
+    with pytest.raises(ValueError):
+        other.verify(token, expected_purpose="csrf")
