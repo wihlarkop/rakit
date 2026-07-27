@@ -245,18 +245,39 @@ async def test_a_rotated_session_cannot_be_rotated_again_from_its_old_id(
         await store.rotate(record.session_id)
 
 
-async def test_concurrent_rotations_of_one_session_yield_at_most_one_new_session(
-    session_factory,
+async def test_concurrent_rotations_of_one_session_yield_exactly_one_new_session(
+    tmp_path,
 ) -> None:
     """Two requests racing on the same cookie must not both succeed into two
-    independent live sessions.
+    independent live sessions -- and exactly one must still get through, or
+    rotation would be broken for legitimate concurrent traffic.
+
+    File-backed rather than in-memory: `sqlite+aiosqlite:///:memory:` shares
+    one underlying connection across sessions, so the two coroutines are not
+    genuinely independent transactions and the winner fails on an unrelated
+    identity-map error. A file gives each session its own connection, which
+    is what makes this a real test of the conditional-UPDATE claim.
     """
-    store = SQLAlchemySessionStore(session_factory)
-    _raw, record = await store.create(Principal(subject_id="1", authenticated=True))
-    results = await asyncio.gather(
-        store.rotate(record.session_id),
-        store.rotate(record.session_id),
-        return_exceptions=True,
-    )
-    succeeded = [result for result in results if not isinstance(result, BaseException)]
-    assert len(succeeded) <= 1, "a revoked session must not rotate again"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'sessions.db'}")
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with factory() as session:
+            session.add(User(id=1, email="ada@example.com", password_hash="hash"))
+            await session.commit()
+
+        store = SQLAlchemySessionStore(factory)
+        _raw, record = await store.create(Principal(subject_id="1", authenticated=True))
+        results = await asyncio.gather(
+            store.rotate(record.session_id),
+            store.rotate(record.session_id),
+            return_exceptions=True,
+        )
+        succeeded = [result for result in results if not isinstance(result, BaseException)]
+        failed = [result for result in results if isinstance(result, ValueError)]
+        assert len(succeeded) == 1, f"expected exactly one winner, got {results}"
+        assert len(failed) == 1, f"the loser must be rejected as revoked, got {results}"
+        assert "revoked" in str(failed[0])
+    finally:
+        await engine.dispose()
