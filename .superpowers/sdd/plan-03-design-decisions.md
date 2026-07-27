@@ -704,3 +704,289 @@ The remaining Minor findings are accepted as-is, each with rationale:
   403s, or session creation. All three are genuine gaps but each is a
   feature the approved plan does not specify, and inventing them here
   would exceed its stop boundary.
+
+**Retracted by round 3.** Two of the acceptances above were wrong. The
+missing `/auth` reservation was not a Plan 00/01 compiler nicety but a live
+authorization bypass (section 28), and section 24's CSRF TTL constant was
+still coupled to another package's default, so raising it only moved the
+cliff rather than removing it (section 33). Both are now fixed.
+
+## 28. The `/auth` namespace is framework-owned (round 3, finding 1)
+
+`RESERVED_PATH_PREFIXES` covered only `/_system`. Round 2's own design log
+(section 27) recorded the missing `/auth` reservation as an accepted Minor
+finding, on the grounds that route-reservation rules were a Plan 00/01
+compiler concern. **That judgement was wrong, and the round-3 reviewer was
+right to raise it as Critical.**
+
+The reason it is not a naming-collision nicety: `AuthorizationMiddleware`
+classifies `/auth/login` and `/auth/logout` as *explicitly public*. So a
+`ResourceAdmin` registered at `/auth/login` was not merely shadowing a
+framework route — it was being served to anonymous callers with no
+permission check at all. Reproduced before the fix with a resource serving a
+`Secret` model: registration was accepted, compilation succeeded, and an
+anonymous `GET /auth/login` returned 200 with the protected data rendered.
+
+`/auth` now sits alongside `/_system` in the same mechanism. Two decisions
+inside that:
+
+- **Exemption is a `RouteDefinition.framework_owned` flag, not an
+  `owner_id == "rakit"` convention.** An `owner_id` check would be forgeable:
+  a `ResourceAdmin` whose `resource_id` happened to be `"rakit"` would
+  inherit permission to claim `/auth/login`, which is the same bypass
+  wearing a different hat.
+- **Reservation does not depend on whether auth is configured.** A no-auth
+  deployment that accepted a resource at `/auth/login` would be storing up a
+  bypass that materializes the moment someone enables authentication, long
+  after the person who chose that path has moved on.
+
+The login/logout routes are now also registered in the compiled route graph,
+not only attached to the Starlette app at `asgi()` time. Previously
+`rakit routes` under-reported what was actually served and the compiler's
+collision checks were blind to routes that genuinely occupied those paths.
+
+## 29. One canonical identifier normalization (round 3, finding 2)
+
+The login rate limiter hashed the raw identifier; `SQLAlchemyAuthBackend`
+matched on `strip().lower()`. One account therefore occupied as many limiter
+buckets as an attacker could spell its email — `admin@example.com`,
+`Admin@Example.com`, `ADMIN@EXAMPLE.COM ` — each with a full fresh
+allowance.
+
+`normalize_identifier` now lives in `rakit_core.auth` and both callers use
+that exact function object. `rakit_auth_sqlalchemy.backend._normalize_identifier`
+is an alias, not a re-implementation, and a test asserts identity (`is`) rather
+than equal behavior. Two private implementations that happen to agree today
+is precisely the arrangement that drifts apart later, which is how this bug
+existed in the first place.
+
+Placement in `rakit_core` is deliberate: it is the only package both
+`rakit-web` and `rakit-auth-sqlalchemy` depend on, and the function is pure
+stdlib string handling, so it introduces no dependency into core.
+
+## 30. Rate limiter memory is bounded in both dimensions (round 3, finding 2)
+
+Per-key storage was an unbounded `list[float]`. Because a *denied* attempt
+still counts toward the window — deliberately, so a client cannot reset its
+own limiter by failing repeatedly — a determined attacker generated
+timestamps indefinitely for a single key.
+
+Storage is now `deque(maxlen=max_attempts)`. Dropping the oldest entry when
+full loses nothing the decision needs: the question is "are there fewer than
+`max_attempts` timestamps inside the window", and a full deque of in-window
+timestamps already answers it. Under continuous hammering the deque stays
+full of recent timestamps, so the caller stays denied — which is the correct
+behavior, and the reason a naive sliding window that discards old entries
+would have let the bound roll forward.
+
+Total keys were already bounded by LRU eviction at `max_tracked_keys`, but
+that meant a credential-stuffing sweep left the limiter pinned at its ceiling
+long after the attack stopped. Lapsed keys are now reclaimed opportunistically
+with a bounded per-call budget, scanning from the least-recently-touched end
+(where lapsed keys accumulate) and stopping at the first live key. Bounded so
+`check()` stays O(1) amortized on the request path — reclaiming everything at
+once would make one unlucky login pay for the whole sweep.
+
+## 31. `production_safe` is a claim, so it gets checked (round 3, finding 2)
+
+`validate_rate_limiter_for_production` accepted any truthy `production_safe`.
+`production_safe = "yes"` — a plausible mistake — silently passed a
+development limiter into production.
+
+It now requires `is True`, and additionally confirms `check` is callable with
+the keyword signature `auth_routes` actually uses. The declaration is
+self-asserted by definition; the least this can do is verify the object can be
+called at all. Otherwise the failure surfaces at the first login attempt — in
+production, on the request path, in the one code path that exists to hold an
+attacker back.
+
+Public signatures (`Admin.__init__`, `build_auth_routes`) now name the
+`RateLimiter` protocol rather than the concrete `LoginRateLimiter`. Supplying
+a shared-store limiter is the supported production path, so the type should
+not name the implementation that is explicitly unsuitable for it. This is a
+widening — every previously valid argument still type-checks.
+
+## 32. Authority parsing is total (round 3, finding 3)
+
+`_parse_origin` reached `urlsplit(value).port` and `.hostname`, and the
+request's own origin came from `request.url.port`. All three raise
+`ValueError` on input a client fully controls: `http://localhost:abc`,
+`:99999`, an unterminated `http://[::1`. The result was a 500 raised from
+inside the middleware whose entire purpose is to reject such input — an
+availability problem, and a signal that unvalidated data was reaching code
+that assumed validity.
+
+`parse_authority` is now written to be total: it never raises, whatever bytes
+arrive. It rejects non-numeric and out-of-range ports, invalid and
+unterminated IPv6 literals, junk between `]` and the port, embedded
+whitespace, and any hostname character outside a strict allow-list.
+
+The allow-list is the important part. Whitespace, `@`, `,`, `/`, `?` and `#`
+are exactly how an ambiguous authority smuggles a second host past a parser,
+and different parsers disagree about which host wins. Rather than trying to
+match some other parser's disambiguation rules, anything ambiguous is
+malformed.
+
+Three related decisions:
+
+- **Non-web schemes are rejected outright.** `file:`, `data:`, `javascript:`
+  and `ftp:` never appear in a legitimate same-origin check.
+- **Userinfo is rejected, not stripped.** `http://localhost@evil.example`
+  reads as "localhost" to a careless human and "evil.example" to a parser.
+  No legitimate Origin or Referer carries credentials.
+- **Origin and Referer are no longer treated identically.** Per RFC 6454 an
+  Origin is a bare `scheme://host[:port]`, so a path, query, or fragment
+  means the value is not an Origin at all. A Referer legitimately carries all
+  three — rejecting those would break every real browser POST — so only its
+  authority is compared.
+
+Status codes distinguish the two failures: a malformed `Host` is 400 (the
+request line is unusable) and a malformed Origin/Referer is 403 (it is an
+origin mismatch). Both keep the full security-header set, for the same reason
+recorded in section 27: a response this middleware generates itself must not
+be the least-protected response the app can emit. A `Host` that parses but is
+not allowed and a `Host` that cannot be parsed are both 400 — distinguishing
+them would only tell a prober which of the two it hit.
+
+The request's own origin is now built from the already-validated `Host`
+authority rather than re-parsing the raw header, so there is exactly one
+parse and exactly one place it can fail.
+
+## 33. CSRF expiry belongs to the session, not to a constant (round 3, finding 4)
+
+Section 24 introduced `DEFAULT_CSRF_TTL = timedelta(days=14)` with the
+rationale that it "matches `SQLAlchemySessionStore`'s default absolute session
+timeout". That rationale was the defect: it hard-coded one package's
+configuration into another.
+
+Any deployment configuring a different absolute lifetime got the wrong answer
+in one of two directions. Shorter, and the CSRF token outlived what it was
+bound to. Longer — a 30-day session, say — and the token lapsed mid-session,
+at which point every subsequent state-changing request including logout is 403
+forever, because nothing re-issues it and the user cannot recover short of
+clearing cookies. That is the same failure section 27 recorded as an Important
+round-2 finding, fixed by raising the constant; raising it only moved the
+cliff.
+
+`CsrfService.issue` now takes the `SessionRecord` and expires with it. The
+constant was **removed rather than raised further**: no constant is correct for
+every deployment, and leaving one in place invites the coupling straight back.
+A test asserts the module has no `DEFAULT_CSRF_TTL` and the constructor has no
+`ttl` parameter, so reintroducing either fails.
+
+An optional explicit `expires_at` allows a deliberately *shorter* window than
+the session's own deadline. The distinction that matters: choosing a shorter
+window is an explicit decision, whereas inheriting another package's default
+was an accident nobody made on purpose. An already-expired session raises
+rather than minting a token that could never be used.
+
+## 34. Identifiers that feed key derivation are validated strictly (round 3, finding 5)
+
+`SigningKey.key_id` only checked truthiness; `admin_id` was unchecked. Two
+distinct failures.
+
+**Purpose separation could collapse.** `admin_id` and `purpose` are
+interpolated into the HKDF info string `rakit:{admin_id}:{purpose}:v{version}`
+(section 3). So `admin_id="a"` with `purpose="b:c"` and `admin_id="a:b"` with
+`purpose="c"` produce the *same* info string and therefore the same derived
+key — one admin's session token would verify as another's. The whole point of
+binding these into the derivation rather than checking them after the fact is
+that cross-purpose tokens cannot be verified at all; an unescaped separator
+gives that back.
+
+**A non-string `key_id` produced silently unusable tokens.** It was accepted
+at construction, written into the token header as a non-string, and then
+rejected by `_validate_header` on the way back in. Every token that key ever
+signed was unverifiable — discovered not at startup but at verification time,
+with a user already mid-session.
+
+A shared `_validate_identifier` now guards `SigningKey.key_id`,
+`TokenService.admin_id`, `issue_in(purpose)`, and `verify(expected_purpose)`:
+string type only (no `int`, `bool`, `bytes`, `None`), non-empty, at most 128
+characters, and a narrow ASCII allow-list of letters, digits, `-`, `_`, `.` —
+excluding whitespace of every kind, control and zero-width characters,
+non-ASCII, and `:`.
+
+`expected_purpose` is validated *before* the token is decoded. An invalid one
+would otherwise derive some other key and silently compare the token against
+it, which fails in a way indistinguishable from a forged token.
+
+The allow-list is narrow because these are internal identifiers, not display
+labels. Round-trip tests confirm validation did not quietly narrow what
+genuinely works: every accepted shape still issues and verifies end to end,
+rotation across a previous key still round-trips, and a token from a different
+`admin_id` still never verifies.
+
+## 35. An unresolvable subject ends the session (round 3, finding 6)
+
+`PrincipalMiddleware` treated `resolve_principal()` returning nothing as
+"anonymous for this request" and changed nothing else. Section 25 described
+that as taking effect "immediately", which was true only of the current
+request: the session row stayed live and the cookie stayed in the browser.
+
+So disabling an account merely *paused* its sessions. Re-enable the account
+and the same pre-deactivation session authenticated again — no new login, no
+new credential, no trace that anything had happened. An administrator
+disabling a compromised account would reasonably believe they had ended its
+access.
+
+The middleware now revokes the session, and appends a `Set-Cookie` clearing
+the browser's session cookie whenever a cookie was present but yielded
+nothing usable. A visitor with no cookie is untouched, so ordinary anonymous
+traffic does not carry a pointless clearing header.
+
+The clearing header is built by hand rather than via `Response.delete_cookie`
+because this is raw ASGI middleware: it appends a header to whatever response
+the downstream app produced instead of constructing a response of its own.
+Its attributes must match how `auth_routes` set the cookie, or the browser
+keeps the original alongside the deletion.
+
+Deletion, deactivation, and a backend returning `authenticated=False` all
+reach the middleware as the same fact — `resolve_principal` gave nothing —
+and are now handled identically.
+
+## 36. Only live sessions rotate, and rotation is atomic (round 3, finding 6)
+
+`SQLAlchemySessionStore.rotate` rejected only an unknown `session_id`.
+Rotating a revoked or expired session minted a brand-new live session out of a
+dead one, turning logout, an administrator's revocation, or a lapsed absolute
+deadline back into working access. It now rejects revoked, idle-expired, and
+absolute-expired sessions alongside unknown ones.
+
+Revoking the old row is the **atomic claim** on the rotation, expressed as a
+conditional `UPDATE ... WHERE id = :id AND revoked_at IS NULL` whose rowcount
+decides the winner — not as an attribute assignment. Two requests racing on
+one stolen cookie both pass the liveness checks above, because both read
+before either writes. `SELECT ... FOR UPDATE` is not a portable answer:
+SQLite ignores it entirely, so the guard would silently do nothing on the
+backend the test suite uses. Predicating the write on `revoked_at IS NULL`
+makes the database itself pick one winner on every supported backend.
+
+## 37. Two of my own tests were not evidence (round 3)
+
+Both worth recording, because in each case a green suite was not proof.
+
+**The full suite failed order-dependently while every subset passed.** The
+shared test `LifespanDriver` raised its own wrapper exception on startup
+failure without awaiting the lifespan task. Starlette sends
+`lifespan.startup.failed` and then re-raises, so that task ended in an
+exception nobody retrieved; anyio's asyncio runner collected it later and
+re-raised it against whichever test was running. The defect predated round 3
+— the new tests only shifted timing enough to expose it. Fixed by awaiting
+the task before raising.
+
+The process lesson: I spent roughly eight full-suite runs bisecting this by
+brute force before reading the traceback properly. One run with `--tb=native`
+identified it immediately.
+
+**The concurrency test proved nothing.** It ran against
+`sqlite+aiosqlite:///:memory:`, which shares one underlying connection across
+sessions — so the two coroutines were never independent transactions. The
+winner died on an unrelated identity-map error and the assertion ("at most one
+winner") passed with *zero* winners. It would have kept passing even if
+rotation were broken for every legitimate concurrent request.
+
+Rewritten against a file-backed database, where each session gets its own
+connection, and tightened to assert exactly one winner and one loser rejected
+as revoked. An "at most" assertion on a success path is worth distrusting on
+sight: it cannot distinguish correct exclusion from total failure.
