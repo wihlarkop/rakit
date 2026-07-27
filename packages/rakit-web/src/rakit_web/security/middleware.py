@@ -11,49 +11,114 @@ _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 _DEFAULT_MAX_BODY_SIZE = 10 * 1024 * 1024
 
 
+_ORIGIN_SCHEMES = frozenset({"http", "https"})
+_MIN_PORT = 1
+_MAX_PORT = 65535
+# Everything a registered hostname may legally contain. Deliberately a
+# strict allow-list: whitespace, control characters, "@", ",", "/", "?" and
+# "#" are all how a malformed or deliberately-ambiguous authority smuggles a
+# second host past a parser, so anything not on this list is malformed.
+_HOSTNAME_CHARACTERS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789-._")
+
+
 def _effective_port(scheme: str, port: int | None) -> int:
     if port is not None:
         return port
     return 443 if scheme == "https" else 80
 
 
-def _canonical_origin(
-    scheme: str, host: str | None, port: int | None
-) -> tuple[str, str, int] | None:
-    """Canonicalize scheme + host + effective port for exact same-origin
-    comparison -- deliberately distinct from allowed-host validation
-    (which only ever checks the hostname). A request's own scheme/host/port
-    is compared against a submitted Origin/Referer's scheme/host/port with
-    this same function, so the two are never accidentally conflated.
-    """
-    if not host:
+def _parse_port(raw_port: str) -> int | None:
+    if not raw_port.isdigit():  # also rejects "", "-1", "+1", " 80", "8_0"
         return None
-    return (scheme.lower(), host.lower(), _effective_port(scheme, port))
+    port = int(raw_port)
+    if not _MIN_PORT <= port <= _MAX_PORT:
+        return None
+    return port
 
 
-def _parse_origin(value: str) -> tuple[str, str, int] | None:
+def parse_authority(raw_authority: str) -> tuple[str, int | None] | None:
+    """Split a `host[:port]` authority into its parts, or `None` if it is
+    malformed in any way.
+
+    Written to be total: it never raises, whatever bytes arrive. That is the
+    whole point. The previous implementation reached `urlsplit(...).port`
+    and `.hostname`, both of which raise `ValueError` on input a client
+    fully controls (`:abc`, `:99999`, an unterminated `[::1`), so a
+    malformed header produced a 500 from inside the middleware whose job is
+    to reject it.
+    """
+    if not raw_authority or raw_authority.strip() != raw_authority:
+        return None
+
+    if raw_authority.startswith("["):
+        closing_bracket = raw_authority.find("]")
+        if closing_bracket == -1:
+            return None
+        host = raw_authority[: closing_bracket + 1]
+        remainder = raw_authority[closing_bracket + 1 :]
+        try:
+            ipaddress.IPv6Address(host[1:-1])
+        except ValueError:
+            return None
+        if not remainder:
+            return (host.lower(), None)
+        if not remainder.startswith(":"):
+            return None  # junk between "]" and the port
+        port = _parse_port(remainder[1:])
+        return None if port is None else (host.lower(), port)
+
+    host, separator, raw_port = raw_authority.partition(":")
+    if not host or not set(host.lower()) <= _HOSTNAME_CHARACTERS:
+        return None
+    if not separator:
+        return (host.lower(), None)
+    port = _parse_port(raw_port)
+    return None if port is None else (host.lower(), port)
+
+
+def _canonical_origin(scheme: str, authority: str) -> tuple[str, str, int] | None:
+    """Canonicalize scheme + authority for exact same-origin comparison --
+    deliberately distinct from allowed-host validation (which only ever
+    checks the hostname). A request's own origin and a submitted
+    Origin/Referer's are built by this same function, so the two are never
+    accidentally conflated.
+    """
+    scheme = scheme.lower()
+    if scheme not in _ORIGIN_SCHEMES:
+        return None
+    parsed = parse_authority(authority)
+    if parsed is None:
+        return None
+    host, port = parsed
+    return (scheme, host, _effective_port(scheme, port))
+
+
+def _parse_origin(value: str, *, allow_path: bool) -> tuple[str, str, int] | None:
     """Parse an Origin/Referer header value into a canonical origin tuple,
-    or `None` if it doesn't resolve to one at all (a literal `"null"`, a
-    scheme-less/malformed value) -- callers must treat `None` as a
-    mismatch, never as "nothing to check."
+    or `None` if it doesn't resolve to one at all -- a literal `"null"`, a
+    scheme-less or otherwise malformed value, a non-web scheme, or an
+    authority carrying userinfo. Callers must treat `None` as a mismatch,
+    never as "nothing to check."
+
+    `allow_path` distinguishes the two headers. Per RFC 6454 an Origin is a
+    bare `scheme://host[:port]`, so a path, query, or fragment means the
+    value is not an Origin at all. A Referer legitimately carries all three,
+    and only its authority is compared.
     """
-    parsed = urlsplit(value)
-    if not parsed.scheme or not parsed.hostname:
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
         return None
-    return _canonical_origin(parsed.scheme, parsed.hostname, parsed.port)
-
-
-def _host_without_port(raw_host: str) -> str:
-    """Strip a trailing `:port` from a `Host` header value, without
-    mangling a bracketed IPv6 literal (`[::1]` or `[::1]:8000`) -- a naive
-    `.split(":")[0]` truncates `[::1]` to `[`, which can never match an
-    allowed-hosts entry of `"[::1]"`."""
-    if raw_host.startswith("["):
-        closing_bracket = raw_host.find("]")
-        if closing_bracket != -1:
-            return raw_host[: closing_bracket + 1]
-        return raw_host
-    return raw_host.split(":", 1)[0]
+    if not allow_path and (parsed.path or parsed.query or parsed.fragment):
+        return None
+    # `netloc`, not `hostname`/`port`: those properties re-parse and raise on
+    # exactly the malformed input this function exists to absorb. Userinfo is
+    # rejected outright rather than stripped -- `http://localhost@evil.example`
+    # reads as "localhost" to a careless human and "evil.example" to a
+    # parser, and no legitimate Origin or Referer carries credentials.
+    if "@" in parsed.netloc:
+        return None
+    return _canonical_origin(parsed.scheme, parsed.netloc)
 
 
 def resolve_client_ip(request: Request, trusted_proxies: tuple[str, ...]) -> str:
@@ -149,15 +214,20 @@ class SecurityMiddleware:
         # itself must not be the least-protected response the app can emit
         # -- it would otherwise skip the very headers this middleware
         # exists to add.
-        host = _host_without_port(request.headers.get("host") or "")
-        if host not in self._allowed_hosts:
+        # A Host that cannot be parsed at all and a Host that parses but
+        # isn't allowed are both 400: the request line is unusable either
+        # way, and distinguishing them in the response would only tell a
+        # prober which of the two it hit.
+        authority = parse_authority(request.headers.get("host") or "")
+        if authority is None or authority[0] not in self._allowed_hosts:
             await PlainTextResponse("Invalid host header", status_code=400)(
                 scope, receive, send_with_security_headers
             )
             return
 
         if request.method in _UNSAFE_METHODS:
-            source = request.headers.get("origin") or request.headers.get("referer")
+            raw_origin = request.headers.get("origin")
+            source = raw_origin if raw_origin is not None else request.headers.get("referer")
             if source is not None:
                 # A *present* Origin/Referer that doesn't resolve to a
                 # canonical origin at all (a literal "null" from a
@@ -174,9 +244,16 @@ class SecurityMiddleware:
                 # matching the hostname but differing in scheme or port
                 # (e.g. https://localhost:4443 against a plain
                 # http://localhost request) must still be rejected.
-                source_origin = _parse_origin(source)
-                request_origin = _canonical_origin(
-                    request.url.scheme, request.url.hostname, request.url.port
+                source_origin = _parse_origin(source, allow_path=raw_origin is None)
+                # Built from the already-validated Host authority rather
+                # than `request.url.hostname`/`.port`, which re-parse the
+                # raw header and raise on malformed input.
+                host, port = authority
+                request_scheme = request.url.scheme.lower()
+                request_origin = (
+                    (request_scheme, host, _effective_port(request_scheme, port))
+                    if request_scheme in _ORIGIN_SCHEMES
+                    else None
                 )
                 if source_origin is None or source_origin != request_origin:
                     await PlainTextResponse("Invalid request origin", status_code=403)(

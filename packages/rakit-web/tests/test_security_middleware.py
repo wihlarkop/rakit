@@ -2,6 +2,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import httpx
+import pytest
 from rakit import Admin, SecretValue
 from rakit_core.auth import Principal, SessionRecord
 from rakit_web.security.rate_limit import LoginRateLimiter
@@ -429,3 +430,138 @@ async def test_oversized_body_rejection_still_carries_security_headers(client) -
     )
     assert response.status_code == 413
     _assert_security_headers(response)
+
+
+# --- Round 3: malformed authority must fail closed, never crash ---------
+
+# Values a cross-origin attacker controls exactly, none of which resolve to
+# a real origin. Several previously raised straight out of the middleware:
+# `urlsplit(...).port` raises ValueError on a non-numeric or out-of-range
+# port, and `.hostname` raises on an unterminated IPv6 literal. Every one
+# must be a 403 -- not a 500, and not an accept.
+MALFORMED_AUTHORITIES = [
+    pytest.param("http://localhost:abc", id="non-numeric-port"),
+    pytest.param("http://localhost:99999", id="port-out-of-range"),
+    pytest.param("http://localhost:0", id="port-zero"),
+    pytest.param("http://localhost:-1", id="negative-port"),
+    pytest.param("http://localhost:80:80", id="double-port"),
+    pytest.param("http://[::1", id="unterminated-ipv6"),
+    pytest.param("http://[not-an-address]", id="invalid-ipv6-literal"),
+    pytest.param("http://[::1]junk", id="junk-after-ipv6-literal"),
+    pytest.param("http://", id="empty-authority"),
+    pytest.param("http:///path", id="authority-less"),
+    pytest.param("//localhost", id="scheme-relative"),
+    pytest.param("localhost", id="bare-hostname"),
+    pytest.param("null", id="literal-null"),
+    pytest.param("", id="empty-string"),
+    pytest.param("   ", id="whitespace-only"),
+    pytest.param("file:///etc/passwd", id="file-scheme"),
+    pytest.param("data:text/html,<b>x</b>", id="data-scheme"),
+    pytest.param("javascript:alert(1)", id="javascript-scheme"),
+    pytest.param("ftp://localhost", id="ftp-scheme"),
+    pytest.param("http://evil.example@localhost", id="userinfo-masking-real-host"),
+    pytest.param("http://localhost@evil.example", id="userinfo-then-other-host"),
+    pytest.param("http://localhost http://evil.example", id="space-separated-pair"),
+    pytest.param("http://localhost,http://evil.example", id="comma-separated-pair"),
+    pytest.param("http://localhost\nhttp://evil.example", id="newline-separated-pair"),
+    pytest.param("http://loc alhost", id="space-inside-host"),
+]
+
+
+@pytest.mark.parametrize("origin", MALFORMED_AUTHORITIES)
+async def test_malformed_origin_is_rejected_with_403(origin: str) -> None:
+    response = await _login_with_headers({"origin": origin})
+    assert response.status_code == 403, origin
+
+
+@pytest.mark.parametrize("referer", MALFORMED_AUTHORITIES)
+async def test_malformed_referer_is_rejected_with_403(referer: str) -> None:
+    """Referer is the fallback when Origin is absent, so it is just as much
+    an attacker-controlled input and must fail closed identically.
+    """
+    response = await _login_with_headers({"referer": referer})
+    assert response.status_code == 403, referer
+
+
+@pytest.mark.parametrize("origin", MALFORMED_AUTHORITIES)
+async def test_malformed_origin_rejection_carries_security_headers(origin: str) -> None:
+    response = await _login_with_headers({"origin": origin})
+    _assert_security_headers(response)
+
+
+# Per RFC 6454 an Origin is a bare scheme://host[:port] -- a path, query, or
+# fragment means the value is not an Origin at all. A Referer, by contrast,
+# legitimately carries all three, and rejecting those would break every real
+# browser POST, so only the authority is compared there.
+ORIGIN_ONLY_MALFORMED = [
+    pytest.param("http://localhost/", id="trailing-slash-path"),
+    pytest.param("http://localhost/auth/login", id="path"),
+    pytest.param("http://localhost?q=1", id="query"),
+    pytest.param("http://localhost#fragment", id="fragment"),
+]
+
+
+@pytest.mark.parametrize("origin", ORIGIN_ONLY_MALFORMED)
+async def test_origin_carrying_a_path_query_or_fragment_is_rejected(origin: str) -> None:
+    response = await _login_with_headers({"origin": origin})
+    assert response.status_code == 403, origin
+
+
+@pytest.mark.parametrize(
+    "referer",
+    ["http://localhost/", "http://localhost/auth/login", "http://localhost/x?q=1#f"],
+)
+async def test_referer_with_a_path_query_or_fragment_is_accepted(referer: str) -> None:
+    """Reaching the credential check (401 for the wrong password) is the
+    proof that the origin check accepted it.
+    """
+    response = await _login_with_headers({"referer": referer})
+    assert response.status_code == 401, referer
+
+
+# A malformed Host is a different failure from a mismatched origin: the
+# request line itself is unusable, which is a 400.
+MALFORMED_HOSTS = [
+    pytest.param("localhost:abc", id="non-numeric-port"),
+    pytest.param("localhost:99999", id="port-out-of-range"),
+    pytest.param("localhost:0", id="port-zero"),
+    pytest.param("localhost:-1", id="negative-port"),
+    pytest.param("localhost:80:80", id="double-port"),
+    pytest.param("[::1", id="unterminated-ipv6"),
+    pytest.param("[not-an-address]", id="invalid-ipv6-literal"),
+    pytest.param("[::1]junk", id="junk-after-ipv6-literal"),
+    pytest.param("", id="empty"),
+    pytest.param("   ", id="whitespace-only"),
+    pytest.param("loc alhost", id="space-inside-host"),
+    pytest.param("localhost,evil.example", id="comma-separated-pair"),
+    pytest.param("localhost/evil", id="path-in-host"),
+    pytest.param("user@localhost", id="userinfo-in-host"),
+    pytest.param("http://localhost", id="scheme-in-host"),
+]
+
+
+@pytest.mark.parametrize("host", MALFORMED_HOSTS)
+async def test_malformed_host_is_rejected_with_400(client, host: str) -> None:
+    response = await client.get("/", headers={"host": host})
+    assert response.status_code == 400, host
+
+
+@pytest.mark.parametrize("host", MALFORMED_HOSTS)
+async def test_malformed_host_rejection_carries_security_headers(client, host: str) -> None:
+    response = await client.get("/", headers={"host": host})
+    _assert_security_headers(response)
+
+
+async def test_a_malformed_authority_never_produces_a_server_error(client) -> None:
+    """The distinction that matters operationally: a 5xx means the parse
+    escaped the middleware, which is both an availability problem and a
+    signal that unvalidated input reached code assuming it was valid.
+    """
+    for host in ("localhost:abc", "[::1", "localhost:99999", "loc alhost"):
+        response = await client.get("/", headers={"host": host})
+        assert response.status_code < 500, host
+
+
+async def test_valid_host_with_an_explicit_default_port_is_accepted(client) -> None:
+    response = await client.get("/", headers={"host": "localhost:80"})
+    assert response.status_code == 200
