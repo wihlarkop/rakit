@@ -47,17 +47,14 @@ def _seed_full_dataset(db_path: Path) -> None:
         conn.execute(sa.text("INSERT INTO rakit_auth_roles (id, name) VALUES (1, 'admin')"))
         conn.execute(
             sa.text(
-                "INSERT INTO rakit_auth_permissions (id, key, label, \"group\", orphaned) "
+                'INSERT INTO rakit_auth_permissions (id, key, label, "group", orphaned) '
                 "VALUES (1, 'users.read', 'Read users', 'users', 0)"
             )
         )
-        conn.execute(
-            sa.text("INSERT INTO rakit_auth_user_roles (user_id, role_id) VALUES (1, 1)")
-        )
+        conn.execute(sa.text("INSERT INTO rakit_auth_user_roles (user_id, role_id) VALUES (1, 1)"))
         conn.execute(
             sa.text(
-                "INSERT INTO rakit_auth_role_permissions (role_id, permission_id) "
-                "VALUES (1, 1)"
+                "INSERT INTO rakit_auth_role_permissions (role_id, permission_id) VALUES (1, 1)"
             )
         )
         conn.execute(
@@ -146,7 +143,7 @@ def test_downgrade_refusal_preserves_seeded_data_and_head_revision(tmp_path) -> 
         command.downgrade(cfg, "base")
 
     assert _current_revision(db_path) == head_revision
-    assert AUTH_TABLES <= _table_names(db_path)
+    assert _table_names(db_path) >= AUTH_TABLES
     assert _row_count(db_path, "rakit_auth_users") == 1
     assert _row_count(db_path, "rakit_auth_roles") == 1
     assert _row_count(db_path, "rakit_auth_permissions") == 1

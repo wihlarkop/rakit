@@ -39,6 +39,7 @@ from .security.validation import (
     parse_trusted_proxy_networks,
     validate_production_config,
     validate_rate_limiter_for_production,
+    validate_session_store_for_production,
 )
 
 _FIELD_POLICY_NAMES = (
@@ -163,6 +164,11 @@ class Admin:
         self._login_rate_limiter = login_rate_limiter or LoginRateLimiter()
         validate_rate_limiter_for_production(
             self._login_rate_limiter,
+            debug=debug,
+            auth_enabled=auth_backend is not None,
+        )
+        validate_session_store_for_production(
+            session_store,
             debug=debug,
             auth_enabled=auth_backend is not None,
         )

@@ -105,3 +105,29 @@ def validate_rate_limiter_for_production(
         raise _invalid_production_config(
             "rate_limiter_not_callable", signature_error=str(error)
         ) from error
+
+
+def validate_session_store_for_production(
+    session_store: object, *, debug: bool, auth_enabled: bool
+) -> None:
+    """Reject process-local or malformed session stores before production serves."""
+    if debug or not auth_enabled:
+        return
+    if getattr(session_store, "production_safe", False) is not True:
+        raise _invalid_production_config("development_only_session_store")
+
+    calls = {
+        "create": (object(),),
+        "resolve": ("",),
+        "rotate": ("",),
+        "revoke": ("",),
+    }
+    for method_name, arguments in calls.items():
+        method = getattr(session_store, method_name, None)
+        reason = f"session_store_{method_name}_not_callable"
+        if not callable(method):
+            raise _invalid_production_config(reason)
+        try:
+            inspect.signature(method).bind(*arguments)
+        except (TypeError, ValueError) as error:
+            raise _invalid_production_config(reason) from error

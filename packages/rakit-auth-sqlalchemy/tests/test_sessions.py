@@ -30,6 +30,8 @@ async def test_create_returns_raw_token_and_record(session_factory) -> None:
 
     raw_token, record = await store.create(principal)
 
+    assert store.production_safe is True
+
     assert raw_token
     assert record.subject_id == "1"
 

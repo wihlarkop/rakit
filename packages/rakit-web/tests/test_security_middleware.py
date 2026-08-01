@@ -88,6 +88,8 @@ class _FakeAuthBackend:
 
 
 class _FakeSessionStore:
+    production_safe = True
+
     def __init__(self) -> None:
         self._sessions: dict[str, SessionRecord] = {}
         self._tokens: dict[str, str] = {}

@@ -123,6 +123,8 @@ class _CountingAuthBackend(FakeAuthBackend):
 
 
 class FakeSessionStore:
+    production_safe = True
+
     def __init__(self) -> None:
         self._sessions: dict[str, SessionRecord] = {}
         self._tokens: dict[str, str] = {}
@@ -537,6 +539,25 @@ def test_admin_rejects_development_rate_limiter_in_production_with_auth() -> Non
             # (the development-only LoginRateLimiter) must be rejected.
         )
     assert exc_info.value.details["reason"] == "development_only_rate_limiter"
+
+
+def test_admin_rejects_development_session_store_in_production_with_auth() -> None:
+    class _DevelopmentStore(FakeSessionStore):
+        production_safe = False
+
+    from rakit_core.errors import RakitError
+
+    with pytest.raises(RakitError) as exc_info:
+        Admin(
+            admin_id="operations",
+            title="Operations",
+            debug=False,
+            secret_key=SecretValue("x" * 32),
+            auth_backend=FakeAuthBackend(),
+            session_store=_DevelopmentStore(),
+            login_rate_limiter=_TestRateLimiter(),
+        )
+    assert exc_info.value.details["reason"] == "development_only_session_store"
 
 
 def test_admin_rejects_auth_backend_without_session_store() -> None:

@@ -71,6 +71,8 @@ class SQLAlchemySessionStore:
     return value and, at the web layer, a cookie value. Never logged, never
     stored."""
 
+    production_safe = True
+
     def __init__(
         self,
         session_factory: async_sessionmaker[AsyncSession],
