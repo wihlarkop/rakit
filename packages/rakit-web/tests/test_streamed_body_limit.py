@@ -103,6 +103,7 @@ async def test_multiple_chunks_at_limit_reach_downstream() -> None:
         [(b"content-length", b"-1")],
         [(b"content-length", b"5"), (b"content-length", b"5")],
         [(b"content-length", b"5"), (b"content-length", b"6")],
+        [(b"content-length", b"9" * 5000)],
     ],
 )
 async def test_invalid_or_duplicate_content_length_fails_before_downstream(

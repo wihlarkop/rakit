@@ -1033,9 +1033,10 @@ session created just before CSRF issuance is revoked if issuance raises.
 `SessionStore` exposes `production_safe`; the SQLAlchemy implementation sets it
 to exactly `True`. Auth-enabled production construction rejects missing,
 truthy-but-not-boolean, development-only, or structurally incompatible stores
-before routes serve requests. Debug and no-auth modes retain their previous
-behavior. This is deployment-capability validation, not a Plan 04 permission
-system.
+before routes serve requests. Compatibility includes coroutine-function
+semantics for all four awaited operations; a matching synchronous signature is
+still invalid. Debug and no-auth modes retain their previous behavior. This is
+deployment-capability validation, not a Plan 04 permission system.
 
 ## 43. Installed-artifact tests may resolve non-Rakit dependencies (round 4)
 
@@ -1044,3 +1045,17 @@ only from their local `--find-links` directory. They no longer add `--offline`,
 because a fresh uv release may lack cached registry metadata for unchanged
 third-party dependencies. This does not weaken the local-wheel assertion and
 avoids making correctness depend on the machine's incidental uv cache state.
+
+## 44. Repeated forwarding headers and unbounded numeric declarations (round 4 review)
+
+ASGI preserves repeated header fields. Trusted-chain resolution therefore uses
+every `X-Forwarded-For` field in wire order, then every comma-delimited value
+within each field. Reading only the first field lets an attacker-controlled
+prefix win when an append-style proxy adds a second field.
+
+An all-digit `Content-Length` is not safe to pass directly to `int`: Python
+limits decimal conversion length and raises for sufficiently large input.
+After syntax validation, leading zeroes are removed and significant digit
+length is compared with the configured maximum before bounded conversion.
+Thus even adversarial raw ASGI scopes deterministically receive 413 without an
+exception or unbounded integer work.

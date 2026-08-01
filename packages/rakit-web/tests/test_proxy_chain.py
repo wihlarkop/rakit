@@ -8,10 +8,11 @@ from rakit_web.security.middleware import resolve_client_ip
 from starlette.requests import Request
 
 
-def _request(*, peer: str, forwarded_for: str | None = None) -> Request:
+def _request(*, peer: str, forwarded_for: str | tuple[str, ...] | None = None) -> Request:
     headers = [(b"host", b"localhost")]
     if forwarded_for is not None:
-        headers.append((b"x-forwarded-for", forwarded_for.encode("ascii")))
+        values = (forwarded_for,) if isinstance(forwarded_for, str) else forwarded_for
+        headers.extend((b"x-forwarded-for", value.encode("ascii")) for value in values)
     return Request(
         {
             "type": "http",
@@ -35,6 +36,11 @@ def _networks(*values: str):
 
 def test_append_style_proxy_uses_nearest_untrusted_hop_not_attacker_prefix() -> None:
     request = _request(peer="10.0.0.9", forwarded_for="198.51.100.4, 203.0.113.8")
+    assert resolve_client_ip(request, _networks("10.0.0.0/24")) == "203.0.113.8"
+
+
+def test_append_style_proxy_across_duplicate_header_lines_uses_nearest_untrusted_hop() -> None:
+    request = _request(peer="10.0.0.9", forwarded_for=("198.51.100.4", "203.0.113.8"))
     assert resolve_client_ip(request, _networks("10.0.0.0/24")) == "203.0.113.8"
 
 

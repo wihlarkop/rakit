@@ -418,3 +418,14 @@ commits plus one installed-artifact regression commit:
 Focused and affected-package suites passed after each change. Final detached
 whole-workspace and installed-artifact verification is pending the fresh
 independent round-4 review.
+
+The fresh independent review found two Important edge cases and no Critical
+findings at `d7748d4`: duplicate X-Forwarded-For header fields were not joined,
+and a 5,000-digit Content-Length escaped as Python's integer conversion
+`ValueError`. Both received revert-failing direct-ASGI regressions and are fixed
+by parsing every forwarded header field in wire order and comparing normalized
+digit length before integer conversion. The affected `rakit-web` suite passes
+435/435. The review's remaining Minor observation was also fixed with a
+revert-failing test: production session-store methods must be coroutine
+functions, so a synchronous implementation cannot pass construction and fail
+at its first `await`. Final whole-branch verification remains pending.

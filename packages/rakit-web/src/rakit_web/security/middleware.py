@@ -145,13 +145,15 @@ def resolve_client_ip(request: Request, trusted_proxies: tuple[TrustedProxyNetwo
     canonical_direct = str(direct_addr)
     if not trusted_proxies or not any(direct_addr in network for network in trusted_proxies):
         return canonical_direct
-    forwarded_for = request.headers.get("x-forwarded-for")
-    if not forwarded_for:
+    forwarded_fields = request.headers.getlist("x-forwarded-for")
+    if not forwarded_fields:
         return canonical_direct
 
     try:
         forwarded_hops = [
-            ipaddress.ip_address(raw_hop.strip()) for raw_hop in forwarded_for.split(",")
+            ipaddress.ip_address(raw_hop.strip())
+            for forwarded_field in forwarded_fields
+            for raw_hop in forwarded_field.split(",")
         ]
     except ValueError:
         return canonical_direct
@@ -288,7 +290,12 @@ class SecurityMiddleware:
             raw_length = content_lengths[0]
             invalid_content_length = not raw_length.isdigit()
             if not invalid_content_length:
-                declared_size = int(raw_length)
+                significant_length = raw_length.lstrip(b"0") or b"0"
+                max_body_size_text = str(self._max_body_size).encode("ascii")
+                if len(significant_length) > len(max_body_size_text):
+                    declared_size = self._max_body_size + 1
+                else:
+                    declared_size = int(significant_length)
         if invalid_content_length or (
             declared_size is not None and declared_size > self._max_body_size
         ):

@@ -191,6 +191,27 @@ def test_session_store_rejects_incompatible_method_signature() -> None:
     assert exc_info.value.details["reason"] == "session_store_create_not_callable"
 
 
+def test_session_store_rejects_synchronous_methods_before_serving() -> None:
+    class _SynchronousStore:
+        production_safe = True
+
+        def create(self, principal):
+            return None
+
+        def resolve(self, raw_token: str):
+            return None
+
+        def rotate(self, session_id: str):
+            return None
+
+        def revoke(self, session_id: str):
+            return None
+
+    with pytest.raises(RakitError) as exc_info:
+        _validate_session_store_for_production(_SynchronousStore(), debug=False, auth_enabled=True)
+    assert exc_info.value.details["reason"] == "session_store_create_not_callable"
+
+
 def test_debug_and_no_auth_skip_session_store_production_validation() -> None:
     _validate_session_store_for_production(
         _DevelopmentSessionStore(), debug=True, auth_enabled=True

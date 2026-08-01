@@ -125,7 +125,7 @@ def validate_session_store_for_production(
     for method_name, arguments in calls.items():
         method = getattr(session_store, method_name, None)
         reason = f"session_store_{method_name}_not_callable"
-        if not callable(method):
+        if not callable(method) or not inspect.iscoroutinefunction(method):
             raise _invalid_production_config(reason)
         try:
             inspect.signature(method).bind(*arguments)
