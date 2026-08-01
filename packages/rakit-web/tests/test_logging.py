@@ -147,6 +147,19 @@ def test_stdlib_logging_bridges_into_structured_pipeline(capsys) -> None:
     assert "[REDACTED]" in output
 
 
+def test_configure_logging_reenables_owned_logger_disabled_by_external_config(capsys) -> None:
+    std_logger = logging.getLogger("rakit_core.events")
+    std_logger.disabled = True
+    try:
+        configure_logging(debug=False)
+        std_logger.warning("Rakit logger restored after external configuration")
+        captured = capsys.readouterr()
+        output = captured.err or captured.out
+        assert "Rakit logger restored" in output
+    finally:
+        std_logger.disabled = False
+
+
 def test_configure_logging_does_not_duplicate_stdlib_bridge_handlers() -> None:
     """configure_logging() may run more than once in the same process (e.g.
     across tests, or repeated ASGI lifespans); repeated calls must not

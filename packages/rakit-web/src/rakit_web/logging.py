@@ -182,7 +182,11 @@ def _attach_bridge_handler(name: str, *, renderer: Processor, level: int) -> Non
             std_logger.removeHandler(existing)
     std_logger.addHandler(handler)
     std_logger.setLevel(level)
+    std_logger.disabled = False
     std_logger.propagate = False
+    for logger_name, existing_logger in logging.root.manager.loggerDict.items():
+        if logger_name.startswith(f"{name}.") and isinstance(existing_logger, logging.Logger):
+            existing_logger.disabled = False
 
 
 def bridge_additional_logger_namespace(name: str, *, debug: bool) -> None:
