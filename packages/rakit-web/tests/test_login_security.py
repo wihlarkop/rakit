@@ -265,6 +265,40 @@ async def test_successful_login_sets_session_and_csrf_cookies(auth_client) -> No
     assert "rakit_csrf" in response.cookies
 
 
+async def test_failed_csrf_issuance_revokes_the_new_session(monkeypatch) -> None:
+    import rakit_web.admin as admin_module
+
+    class _FailingCsrfService:
+        def __init__(self, token_service) -> None:
+            pass
+
+        def issue(self, session) -> str:
+            raise ValueError("synthetic token failure")
+
+        def verify(self, token: str, *, session_id: str) -> bool:
+            return False
+
+    monkeypatch.setattr(admin_module, "CsrfService", _FailingCsrfService)
+    store = FakeSessionStore()
+    admin = Admin(
+        admin_id="operations",
+        title="Operations",
+        debug=True,
+        secret_key=SecretValue("x" * 32),
+        auth_backend=FakeAuthBackend(),
+        session_store=store,
+    )
+    app = admin.asgi()
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        _LifespanDriver(app),
+        httpx.AsyncClient(transport=transport, base_url="http://localhost") as client,
+    ):
+        with pytest.raises(ValueError, match="synthetic token failure"):
+            await _login(client)
+    assert store._sessions == {}
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

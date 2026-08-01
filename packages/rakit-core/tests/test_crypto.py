@@ -6,6 +6,7 @@ from datetime import timedelta
 from typing import cast
 
 import pytest
+import rakit_core.crypto as crypto
 from rakit_core.config import SecretValue
 from rakit_core.crypto import TOKEN_VERSION, KeyRing, SigningKey, TokenService, _derive_key
 
@@ -543,3 +544,7 @@ def test_a_token_from_a_different_admin_id_never_verifies() -> None:
     token = one.issue_in("csrf", {"session_id": "s1"}, timedelta(minutes=5))
     with pytest.raises(ValueError):
         other.verify(token, expected_purpose="csrf")
+
+
+def test_maximum_token_ttl_is_exposed_for_integrations() -> None:
+    assert timedelta(days=365) == crypto.MAX_TOKEN_TTL

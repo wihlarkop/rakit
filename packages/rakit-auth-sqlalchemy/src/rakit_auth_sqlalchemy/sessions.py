@@ -4,6 +4,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 from rakit_core.auth import Principal, SessionRecord
+from rakit_core.crypto import MAX_TOKEN_TTL
+from rakit_core.errors import ErrorCode, RakitError
 from sqlalchemy import select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -12,6 +14,26 @@ from .models import Session as SessionRow
 
 _DEFAULT_IDLE_TIMEOUT = timedelta(hours=2)
 _DEFAULT_ABSOLUTE_TIMEOUT = timedelta(days=14)
+
+
+def _invalid_session_config(reason: str) -> RakitError:
+    return RakitError(
+        code=ErrorCode.CONFIG_INVALID,
+        message=f"Invalid session lifetime configuration: {reason}",
+        status_code=500,
+        details={"reason": reason},
+    )
+
+
+def _validate_session_lifetimes(idle_timeout: object, absolute_timeout: object) -> None:
+    if not isinstance(idle_timeout, timedelta) or idle_timeout <= timedelta(0):
+        raise _invalid_session_config("invalid_idle_timeout")
+    if not isinstance(absolute_timeout, timedelta) or absolute_timeout <= timedelta(0):
+        raise _invalid_session_config("invalid_absolute_timeout")
+    if idle_timeout > absolute_timeout:
+        raise _invalid_session_config("idle_timeout_exceeds_absolute")
+    if absolute_timeout > MAX_TOKEN_TTL:
+        raise _invalid_session_config("absolute_timeout_exceeds_token_limit")
 
 
 def _hash_token(raw_token: str) -> str:
@@ -56,6 +78,7 @@ class SQLAlchemySessionStore:
         idle_timeout: timedelta = _DEFAULT_IDLE_TIMEOUT,
         absolute_timeout: timedelta = _DEFAULT_ABSOLUTE_TIMEOUT,
     ) -> None:
+        _validate_session_lifetimes(idle_timeout, absolute_timeout)
         self._session_factory = session_factory
         self._idle_timeout = idle_timeout
         self._absolute_timeout = absolute_timeout

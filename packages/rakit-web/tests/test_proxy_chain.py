@@ -70,13 +70,15 @@ def test_ipv6_is_canonicalized_for_stable_limiter_buckets() -> None:
 
 @pytest.mark.parametrize("debug", [True, False])
 def test_invalid_trusted_proxy_cidr_fails_during_admin_construction(debug: bool) -> None:
-    kwargs = {"title": "Operations", "debug": debug, "trusted_proxies": ("not-a-cidr",)}
-    if not debug:
-        from rakit import SecretValue
+    from rakit import SecretValue
 
-        kwargs["secret_key"] = SecretValue("x" * 32)
     with pytest.raises(RakitError) as exc_info:
-        Admin(**kwargs)
+        Admin(
+            title="Operations",
+            debug=debug,
+            secret_key=None if debug else SecretValue("x" * 32),
+            trusted_proxies=("not-a-cidr",),
+        )
     assert exc_info.value.details["reason"] == "invalid_trusted_proxy"
 
 

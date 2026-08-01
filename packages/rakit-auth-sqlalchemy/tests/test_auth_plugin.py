@@ -1,8 +1,10 @@
 from datetime import timedelta
 
+import pytest
 from rakit_auth_sqlalchemy.backend import SQLAlchemyAuthBackend
 from rakit_auth_sqlalchemy.plugin import SQLAlchemyAuthPlugin
 from rakit_auth_sqlalchemy.sessions import SQLAlchemySessionStore
+from rakit_core.errors import RakitError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 
@@ -36,3 +38,13 @@ def test_plugin_accepts_custom_session_timeouts() -> None:
 
     assert plugin.session_store._idle_timeout == timedelta(minutes=5)
     assert plugin.session_store._absolute_timeout == timedelta(hours=1)
+
+
+def test_plugin_rejects_invalid_session_timeouts_before_use() -> None:
+    with pytest.raises(RakitError) as exc_info:
+        SQLAlchemyAuthPlugin(
+            _session_factory(),
+            idle_timeout=timedelta(days=2),
+            absolute_timeout=timedelta(days=1),
+        )
+    assert exc_info.value.details["reason"] == "idle_timeout_exceeds_absolute"

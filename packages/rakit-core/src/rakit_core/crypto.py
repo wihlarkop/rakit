@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from .config import SecretValue
 
 TOKEN_VERSION = 1
-_MAX_TTL = timedelta(days=365)
+MAX_TOKEN_TTL = timedelta(days=365)
 
 # `admin_id` and `purpose` are interpolated into the HKDF info string
 # `rakit:{admin_id}:{purpose}:v{version}`, so ":" must never appear inside
@@ -206,7 +206,7 @@ class TokenService:
             raise ValueError("claims must be a dict")
         if ttl <= timedelta(0):
             raise ValueError("ttl must be positive")
-        if ttl > _MAX_TTL:
+        if ttl > MAX_TOKEN_TTL:
             raise ValueError("ttl exceeds the maximum allowed duration")
         try:
             payload_json = json.dumps(claims, separators=(",", ":"))

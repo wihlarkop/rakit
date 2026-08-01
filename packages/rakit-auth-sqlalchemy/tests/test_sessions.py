@@ -6,6 +6,7 @@ import pytest
 from rakit_auth_sqlalchemy.models import Base, User
 from rakit_auth_sqlalchemy.sessions import SQLAlchemySessionStore
 from rakit_core.auth import Principal
+from rakit_core.errors import RakitError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -74,24 +75,43 @@ async def test_resolve_returns_none_for_a_revoked_session(session_factory) -> No
     assert await store.resolve(raw_token) is None
 
 
-async def test_resolve_returns_none_past_idle_expiry(session_factory) -> None:
+@pytest.mark.parametrize(
+    ("idle_timeout", "absolute_timeout", "reason"),
+    [
+        (timedelta(0), timedelta(days=1), "invalid_idle_timeout"),
+        (timedelta(hours=1), timedelta(0), "invalid_absolute_timeout"),
+        (timedelta(seconds=-1), timedelta(days=1), "invalid_idle_timeout"),
+        (timedelta(hours=1), timedelta(seconds=-1), "invalid_absolute_timeout"),
+        (timedelta(days=2), timedelta(days=1), "idle_timeout_exceeds_absolute"),
+        (timedelta(days=1), timedelta(days=366), "absolute_timeout_exceeds_token_limit"),
+    ],
+)
+async def test_invalid_session_lifetimes_fail_during_construction(
+    session_factory,
+    idle_timeout: timedelta,
+    absolute_timeout: timedelta,
+    reason: str,
+) -> None:
+    with pytest.raises(RakitError) as exc_info:
+        SQLAlchemySessionStore(
+            session_factory,
+            idle_timeout=idle_timeout,
+            absolute_timeout=absolute_timeout,
+        )
+    assert exc_info.value.details["reason"] == reason
+
+
+@pytest.mark.parametrize("duration", [timedelta(days=1), timedelta(days=14), timedelta(days=30)])
+async def test_supported_session_lifetimes_create_live_sessions(
+    session_factory, duration: timedelta
+) -> None:
     store = SQLAlchemySessionStore(
-        session_factory, idle_timeout=timedelta(seconds=-1), absolute_timeout=timedelta(days=1)
+        session_factory,
+        idle_timeout=min(duration, timedelta(days=1)),
+        absolute_timeout=duration,
     )
-    principal = Principal(subject_id="1", authenticated=True)
-    raw_token, _ = await store.create(principal)
-
-    assert await store.resolve(raw_token) is None
-
-
-async def test_resolve_returns_none_past_absolute_expiry(session_factory) -> None:
-    store = SQLAlchemySessionStore(
-        session_factory, idle_timeout=timedelta(days=1), absolute_timeout=timedelta(seconds=-1)
-    )
-    principal = Principal(subject_id="1", authenticated=True)
-    raw_token, _ = await store.create(principal)
-
-    assert await store.resolve(raw_token) is None
+    raw_token, _ = await store.create(Principal(subject_id="1", authenticated=True))
+    assert await store.resolve(raw_token) is not None
 
 
 async def test_resolve_extends_idle_expiry_and_updates_last_seen(session_factory) -> None:
@@ -190,20 +210,6 @@ async def test_rotate_rejects_a_revoked_session(session_factory) -> None:
     store = SQLAlchemySessionStore(session_factory)
     _raw, record = await store.create(Principal(subject_id="1", authenticated=True))
     await store.revoke(record.session_id)
-    with pytest.raises(ValueError):
-        await store.rotate(record.session_id)
-
-
-async def test_rotate_rejects_an_idle_expired_session(session_factory) -> None:
-    store = SQLAlchemySessionStore(session_factory, idle_timeout=timedelta(seconds=-1))
-    _raw, record = await store.create(Principal(subject_id="1", authenticated=True))
-    with pytest.raises(ValueError):
-        await store.rotate(record.session_id)
-
-
-async def test_rotate_rejects_an_absolute_expired_session(session_factory) -> None:
-    store = SQLAlchemySessionStore(session_factory, absolute_timeout=timedelta(seconds=-1))
-    _raw, record = await store.create(Principal(subject_id="1", authenticated=True))
     with pytest.raises(ValueError):
         await store.rotate(record.session_id)
 
