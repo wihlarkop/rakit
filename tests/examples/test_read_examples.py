@@ -432,6 +432,28 @@ def test_auth_migration_history_coexists_with_a_host_alembic_version_table(
 
     # 4. The host's own version table is unchanged.
     assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [("host_0001",)]
+    conn.execute(
+        "INSERT INTO rakit_auth_users "
+        "(id, email, password_hash, is_active, is_superuser, created_at, updated_at) "
+        "VALUES (1, 'ada@example.com', 'hash', 1, 0, '2026-01-01', '2026-01-01')"
+    )
+    conn.execute("INSERT INTO rakit_auth_roles (id, name) VALUES (1, 'admin')")
+    conn.execute(
+        'INSERT INTO rakit_auth_permissions (id, key, label, "group", orphaned) '
+        "VALUES (1, 'users.read', 'Read users', 'users', 0)"
+    )
+    conn.execute("INSERT INTO rakit_auth_user_roles (user_id, role_id) VALUES (1, 1)")
+    conn.execute(
+        "INSERT INTO rakit_auth_role_permissions (role_id, permission_id) VALUES (1, 1)"
+    )
+    conn.execute(
+        "INSERT INTO rakit_auth_sessions "
+        "(id, token_hash, user_id, created_at, last_seen_at, idle_expires_at, "
+        "absolute_expires_at) VALUES "
+        "(1, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 1, "
+        "'2026-01-01', '2026-01-01', '2026-01-02', '2026-01-08')"
+    )
+    conn.commit()
     conn.close()
 
     # 5. Rerunning the upgrade succeeds (idempotent no-op at head).
@@ -444,7 +466,19 @@ def test_auth_migration_history_coexists_with_a_host_alembic_version_table(
     )
     assert rerun.returncode == 0, rerun.stderr
 
-    # 6. Only Rakit-owned tables were affected: every expected auth table
+    # 6. Downgrade is explicitly refused by the migration shipped in the
+    # wheel, and Alembic leaves the revision, tables, and seeded data intact.
+    downgrade = subprocess.run(
+        [str(installed_python), "-m", "alembic", "-c", str(ini_path), "downgrade", "base"],
+        env=isolated_environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert downgrade.returncode != 0
+    assert "forward-only" in (downgrade.stdout + downgrade.stderr)
+
+    # 7. Only Rakit-owned tables were affected: every expected auth table
     # exists, and the host's alembic_version table/row are byte-identical
     # to what was seeded.
     conn = sqlite3.connect(db_path)
@@ -461,5 +495,10 @@ def test_auth_migration_history_coexists_with_a_host_alembic_version_table(
         "rakit_auth_sessions",
     }
     assert expected_rakit_tables <= final_tables
+    assert conn.execute("SELECT version_num FROM rakit_auth_alembic_version").fetchall() == [
+        ("0001",)
+    ]
     assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [("host_0001",)]
+    for table_name in expected_rakit_tables - {"rakit_auth_alembic_version"}:
+        assert conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone() == (1,)
     conn.close()
