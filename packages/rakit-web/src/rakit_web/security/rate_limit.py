@@ -92,6 +92,9 @@ class LoginRateLimiter:
         self._lock = threading.Lock()
 
     async def check(self, *, admin_id: str, identifier: str, client_ip: str) -> bool:
+        return self._check_sync(admin_id=admin_id, identifier=identifier, client_ip=client_ip)
+
+    def _check_sync(self, *, admin_id: str, identifier: str, client_ip: str) -> bool:
         """Record this attempt and return whether it is allowed.
 
         Every call (allowed or not) counts toward the window -- a denied

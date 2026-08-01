@@ -1,4 +1,3 @@
-import asyncio
 import threading
 
 import pytest
@@ -8,8 +7,8 @@ from rakit_web.security.validation import validate_rate_limiter_for_production
 
 
 def _sync_check(limiter: LoginRateLimiter, **kwargs: str) -> bool:
-    """Drive the public async contract from synchronous limiter unit tests."""
-    return asyncio.run(limiter.check(**kwargs))
+    """Exercise the locked in-memory calculation without event-loop churn."""
+    return limiter._check_sync(**kwargs)
 
 
 def test_allows_attempts_under_the_limit() -> None:
