@@ -113,6 +113,15 @@ class FakeAuthBackend:
         )
 
 
+class _CountingAuthBackend(FakeAuthBackend):
+    def __init__(self) -> None:
+        self.authenticate_calls = 0
+
+    async def authenticate(self, identifier: str, password: str) -> Principal | None:
+        self.authenticate_calls += 1
+        return await super().authenticate(identifier, password)
+
+
 class FakeSessionStore:
     def __init__(self) -> None:
         self._sessions: dict[str, SessionRecord] = {}
@@ -214,6 +223,33 @@ async def auth_client() -> AsyncIterator[httpx.AsyncClient]:
         yield http_client
 
 
+@pytest.fixture
+async def bounded_login_client() -> AsyncIterator[tuple[httpx.AsyncClient, _CountingAuthBackend]]:
+    backend = _CountingAuthBackend()
+    admin = Admin(
+        admin_id="operations",
+        title="Operations",
+        debug=True,
+        secret_key=SecretValue("x" * 32),
+        auth_backend=backend,
+        session_store=FakeSessionStore(),
+    )
+    app = admin.asgi()
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        _LifespanDriver(app),
+        httpx.AsyncClient(transport=transport, base_url="http://localhost") as client,
+    ):
+        yield client, backend
+
+
+async def _login_form_token(client: httpx.AsyncClient) -> str:
+    page = await client.get("/auth/login")
+    token = page.cookies["rakit_login_csrf"]
+    client.cookies.set("rakit_login_csrf", token)
+    return token
+
+
 async def test_unknown_user_and_wrong_password_share_message(auth_client) -> None:
     unknown = await _login(auth_client, identifier="missing@example.com", password="wrong")
     wrong = await _login(auth_client, identifier="admin@example.com", password="wrong")
@@ -227,6 +263,74 @@ async def test_successful_login_sets_session_and_csrf_cookies(auth_client) -> No
     assert response.status_code == 303
     assert "rakit_session" in response.cookies
     assert "rakit_csrf" in response.cookies
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("identifier", "i" * 321),
+        ("password", "p" * 1025),
+        ("login_csrf_token", "c" * 513),
+    ],
+)
+async def test_oversized_login_fields_are_rejected_before_authentication(
+    bounded_login_client: tuple[httpx.AsyncClient, _CountingAuthBackend],
+    field: str,
+    value: str,
+) -> None:
+    client, backend = bounded_login_client
+    token = await _login_form_token(client)
+    data = {
+        "identifier": "admin@example.com",
+        "password": "wrong",
+        "login_csrf_token": token,
+    }
+    data[field] = value
+    response = await client.post("/auth/login", data=data)
+    assert response.status_code == 400
+    assert backend.authenticate_calls == 0
+
+
+async def test_login_field_count_is_bounded_before_authentication(
+    bounded_login_client: tuple[httpx.AsyncClient, _CountingAuthBackend],
+) -> None:
+    client, backend = bounded_login_client
+    token = await _login_form_token(client)
+    data = {
+        "identifier": "admin@example.com",
+        "password": "wrong",
+        "login_csrf_token": token,
+        **{f"extra_{index}": "x" for index in range(6)},
+    }
+    response = await client.post("/auth/login", data=data)
+    assert response.status_code == 400
+    assert backend.authenticate_calls == 0
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        {"upload": ("credentials.txt", b"secret")},
+        {"oversized": (None, b"x" * (64 * 1024 + 1))},
+    ],
+)
+async def test_login_multipart_files_and_oversized_parts_are_rejected(
+    bounded_login_client: tuple[httpx.AsyncClient, _CountingAuthBackend],
+    files: dict[str, tuple[str | None, bytes]],
+) -> None:
+    client, backend = bounded_login_client
+    token = await _login_form_token(client)
+    response = await client.post(
+        "/auth/login",
+        data={
+            "identifier": "admin@example.com",
+            "password": "wrong",
+            "login_csrf_token": token,
+        },
+        files=files,
+    )
+    assert response.status_code == 400
+    assert backend.authenticate_calls == 0
 
 
 async def test_login_page_renders_without_a_session(auth_client) -> None:

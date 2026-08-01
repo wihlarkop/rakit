@@ -8,6 +8,7 @@ import hmac
 import secrets
 
 from rakit_core.auth import AuthBackend, SessionStore
+from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, RedirectResponse, Response
 from starlette.routing import Route
@@ -23,6 +24,49 @@ from .security.validation import TrustedProxyNetwork
 CSRF_HEADER_NAME = "x-csrf-token"
 CSRF_FORM_FIELD = "csrf_token"
 LOGIN_CSRF_FORM_FIELD = "login_csrf_token"
+_MAX_LOGIN_FIELDS = 8
+_MAX_LOGIN_IDENTIFIER_LENGTH = 320
+_MAX_LOGIN_PASSWORD_LENGTH = 1024
+_MAX_LOGIN_CSRF_LENGTH = 512
+_MAX_LOGIN_MULTIPART_PART_SIZE = 64 * 1024
+
+
+async def _parse_login_form(request: Request) -> tuple[str, str, str] | None:
+    try:
+        form = await request.form(
+            max_files=0,
+            max_fields=_MAX_LOGIN_FIELDS,
+            max_part_size=_MAX_LOGIN_MULTIPART_PART_SIZE,
+        )
+    except HTTPException:
+        return None
+
+    items = form.multi_items()
+    if len(items) > _MAX_LOGIN_FIELDS:
+        return None
+    if (
+        any(
+            sum(name == required for name, _ in items) != 1
+            for required in ("identifier", "password")
+        )
+        or sum(name == LOGIN_CSRF_FORM_FIELD for name, _ in items) > 1
+    ):
+        return None
+    identifier = form.get("identifier")
+    password = form.get("password")
+    csrf_token = form.get(LOGIN_CSRF_FORM_FIELD, "")
+    if not all(isinstance(value, str) for value in (identifier, password, csrf_token)):
+        return None
+    assert isinstance(identifier, str)
+    assert isinstance(password, str)
+    assert isinstance(csrf_token, str)
+    if (
+        len(identifier) > _MAX_LOGIN_IDENTIFIER_LENGTH
+        or len(password) > _MAX_LOGIN_PASSWORD_LENGTH
+        or len(csrf_token) > _MAX_LOGIN_CSRF_LENGTH
+    ):
+        return None
+    return identifier.strip(), password, csrf_token
 
 
 async def _submitted_csrf_token(request: Request) -> str | None:
@@ -112,15 +156,15 @@ def build_auth_routes(
         return _render_login(request, error=None)
 
     async def login_post(request: Request) -> Response:
-        form = await request.form()
-        identifier = str(form.get("identifier", "")).strip()
-        password = str(form.get("password", ""))
+        parsed_form = await _parse_login_form(request)
+        if parsed_form is None:
+            return PlainTextResponse(
+                "Invalid login form", status_code=400, headers={"Cache-Control": "no-store"}
+            )
+        identifier, password, submitted_login_csrf = parsed_form
         client_ip = resolve_client_ip(request, trusted_proxies)
 
-        submitted_login_csrf = form.get(LOGIN_CSRF_FORM_FIELD)
-        if not _verify_login_csrf(
-            request, str(submitted_login_csrf) if submitted_login_csrf is not None else None
-        ):
+        if not _verify_login_csrf(request, submitted_login_csrf):
             # Checked before the credentials are even looked at, so a
             # forged cross-site login POST never reaches the auth backend
             # (and never consumes a rate-limit slot for the victim's

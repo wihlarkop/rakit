@@ -23,6 +23,10 @@ _MAX_PORT = 65535
 _HOSTNAME_CHARACTERS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789-._")
 
 
+class _BodyTooLarge(BaseException):
+    """Private control signal that downstream exception middleware must not turn into 500."""
+
+
 def _effective_port(scheme: str, port: int | None) -> int:
     if port is not None:
         return port
@@ -171,11 +175,9 @@ class SecurityMiddleware:
     (untrusted host, oversized body, cross-origin mutation) never invoke the
     downstream app at all.
 
-    Bounded scope: the body-size limit only inspects a declared
-    `Content-Length` header, not actual bytes streamed -- a request that
-    omits `Content-Length` (chunked transfer) is not currently bounded by
-    this middleware. True streaming enforcement is deferred; see
-    `plan-03-design-decisions.md`.
+    The body-size limit validates Content-Length and independently counts
+    bytes delivered by the ASGI receive stream, so absent or dishonest
+    declarations cannot bypass it.
     """
 
     def __init__(
@@ -197,9 +199,13 @@ class SecurityMiddleware:
             return
 
         request = Request(scope, receive=receive)
+        response_started = False
+        received_size = 0
 
         async def send_with_security_headers(message: MutableMapping[str, Any]) -> None:
+            nonlocal response_started
             if message["type"] == "http.response.start":
+                response_started = True
                 existing = {name.decode("latin-1").lower() for name, _ in message["headers"]}
                 extra: list[tuple[bytes, bytes]] = []
 
@@ -273,16 +279,37 @@ class SecurityMiddleware:
                     )
                     return
 
-        content_length = request.headers.get("content-length")
-        if content_length is not None:
-            try:
-                declared_size = int(content_length)
-            except ValueError:
-                declared_size = None
-            if declared_size is not None and declared_size > self._max_body_size:
+        content_lengths = [
+            value for name, value in scope.get("headers", ()) if name.lower() == b"content-length"
+        ]
+        invalid_content_length = len(content_lengths) > 1
+        declared_size: int | None = None
+        if len(content_lengths) == 1:
+            raw_length = content_lengths[0]
+            invalid_content_length = not raw_length.isdigit()
+            if not invalid_content_length:
+                declared_size = int(raw_length)
+        if invalid_content_length or (
+            declared_size is not None and declared_size > self._max_body_size
+        ):
+            await PlainTextResponse("Request entity too large", status_code=413)(
+                scope, receive, send_with_security_headers
+            )
+            return
+
+        async def limited_receive() -> MutableMapping[str, Any]:
+            nonlocal received_size
+            message = await receive()
+            if message["type"] == "http.request":
+                received_size += len(message.get("body", b""))
+                if received_size > self._max_body_size:
+                    raise _BodyTooLarge
+            return message
+
+        try:
+            await self.app(scope, limited_receive, send_with_security_headers)
+        except _BodyTooLarge:
+            if not response_started:
                 await PlainTextResponse("Request entity too large", status_code=413)(
                     scope, receive, send_with_security_headers
                 )
-                return
-
-        await self.app(scope, receive, send_with_security_headers)
