@@ -238,7 +238,30 @@ class SecurityMiddleware:
         # isn't allowed are both 400: the request line is unusable either
         # way, and distinguishing them in the response would only tell a
         # prober which of the two it hit.
-        authority = parse_authority(request.headers.get("host") or "")
+        raw_headers = scope.get("headers", ())
+
+        def singleton_values(name: bytes) -> list[str]:
+            return [
+                value.decode("latin-1")
+                for raw_name, value in raw_headers
+                if raw_name.lower() == name
+            ]
+
+        host_values = singleton_values(b"host")
+        origin_values = singleton_values(b"origin")
+        referer_values = singleton_values(b"referer")
+        if len(host_values) != 1:
+            await PlainTextResponse("Invalid host header", status_code=400)(
+                scope, receive, send_with_security_headers
+            )
+            return
+        if len(origin_values) > 1 or len(referer_values) > 1:
+            await PlainTextResponse("Invalid request origin", status_code=403)(
+                scope, receive, send_with_security_headers
+            )
+            return
+
+        authority = parse_authority(host_values[0])
         if authority is None or authority[0] not in self._allowed_hosts:
             await PlainTextResponse("Invalid host header", status_code=400)(
                 scope, receive, send_with_security_headers
@@ -246,9 +269,21 @@ class SecurityMiddleware:
             return
 
         if request.method in _UNSAFE_METHODS:
-            raw_origin = request.headers.get("origin")
-            source = raw_origin if raw_origin is not None else request.headers.get("referer")
-            if source is not None:
+            request_scheme = request.url.scheme.lower()
+            host, port = authority
+            request_origin = (
+                (request_scheme, host, _effective_port(request_scheme, port))
+                if request_scheme in _ORIGIN_SCHEMES
+                else None
+            )
+            sources = (
+                (origin_values[0], False) if origin_values else None,
+                (referer_values[0], True) if referer_values else None,
+            )
+            for source_entry in sources:
+                if source_entry is None:
+                    continue
+                source, allow_path = source_entry
                 # A *present* Origin/Referer that doesn't resolve to a
                 # canonical origin at all (a literal "null" from a
                 # sandboxed iframe, or a malformed/scheme-less value) is
@@ -264,17 +299,7 @@ class SecurityMiddleware:
                 # matching the hostname but differing in scheme or port
                 # (e.g. https://localhost:4443 against a plain
                 # http://localhost request) must still be rejected.
-                source_origin = _parse_origin(source, allow_path=raw_origin is None)
-                # Built from the already-validated Host authority rather
-                # than `request.url.hostname`/`.port`, which re-parse the
-                # raw header and raise on malformed input.
-                host, port = authority
-                request_scheme = request.url.scheme.lower()
-                request_origin = (
-                    (request_scheme, host, _effective_port(request_scheme, port))
-                    if request_scheme in _ORIGIN_SCHEMES
-                    else None
-                )
+                source_origin = _parse_origin(source, allow_path=allow_path)
                 if source_origin is None or source_origin != request_origin:
                     await PlainTextResponse("Invalid request origin", status_code=403)(
                         scope, receive, send_with_security_headers
@@ -282,7 +307,7 @@ class SecurityMiddleware:
                     return
 
         content_lengths = [
-            value for name, value in scope.get("headers", ()) if name.lower() == b"content-length"
+            value for name, value in raw_headers if name.lower() == b"content-length"
         ]
         invalid_content_length = len(content_lengths) > 1
         declared_size: int | None = None
