@@ -35,7 +35,11 @@ from .security.authentication import (
 from .security.csrf import CsrfService
 from .security.middleware import SecurityMiddleware
 from .security.rate_limit import LoginRateLimiter, RateLimiter
-from .security.validation import validate_production_config, validate_rate_limiter_for_production
+from .security.validation import (
+    parse_trusted_proxy_networks,
+    validate_production_config,
+    validate_rate_limiter_for_production,
+)
 
 _FIELD_POLICY_NAMES = (
     "list_fields",
@@ -139,7 +143,10 @@ class Admin:
             debug=debug,
             security=security_config,
         )
-        validate_production_config(self.config)
+        self._trusted_proxy_networks = parse_trusted_proxy_networks(
+            self.config.security.trusted_proxies
+        )
+        validate_production_config(self.config, trusted_proxy_networks=self._trusted_proxy_networks)
         if (auth_backend is None) != (session_store is None):
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
@@ -411,7 +418,7 @@ class Admin:
                 templates=templates,
                 admin_id=self.config.admin_id,
                 secure_cookies=not self.config.debug,
-                trusted_proxies=self.config.security.trusted_proxies,
+                trusted_proxies=self._trusted_proxy_networks,
             )
             for route in auth_routes:
                 app.routes.append(route)

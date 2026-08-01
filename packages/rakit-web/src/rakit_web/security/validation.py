@@ -1,5 +1,6 @@
 import inspect
 import ipaddress
+from collections.abc import Iterable
 
 from rakit_core.config import RakitConfig
 from rakit_core.errors import ErrorCode, RakitError
@@ -15,6 +16,8 @@ _MAX_TRUSTED_PROXY_ADDRESSES = 2**16
 # than every key derived from it can actually provide.
 _MIN_SECRET_BYTES = 32
 
+TrustedProxyNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
+
 
 def _invalid_production_config(reason: str, **details: object) -> RakitError:
     return RakitError(
@@ -25,7 +28,22 @@ def _invalid_production_config(reason: str, **details: object) -> RakitError:
     )
 
 
-def validate_production_config(config: RakitConfig) -> None:
+def parse_trusted_proxy_networks(cidrs: Iterable[str]) -> tuple[TrustedProxyNetwork, ...]:
+    """Parse trusted proxy CIDRs once, before any request can be served."""
+    networks: list[TrustedProxyNetwork] = []
+    for cidr in cidrs:
+        try:
+            networks.append(ipaddress.ip_network(cidr, strict=False))
+        except ValueError as error:
+            raise _invalid_production_config("invalid_trusted_proxy") from error
+    return tuple(networks)
+
+
+def validate_production_config(
+    config: RakitConfig,
+    *,
+    trusted_proxy_networks: tuple[TrustedProxyNetwork, ...] | None = None,
+) -> None:
     """Fail closed at compile time for dangerous production settings.
 
     Only runs when `config.debug` is False. `RakitConfig` itself already
@@ -34,14 +52,18 @@ def validate_production_config(config: RakitConfig) -> None:
     depend on values a bare model validator on `RakitConfig` cannot express
     without duplicating `rakit-web`'s own security-header/CSP knowledge.
     """
+    networks = (
+        parse_trusted_proxy_networks(config.security.trusted_proxies)
+        if trusted_proxy_networks is None
+        else trusted_proxy_networks
+    )
     if config.debug:
         return
     if "*" in config.security.allowed_hosts:
         raise _invalid_production_config("wildcard_allowed_host")
     if not config.security.content_security_policy_enabled:
         raise _invalid_production_config("content_security_policy_disabled")
-    for cidr in config.security.trusted_proxies:
-        network = ipaddress.ip_network(cidr, strict=False)
+    for cidr, network in zip(config.security.trusted_proxies, networks, strict=True):
         if network.num_addresses > _MAX_TRUSTED_PROXY_ADDRESSES:
             raise _invalid_production_config("overbroad_trusted_proxy", cidr=cidr)
     # `RakitConfig.require_production_secret` already guarantees a secret is

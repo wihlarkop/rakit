@@ -26,6 +26,17 @@ class _TestRateLimiter(LoginRateLimiter):
     production_safe = True
 
 
+class _CapturingRateLimiter:
+    production_safe = True
+
+    def __init__(self) -> None:
+        self.client_ips: list[str] = []
+
+    def check(self, *, admin_id: str, identifier: str, client_ip: str) -> bool:
+        self.client_ips.append(client_ip)
+        return True
+
+
 class _LifespanDriver:
     """Local copy of conftest.py's LifespanDriver: the tests directory is
     not a package (no __init__.py), so it cannot be imported across test
@@ -162,6 +173,7 @@ async def _login(
     prefix: str = "",
     identifier: str = "admin@example.com",
     password: str = "correct-password",
+    headers: dict[str, str] | None = None,
 ) -> httpx.Response:
     """Fetch the login page to obtain a pre-session CSRF token, then submit
     it with the credentials -- the flow a real browser performs. Login
@@ -178,6 +190,7 @@ async def _login(
             "login_csrf_token": token,
         },
         follow_redirects=False,
+        headers=headers,
     )
 
 
@@ -318,6 +331,33 @@ async def test_repeated_failed_logins_are_rate_limited(auth_client) -> None:
 
     limited = await _login(auth_client, password="wrong")
     assert limited.status_code == 429
+
+
+async def test_production_limiter_receives_canonical_client_ip_from_trusted_chain() -> None:
+    limiter = _CapturingRateLimiter()
+    admin = Admin(
+        admin_id="operations",
+        title="Operations",
+        debug=False,
+        secret_key=SecretValue("x" * 32),
+        auth_backend=FakeAuthBackend(),
+        session_store=FakeSessionStore(),
+        login_rate_limiter=limiter,
+        trusted_proxies=("127.0.0.0/24",),
+    )
+    app = admin.asgi()
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        _LifespanDriver(app),
+        httpx.AsyncClient(transport=transport, base_url="http://localhost") as client,
+    ):
+        response = await _login(
+            client,
+            password="wrong",
+            headers={"x-forwarded-for": "2001:db8:0:0:0:0:0:1"},
+        )
+    assert response.status_code == 401
+    assert limiter.client_ips == ["2001:db8::1"]
 
 
 async def test_login_response_is_not_cached() -> None:

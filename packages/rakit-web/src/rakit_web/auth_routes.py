@@ -18,6 +18,7 @@ from .security.cookies import CSRF_COOKIE_NAME, LOGIN_CSRF_COOKIE_NAME, SESSION_
 from .security.csrf import CsrfService
 from .security.middleware import resolve_client_ip
 from .security.rate_limit import RateLimiter
+from .security.validation import TrustedProxyNetwork
 
 CSRF_HEADER_NAME = "x-csrf-token"
 CSRF_FORM_FIELD = "csrf_token"
@@ -78,7 +79,7 @@ def build_auth_routes(
     templates: Jinja2Templates,
     admin_id: str,
     secure_cookies: bool,
-    trusted_proxies: tuple[str, ...] = (),
+    trusted_proxies: tuple[TrustedProxyNetwork, ...] = (),
 ) -> list[Route]:
     def _render_login(request: Request, *, error: str | None, status_code: int = 200) -> Response:
         """Render the login page, always issuing a fresh pre-session CSRF
