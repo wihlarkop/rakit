@@ -69,9 +69,13 @@ class SQLAlchemySessionStore:
     """Opaque, server-side session storage. Only ever persists
     `sha256(raw_token)` -- the raw token exists solely as this class's
     return value and, at the web layer, a cookie value. Never logged, never
-    stored."""
+    stored.
 
-    production_safe = True
+    Production safety is instance-specific. An unbound factory cannot store
+    sessions, and every SQLite URL is treated as development-only: in-memory
+    databases are process-local, while file-backed SQLite does not provide the
+    shared multi-worker deployment semantics this security contract promises.
+    """
 
     def __init__(
         self,
@@ -84,6 +88,10 @@ class SQLAlchemySessionStore:
         self._session_factory = session_factory
         self._idle_timeout = idle_timeout
         self._absolute_timeout = absolute_timeout
+        bind = session_factory.kw.get("bind")
+        dialect = getattr(bind, "dialect", None)
+        dialect_name = getattr(dialect, "name", None)
+        self.production_safe = isinstance(dialect_name, str) and dialect_name != "sqlite"
 
     async def create(self, principal: Principal) -> tuple[str, SessionRecord]:
         if principal.subject_id is None:

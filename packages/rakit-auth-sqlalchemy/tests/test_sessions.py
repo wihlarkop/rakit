@@ -1,12 +1,14 @@
 import asyncio
 from collections.abc import AsyncIterator
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 from rakit_auth_sqlalchemy.models import Base, User
 from rakit_auth_sqlalchemy.sessions import SQLAlchemySessionStore
 from rakit_core.auth import Principal
 from rakit_core.errors import RakitError
+from rakit_web.security.validation import validate_session_store_for_production
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -30,10 +32,45 @@ async def test_create_returns_raw_token_and_record(session_factory) -> None:
 
     raw_token, record = await store.create(principal)
 
-    assert store.production_safe is True
+    assert store.production_safe is False
 
     assert raw_token
     assert record.subject_id == "1"
+
+
+def test_unbound_session_factory_is_not_production_safe() -> None:
+    store = SQLAlchemySessionStore(async_sessionmaker())
+    assert store.production_safe is False
+    with pytest.raises(RakitError) as exc_info:
+        validate_session_store_for_production(store, debug=False, auth_enabled=True)
+    assert exc_info.value.details["reason"] == "development_only_session_store"
+
+
+async def test_sqlite_file_session_factory_is_not_claimed_as_production_shared(tmp_path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'sessions.db'}")
+    store = SQLAlchemySessionStore(async_sessionmaker(engine))
+    assert store.production_safe is False
+    await engine.dispose()
+
+
+async def test_debug_mode_accepts_sqlite_development_store() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    store = SQLAlchemySessionStore(async_sessionmaker(engine))
+    validate_session_store_for_production(store, debug=True, auth_enabled=True)
+    await engine.dispose()
+
+
+def test_bound_shared_database_store_is_production_safe() -> None:
+    class _SharedDialect:
+        name = "postgresql"
+
+    class _SharedBind:
+        dialect = _SharedDialect()
+
+    factory = SimpleNamespace(kw={"bind": _SharedBind()})
+    store = SQLAlchemySessionStore(factory)  # ty: ignore[invalid-argument-type]
+    assert store.production_safe is True
+    validate_session_store_for_production(store, debug=False, auth_enabled=True)
 
 
 async def test_raw_token_never_stored_in_database(session_factory) -> None:

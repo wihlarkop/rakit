@@ -145,7 +145,7 @@ def _build_admin(session_factory) -> Admin:
     admin = Admin(
         admin_id="operations",
         title="Operations",
-        debug=False,
+        debug=True,
         secret_key=SecretValue("x" * 32),
         auth_backend=auth.auth_backend,
         session_store=auth.session_store,

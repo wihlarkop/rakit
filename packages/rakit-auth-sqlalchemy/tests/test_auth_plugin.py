@@ -14,10 +14,13 @@ def _session_factory() -> async_sessionmaker:
 
 
 def test_plugin_composes_a_matching_backend_and_session_store() -> None:
-    plugin = SQLAlchemyAuthPlugin(_session_factory())
+    factory = _session_factory()
+    plugin = SQLAlchemyAuthPlugin(factory)
 
     assert isinstance(plugin.auth_backend, SQLAlchemyAuthBackend)
     assert isinstance(plugin.session_store, SQLAlchemySessionStore)
+    assert plugin.auth_backend._session_factory is factory
+    assert plugin.session_store._session_factory is factory
 
 
 def test_plugin_accepts_a_custom_password_hasher() -> None:
