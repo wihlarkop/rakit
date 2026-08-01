@@ -990,3 +990,57 @@ Rewritten against a file-backed database, where each session gets its own
 connection, and tightened to assert exactly one winner and one loser rejected
 as revoked. An "at most" assertion on a success path is worth distrusting on
 sight: it cannot distinguish correct exclusion from total failure.
+
+## 38. Auth migrations refuse every downgrade (round 4)
+
+Plan 03's forward-only requirement applies to migration execution, not merely
+to the documented operator workflow. The initial revision therefore raises a
+stable `RuntimeError` immediately from `downgrade()` and provides no destructive
+escape hatch. Installed-wheel coverage seeds every auth table alongside an
+independent host Alembic history and proves the failed command preserves both
+revision histories, all tables, and every row.
+
+## 39. Trusted proxy resolution starts at the direct peer (round 4)
+
+Trusted CIDRs are parsed once while constructing `Admin`; invalid networks are
+configuration errors in every mode. Resolution appends the canonical direct
+peer to the forwarded chain and walks right-to-left, discarding only trusted
+proxy hops before selecting the nearest untrusted address. An untrusted direct
+peer makes the entire header irrelevant. Any malformed forwarded hop fails
+closed to the canonical direct-peer bucket rather than allowing attacker text
+to become a rate-limit key.
+
+## 40. Request limits count ASGI bytes, not declarations (round 4)
+
+`Content-Length` is an early consistency check, not the body-limit mechanism.
+Security middleware wraps `receive`, counts cumulative `http.request` bytes,
+and aborts at the first excess byte. This covers chunked and lying-length
+requests while retaining security headers, disconnect behavior, and the
+single-response rule after downstream response start. Login parsing adds
+bounded field count and value/part sizes so authentication never consumes an
+unbounded form even below the global byte ceiling.
+
+## 41. Session lifetime validity is a construction-time invariant (round 4)
+
+Idle and absolute durations must be positive timedeltas, idle cannot exceed
+absolute, and absolute cannot exceed the public `MAX_TOKEN_TTL`. The token
+ceiling now has one public definition in `rakit_core.crypto`; consumers no
+longer copy a private implementation value. As a transactional backstop, a
+session created just before CSRF issuance is revoked if issuance raises.
+
+## 42. Production session stores explicitly attest shared safety (round 4)
+
+`SessionStore` exposes `production_safe`; the SQLAlchemy implementation sets it
+to exactly `True`. Auth-enabled production construction rejects missing,
+truthy-but-not-boolean, development-only, or structurally incompatible stores
+before routes serve requests. Debug and no-auth modes retain their previous
+behavior. This is deployment-capability validation, not a Plan 04 permission
+system.
+
+## 43. Installed-artifact tests may resolve non-Rakit dependencies (round 4)
+
+The artifact tests still build and install unpublished Rakit distributions
+only from their local `--find-links` directory. They no longer add `--offline`,
+because a fresh uv release may lack cached registry metadata for unchanged
+third-party dependencies. This does not weaken the local-wheel assertion and
+avoids making correctness depend on the machine's incidental uv cache state.

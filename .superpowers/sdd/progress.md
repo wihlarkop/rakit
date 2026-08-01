@@ -394,3 +394,27 @@ Plan 03 round-2 independent review: "Ready to merge: Yes", zero Critical at
   specify).
 
   Full suite 650/650 passing, ruff format/check and ty check clean.
+
+Plan 03 round-4 external review fixes are implemented in six focused product
+commits plus one installed-artifact regression commit:
+
+- `702f05e`: the initial auth migration is genuinely forward-only; downgrade
+  refuses before altering revision state, tables, or data.
+- `1a7d758`: trusted proxy CIDRs are compiled once and client IP resolution
+  validates and canonicalizes every hop while walking the chain from the
+  trusted right-hand edge.
+- `276f428`: security middleware enforces the body limit on cumulative ASGI
+  bytes and login parsing has bounded fields, values, and multipart parts.
+- `4881eca`: session lifetimes are validated during construction against the
+  public token TTL ceiling, and failed CSRF issuance revokes its new session.
+- `aa962d4`: production auth requires a session store whose safety declaration
+  is exactly `True` and whose required operations have compatible signatures.
+- `9d372d2`: migration tests no longer disable Rakit log capture, and installed
+  artifact tests resolve third-party dependencies while still selecting local
+  unpublished Rakit wheels through `--find-links`.
+- `b37e751`: the installed-wheel migration test seeds every auth relation and
+  proves downgrade refusal preserves both Rakit and host Alembic histories.
+
+Focused and affected-package suites passed after each change. Final detached
+whole-workspace and installed-artifact verification is pending the fresh
+independent round-4 review.
