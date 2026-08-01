@@ -84,6 +84,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise RuntimeError(
-        "Rakit auth migrations are forward-only; downgrade is not supported."
-    )
+    raise RuntimeError("Rakit auth migrations are forward-only; downgrade is not supported.")

@@ -443,9 +443,7 @@ def test_auth_migration_history_coexists_with_a_host_alembic_version_table(
         "VALUES (1, 'users.read', 'Read users', 'users', 0)"
     )
     conn.execute("INSERT INTO rakit_auth_user_roles (user_id, role_id) VALUES (1, 1)")
-    conn.execute(
-        "INSERT INTO rakit_auth_role_permissions (role_id, permission_id) VALUES (1, 1)"
-    )
+    conn.execute("INSERT INTO rakit_auth_role_permissions (role_id, permission_id) VALUES (1, 1)")
     conn.execute(
         "INSERT INTO rakit_auth_sessions "
         "(id, token_hash, user_id, created_at, last_seen_at, idle_expires_at, "
