@@ -84,9 +84,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_table("rakit_auth_sessions")
-    op.drop_table("rakit_auth_role_permissions")
-    op.drop_table("rakit_auth_user_roles")
-    op.drop_table("rakit_auth_permissions")
-    op.drop_table("rakit_auth_roles")
-    op.drop_table("rakit_auth_users")
+    raise RuntimeError(
+        "Rakit auth migrations are forward-only; downgrade is not supported."
+    )
