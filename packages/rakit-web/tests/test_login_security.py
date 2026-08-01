@@ -498,7 +498,7 @@ async def test_async_production_limiter_is_awaited_once_and_controls_login(
         secret_key=SecretValue("x" * 32),
         auth_backend=backend,
         session_store=FakeSessionStore(),
-        login_rate_limiter=limiter,
+        login_rate_limiter=limiter,  # ty: ignore[invalid-argument-type]
     )
     app = admin.asgi()
     async with (
@@ -523,7 +523,7 @@ async def test_non_boolean_limiter_result_fails_closed_before_authentication() -
         secret_key=SecretValue("x" * 32),
         auth_backend=backend,
         session_store=FakeSessionStore(),
-        login_rate_limiter=limiter,
+        login_rate_limiter=limiter,  # ty: ignore[invalid-argument-type]
     )
     app = admin.asgi()
     async with (

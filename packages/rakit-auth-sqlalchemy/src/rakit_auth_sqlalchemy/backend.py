@@ -1,6 +1,7 @@
 import secrets
 from datetime import UTC, datetime
 
+import anyio
 from rakit_core.auth import Principal, normalize_identifier
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -34,6 +35,7 @@ class SQLAlchemyAuthBackend:
         self._session_factory = session_factory
         self._password_hasher = password_hasher or Argon2PasswordHasher()
         self._dummy_hash: str | None = None
+        self._dummy_hash_lock = anyio.Lock()
 
     async def _get_dummy_hash(self) -> str:
         # Computed once, lazily, and cached -- every subsequent "unknown or
@@ -42,7 +44,9 @@ class SQLAlchemyAuthBackend:
         # whether the identifier exists or is merely inactive. The dummy
         # password itself is arbitrary and never used for anything else.
         if self._dummy_hash is None:
-            self._dummy_hash = await self._password_hasher.hash(secrets.token_urlsafe(32))
+            async with self._dummy_hash_lock:
+                if self._dummy_hash is None:
+                    self._dummy_hash = await self._password_hasher.hash(secrets.token_urlsafe(32))
         return self._dummy_hash
 
     @staticmethod

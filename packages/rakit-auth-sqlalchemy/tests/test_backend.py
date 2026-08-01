@@ -1,3 +1,4 @@
+import asyncio
 import time
 from collections.abc import AsyncIterator
 
@@ -169,6 +170,68 @@ async def test_unknown_and_inactive_identifiers_take_similar_time_to_reject(
     # short-circuits to near-zero while the other actually hashes.
     assert unknown_elapsed > 0.001
     assert inactive_elapsed > 0.001
+
+
+class _CountingDummyHasher:
+    def __init__(self, *, failures: int = 0) -> None:
+        self.hash_calls = 0
+        self.verify_calls = 0
+        self._failures = failures
+
+    async def hash(self, password: str) -> str:
+        self.hash_calls += 1
+        await asyncio.sleep(0.01)
+        if self.hash_calls <= self._failures:
+            raise RuntimeError("synthetic hash failure")
+        return "completed-dummy-hash"
+
+    async def verify(self, password: str, encoded: str) -> bool:
+        self.verify_calls += 1
+        return False
+
+
+async def test_dummy_hash_initialization_is_single_flight_for_fifty_callers(
+    session_factory,
+) -> None:
+    hasher = _CountingDummyHasher()
+    backend = SQLAlchemyAuthBackend(
+        session_factory,
+        password_hasher=hasher,  # ty: ignore[invalid-argument-type]
+    )
+
+    hashes = await asyncio.gather(*(backend._get_dummy_hash() for _ in range(50)))
+
+    assert hasher.hash_calls == 1
+    assert hashes == ["completed-dummy-hash"] * 50
+
+
+async def test_failed_dummy_hash_initialization_can_be_retried(session_factory) -> None:
+    hasher = _CountingDummyHasher(failures=1)
+    backend = SQLAlchemyAuthBackend(
+        session_factory,
+        password_hasher=hasher,  # ty: ignore[invalid-argument-type]
+    )
+
+    with pytest.raises(RuntimeError, match="synthetic hash failure"):
+        await backend._get_dummy_hash()
+    assert await backend._get_dummy_hash() == "completed-dummy-hash"
+    assert hasher.hash_calls == 2
+
+
+async def test_concurrent_cold_unknown_users_share_one_dummy_hash(session_factory) -> None:
+    hasher = _CountingDummyHasher()
+    backend = SQLAlchemyAuthBackend(
+        session_factory,
+        password_hasher=hasher,  # ty: ignore[invalid-argument-type]
+    )
+
+    results = await asyncio.gather(
+        *(backend.authenticate(f"missing-{index}@example.com", "wrong") for index in range(50))
+    )
+
+    assert results == [None] * 50
+    assert hasher.hash_calls == 1
+    assert hasher.verify_calls == 50
 
 
 async def test_resolve_principal_returns_current_state_for_active_user(session_factory) -> None:
