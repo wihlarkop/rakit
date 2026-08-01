@@ -454,3 +454,9 @@ derives its read-only `production_safe` property from the current bind on each
 validation, and the core protocol models that property as read-only. A
 reconfiguration from a shared async engine to SQLite is proven to fail the
 production validator.
+
+The same review found one further Important failure oracle: dummy-hash
+initialization errors affected only unknown/inactive identifiers. Authentication
+now requires successful dummy initialization before querying any identifier, so
+a persistent/transient initializer failure has the same external outcome for
+known and unknown accounts while retaining retry-after-failure behavior.

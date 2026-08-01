@@ -1074,6 +1074,10 @@ behind its async method and performs no blocking I/O.
 An AnyIO lock guards the second cache check and awaited hash. Only success is
 cached, so concurrent cold requests share one completed hash while an exception
 releases the lock for a later retry. No blocking thread lock spans an await.
+Dummy initialization also precedes every credential lookup outcome. If the
+initializer is temporarily unavailable, known and unknown identifiers fail in
+the same way instead of restoring a 500-versus-401 enumeration signal; after a
+successful retry, normal verification resumes.
 
 ## 47. Trusted chains resolve lazily without proxy fallback (round 5)
 

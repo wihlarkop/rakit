@@ -218,6 +218,22 @@ async def test_failed_dummy_hash_initialization_can_be_retried(session_factory) 
     assert hasher.hash_calls == 2
 
 
+async def test_dummy_hash_failure_does_not_reveal_whether_identifier_exists(
+    session_factory,
+) -> None:
+    await _seed_user(session_factory, email="known@example.com")
+    hasher = _CountingDummyHasher(failures=10)
+    backend = SQLAlchemyAuthBackend(
+        session_factory,
+        password_hasher=hasher,  # ty: ignore[invalid-argument-type]
+    )
+
+    with pytest.raises(RuntimeError, match="synthetic hash failure"):
+        await backend.authenticate("missing@example.com", "wrong")
+    with pytest.raises(RuntimeError, match="synthetic hash failure"):
+        await backend.authenticate("known@example.com", "wrong")
+
+
 async def test_concurrent_cold_unknown_users_share_one_dummy_hash(session_factory) -> None:
     hasher = _CountingDummyHasher()
     backend = SQLAlchemyAuthBackend(

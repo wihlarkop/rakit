@@ -67,6 +67,7 @@ class SQLAlchemyAuthBackend:
 
     async def authenticate(self, identifier: str, password: str) -> Principal | None:
         normalized = _normalize_identifier(identifier)
+        dummy_hash = await self._get_dummy_hash()
         async with self._session_factory() as session:
             user = (
                 await session.execute(
@@ -77,7 +78,7 @@ class SQLAlchemyAuthBackend:
             ).scalar_one_or_none()
 
             if user is None or not user.is_active:
-                await self._password_hasher.verify(password, await self._get_dummy_hash())
+                await self._password_hasher.verify(password, dummy_hash)
                 return None
 
             if not await self._password_hasher.verify(password, user.password_hash):
