@@ -1091,6 +1091,11 @@ non-SQLite shared-database dialect is eligible. One plugin factory object is
 passed to both backend and store. Eligibility also requires an actual
 SQLAlchemy `AsyncEngine` or `AsyncConnection`; an arbitrary object that merely
 exposes a dialect-shaped attribute cannot self-upgrade the built-in store.
+The capability is computed from the factory's current bind rather than cached:
+`async_sessionmaker.configure()` is mutable, so a construction-time snapshot
+could remain true after rebinding to SQLite or no bind. The core protocol uses
+a read-only property, allowing built-in adapters to expose a live capability
+while custom stores may still satisfy it with a stable boolean attribute.
 
 ## 49. Security singleton cardinality uses raw ASGI headers (round 5)
 

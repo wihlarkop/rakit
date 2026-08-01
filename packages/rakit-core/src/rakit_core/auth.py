@@ -88,7 +88,10 @@ class SessionStore(Protocol):
     """Server-side opaque session storage. Implementations persist only a
     hash of the raw browser token, never the token itself."""
 
-    production_safe: bool
+    @property
+    def production_safe(self) -> bool:
+        """Whether the store's current deployment configuration is shared-safe."""
+        ...
 
     async def create(self, principal: Principal) -> tuple[str, SessionRecord]:
         """Create a new session for `principal`, returning `(raw_token, record)`."""

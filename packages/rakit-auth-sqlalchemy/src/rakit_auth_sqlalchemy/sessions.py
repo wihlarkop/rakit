@@ -88,10 +88,13 @@ class SQLAlchemySessionStore:
         self._session_factory = session_factory
         self._idle_timeout = idle_timeout
         self._absolute_timeout = absolute_timeout
-        bind = session_factory.kw.get("bind")
+
+    @property
+    def production_safe(self) -> bool:
+        bind = self._session_factory.kw.get("bind")
         dialect = getattr(bind, "dialect", None)
         dialect_name = getattr(dialect, "name", None)
-        self.production_safe = (
+        return (
             isinstance(bind, AsyncEngine | AsyncConnection)
             and isinstance(dialect_name, str)
             and dialect_name != "sqlite"

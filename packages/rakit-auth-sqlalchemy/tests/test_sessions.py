@@ -85,6 +85,24 @@ def test_dialect_shaped_non_engine_does_not_claim_production_safety() -> None:
     assert store.production_safe is False
 
 
+async def test_production_safety_tracks_session_factory_reconfiguration() -> None:
+    class _SharedDialect:
+        name = "postgresql"
+
+    shared_engine = Mock(spec=AsyncEngine)
+    shared_engine.dialect = _SharedDialect()
+    factory = async_sessionmaker(bind=shared_engine)
+    store = SQLAlchemySessionStore(factory)
+    assert store.production_safe is True
+
+    sqlite_engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    factory.configure(bind=sqlite_engine)
+    assert store.production_safe is False
+    with pytest.raises(RakitError):
+        validate_session_store_for_production(store, debug=False, auth_enabled=True)
+    await sqlite_engine.dispose()
+
+
 async def test_raw_token_never_stored_in_database(session_factory) -> None:
     store = SQLAlchemySessionStore(session_factory)
     principal = Principal(subject_id="1", authenticated=True)

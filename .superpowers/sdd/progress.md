@@ -447,3 +447,10 @@ Plan 03 round-5 external-review fixes are implemented with TDD:
 
 The source-worktree gate passes 974 tests with Ruff format/check and ty clean.
 Fresh review and detached installed-artifact verification remain pending.
+
+The independent review then identified a stale-capability Important: an
+`async_sessionmaker` can be rebound after store construction. The store now
+derives its read-only `production_safe` property from the current bind on each
+validation, and the core protocol models that property as read-only. A
+reconfiguration from a shared async engine to SQLite is proven to fail the
+production validator.
