@@ -7,7 +7,8 @@ neither remains exactly as unauthenticated as before this module existed.
 import hmac
 import secrets
 
-from rakit_core.auth import AuthBackend, SessionStore
+from rakit_core.auth import AuthBackend, SessionStore, normalize_identifier
+from rakit_core.errors import ErrorCode, RakitError
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, RedirectResponse, Response
@@ -162,6 +163,7 @@ def build_auth_routes(
                 "Invalid login form", status_code=400, headers={"Cache-Control": "no-store"}
             )
         identifier, password, submitted_login_csrf = parsed_form
+        identifier = normalize_identifier(identifier)
         client_ip = resolve_client_ip(request, trusted_proxies)
 
         if not _verify_login_csrf(request, submitted_login_csrf):
@@ -173,7 +175,16 @@ def build_auth_routes(
                 "Invalid CSRF token", status_code=403, headers={"Cache-Control": "no-store"}
             )
 
-        if not rate_limiter.check(admin_id=admin_id, identifier=identifier, client_ip=client_ip):
+        limiter_result = await rate_limiter.check(
+            admin_id=admin_id, identifier=identifier, client_ip=client_ip
+        )
+        if not isinstance(limiter_result, bool):
+            raise RakitError(
+                code=ErrorCode.INTERNAL_ERROR,
+                message="Rate limiter returned an invalid result",
+                status_code=500,
+            )
+        if not limiter_result:
             return _render_login(
                 request, error="Too many attempts. Try again later.", status_code=429
             )

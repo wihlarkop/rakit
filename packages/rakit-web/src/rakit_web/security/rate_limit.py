@@ -36,7 +36,7 @@ class RateLimiter(Protocol):
 
     production_safe: bool
 
-    def check(self, *, admin_id: str, identifier: str, client_ip: str) -> bool: ...
+    async def check(self, *, admin_id: str, identifier: str, client_ip: str) -> bool: ...
 
 
 class LoginRateLimiter:
@@ -91,7 +91,7 @@ class LoginRateLimiter:
         self._attempts: OrderedDict[str, deque[float]] = OrderedDict()
         self._lock = threading.Lock()
 
-    def check(self, *, admin_id: str, identifier: str, client_ip: str) -> bool:
+    async def check(self, *, admin_id: str, identifier: str, client_ip: str) -> bool:
         """Record this attempt and return whether it is allowed.
 
         Every call (allowed or not) counts toward the window -- a denied

@@ -32,9 +32,21 @@ class _CapturingRateLimiter:
     def __init__(self) -> None:
         self.client_ips: list[str] = []
 
-    def check(self, *, admin_id: str, identifier: str, client_ip: str) -> bool:
+    async def check(self, *, admin_id: str, identifier: str, client_ip: str) -> bool:
         self.client_ips.append(client_ip)
         return True
+
+
+class _AsyncDecisionLimiter:
+    production_safe = True
+
+    def __init__(self, result: object) -> None:
+        self.result = result
+        self.calls: list[str] = []
+
+    async def check(self, *, admin_id: str, identifier: str, client_ip: str) -> object:
+        self.calls.append(identifier)
+        return self.result
 
 
 class _LifespanDriver:
@@ -471,6 +483,58 @@ async def test_repeated_failed_logins_are_rate_limited(auth_client) -> None:
 
     limited = await _login(auth_client, password="wrong")
     assert limited.status_code == 429
+
+
+@pytest.mark.parametrize(("decision", "status"), [(False, 429), (True, 401)])
+async def test_async_production_limiter_is_awaited_once_and_controls_login(
+    decision: bool, status: int
+) -> None:
+    limiter = _AsyncDecisionLimiter(decision)
+    backend = _CountingAuthBackend()
+    admin = Admin(
+        admin_id="operations",
+        title="Operations",
+        debug=False,
+        secret_key=SecretValue("x" * 32),
+        auth_backend=backend,
+        session_store=FakeSessionStore(),
+        login_rate_limiter=limiter,
+    )
+    app = admin.asgi()
+    async with (
+        _LifespanDriver(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+        ) as client,
+    ):
+        response = await _login(client, identifier="  Admin@Example.COM  ", password="wrong")
+    assert response.status_code == status
+    assert limiter.calls == ["admin@example.com"]
+    assert backend.authenticate_calls == int(decision)
+
+
+async def test_non_boolean_limiter_result_fails_closed_before_authentication() -> None:
+    limiter = _AsyncDecisionLimiter("yes")
+    backend = _CountingAuthBackend()
+    admin = Admin(
+        admin_id="operations",
+        title="Operations",
+        debug=False,
+        secret_key=SecretValue("x" * 32),
+        auth_backend=backend,
+        session_store=FakeSessionStore(),
+        login_rate_limiter=limiter,
+    )
+    app = admin.asgi()
+    async with (
+        _LifespanDriver(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+        ) as client,
+    ):
+        response = await _login(client)
+    assert response.status_code == 500
+    assert backend.authenticate_calls == 0
 
 
 async def test_production_limiter_receives_canonical_client_ip_from_trusted_chain() -> None:

@@ -1,3 +1,4 @@
+import asyncio
 import threading
 
 import pytest
@@ -6,56 +7,79 @@ from rakit_web.security.rate_limit import LoginRateLimiter, RateLimiter
 from rakit_web.security.validation import validate_rate_limiter_for_production
 
 
+def _sync_check(limiter: LoginRateLimiter, **kwargs: str) -> bool:
+    """Drive the public async contract from synchronous limiter unit tests."""
+    return asyncio.run(limiter.check(**kwargs))
+
+
 def test_allows_attempts_under_the_limit() -> None:
     limiter = LoginRateLimiter(max_attempts=3, window_seconds=60.0)
     for _ in range(3):
-        assert limiter.check(
-            admin_id="operations", identifier="ada@example.com", client_ip="1.1.1.1"
+        assert _sync_check(
+            limiter, admin_id="operations", identifier="ada@example.com", client_ip="1.1.1.1"
         )
 
 
 def test_denies_attempts_over_the_limit() -> None:
     limiter = LoginRateLimiter(max_attempts=3, window_seconds=60.0)
     for _ in range(3):
-        limiter.check(admin_id="operations", identifier="ada@example.com", client_ip="1.1.1.1")
-    assert not limiter.check(
-        admin_id="operations", identifier="ada@example.com", client_ip="1.1.1.1"
+        _sync_check(
+            limiter, admin_id="operations", identifier="ada@example.com", client_ip="1.1.1.1"
+        )
+    assert not _sync_check(
+        limiter, admin_id="operations", identifier="ada@example.com", client_ip="1.1.1.1"
     )
 
 
 def test_limits_are_scoped_per_identifier() -> None:
     limiter = LoginRateLimiter(max_attempts=1, window_seconds=60.0)
-    assert limiter.check(admin_id="operations", identifier="ada@example.com", client_ip="1.1.1.1")
-    assert not limiter.check(
-        admin_id="operations", identifier="ada@example.com", client_ip="1.1.1.1"
+    assert _sync_check(
+        limiter, admin_id="operations", identifier="ada@example.com", client_ip="1.1.1.1"
     )
-    assert limiter.check(admin_id="operations", identifier="grace@example.com", client_ip="1.1.1.1")
+    assert not _sync_check(
+        limiter, admin_id="operations", identifier="ada@example.com", client_ip="1.1.1.1"
+    )
+    assert _sync_check(
+        limiter, admin_id="operations", identifier="grace@example.com", client_ip="1.1.1.1"
+    )
 
 
 def test_limits_are_scoped_per_client_ip() -> None:
     limiter = LoginRateLimiter(max_attempts=1, window_seconds=60.0)
-    assert limiter.check(admin_id="operations", identifier="ada@example.com", client_ip="1.1.1.1")
-    assert not limiter.check(
-        admin_id="operations", identifier="ada@example.com", client_ip="1.1.1.1"
+    assert _sync_check(
+        limiter, admin_id="operations", identifier="ada@example.com", client_ip="1.1.1.1"
     )
-    assert limiter.check(admin_id="operations", identifier="ada@example.com", client_ip="2.2.2.2")
+    assert not _sync_check(
+        limiter, admin_id="operations", identifier="ada@example.com", client_ip="1.1.1.1"
+    )
+    assert _sync_check(
+        limiter, admin_id="operations", identifier="ada@example.com", client_ip="2.2.2.2"
+    )
 
 
 def test_limits_are_scoped_per_admin_id() -> None:
     limiter = LoginRateLimiter(max_attempts=1, window_seconds=60.0)
-    assert limiter.check(admin_id="operations", identifier="ada@example.com", client_ip="1.1.1.1")
-    assert limiter.check(admin_id="other-admin", identifier="ada@example.com", client_ip="1.1.1.1")
+    assert _sync_check(
+        limiter, admin_id="operations", identifier="ada@example.com", client_ip="1.1.1.1"
+    )
+    assert _sync_check(
+        limiter, admin_id="other-admin", identifier="ada@example.com", client_ip="1.1.1.1"
+    )
 
 
 def test_window_expiry_allows_new_attempts() -> None:
     clock = [0.0]
     limiter = LoginRateLimiter(max_attempts=1, window_seconds=10.0, clock=lambda: clock[0])
-    assert limiter.check(admin_id="operations", identifier="ada@example.com", client_ip="1.1.1.1")
-    assert not limiter.check(
-        admin_id="operations", identifier="ada@example.com", client_ip="1.1.1.1"
+    assert _sync_check(
+        limiter, admin_id="operations", identifier="ada@example.com", client_ip="1.1.1.1"
+    )
+    assert not _sync_check(
+        limiter, admin_id="operations", identifier="ada@example.com", client_ip="1.1.1.1"
     )
     clock[0] = 11.0
-    assert limiter.check(admin_id="operations", identifier="ada@example.com", client_ip="1.1.1.1")
+    assert _sync_check(
+        limiter, admin_id="operations", identifier="ada@example.com", client_ip="1.1.1.1"
+    )
 
 
 def test_development_limiter_is_not_production_safe_by_default() -> None:
@@ -95,8 +119,11 @@ def test_total_tracked_keys_are_bounded_via_lru_eviction() -> None:
     limiter = LoginRateLimiter(max_attempts=5, window_seconds=60.0, max_tracked_keys=100)
 
     for index in range(150):
-        limiter.check(
-            admin_id="operations", identifier=f"user-{index}@example.com", client_ip="1.1.1.1"
+        _sync_check(
+            limiter,
+            admin_id="operations",
+            identifier=f"user-{index}@example.com",
+            client_ip="1.1.1.1",
         )
 
     assert len(limiter._attempts) <= 100
@@ -105,18 +132,18 @@ def test_total_tracked_keys_are_bounded_via_lru_eviction() -> None:
 def test_lru_eviction_keeps_the_most_recently_used_key() -> None:
     limiter = LoginRateLimiter(max_attempts=5, window_seconds=60.0, max_tracked_keys=2)
 
-    limiter.check(admin_id="operations", identifier="a@example.com", client_ip="1.1.1.1")
-    limiter.check(admin_id="operations", identifier="b@example.com", client_ip="1.1.1.1")
+    _sync_check(limiter, admin_id="operations", identifier="a@example.com", client_ip="1.1.1.1")
+    _sync_check(limiter, admin_id="operations", identifier="b@example.com", client_ip="1.1.1.1")
     # Touch "a" again so it becomes the most-recently-used of the two.
-    limiter.check(admin_id="operations", identifier="a@example.com", client_ip="1.1.1.1")
+    _sync_check(limiter, admin_id="operations", identifier="a@example.com", client_ip="1.1.1.1")
     # A third distinct key must evict "b" (the least-recently-used), not "a".
-    limiter.check(admin_id="operations", identifier="c@example.com", client_ip="1.1.1.1")
+    _sync_check(limiter, admin_id="operations", identifier="c@example.com", client_ip="1.1.1.1")
 
     assert len(limiter._attempts) == 2
     # "a" was touched most recently before the eviction, so it survives;
     # its own limit bookkeeping (2 recorded attempts) is still intact.
-    remaining_result = limiter.check(
-        admin_id="operations", identifier="a@example.com", client_ip="1.1.1.1"
+    remaining_result = _sync_check(
+        limiter, admin_id="operations", identifier="a@example.com", client_ip="1.1.1.1"
     )
     assert remaining_result is True
 
@@ -130,8 +157,8 @@ def test_concurrent_checks_do_not_lose_or_corrupt_counts() -> None:
     lock = threading.Lock()
 
     def _hit() -> None:
-        allowed = limiter.check(
-            admin_id="operations", identifier="ada@example.com", client_ip="1.1.1.1"
+        allowed = _sync_check(
+            limiter, admin_id="operations", identifier="ada@example.com", client_ip="1.1.1.1"
         )
         with lock:
             results.append(allowed)
@@ -178,9 +205,9 @@ def test_identifier_normalization_is_shared_with_the_auth_backend() -> None:
 )
 def test_case_and_whitespace_variants_share_one_limiter_bucket(spelling: str) -> None:
     limiter = LoginRateLimiter(max_attempts=2, window_seconds=60.0)
-    assert limiter.check(admin_id="a", identifier="admin@example.com", client_ip="1.1.1.1")
-    assert limiter.check(admin_id="a", identifier="admin@example.com", client_ip="1.1.1.1")
-    assert not limiter.check(admin_id="a", identifier=spelling, client_ip="1.1.1.1")
+    assert _sync_check(limiter, admin_id="a", identifier="admin@example.com", client_ip="1.1.1.1")
+    assert _sync_check(limiter, admin_id="a", identifier="admin@example.com", client_ip="1.1.1.1")
+    assert not _sync_check(limiter, admin_id="a", identifier=spelling, client_ip="1.1.1.1")
 
 
 def test_per_key_storage_is_bounded_under_continuous_denied_attempts() -> None:
@@ -191,7 +218,7 @@ def test_per_key_storage_is_bounded_under_continuous_denied_attempts() -> None:
     clock = _ManualClock()
     limiter = LoginRateLimiter(max_attempts=3, window_seconds=60.0, clock=clock)
     for _ in range(5_000):
-        limiter.check(admin_id="a", identifier="victim@example.com", client_ip="1.1.1.1")
+        _sync_check(limiter, admin_id="a", identifier="victim@example.com", client_ip="1.1.1.1")
         clock.advance(0.01)
     (attempts,) = limiter._attempts.values()
     assert len(attempts) <= 3
@@ -204,20 +231,22 @@ def test_continuous_denied_attempts_never_reopen_the_window() -> None:
     clock = _ManualClock()
     limiter = LoginRateLimiter(max_attempts=3, window_seconds=60.0, clock=clock)
     for _ in range(3):
-        assert limiter.check(admin_id="a", identifier="v@example.com", client_ip="1.1.1.1")
+        assert _sync_check(limiter, admin_id="a", identifier="v@example.com", client_ip="1.1.1.1")
     for _ in range(600):  # ten window-lengths of continuous hammering
         clock.advance(1.0)
-        assert not limiter.check(admin_id="a", identifier="v@example.com", client_ip="1.1.1.1")
+        assert not _sync_check(
+            limiter, admin_id="a", identifier="v@example.com", client_ip="1.1.1.1"
+        )
 
 
 def test_the_window_reopens_once_attempts_actually_stop() -> None:
     clock = _ManualClock()
     limiter = LoginRateLimiter(max_attempts=3, window_seconds=60.0, clock=clock)
     for _ in range(3):
-        assert limiter.check(admin_id="a", identifier="v@example.com", client_ip="1.1.1.1")
-    assert not limiter.check(admin_id="a", identifier="v@example.com", client_ip="1.1.1.1")
+        assert _sync_check(limiter, admin_id="a", identifier="v@example.com", client_ip="1.1.1.1")
+    assert not _sync_check(limiter, admin_id="a", identifier="v@example.com", client_ip="1.1.1.1")
     clock.advance(61.0)
-    assert limiter.check(admin_id="a", identifier="v@example.com", client_ip="1.1.1.1")
+    assert _sync_check(limiter, admin_id="a", identifier="v@example.com", client_ip="1.1.1.1")
 
 
 def test_stale_keys_are_reclaimed_without_waiting_for_the_lru_bound() -> None:
@@ -230,18 +259,22 @@ def test_stale_keys_are_reclaimed_without_waiting_for_the_lru_bound() -> None:
         max_attempts=3, window_seconds=60.0, clock=clock, max_tracked_keys=10_000
     )
     for index in range(500):
-        limiter.check(admin_id="a", identifier=f"user{index}@example.com", client_ip="1.1.1.1")
+        _sync_check(
+            limiter, admin_id="a", identifier=f"user{index}@example.com", client_ip="1.1.1.1"
+        )
     assert len(limiter._attempts) == 500
     clock.advance(61.0)
     for _ in range(600):
-        limiter.check(admin_id="a", identifier="live@example.com", client_ip="1.1.1.1")
+        _sync_check(limiter, admin_id="a", identifier="live@example.com", client_ip="1.1.1.1")
     assert len(limiter._attempts) < 500
 
 
 def test_total_tracked_keys_stay_bounded() -> None:
     limiter = LoginRateLimiter(max_attempts=3, window_seconds=600.0, max_tracked_keys=64)
     for index in range(5_000):
-        limiter.check(admin_id="a", identifier=f"user{index}@example.com", client_ip="1.1.1.1")
+        _sync_check(
+            limiter, admin_id="a", identifier=f"user{index}@example.com", client_ip="1.1.1.1"
+        )
     assert len(limiter._attempts) <= 64
 
 
@@ -256,7 +289,7 @@ def test_check_is_thread_safe() -> None:
     def worker() -> None:
         barrier.wait()
         for _ in range(25):
-            if limiter.check(admin_id="a", identifier="v@example.com", client_ip="1.1.1.1"):
+            if _sync_check(limiter, admin_id="a", identifier="v@example.com", client_ip="1.1.1.1"):
                 granted.append(1)
 
     threads = [threading.Thread(target=worker) for _ in range(16)]
@@ -322,11 +355,23 @@ def test_production_validation_rejects_a_limiter_with_a_wrong_check_signature() 
     assert caught.value.details["reason"] == "rate_limiter_not_callable"
 
 
+def test_production_validation_rejects_a_synchronous_limiter() -> None:
+    class Synchronous:
+        production_safe = True
+
+        def check(self, *, admin_id: str, identifier: str, client_ip: str) -> bool:
+            return True
+
+    with pytest.raises(RakitError) as caught:
+        validate_rate_limiter_for_production(Synchronous(), debug=False, auth_enabled=True)
+    assert caught.value.details["reason"] == "rate_limiter_not_callable"
+
+
 def test_production_validation_accepts_a_real_production_limiter() -> None:
     class Real:
         production_safe = True
 
-        def check(self, *, admin_id: str, identifier: str, client_ip: str) -> bool:
+        async def check(self, *, admin_id: str, identifier: str, client_ip: str) -> bool:
             return True
 
     validate_rate_limiter_for_production(Real(), debug=False, auth_enabled=True)

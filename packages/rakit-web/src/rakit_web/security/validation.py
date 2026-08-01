@@ -97,7 +97,7 @@ def validate_rate_limiter_for_production(
     # login attempt raises -- in production, on the request path, in the one
     # code path that is supposed to be holding an attacker back.
     check = getattr(rate_limiter, "check", None)
-    if not callable(check):
+    if not callable(check) or not inspect.iscoroutinefunction(check):
         raise _invalid_production_config("rate_limiter_not_callable")
     try:
         inspect.signature(check).bind(admin_id="", identifier="", client_ip="")

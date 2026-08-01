@@ -101,7 +101,7 @@ def test_production_safe_limiter_is_accepted_in_production_with_auth_enabled() -
     class _SharedLimiter:
         production_safe = True
 
-        def check(self, *, admin_id: str, identifier: str, client_ip: str) -> bool:
+        async def check(self, *, admin_id: str, identifier: str, client_ip: str) -> bool:
             return True
 
     validate_rate_limiter_for_production(_SharedLimiter(), debug=False, auth_enabled=True)
