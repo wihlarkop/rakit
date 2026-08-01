@@ -1088,7 +1088,9 @@ Missing binds and every SQLite dialect are development-only. File SQLite is
 also excluded because production promises shared multi-worker session and
 revocation semantics, not merely a file multiple processes can open. A present
 non-SQLite shared-database dialect is eligible. One plugin factory object is
-passed to both backend and store.
+passed to both backend and store. Eligibility also requires an actual
+SQLAlchemy `AsyncEngine` or `AsyncConnection`; an arbitrary object that merely
+exposes a dialect-shaped attribute cannot self-upgrade the built-in store.
 
 ## 49. Security singleton cardinality uses raw ASGI headers (round 5)
 

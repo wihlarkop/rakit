@@ -8,7 +8,7 @@ from rakit_core.crypto import MAX_TOKEN_TTL
 from rakit_core.errors import ErrorCode, RakitError
 from sqlalchemy import select, update
 from sqlalchemy.engine import CursorResult
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, async_sessionmaker
 
 from .models import Session as SessionRow
 
@@ -91,7 +91,11 @@ class SQLAlchemySessionStore:
         bind = session_factory.kw.get("bind")
         dialect = getattr(bind, "dialect", None)
         dialect_name = getattr(dialect, "name", None)
-        self.production_safe = isinstance(dialect_name, str) and dialect_name != "sqlite"
+        self.production_safe = (
+            isinstance(bind, AsyncEngine | AsyncConnection)
+            and isinstance(dialect_name, str)
+            and dialect_name != "sqlite"
+        )
 
     async def create(self, principal: Principal) -> tuple[str, SessionRecord]:
         if principal.subject_id is None:

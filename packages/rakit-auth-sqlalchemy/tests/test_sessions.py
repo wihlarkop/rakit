@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from rakit_auth_sqlalchemy.models import Base, User
@@ -10,7 +11,12 @@ from rakit_core.auth import Principal
 from rakit_core.errors import RakitError
 from rakit_web.security.validation import validate_session_store_for_production
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 
 @pytest.fixture
@@ -64,13 +70,19 @@ def test_bound_shared_database_store_is_production_safe() -> None:
     class _SharedDialect:
         name = "postgresql"
 
-    class _SharedBind:
-        dialect = _SharedDialect()
-
-    factory = SimpleNamespace(kw={"bind": _SharedBind()})
+    shared_engine = Mock(spec=AsyncEngine)
+    shared_engine.dialect = _SharedDialect()
+    factory = SimpleNamespace(kw={"bind": shared_engine})
     store = SQLAlchemySessionStore(factory)  # ty: ignore[invalid-argument-type]
     assert store.production_safe is True
     validate_session_store_for_production(store, debug=False, auth_enabled=True)
+
+
+def test_dialect_shaped_non_engine_does_not_claim_production_safety() -> None:
+    fake_bind = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+    factory = SimpleNamespace(kw={"bind": fake_bind})
+    store = SQLAlchemySessionStore(factory)  # ty: ignore[invalid-argument-type]
+    assert store.production_safe is False
 
 
 async def test_raw_token_never_stored_in_database(session_factory) -> None:
