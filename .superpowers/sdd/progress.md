@@ -429,3 +429,21 @@ digit length before integer conversion. The affected `rakit-web` suite passes
 revert-failing test: production session-store methods must be coroutine
 functions, so a synchronous implementation cannot pass construction and fail
 at its first `await`. Final whole-branch verification remains pending.
+
+Plan 03 round-5 external-review fixes are implemented with TDD:
+
+- `864abdf`: `RateLimiter.check` is async, awaited exactly once, returns an
+  actual bool, and receives the same canonical identifier as the backend.
+- `43a15cd`: dummy Argon2 initialization is retryable single-flight; 50 cold
+  callers share one hash operation.
+- `c098f7b`: trusted XFF chains parse lazily right-to-left, unresolved chains
+  return secured 400, and no client falls into a shared proxy bucket.
+- `f5b7481`: SQLAlchemy store safety derives from its bind; unbound and all
+  SQLite factories are development-only, and plugin factory identity is fixed.
+- `408b0c8`: raw ASGI Host/Origin/Referer cardinality is enforced and
+  coexisting Origin plus Referer are both validated.
+- `6989221`: limiter core unit tests avoid per-call event-loop creation while
+  route/protocol tests retain public async-await coverage.
+
+The source-worktree gate passes 974 tests with Ruff format/check and ty clean.
+Fresh review and detached installed-artifact verification remain pending.

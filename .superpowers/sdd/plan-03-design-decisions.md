@@ -1059,3 +1059,40 @@ After syntax validation, leading zeroes are removed and significant digit
 length is compared with the configured maximum before bounded conversion.
 Thus even adversarial raw ASGI scopes deterministically receive 413 without an
 exception or unbounded integer work.
+
+## 45. Rate limiting is async and route-canonical (round 5)
+
+Shared production limiters are naturally network-backed, so `check` is an
+awaited async operation. Production rejects synchronous implementations and a
+runtime result must be literally boolean. The route applies the public
+`normalize_identifier` once and gives that value to limiter and backend. The
+built-in development limiter keeps a short thread-locked synchronous core
+behind its async method and performs no blocking I/O.
+
+## 46. Dummy Argon2 initialization is retryable single-flight (round 5)
+
+An AnyIO lock guards the second cache check and awaited hash. Only success is
+cached, so concurrent cold requests share one completed hash while an exception
+releases the lock for a later retry. No blocking thread lock spans an await.
+
+## 47. Trusted chains resolve lazily without proxy fallback (round 5)
+
+After the direct trusted peer, tokens are consumed right-to-left. The first
+valid untrusted hop ends parsing, making farther-left attacker text irrelevant.
+A malformed token before that boundary, or no untrusted client, is explicitly
+invalid; login returns secured 400 without limiter/backend calls.
+
+## 48. SQLAlchemy store safety belongs to the bound instance (round 5)
+
+Missing binds and every SQLite dialect are development-only. File SQLite is
+also excluded because production promises shared multi-worker session and
+revocation semantics, not merely a file multiple processes can open. A present
+non-SQLite shared-database dialect is eligible. One plugin factory object is
+passed to both backend and store.
+
+## 49. Security singleton cardinality uses raw ASGI headers (round 5)
+
+Host must occur exactly once; Origin and Referer at most once each regardless
+of casing. Missing/duplicate Host is 400 and duplicate Origin/Referer is 403,
+through the security-header wrapper. If Origin and Referer coexist, both must
+parse and match rather than one shadowing the other.
