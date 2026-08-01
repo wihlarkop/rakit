@@ -127,7 +127,9 @@ def _parse_origin(value: str, *, allow_path: bool) -> tuple[str, str, int] | Non
     return _canonical_origin(parsed.scheme, parsed.netloc)
 
 
-def resolve_client_ip(request: Request, trusted_proxies: tuple[TrustedProxyNetwork, ...]) -> str:
+def resolve_client_ip(
+    request: Request, trusted_proxies: tuple[TrustedProxyNetwork, ...]
+) -> str | None:
     """Return the real client IP, honouring `X-Forwarded-For` only when the
     directly-connecting peer is inside a configured trusted-proxy CIDR.
 
@@ -135,13 +137,13 @@ def resolve_client_ip(request: Request, trusted_proxies: tuple[TrustedProxyNetwo
     peer's claimed `X-Forwarded-For` is ignored entirely, since accepting it
     would let any client spoof its own rate-limit/audit identity.
     """
-    direct_ip = request.client.host if request.client else "unknown"
-    if direct_ip == "unknown":
-        return direct_ip
+    direct_ip = request.client.host if request.client else None
+    if direct_ip is None:
+        return None
     try:
         direct_addr = ipaddress.ip_address(direct_ip)
     except ValueError:
-        return "unknown"
+        return None
     canonical_direct = str(direct_addr)
     if not trusted_proxies or not any(direct_addr in network for network in trusted_proxies):
         return canonical_direct
@@ -149,20 +151,18 @@ def resolve_client_ip(request: Request, trusted_proxies: tuple[TrustedProxyNetwo
     if not forwarded_fields:
         return canonical_direct
 
-    try:
-        forwarded_hops = [
-            ipaddress.ip_address(raw_hop.strip())
-            for forwarded_field in forwarded_fields
-            for raw_hop in forwarded_field.split(",")
-        ]
-    except ValueError:
-        return canonical_direct
-
-    for hop in reversed([*forwarded_hops, direct_addr]):
+    raw_hops = [
+        raw_hop for forwarded_field in forwarded_fields for raw_hop in forwarded_field.split(",")
+    ]
+    for raw_hop in reversed(raw_hops):
+        try:
+            hop = ipaddress.ip_address(raw_hop.strip())
+        except ValueError:
+            return None
         if any(hop in network for network in trusted_proxies):
             continue
         return str(hop)
-    return canonical_direct
+    return None
 
 
 class SecurityMiddleware:

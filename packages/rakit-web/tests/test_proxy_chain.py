@@ -60,11 +60,21 @@ def test_untrusted_direct_peer_ignores_forwarded_chain() -> None:
 
 
 @pytest.mark.parametrize("forwarded_for", ["attacker", "999.999.999.999", "1.2.3.4, bad"])
-def test_malformed_forwarded_chain_falls_back_to_canonical_direct_peer(
+def test_malformed_forwarded_chain_before_client_resolution_is_invalid(
     forwarded_for: str,
 ) -> None:
     request = _request(peer="10.0.0.9", forwarded_for=forwarded_for)
-    assert resolve_client_ip(request, _networks("10.0.0.0/24")) == "10.0.0.9"
+    assert resolve_client_ip(request, _networks("10.0.0.0/24")) is None
+
+
+def test_malformed_attacker_prefix_is_ignored_after_nearest_client_is_resolved() -> None:
+    request = _request(peer="10.0.0.9", forwarded_for="attacker, 203.0.113.10")
+    assert resolve_client_ip(request, _networks("10.0.0.0/24")) == "203.0.113.10"
+
+
+def test_malformed_trusted_portion_before_client_is_rejected() -> None:
+    request = _request(peer="10.0.0.9", forwarded_for="203.0.113.10, malformed")
+    assert resolve_client_ip(request, _networks("10.0.0.0/24")) is None
 
 
 def test_ipv6_is_canonicalized_for_stable_limiter_buckets() -> None:

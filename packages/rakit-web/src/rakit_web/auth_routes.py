@@ -165,6 +165,12 @@ def build_auth_routes(
         identifier, password, submitted_login_csrf = parsed_form
         identifier = normalize_identifier(identifier)
         client_ip = resolve_client_ip(request, trusted_proxies)
+        if client_ip is None:
+            return PlainTextResponse(
+                "Invalid forwarded client chain",
+                status_code=400,
+                headers={"Cache-Control": "no-store"},
+            )
 
         if not _verify_login_csrf(request, submitted_login_csrf):
             # Checked before the credentials are even looked at, so a

@@ -564,6 +564,72 @@ async def test_production_limiter_receives_canonical_client_ip_from_trusted_chai
     assert limiter.client_ips == ["2001:db8::1"]
 
 
+async def test_invalid_trusted_proxy_chain_returns_secured_400_without_using_limiter() -> None:
+    limiter = _CapturingRateLimiter()
+    admin = Admin(
+        admin_id="operations",
+        title="Operations",
+        debug=False,
+        secret_key=SecretValue("x" * 32),
+        auth_backend=FakeAuthBackend(),
+        session_store=FakeSessionStore(),
+        login_rate_limiter=limiter,
+        trusted_proxies=("127.0.0.0/24",),
+    )
+    app = admin.asgi()
+    async with (
+        _LifespanDriver(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+        ) as client,
+    ):
+        response = await _login(
+            client,
+            password="wrong",
+            headers={"x-forwarded-for": "203.0.113.10, malformed"},
+        )
+    assert response.status_code == 400
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert limiter.client_ips == []
+
+
+async def test_malformed_prefixes_cannot_create_cross_client_rate_limit_denial() -> None:
+    limiter = _TestRateLimiter(max_attempts=1, window_seconds=60)
+    admin = Admin(
+        admin_id="operations",
+        title="Operations",
+        debug=False,
+        secret_key=SecretValue("x" * 32),
+        auth_backend=FakeAuthBackend(),
+        session_store=FakeSessionStore(),
+        login_rate_limiter=limiter,
+        trusted_proxies=("127.0.0.0/24",),
+    )
+    app = admin.asgi()
+    async with (
+        _LifespanDriver(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+        ) as client,
+    ):
+        first = await _login(
+            client,
+            password="wrong",
+            headers={"x-forwarded-for": "attacker-one, 203.0.113.10"},
+        )
+        second = await _login(
+            client,
+            password="wrong",
+            headers={"x-forwarded-for": "attacker-two, 203.0.113.11"},
+        )
+        first_again = await _login(
+            client,
+            password="wrong",
+            headers={"x-forwarded-for": "changed-prefix, 203.0.113.10"},
+        )
+    assert (first.status_code, second.status_code, first_again.status_code) == (401, 401, 429)
+
+
 async def test_login_response_is_not_cached() -> None:
     admin = Admin(
         admin_id="operations",
