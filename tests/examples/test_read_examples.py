@@ -424,11 +424,12 @@ def test_auth_migration_history_coexists_with_a_host_alembic_version_table(
         row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
 
-    # 3. rakit_auth_alembic_version reaches Rakit head.
+    # 3. rakit_auth_alembic_version reaches the current Rakit auth head.
     assert "rakit_auth_alembic_version" in table_names
     assert conn.execute("SELECT version_num FROM rakit_auth_alembic_version").fetchall() == [
-        ("0001",)
+        ("0002",)
     ]
+    assert "rakit_auth_idempotency" in table_names
 
     # 4. The host's own version table is unchanged.
     assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [("host_0001",)]
@@ -491,12 +492,17 @@ def test_auth_migration_history_coexists_with_a_host_alembic_version_table(
         "rakit_auth_user_roles",
         "rakit_auth_role_permissions",
         "rakit_auth_sessions",
+        "rakit_auth_idempotency",
     }
     assert expected_rakit_tables <= final_tables
     assert conn.execute("SELECT version_num FROM rakit_auth_alembic_version").fetchall() == [
-        ("0001",)
+        ("0002",)
     ]
     assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [("host_0001",)]
-    for table_name in expected_rakit_tables - {"rakit_auth_alembic_version"}:
+    for table_name in expected_rakit_tables - {
+        "rakit_auth_alembic_version",
+        "rakit_auth_idempotency",
+    }:
         assert conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone() == (1,)
+    assert conn.execute("SELECT COUNT(*) FROM rakit_auth_idempotency").fetchone() == (0,)
     conn.close()
