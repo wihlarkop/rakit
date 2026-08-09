@@ -20,6 +20,7 @@ from rakit_core.mutations import (
 )
 from rakit_core.transactions import TransactionPolicy
 from sqlalchemy import select
+from sqlalchemy import update as sqlalchemy_update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .uow import SQLAlchemyUnitOfWork
@@ -141,14 +142,33 @@ class SQLAlchemyMutationService:
                 self._concurrency.verify(
                     concurrency_token, identity, getattr(record, self._version_field)
                 )
-            for name, value in plan.values.items():
-                setattr(record, name, value)
-            if self._version_field is not None:
                 current_version = getattr(record, self._version_field)
                 if not isinstance(current_version, int):
                     raise RuntimeError("Configured version field must contain an integer")
-                setattr(record, self._version_field, current_version + 1)
-            await uow.session.flush()
+                # The in-memory token check above makes stale forms pleasant
+                # to reject, but it cannot protect two independent database
+                # transactions that both read the same revision.  Put the
+                # expected revision in the UPDATE predicate as well: exactly
+                # one of concurrent writers can affect a row.
+                result = await uow.session.execute(
+                    sqlalchemy_update(self._model)
+                    .where(
+                        *self._identity_conditions(identity),
+                        getattr(self._model, self._version_field) == current_version,
+                    )
+                    .values(**dict(plan.values), **{self._version_field: current_version + 1})
+                )
+                if result.rowcount != 1:
+                    raise RakitError(
+                        code=ErrorCode.RESOURCE_CONFLICT,
+                        message="The resource was changed by another request.",
+                        status_code=409,
+                    )
+                await uow.session.refresh(record)
+            else:
+                for name, value in plan.values.items():
+                    setattr(record, name, value)
+                await uow.session.flush()
             if self._event_publisher is not None:
                 self._event_publisher.publish(
                     ResourceUpdated(identity=identity, changed_fields=tuple(plan.values))
@@ -229,10 +249,12 @@ class SQLAlchemyMutationService:
             await uow.mark_success()
 
     async def _load(self, session: AsyncSession, identity: RecordIdentity) -> object | None:
-        conditions = [
-            getattr(self._model, name) == value for name, value in identity.values.items()
-        ]
-        return (await session.scalars(select(self._model).where(*conditions))).one_or_none()
+        return (
+            await session.scalars(select(self._model).where(*self._identity_conditions(identity)))
+        ).one_or_none()
+
+    def _identity_conditions(self, identity: RecordIdentity) -> list[object]:
+        return [getattr(self._model, name) == value for name, value in identity.values.items()]
 
     def _identity_for(self, record: object) -> RecordIdentity:
         return RecordIdentity(

@@ -1,4 +1,6 @@
+import asyncio
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 from rakit_core.config import SecretValue
@@ -58,3 +60,53 @@ async def test_stale_update_returns_a_conflict_before_writing(
         await service.update(created.identity, {"name": "Ada"}, concurrency_token=token)
     assert caught.value.code == ErrorCode.RESOURCE_CONFLICT
     assert caught.value.status_code == 409
+
+
+@pytest.mark.anyio
+async def test_concurrent_updates_with_the_same_token_have_exactly_one_winner(
+    tmp_path: Path,
+) -> None:
+    """The version predicate belongs in SQL, after both writers have read it."""
+    database = tmp_path / "concurrency.db"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{database}")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    barrier = asyncio.Barrier(2)
+
+    class BarrierService(SQLAlchemyMutationService):
+        async def _load(self, session: AsyncSession, identity: object) -> object | None:
+            record = await super()._load(session, identity)  # type: ignore[arg-type]
+            if record is not None:
+                await barrier.wait()
+            return record
+
+    service = BarrierService(
+        model=User,
+        session_factory=factory,
+        form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="name", python_type=str, required=True),)
+        ),
+        writable_fields=("name",),
+        identity_fields=("id",),
+        token_service=TokenService.single_key(
+            key_id="test", value=SecretValue("x" * 32), admin_id="admin"
+        ),
+        version_field="revision",
+    )
+    created = await service.create({"name": "Ada"})
+    token = service.issue_update_token(created.record)
+
+    outcomes = await asyncio.gather(
+        service.update(created.identity, {"name": "Grace"}, concurrency_token=token),
+        service.update(created.identity, {"name": "Lin"}, concurrency_token=token),
+        return_exceptions=True,
+    )
+
+    assert sum(isinstance(outcome, RakitError) for outcome in outcomes) == 1
+    assert sum(not isinstance(outcome, Exception) for outcome in outcomes) == 1
+    assert any(
+        isinstance(outcome, RakitError) and outcome.code == ErrorCode.RESOURCE_CONFLICT
+        for outcome in outcomes
+    )
+    await engine.dispose()
