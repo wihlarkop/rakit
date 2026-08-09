@@ -3,6 +3,8 @@
 from collections.abc import Mapping
 from typing import Any
 
+from rakit_core.concurrency import ConcurrencyTokenService
+from rakit_core.crypto import TokenService
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.events import EventPublisher
 from rakit_core.forms import FormSchema, FormValidationError
@@ -46,6 +48,8 @@ class SQLAlchemyMutationService:
         writable_fields: tuple[str, ...],
         identity_fields: tuple[str, ...],
         event_publisher: EventPublisher | None = None,
+        token_service: TokenService | None = None,
+        version_field: str | None = None,
     ) -> None:
         if not writable_fields or not identity_fields:
             raise ValueError("Writable and identity fields must be explicitly declared")
@@ -57,6 +61,12 @@ class SQLAlchemyMutationService:
         self._writable_fields = frozenset(writable_fields)
         self._identity_fields = identity_fields
         self._event_publisher = event_publisher
+        if (token_service is None) != (version_field is None):
+            raise ValueError("token_service and version_field must be supplied together")
+        self._version_field = version_field
+        self._concurrency = (
+            ConcurrencyTokenService(token_service) if token_service is not None else None
+        )
 
     def prepare_create(self, submitted: Mapping[str, Any]) -> ResourceMutationPlan:
         try:
@@ -84,8 +94,19 @@ class SQLAlchemyMutationService:
             await uow.mark_success()
         return MutationResult(identity=identity, record=record)
 
+    def issue_update_token(self, record: object) -> str:
+        if self._concurrency is None or self._version_field is None:
+            raise RuntimeError("This resource has no configured concurrency provider")
+        return self._concurrency.issue(
+            self._identity_for(record), getattr(record, self._version_field)
+        )
+
     async def update(
-        self, identity: RecordIdentity, submitted: Mapping[str, Any]
+        self,
+        identity: RecordIdentity,
+        submitted: Mapping[str, Any],
+        *,
+        concurrency_token: str | None = None,
     ) -> MutationResult:
         plan = self.prepare_create(submitted)
         if set(identity.values) != set(self._identity_fields):
@@ -106,8 +127,23 @@ class SQLAlchemyMutationService:
                     message="Resource was not found",
                     status_code=404,
                 )
+            if self._concurrency is not None and self._version_field is not None:
+                if not concurrency_token:
+                    raise RakitError(
+                        code=ErrorCode.RESOURCE_CONFLICT,
+                        message="A concurrency token is required.",
+                        status_code=409,
+                    )
+                self._concurrency.verify(
+                    concurrency_token, identity, getattr(record, self._version_field)
+                )
             for name, value in plan.values.items():
                 setattr(record, name, value)
+            if self._version_field is not None:
+                current_version = getattr(record, self._version_field)
+                if not isinstance(current_version, int):
+                    raise RuntimeError("Configured version field must contain an integer")
+                setattr(record, self._version_field, current_version + 1)
             await uow.session.flush()
             if self._event_publisher is not None:
                 self._event_publisher.publish(
