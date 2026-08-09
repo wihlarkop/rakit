@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}New {{ label }}{% endblock %}
+{% block content %}
+<h1>New {{ label }}</h1>
+{% if issues %}
+<div id="form-errors" data-rakit-focus-target="form-errors" role="alert" tabindex="-1">
+  <p>Please correct the highlighted fields.</p>
+</div>
+{% endif %}
+<form method="post" action="{{ action_url }}" novalidate>
+  <input type="hidden" name="submission_token" value="{{ submission_token }}" />
+  {% for field in fields %}
+  {% set has_issue = issues | selectattr('field_id', 'equalto', field.field_id) | list %}
+  <div>
+    <label for="field-{{ field.field_id }}">{{ field.label or field.field_id }}</label>
+    <input id="field-{{ field.field_id }}" name="{{ field.field_id }}" value="{{ submitted.get(field.field_id, '') }}" {% if has_issue %}aria-invalid="true"{% endif %} />
+    {% if has_issue %}<p>{{ has_issue[0].message }}</p>{% endif %}
+  </div>
+  {% endfor %}
+  <button type="submit">Save</button>
+</form>
+{% endblock %}
