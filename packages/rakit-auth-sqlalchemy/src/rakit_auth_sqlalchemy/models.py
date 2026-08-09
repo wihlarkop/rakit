@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Table, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, String, Table, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -128,3 +128,18 @@ class Session(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     user_agent: Mapped[str | None] = mapped_column(String(255))
     ip_address: Mapped[str | None] = mapped_column(String(64))
+
+
+class IdempotencyRecord(Base):
+    """A safe receipt only; never stores submitted form data or secrets."""
+
+    __tablename__ = "rakit_auth_idempotency"
+    __table_args__ = (UniqueConstraint("token_hash", name="uq_rakit_auth_idempotency_token_hash"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), index=True)
+    fingerprint: Mapped[str] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(32))
+    receipt: Mapped[dict[str, str | None] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
