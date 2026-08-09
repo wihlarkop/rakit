@@ -1,10 +1,12 @@
 """SQLAlchemy execution for the framework-neutral write pipeline."""
 
 from collections.abc import Mapping
+from datetime import timedelta
 from typing import Any
 
 from rakit_core.concurrency import ConcurrencyTokenService
 from rakit_core.crypto import TokenService
+from rakit_core.deletion import DeletionPlan
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.events import EventPublisher
 from rakit_core.forms import FormSchema, FormValidationError
@@ -12,6 +14,7 @@ from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import (
     MutationResult,
     ResourceCreated,
+    ResourceDeleted,
     ResourceMutationPlan,
     ResourceUpdated,
 )
@@ -64,6 +67,7 @@ class SQLAlchemyMutationService:
         if (token_service is None) != (version_field is None):
             raise ValueError("token_service and version_field must be supplied together")
         self._version_field = version_field
+        self._token_service = token_service
         self._concurrency = (
             ConcurrencyTokenService(token_service) if token_service is not None else None
         )
@@ -152,6 +156,78 @@ class SQLAlchemyMutationService:
             await uow.mark_success()
         return MutationResult(identity=identity, record=record)
 
+    async def preview_delete(self, identity: RecordIdentity) -> DeletionPlan:
+        if self._token_service is None or self._version_field is None:
+            raise RuntimeError("Delete requires a configured token and version provider")
+        async with self._session_factory() as session:
+            record = await self._load(session, identity)
+            if record is None:
+                raise RakitError(
+                    code=ErrorCode.RESOURCE_NOT_FOUND,
+                    message="Resource was not found",
+                    status_code=404,
+                )
+            return DeletionPlan(
+                identity=identity,
+                expected_version=getattr(record, self._version_field),
+            )
+
+    async def issue_delete_token(self, identity: RecordIdentity) -> str:
+        if self._token_service is None:
+            raise RuntimeError("Delete requires a configured token service")
+        plan = await self.preview_delete(identity)
+        return self._token_service.issue_in(
+            "delete_confirmation",
+            {
+                "identity": dict(plan.identity.values),
+                "expected_version": plan.expected_version,
+                "nonce": plan.nonce,
+            },
+            timedelta(minutes=15),
+        )
+
+    async def delete(self, confirmation_token: str) -> None:
+        if self._token_service is None or self._version_field is None:
+            raise RuntimeError("Delete requires a configured token and version provider")
+        try:
+            claims = self._token_service.verify(
+                confirmation_token, expected_purpose="delete_confirmation"
+            )
+            identity = RecordIdentity(values=claims["identity"])
+            expected_version = claims["expected_version"]
+            if set(identity.values) != set(self._identity_fields):
+                raise ValueError
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RakitError(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="Invalid delete confirmation.",
+                status_code=400,
+                cause=exc,
+            ) from exc
+        async with SQLAlchemyUnitOfWork(
+            self._session_factory,
+            policy=TransactionPolicy.AUTO,
+            event_publisher=self._event_publisher,
+        ) as uow:
+            record = await self._load(uow.session, identity)
+            if record is None:
+                raise RakitError(
+                    code=ErrorCode.RESOURCE_NOT_FOUND,
+                    message="Resource was not found",
+                    status_code=404,
+                )
+            if getattr(record, self._version_field) != expected_version:
+                raise RakitError(
+                    code=ErrorCode.RESOURCE_CONFLICT,
+                    message="The resource has changed since deletion was confirmed.",
+                    status_code=409,
+                )
+            await uow.session.delete(record)
+            await uow.session.flush()
+            if self._event_publisher is not None:
+                self._event_publisher.publish(ResourceDeleted(identity=identity))
+            await uow.mark_success()
+
     async def _load(self, session: AsyncSession, identity: RecordIdentity) -> object | None:
         conditions = [
             getattr(self._model, name) == value for name, value in identity.values.items()
@@ -166,6 +242,7 @@ class SQLAlchemyMutationService:
 
 __all__ = [
     "ResourceCreated",
+    "ResourceDeleted",
     "ResourceUpdated",
     "SQLAlchemyMutationService",
 ]

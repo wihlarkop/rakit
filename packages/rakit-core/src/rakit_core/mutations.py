@@ -38,3 +38,8 @@ class ResourceCreated(DomainEvent):
 class ResourceUpdated(DomainEvent):
     identity: RecordIdentity
     changed_fields: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ResourceDeleted(DomainEvent):
+    identity: RecordIdentity
