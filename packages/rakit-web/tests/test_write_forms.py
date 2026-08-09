@@ -49,6 +49,14 @@ class FullFakeMutationService(FakeMutationService):
         self.deleted = (confirmation_token, identity)
 
 
+class SlowMutationService(FakeMutationService):
+    async def create(self, submitted: dict[str, object]) -> object:
+        import asyncio
+
+        await asyncio.sleep(0.05)
+        return await super().create(submitted)
+
+
 async def _allow(_request: object) -> bool:
     return True
 
@@ -164,3 +172,31 @@ async def test_update_and_delete_routes_bind_identity_tokens_and_mount_prefix() 
         "revision-token",
     )
     assert service.deleted == ("delete-token", RecordIdentity(values={"id": 1}))
+
+
+@pytest.mark.anyio
+async def test_mutation_deadline_returns_504_before_the_service_completes() -> None:
+    service = SlowMutationService()
+    binding = WriteResourceBinding(
+        path="/users",
+        label="User",
+        form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="email", python_type=str, required=True),)
+        ),
+        mutation_service=service,
+        templates=build_templates(()),
+        authorize=_allow,
+        verify_csrf=_allow,
+        verify_submission_token=_allow,
+        issue_submission_token=lambda _request: "submission",
+        deadline_seconds=0.001,
+    )
+    app = Starlette(routes=build_write_routes(binding))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+        response = await client.post(
+            "/users/new",
+            data={"email": "ada@example.com", "csrf_token": "x", "submission_token": "x"},
+        )
+    assert response.status_code == 504
+    assert service.calls == 0

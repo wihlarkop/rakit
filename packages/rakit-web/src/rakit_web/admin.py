@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import timedelta
+from math import isfinite
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -133,6 +134,7 @@ class Admin:
         content_security_policy_enabled: bool = True,
         trusted_proxies: tuple[str, ...] = (),
         superuser_bypass: bool = True,
+        mutation_deadline_seconds: float = 30.0,
     ) -> None:
         security_config: dict[str, object] = {
             "secret_key": secret_key,
@@ -164,6 +166,17 @@ class Admin:
         self._auth_backend = auth_backend
         self._session_store = session_store
         self._superuser_bypass = superuser_bypass
+        if (
+            not isinstance(mutation_deadline_seconds, int | float)
+            or not isfinite(mutation_deadline_seconds)
+            or mutation_deadline_seconds <= 0
+        ):
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="mutation_deadline_seconds must be a positive finite number.",
+                status_code=500,
+            )
+        self._mutation_deadline_seconds = float(mutation_deadline_seconds)
         self._login_rate_limiter = login_rate_limiter or LoginRateLimiter()
         validate_rate_limiter_for_production(
             self._login_rate_limiter,
@@ -524,6 +537,7 @@ class Admin:
                     verify_submission_token=verify_submission_token,
                     issue_submission_token=issue_submission_token,
                     templates=templates,
+                    deadline_seconds=self._mutation_deadline_seconds,
                 )
                 write_routes.extend(build_write_routes(secured_binding))
 
