@@ -3,6 +3,7 @@
 from typing import Self
 
 from rakit_core.events import EventPublisher
+from rakit_core.operations import OperationContext
 from rakit_core.transactions import TransactionPolicy
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -16,10 +17,12 @@ class SQLAlchemyUnitOfWork:
         *,
         policy: TransactionPolicy = TransactionPolicy.AUTO,
         event_publisher: EventPublisher | None = None,
+        operation_context: OperationContext | None = None,
     ) -> None:
         self._session_factory = session_factory
         self.policy = policy
         self.event_publisher = event_publisher
+        self.operation_context = operation_context
         self.session: AsyncSession
         self._success = False
         self._completed = False
@@ -29,6 +32,8 @@ class SQLAlchemyUnitOfWork:
         return self
 
     async def mark_success(self) -> None:
+        if self.operation_context is not None:
+            self.operation_context.checkpoint()
         self._success = True
 
     async def commit(self) -> None:
@@ -55,6 +60,10 @@ class SQLAlchemyUnitOfWork:
             if exc_type is not None:
                 await self.rollback()
             elif self.policy is TransactionPolicy.AUTO and self._success:
+                if self.operation_context is not None:
+                    # A commit already in progress is never force-cancelled;
+                    # this is the last cooperative checkpoint before it starts.
+                    self.operation_context.checkpoint()
                 await self.session.commit()
                 self._completed = True
                 if self.event_publisher is not None:
