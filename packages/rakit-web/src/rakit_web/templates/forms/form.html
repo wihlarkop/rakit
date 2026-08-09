@@ -1,14 +1,16 @@
 {% extends "base.html" %}
-{% block title %}New {{ label }}{% endblock %}
+{% block title %}{{ title }}{% endblock %}
 {% block content %}
-<h1>New {{ label }}</h1>
+<h1>{{ title }}</h1>
 {% if issues %}
 <div id="form-errors" data-rakit-focus-target="form-errors" role="alert" tabindex="-1">
   <p>Please correct the highlighted fields.</p>
 </div>
 {% endif %}
 <form method="post" action="{{ action_url }}" novalidate>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
   <input type="hidden" name="submission_token" value="{{ submission_token }}" />
+  {% if concurrency_token %}<input type="hidden" name="concurrency_token" value="{{ concurrency_token }}" />{% endif %}
   {% for field in fields %}
   {% set has_issue = issues | selectattr('field_id', 'equalto', field.field_id) | list %}
   <div>

@@ -8,6 +8,7 @@ from rakit_core.crypto import TokenService
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.fields import FieldDefinition
 from rakit_core.forms import FormSchema
+from rakit_core.identity import RecordIdentity
 from rakit_sqlalchemy.mutations import SQLAlchemyMutationService
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -75,8 +76,8 @@ async def test_concurrent_updates_with_the_same_token_have_exactly_one_winner(
     barrier = asyncio.Barrier(2)
 
     class BarrierService(SQLAlchemyMutationService):
-        async def _load(self, session: AsyncSession, identity: object) -> object | None:
-            record = await super()._load(session, identity)  # type: ignore[arg-type]
+        async def _load(self, session: AsyncSession, identity: RecordIdentity) -> object | None:
+            record = await super()._load(session, identity)
             if record is not None:
                 await barrier.wait()
             return record

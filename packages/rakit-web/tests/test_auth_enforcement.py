@@ -7,6 +7,7 @@ request, and routes are gated by explicit permission requirements.
 """
 
 import asyncio
+import re
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import cast
@@ -15,6 +16,13 @@ import httpx
 import pytest
 from rakit import Admin, ModelAdmin, SecretValue
 from rakit_core.auth import Principal, SessionRecord
+from rakit_core.crypto import TokenService
+from rakit_core.fields import FieldDefinition
+from rakit_core.forms import FormSchema
+from rakit_core.identity import IdentityCodec, RecordIdentity
+from rakit_sqlalchemy.mutations import SQLAlchemyMutationService
+from rakit_web.form_routes import WriteResourceBinding
+from rakit_web.resource_routes import build_templates
 from rakit_web.security.rate_limit import LoginRateLimiter
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -69,6 +77,7 @@ class Widget(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str]
+    revision: Mapped[int] = mapped_column(default=1)
 
 
 class WidgetAdmin(ModelAdmin):
@@ -183,13 +192,50 @@ def _build_admin(session_factory, backend: _ConfigurableAuthBackend) -> Admin:
     return admin
 
 
+def _build_write_admin(session_factory, backend: _ConfigurableAuthBackend) -> Admin:
+    admin = _build_admin(session_factory, backend)
+    form_schema = FormSchema(
+        fields=(FieldDefinition(field_id="name", python_type=str, required=True),)
+    )
+    service = SQLAlchemyMutationService(
+        model=Widget,
+        session_factory=session_factory,
+        form_schema=form_schema,
+        writable_fields=("name",),
+        identity_fields=("id",),
+        token_service=TokenService.single_key(
+            key_id="test", value=SecretValue("x" * 32), admin_id="operations"
+        ),
+        version_field="revision",
+    )
+
+    async def allowed(_request: object) -> bool:
+        return True
+
+    admin.register_write_resource(
+        "widgets",
+        WriteResourceBinding(
+            path="/widgets",
+            label="Widget",
+            form_schema=form_schema,
+            mutation_service=service,
+            templates=build_templates(()),
+            authorize=allowed,
+            verify_csrf=allowed,
+            verify_submission_token=allowed,
+            issue_submission_token=lambda _request: "placeholder",
+        ),
+    )
+    return admin
+
+
 async def _client_for(admin: Admin) -> tuple[ASGIApp, httpx.AsyncClient]:
     app = admin.asgi()
     transport = httpx.ASGITransport(app=app)
     return app, httpx.AsyncClient(transport=transport, base_url="http://localhost")
 
 
-async def _login(client: httpx.AsyncClient, prefix: str = "") -> None:
+async def _login(client: httpx.AsyncClient, prefix: str = "") -> str:
     """Perform the full browser login flow: fetch the login page for its
     pre-session CSRF token, then submit it with the credentials. Login
     requires that token, so a bare POST is rejected 403 by design."""
@@ -207,6 +253,11 @@ async def _login(client: httpx.AsyncClient, prefix: str = "") -> None:
     )
     assert response.status_code == 303
     client.cookies.set("rakit_session", response.cookies["rakit_session"])
+    csrf = response.cookies["rakit_csrf"]
+    # ASGITransport normalizes localhost cookie domains differently from a
+    # browser.  Pin the browser-visible double-submit cookie explicitly.
+    client.cookies.set("rakit_csrf", csrf, domain="localhost.local", path="/")
+    return csrf
 
 
 # --- Anonymous access ---------------------------------------------------
@@ -283,6 +334,82 @@ async def test_authenticated_user_with_read_permission_sees_the_list(session_fac
         response = await client.get("/widgets")
         assert response.status_code == 200
         assert "Sprocket" in response.text
+
+
+@pytest.mark.anyio
+async def test_admin_wires_authenticated_create_update_and_signed_delete(session_factory) -> None:
+    """The compiler-visible mutation graph reaches real SQLAlchemy writes."""
+    permissions = frozenset(
+        {
+            "operations.access",
+            "operations.resources.widgets.create",
+            "operations.resources.widgets.update",
+            "operations.resources.widgets.delete",
+        }
+    )
+    app, client = await _client_for(
+        _build_write_admin(session_factory, _ConfigurableAuthBackend(permissions=permissions))
+    )
+    encoded = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+
+    def hidden_value(page: str, name: str) -> str:
+        matched = re.search(rf'name="{name}" value="([^"]+)"', page)
+        assert matched is not None
+        return matched.group(1)
+
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+
+        created_form = await client.get("/widgets/new")
+        assert created_form.status_code == 200
+        created = await client.post(
+            "/widgets/new",
+            data={
+                "name": "Created",
+                "csrf_token": csrf,
+                "submission_token": hidden_value(created_form.text, "submission_token"),
+            },
+            follow_redirects=False,
+        )
+        assert created.status_code == 303
+
+        edit_form = await client.get(f"/widgets/{encoded}/edit")
+        assert edit_form.status_code == 200
+        updated = await client.post(
+            f"/widgets/{encoded}/edit",
+            data={
+                "name": "Updated",
+                "csrf_token": csrf,
+                "submission_token": hidden_value(edit_form.text, "submission_token"),
+                "concurrency_token": hidden_value(edit_form.text, "concurrency_token"),
+            },
+            follow_redirects=False,
+        )
+        assert updated.status_code == 303
+
+        delete_form = await client.get(f"/widgets/{encoded}/delete")
+        assert delete_form.status_code == 200
+        deleted = await client.post(
+            f"/widgets/{encoded}/delete",
+            data={
+                "csrf_token": csrf,
+                "delete_token": hidden_value(delete_form.text, "delete_token"),
+            },
+            follow_redirects=False,
+        )
+    assert deleted.status_code == 303
+
+
+@pytest.mark.anyio
+async def test_read_permission_does_not_authorize_mutation_submission(session_factory) -> None:
+    permissions = frozenset({"operations.access", "operations.resources.widgets.read"})
+    app, client = await _client_for(
+        _build_write_admin(session_factory, _ConfigurableAuthBackend(permissions=permissions))
+    )
+    async with _LifespanDriver(app), client:
+        await _login(client)
+        response = await client.post("/widgets/new", data={"name": "forged"})
+    assert response.status_code == 403
 
 
 async def test_authenticated_user_without_read_permission_gets_403(session_factory) -> None:
@@ -518,6 +645,29 @@ def test_nested_resource_paths_resolve_to_the_longest_match() -> None:
     assert permissions_for("/orders/1") == ("operations.resources.orders.read",)
     assert permissions_for("/orders/lines") == ("operations.resources.order_lines.read",)
     assert permissions_for("/orders/lines/7") == ("operations.resources.order_lines.read",)
+
+
+def test_mutation_routes_require_their_exact_operation_permission() -> None:
+    """A read grant must never authorize a write merely because it is under the resource path."""
+    from rakit_web.security.authentication import build_requirement_resolver
+
+    resolve = build_requirement_resolver(
+        admin_id="operations",
+        resource_paths={"/widgets": "widgets"},
+        writable_resources=frozenset({"widgets"}),
+    )
+
+    def permissions_for(path: str, method: str) -> tuple[str, ...]:
+        requirement = resolve(path, method)
+        assert requirement is not None
+        return requirement.permissions
+
+    assert permissions_for("/widgets/new", "POST") == ("operations.resources.widgets.create",)
+    assert permissions_for("/widgets/abc/edit", "POST") == ("operations.resources.widgets.update",)
+    assert permissions_for("/widgets/abc/delete", "POST") == (
+        "operations.resources.widgets.delete",
+    )
+    assert permissions_for("/widgets/abc/edit", "GET") == ("operations.resources.widgets.update",)
 
 
 # --- The /auth namespace is framework-owned ------------------------------

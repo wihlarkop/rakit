@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 
 from rakit_core.concurrency import ConcurrencyTokenService
 from rakit_core.crypto import TokenService
@@ -21,7 +21,9 @@ from rakit_core.mutations import (
 from rakit_core.transactions import TransactionPolicy
 from sqlalchemy import select
 from sqlalchemy import update as sqlalchemy_update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.sql.elements import ColumnElement
 
 from .uow import SQLAlchemyUnitOfWork
 
@@ -106,6 +108,17 @@ class SQLAlchemyMutationService:
             self._identity_for(record), getattr(record, self._version_field)
         )
 
+    async def get(self, identity: RecordIdentity) -> object | None:
+        """Load one record for a write form without exposing ORM query internals."""
+        if set(identity.values) != set(self._identity_fields):
+            raise RakitError(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="Invalid resource identity",
+                status_code=400,
+            )
+        async with self._session_factory() as session:
+            return await self._load(session, identity)
+
     async def update(
         self,
         identity: RecordIdentity,
@@ -150,13 +163,16 @@ class SQLAlchemyMutationService:
                 # transactions that both read the same revision.  Put the
                 # expected revision in the UPDATE predicate as well: exactly
                 # one of concurrent writers can affect a row.
-                result = await uow.session.execute(
-                    sqlalchemy_update(self._model)
-                    .where(
-                        *self._identity_conditions(identity),
-                        getattr(self._model, self._version_field) == current_version,
-                    )
-                    .values(**dict(plan.values), **{self._version_field: current_version + 1})
+                result = cast(
+                    CursorResult[Any],
+                    await uow.session.execute(
+                        sqlalchemy_update(self._model)
+                        .where(
+                            *self._identity_conditions(identity),
+                            getattr(self._model, self._version_field) == current_version,
+                        )
+                        .values(**dict(plan.values), **{self._version_field: current_version + 1})
+                    ),
                 )
                 if result.rowcount != 1:
                     raise RakitError(
@@ -206,16 +222,19 @@ class SQLAlchemyMutationService:
             timedelta(minutes=15),
         )
 
-    async def delete(self, confirmation_token: str) -> None:
+    async def delete(
+        self, confirmation_token: str, *, identity: RecordIdentity | None = None
+    ) -> None:
         if self._token_service is None or self._version_field is None:
             raise RuntimeError("Delete requires a configured token and version provider")
+        target_identity = identity
         try:
             claims = self._token_service.verify(
                 confirmation_token, expected_purpose="delete_confirmation"
             )
-            identity = RecordIdentity(values=claims["identity"])
+            confirmed_identity = RecordIdentity(values=claims["identity"])
             expected_version = claims["expected_version"]
-            if set(identity.values) != set(self._identity_fields):
+            if set(confirmed_identity.values) != set(self._identity_fields):
                 raise ValueError
         except (KeyError, TypeError, ValueError) as exc:
             raise RakitError(
@@ -224,12 +243,18 @@ class SQLAlchemyMutationService:
                 status_code=400,
                 cause=exc,
             ) from exc
+        if target_identity is not None and target_identity != confirmed_identity:
+            raise RakitError(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="Invalid delete confirmation.",
+                status_code=400,
+            )
         async with SQLAlchemyUnitOfWork(
             self._session_factory,
             policy=TransactionPolicy.AUTO,
             event_publisher=self._event_publisher,
         ) as uow:
-            record = await self._load(uow.session, identity)
+            record = await self._load(uow.session, confirmed_identity)
             if record is None:
                 raise RakitError(
                     code=ErrorCode.RESOURCE_NOT_FOUND,
@@ -245,7 +270,7 @@ class SQLAlchemyMutationService:
             await uow.session.delete(record)
             await uow.session.flush()
             if self._event_publisher is not None:
-                self._event_publisher.publish(ResourceDeleted(identity=identity))
+                self._event_publisher.publish(ResourceDeleted(identity=confirmed_identity))
             await uow.mark_success()
 
     async def _load(self, session: AsyncSession, identity: RecordIdentity) -> object | None:
@@ -253,8 +278,11 @@ class SQLAlchemyMutationService:
             await session.scalars(select(self._model).where(*self._identity_conditions(identity)))
         ).one_or_none()
 
-    def _identity_conditions(self, identity: RecordIdentity) -> list[object]:
-        return [getattr(self._model, name) == value for name, value in identity.values.items()]
+    def _identity_conditions(self, identity: RecordIdentity) -> list[ColumnElement[bool]]:
+        return [
+            cast(ColumnElement[bool], getattr(self._model, name) == value)
+            for name, value in identity.values.items()
+        ]
 
     def _identity_for(self, record: object) -> RecordIdentity:
         return RecordIdentity(

@@ -66,13 +66,18 @@ def _is_safe_owned_static_precedence(
     second_path: str,
     second_owner: str,
 ) -> bool:
-    """Allow a same-owner static route to precede its dynamic fallback route."""
+    """Allow a same-owner static route beside its dynamic fallback route.
+
+    The compiled graph is deliberately backend-neutral; web routing places
+    static write endpoints ahead of a resource detail fallback at runtime.
+    Requiring their declaration order here would reject that safe graph even
+    though both routes are owned by the same compiled resource.
+    """
 
     return (
         first_owner == second_owner
         and first_path != second_path
-        and not _has_path_parameter(first_path)
-        and _has_path_parameter(second_path)
+        and _has_path_parameter(first_path) != _has_path_parameter(second_path)
     )
 
 

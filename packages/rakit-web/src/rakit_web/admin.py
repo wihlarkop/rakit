@@ -1,6 +1,8 @@
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -21,7 +23,8 @@ from starlette.routing import Mount, Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .assets import static_files
-from .auth_routes import build_auth_routes
+from .auth_routes import _verify_csrf, build_auth_routes
+from .form_routes import WriteResourceBinding, build_write_routes
 from .lifecycle import LifecycleManager
 from .logging import bind_request_context, configure_logging, reset_request_context
 from .resource_routes import ResourceBinding, build_resource_routes, build_templates
@@ -207,6 +210,7 @@ class Admin:
         self._application_resolver: ServiceResolver | None = None
         self._resource_services: dict[str, ResourceService] = {}
         self._resource_definitions: dict[str, ResourceDefinition] = {}
+        self._write_resource_bindings: dict[str, WriteResourceBinding] = {}
         self._template_dirs = template_dirs
         self.lifecycle = LifecycleManager()
         self.lifecycle.register_stopping_callback(self._close_application_resolver)
@@ -321,6 +325,63 @@ class Admin:
         self._resource_services[admin_cls.resource_id] = ResourceService(data_source)
         self._resource_definitions[admin_cls.resource_id] = definition
 
+    def register_write_resource(self, resource_id: str, binding: WriteResourceBinding) -> None:
+        """Register the explicit Plan 04 write policy for an existing resource.
+
+        Read registration never implies writability.  A resource becomes
+        mutable only through this separate, immutable form binding and only
+        for an auth-enabled admin.
+        """
+        if self.compiled is not None:
+            raise RuntimeError("Cannot register write resources after compilation")
+        definition = self._resource_definitions.get(resource_id)
+        if definition is None or binding.path != definition.path:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+                message="Invalid resource write policy declaration",
+                status_code=500,
+                details={"resource_id": resource_id, "reason": "resource_mismatch"},
+            )
+        if self._auth_backend is None or self._session_store is None:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="Write resources require configured authentication.",
+                status_code=500,
+            )
+        if resource_id in self._write_resource_bindings:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+                message="Invalid resource write policy declaration",
+                status_code=500,
+                details={"resource_id": resource_id, "reason": "duplicate_write_policy"},
+            )
+        known_fields = set(self._resource_services[resource_id].data_source.fields)
+        writable = {field.field_id for field in binding.form_schema.fields if field.writable}
+        if not writable or not writable <= known_fields:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+                message="Invalid resource write policy declaration",
+                status_code=500,
+                details={"resource_id": resource_id, "reason": "unknown_or_empty_writable_field"},
+            )
+        self._write_resource_bindings[resource_id] = replace(binding, resource_id=resource_id)
+        for route_name, methods, path in (
+            (f"resource:{resource_id}:create", ("GET",), binding.create_path),
+            (f"resource:{resource_id}:create.submit", ("POST",), binding.create_path),
+            (f"resource:{resource_id}:edit", ("GET",), binding.update_path),
+            (f"resource:{resource_id}:edit.submit", ("POST",), binding.update_path),
+            (f"resource:{resource_id}:delete", ("GET",), binding.delete_path),
+            (f"resource:{resource_id}:delete.submit", ("POST",), binding.delete_path),
+        ):
+            self._builder.add_route(
+                RouteDefinition(
+                    route_name=route_name,
+                    methods=methods,
+                    path=path,
+                    owner_id=resource_id,
+                )
+            )
+
     def compile(self) -> CompiledApplication:
         if self.compiled is None:
             self.compiled = compile_application(self._builder)
@@ -389,6 +450,83 @@ class Admin:
             bindings[resource_id] = binding
             resource_routes.extend(build_resource_routes(binding))
 
+        write_routes: list[Route] = []
+        requirement_resolver = build_requirement_resolver(
+            admin_id=self.config.admin_id,
+            resource_paths={
+                definition.path: resource_id
+                for resource_id, definition in self._resource_definitions.items()
+            },
+            writable_resources=frozenset(self._write_resource_bindings),
+        )
+        if self._session_store is not None and self.config.security.secret_key is not None:
+            write_token_service = TokenService.single_key(
+                key_id="primary",
+                value=self.config.security.secret_key,
+                admin_id=self.config.admin_id,
+            )
+            write_csrf_service = CsrfService(write_token_service)
+
+            async def authorize_write(request: Request) -> bool:
+                principal = request.scope.get("state", {}).get("principal")
+                requirement = requirement_resolver(
+                    request.url.path.removeprefix(request.scope.get("root_path", "")),
+                    request.method,
+                )
+                return bool(
+                    principal is not None
+                    and principal.authenticated
+                    and requirement is not None
+                    and requirement.matches(principal, superuser_bypass=self._superuser_bypass)
+                )
+
+            async def verify_write_csrf(request: Request) -> bool:
+                session_id = request.scope.get("state", {}).get("session_id")
+                return isinstance(session_id, str) and await _verify_csrf(
+                    request, write_csrf_service, session_id=session_id
+                )
+
+            def issue_submission_token(request: Request) -> str:
+                session_id = request.scope.get("state", {}).get("session_id")
+                if not isinstance(session_id, str):
+                    return ""
+                return write_token_service.issue_in(
+                    "form_submission",
+                    {"session_id": session_id, "path": request.scope.get("path", "")},
+                    timedelta(minutes=15),
+                )
+
+            async def verify_submission_token(request: Request) -> bool:
+                form = await request.form()
+                tokens = form.getlist("submission_token")
+                session_id = request.scope.get("state", {}).get("session_id")
+                if (
+                    len(tokens) != 1
+                    or not isinstance(tokens[0], str)
+                    or not isinstance(session_id, str)
+                ):
+                    return False
+                try:
+                    claims = write_token_service.verify(
+                        tokens[0], expected_purpose="form_submission"
+                    )
+                except ValueError:
+                    return False
+                return claims.get("session_id") == session_id and claims.get(
+                    "path"
+                ) == request.scope.get("path", "")
+
+            for write_binding in self._write_resource_bindings.values():
+                secured_binding = replace(
+                    write_binding,
+                    authorize=authorize_write,
+                    verify_csrf=verify_write_csrf,
+                    verify_submission_token=verify_submission_token,
+                    issue_submission_token=issue_submission_token,
+                    templates=templates,
+                )
+                write_routes.extend(build_write_routes(secured_binding))
+
         app = Starlette(
             debug=self.config.debug,
             routes=[Route("/", home)],
@@ -398,6 +536,8 @@ class Admin:
         app.routes.append(Route("/_system/health", health))
         app.routes.append(Route("/_system/ready", ready))
         app.routes.append(Mount("/_system/static", app=static_files(), name="rakit-static"))
+        for route in write_routes:
+            app.routes.append(route)
         for route in resource_routes:
             app.routes.append(route)
         if self._auth_backend is not None and self._session_store is not None:
@@ -439,13 +579,7 @@ class Admin:
         if self._auth_backend is not None and self._session_store is not None:
             inner_app = AuthorizationMiddleware(
                 inner_app,
-                requirement_for=build_requirement_resolver(
-                    admin_id=self.config.admin_id,
-                    resource_paths={
-                        definition.path: resource_id
-                        for resource_id, definition in self._resource_definitions.items()
-                    },
-                ),
+                requirement_for=requirement_resolver,
                 superuser_bypass=self._superuser_bypass,
             )
             inner_app = PrincipalMiddleware(

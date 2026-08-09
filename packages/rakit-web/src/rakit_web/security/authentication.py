@@ -118,7 +118,7 @@ class PrincipalMiddleware:
         self._auth_backend = auth_backend
         self._session_store = session_store
 
-    async def _resolve(self, request: Request) -> tuple[Principal, bool]:
+    async def _resolve(self, request: Request) -> tuple[Principal, bool, str | None]:
         """Resolve the request's principal, and report whether a session
         cookie was present but no longer usable.
 
@@ -130,10 +130,10 @@ class PrincipalMiddleware:
         """
         raw_token = request.cookies.get(SESSION_COOKIE_NAME)
         if not raw_token:
-            return ANONYMOUS_PRINCIPAL, False
+            return ANONYMOUS_PRINCIPAL, False, None
         record = await self._session_store.resolve(raw_token)
         if record is None:
-            return ANONYMOUS_PRINCIPAL, True
+            return ANONYMOUS_PRINCIPAL, True, None
         principal = await self._auth_backend.resolve_principal(record.subject_id)
         if principal is None or not principal.authenticated:
             # Revoke, don't just ignore. Treating this as anonymous for the
@@ -142,17 +142,22 @@ class PrincipalMiddleware:
             # *same* pre-deactivation session. Disabling an account has to
             # end its sessions, not pause them.
             await self._session_store.revoke(record.session_id)
-            return ANONYMOUS_PRINCIPAL, True
-        return principal, False
+            return ANONYMOUS_PRINCIPAL, True, None
+        return principal, False, record.session_id
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
         request = Request(scope, receive=receive)
-        principal, clear_session_cookie = await self._resolve(request)
+        principal, clear_session_cookie, session_id = await self._resolve(request)
         scope.setdefault("state", {})
         scope["state"]["principal"] = principal
+        if session_id is not None:
+            # The opaque identifier is request-private state, not a response
+            # field.  Write routes use it to bind CSRF/submission tokens to
+            # the live session already resolved by this middleware.
+            scope["state"]["session_id"] = session_id
         if not clear_session_cookie:
             await self.app(scope, receive, send)
             return
@@ -180,7 +185,7 @@ class AuthorizationMiddleware:
         self,
         app: ASGIApp,
         *,
-        requirement_for: Callable[[str], PermissionRequirement | None],
+        requirement_for: Callable[..., PermissionRequirement | None],
         superuser_bypass: bool = True,
     ) -> None:
         self.app = app
@@ -193,7 +198,7 @@ class AuthorizationMiddleware:
             return
 
         request = Request(scope, receive=receive)
-        requirement = self._requirement_for(admin_relative_path(request))
+        requirement = self._requirement_for(admin_relative_path(request), request.method)
         if requirement is None:
             await self.app(scope, receive, send)
             return
@@ -223,8 +228,11 @@ class AuthorizationMiddleware:
 
 
 def build_requirement_resolver(
-    *, admin_id: str, resource_paths: dict[str, str]
-) -> Callable[[str], PermissionRequirement | None]:
+    *,
+    admin_id: str,
+    resource_paths: dict[str, str],
+    writable_resources: frozenset[str] = frozenset(),
+) -> Callable[..., PermissionRequirement | None]:
     """Map a request path to the permission it requires.
 
     `resource_paths` maps each compiled resource's base path (e.g.
@@ -236,7 +244,10 @@ def build_requirement_resolver(
     """
     access_requirement = PermissionRequirement.all_of(f"{admin_id}.access")
     read_requirements = {
-        path: PermissionRequirement.all_of(f"{admin_id}.resources.{resource_id}.read")
+        path: (
+            resource_id,
+            PermissionRequirement.all_of(f"{admin_id}.resources.{resource_id}.read"),
+        )
         for path, resource_id in resource_paths.items()
     }
 
@@ -249,11 +260,22 @@ def build_requirement_resolver(
         read_requirements.items(), key=lambda item: len(item[0]), reverse=True
     )
 
-    def resolve(path: str) -> PermissionRequirement | None:
+    def resolve(path: str, method: str = "GET") -> PermissionRequirement | None:
         if is_public_path(path):
             return None
-        for resource_path, requirement in ordered_requirements:
+        for resource_path, (resource_id, requirement) in ordered_requirements:
             if path == resource_path or path.startswith(f"{resource_path}/"):
+                if resource_id in writable_resources:
+                    suffix = path[len(resource_path) :].strip("/").split("/")
+                    operation: str | None = None
+                    if suffix == ["new"]:
+                        operation = "create"
+                    elif len(suffix) == 2 and suffix[1] in {"edit", "delete"}:
+                        operation = "update" if suffix[1] == "edit" else "delete"
+                    if operation is not None:
+                        return PermissionRequirement.all_of(
+                            f"{admin_id}.resources.{resource_id}.{operation}"
+                        )
                 return requirement
         return access_requirement
 
