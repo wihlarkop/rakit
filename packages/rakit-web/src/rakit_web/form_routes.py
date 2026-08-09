@@ -31,6 +31,7 @@ class WriteResourceBinding:
     templates: Jinja2Templates
     authorize: Verifier
     verify_csrf: Verifier
+    verify_submission_token: Verifier
     issue_submission_token: SubmissionTokenIssuer
 
     @property
@@ -91,6 +92,12 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
         if not await binding.verify_csrf(request):
             return PlainTextResponse(
                 "Invalid CSRF token", status_code=403, headers={"Cache-Control": "no-store"}
+            )
+        if not await binding.verify_submission_token(request):
+            return PlainTextResponse(
+                "Invalid submission token",
+                status_code=409,
+                headers={"Cache-Control": "no-store"},
             )
         submitted = await _parse_form(request, binding.form_schema)
         if submitted is None:
