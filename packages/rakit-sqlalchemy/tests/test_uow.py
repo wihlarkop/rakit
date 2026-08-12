@@ -1,4 +1,6 @@
+import asyncio
 from collections.abc import AsyncIterator
+from typing import cast
 
 import pytest
 from rakit_core.transactions import TransactionPolicy
@@ -51,3 +53,41 @@ async def test_auto_policy_rolls_back_when_the_operation_raises(
 
     async with session_factory() as session:
         assert await session.scalar(select(func.count(User.id))) == 0
+
+
+@pytest.mark.anyio
+async def test_cancellation_during_commit_waits_for_the_durable_outcome() -> None:
+    """Once commit starts, cancellation cannot produce false rollback semantics."""
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class Session:
+        committed = False
+        rolled_back = False
+
+        async def commit(self) -> None:
+            entered.set()
+            await release.wait()
+            self.committed = True
+
+        async def rollback(self) -> None:
+            self.rolled_back = True
+
+        async def close(self) -> None:
+            return None
+
+    session = Session()
+
+    async def operation() -> None:
+        factory = cast(async_sessionmaker[AsyncSession], lambda: session)
+        async with SQLAlchemyUnitOfWork(factory) as uow:
+            await uow.mark_success()
+
+    task = asyncio.create_task(operation())
+    await entered.wait()
+    task.cancel()
+    release.set()
+    await task
+
+    assert session.committed is True
+    assert session.rolled_back is False

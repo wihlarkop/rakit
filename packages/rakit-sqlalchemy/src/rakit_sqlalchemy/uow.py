@@ -1,5 +1,6 @@
 """Operation-scoped SQLAlchemy transaction handling."""
 
+import asyncio
 from typing import Self
 
 from rakit_core.events import EventPublisher
@@ -39,7 +40,7 @@ class SQLAlchemyUnitOfWork:
     async def commit(self) -> None:
         if self.policy is not TransactionPolicy.MANUAL:
             raise RuntimeError("Explicit commit is only available with manual transaction policy")
-        await self.session.commit()
+        await self._commit_critical()
         self._completed = True
         if self.event_publisher is not None:
             await self.event_publisher.after_commit()
@@ -49,6 +50,20 @@ class SQLAlchemyUnitOfWork:
         self._completed = True
         if self.event_publisher is not None:
             self.event_publisher.after_rollback()
+
+    async def _commit_critical(self) -> None:
+        """Finish the durable commit once it has started, despite cancellation.
+
+        Cancellation remains cooperative until the checkpoint immediately
+        before this method.  After the driver is asked to commit, awaiting a
+        cancelled request must not let the caller report a rollback while the
+        database task continues and commits in the background.
+        """
+        commit_task = asyncio.create_task(self.session.commit())
+        try:
+            await asyncio.shield(commit_task)
+        except asyncio.CancelledError:
+            await asyncio.shield(commit_task)
 
     async def __aexit__(
         self,
@@ -64,7 +79,7 @@ class SQLAlchemyUnitOfWork:
                     # A commit already in progress is never force-cancelled;
                     # this is the last cooperative checkpoint before it starts.
                     self.operation_context.checkpoint()
-                await self.session.commit()
+                await self._commit_critical()
                 self._completed = True
                 if self.event_publisher is not None:
                     await self.event_publisher.after_commit()
