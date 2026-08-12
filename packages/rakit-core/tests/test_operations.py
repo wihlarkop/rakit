@@ -141,19 +141,33 @@ async def test_operation_scoped_publishers_isolate_deferred_events() -> None:
         scope=ServiceScope.OPERATION,
     )
 
-    async with (
-        registry.application_scope() as application,
-        application.request_scope() as request,
-        request.operation_scope() as operation_a,
-        request.operation_scope() as operation_b,
-    ):
-        publisher_a = operation_a.require(EventPublisher)
-        publisher_b = operation_b.require(EventPublisher)
-        assert publisher_a is not publisher_b
+    publishers: list[EventPublisher] = []
+    first_queued = anyio.Event()
+    second_committed = anyio.Event()
 
-        publisher_a.publish(_OperationEvent("a"))
-        publisher_b.publish(_OperationEvent("b"))
-        await publisher_b.after_commit()
-        publisher_a.after_rollback()
+    async with registry.application_scope() as application, application.request_scope() as request:
+
+        async def first_operation() -> None:
+            async with request.operation_scope() as services:
+                publisher = services.require(EventPublisher)
+                publishers.append(publisher)
+                publisher.publish(_OperationEvent("a"))
+                first_queued.set()
+                await second_committed.wait()
+                publisher.after_rollback()
+
+        async def second_operation() -> None:
+            await first_queued.wait()
+            async with request.operation_scope() as services:
+                publisher = services.require(EventPublisher)
+                publishers.append(publisher)
+                publisher.publish(_OperationEvent("b"))
+                await publisher.after_commit()
+                second_committed.set()
+
+        async with anyio.create_task_group() as task_group:
+            task_group.start_soon(first_operation)
+            task_group.start_soon(second_operation)
 
     assert received == ["b"]
+    assert publishers[0] is not publishers[1]
