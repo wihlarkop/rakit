@@ -2,17 +2,18 @@
 
 import asyncio
 import uuid
-from collections.abc import Awaitable, Iterator, Mapping
+from collections.abc import Awaitable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from time import monotonic
-from types import MappingProxyType
 
 import anyio
 
 from rakit_core.auth import Principal
+from rakit_core.di import ServiceResolver
 from rakit_core.errors import ErrorCode, RakitError
+from rakit_core.events import EventPublisher
 
 
 def _timeout_error() -> RakitError:
@@ -62,14 +63,12 @@ class OperationContext:
     resource_id: str = ""
     operation: str = ""
     permissions: tuple[str, ...] = ()
-    services: Mapping[str, object] | None = None
-    events: object | None = None
+    services: ServiceResolver | None = None
+    events: EventPublisher | None = None
 
     def __post_init__(self) -> None:
         if self.principal is not None and not self.principal_id:
             object.__setattr__(self, "principal_id", self.principal.subject_id)
-        if self.services is not None:
-            object.__setattr__(self, "services", MappingProxyType(dict(self.services)))
 
     def checkpoint(self) -> None:
         self.cancellation.check(self.deadline)

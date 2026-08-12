@@ -602,6 +602,17 @@ class Admin:
                 ) == request.scope.get("path", "")
 
             for write_binding in self._write_resource_bindings.values():
+
+                @asynccontextmanager
+                async def operation_scope() -> AsyncIterator[ServiceResolver]:
+                    if self._application_resolver is None:
+                        raise RuntimeError("Application services are not available")
+                    async with (
+                        self._application_resolver.request_scope() as request_services,
+                        request_services.operation_scope() as operation_services,
+                    ):
+                        yield operation_services
+
                 secured_binding = replace(
                     write_binding,
                     authorize=authorize_write,
@@ -611,13 +622,9 @@ class Admin:
                     mutation_authorizer=authorize_mutation,
                     templates=templates,
                     deadline_seconds=self._mutation_deadline_seconds,
-                    operation_services=lambda: (
-                        {"resolver": self._application_resolver}
-                        if self._application_resolver is not None
-                        else {}
-                    ),
-                    operation_events=lambda service=write_binding.mutation_service: getattr(
-                        service, "_event_publisher", None
+                    operation_scope=operation_scope,
+                    event_publisher=getattr(
+                        write_binding.mutation_service, "event_publisher", None
                     ),
                 )
                 write_routes.extend(build_write_routes(secured_binding))

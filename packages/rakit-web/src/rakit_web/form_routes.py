@@ -10,11 +10,14 @@ import hashlib
 import json
 import re
 import uuid
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Protocol, cast
 
+from rakit_core.di import ServiceResolver
 from rakit_core.errors import RakitError
+from rakit_core.events import EventPublisher
 from rakit_core.forms import (
     CollapsibleGroup,
     Column,
@@ -95,6 +98,7 @@ SubmissionTokenIssuer = Callable[[Request], str]
 MutationAuthorizer = Callable[
     [Request, MutationOperation, RecordIdentity | None], Awaitable[MutationAuthorization | None]
 ]
+OperationScopeFactory = Callable[[], AbstractAsyncContextManager[ServiceResolver]]
 
 
 @dataclass(frozen=True)
@@ -114,8 +118,8 @@ class WriteResourceBinding:
     mutation_authorizer: MutationAuthorizer | None = None
     htmx_refresh_targets: tuple[str, ...] = ()
     success_message: str | None = None
-    operation_services: Callable[[], Mapping[str, object]] | None = None
-    operation_events: Callable[[], object | None] | None = None
+    operation_scope: OperationScopeFactory | None = None
+    event_publisher: EventPublisher | None = None
     codec: IdentityCodec = field(default_factory=IdentityCodec)
 
     @property
@@ -352,25 +356,35 @@ async def _execute_with_deadline(
     awaitable: Awaitable[object],
     authorization: MutationAuthorization,
 ) -> object:
-    if binding.deadline_seconds is None:
+    if binding.deadline_seconds is None and binding.operation_scope is None:
         return await awaitable
-    deadline = Deadline.after(binding.deadline_seconds)
-    context = OperationContext(
-        deadline=deadline,
-        cancellation=CancellationContext(),
-        request_id=cast(str, request.scope.get("state", {}).get("request_id", "")),
-        operation_id=new_operation_id(),
-        principal=request.scope.get("state", {}).get("principal"),
-        principal_id=authorization.principal_id,
-        admin_id=authorization.admin_id,
-        resource_id=authorization.resource_id,
-        operation=authorization.operation,
-        permissions=authorization.permissions,
-        services=binding.operation_services() if binding.operation_services is not None else None,
-        events=binding.operation_events() if binding.operation_events is not None else None,
-    )
-    with activate_operation_context(context):
-        return await run_with_deadline(awaitable, deadline)
+    deadline = Deadline.after(binding.deadline_seconds or 30.0)
+
+    @asynccontextmanager
+    async def scoped_services() -> AsyncIterator[ServiceResolver | None]:
+        if binding.operation_scope is None:
+            yield None
+        else:
+            async with binding.operation_scope() as services:
+                yield services
+
+    async with scoped_services() as services:
+        context = OperationContext(
+            deadline=deadline,
+            cancellation=CancellationContext(),
+            request_id=cast(str, request.scope.get("state", {}).get("request_id", "")),
+            operation_id=new_operation_id(),
+            principal=request.scope.get("state", {}).get("principal"),
+            principal_id=authorization.principal_id,
+            admin_id=authorization.admin_id,
+            resource_id=authorization.resource_id,
+            operation=authorization.operation,
+            permissions=authorization.permissions,
+            services=services,
+            events=binding.event_publisher,
+        )
+        with activate_operation_context(context):
+            return await run_with_deadline(awaitable, deadline)
 
 
 async def _claim_submission(

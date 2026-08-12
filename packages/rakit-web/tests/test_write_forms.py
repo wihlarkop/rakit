@@ -6,6 +6,8 @@ from typing import cast
 import httpx
 import pytest
 from rakit_core.auth import Principal
+from rakit_core.di import ServiceRegistry, ServiceScope
+from rakit_core.events import EventBus, EventPublisher
 from rakit_core.fields import FieldDefinition
 from rakit_core.forms import (
     CollapsibleGroup,
@@ -365,36 +367,42 @@ async def test_idempotent_create_replays_without_second_mutation() -> None:
 @pytest.mark.anyio
 async def test_request_deadline_is_visible_to_the_mutation_pipeline() -> None:
     service = ContextCapturingMutationService()
-    operation_events = object()
-    binding = WriteResourceBinding(
-        path="/users",
-        label="User",
-        form_schema=FormSchema(
-            fields=(FieldDefinition(field_id="email", python_type=str, required=True),)
-        ),
-        mutation_service=service,
-        templates=build_templates(()),
-        authorize=_allow,
-        verify_csrf=_allow,
-        verify_submission_token=_allow,
-        issue_submission_token=lambda _request: "submission",
-        mutation_authorizer=_allow_mutation,
-        deadline_seconds=1,
-        operation_services=lambda: {"request-service": service},
-        operation_events=lambda: operation_events,
-    )
-    app = Starlette(routes=build_write_routes(binding))
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
-        response = await client.post(
-            "/users/new",
-            data={"email": "ada@example.com", "csrf_token": "x", "submission_token": "x"},
-            follow_redirects=False,
+    operation_events = EventPublisher(EventBus())
+    registry = ServiceRegistry()
+    registry.add_value(object, service, scope=ServiceScope.APPLICATION)
+    async with (
+        registry.application_scope() as application,
+        application.request_scope() as request_services,
+    ):
+        binding = WriteResourceBinding(
+            path="/users",
+            label="User",
+            form_schema=FormSchema(
+                fields=(FieldDefinition(field_id="email", python_type=str, required=True),)
+            ),
+            mutation_service=service,
+            templates=build_templates(()),
+            authorize=_allow,
+            verify_csrf=_allow,
+            verify_submission_token=_allow,
+            issue_submission_token=lambda _request: "submission",
+            mutation_authorizer=_allow_mutation,
+            deadline_seconds=1,
+            operation_scope=request_services.operation_scope,
+            event_publisher=operation_events,
         )
+        app = Starlette(routes=build_write_routes(binding))
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+            response = await client.post(
+                "/users/new",
+                data={"email": "ada@example.com", "csrf_token": "x", "submission_token": "x"},
+                follow_redirects=False,
+            )
     assert response.status_code == 303
     assert service.operation_context is not None
     context = cast(OperationContext, service.operation_context)
-    assert context.services is not None and context.services["request-service"] is service
+    assert context.services is not None and context.services.require(object) is service
     assert context.events is operation_events
 
 
