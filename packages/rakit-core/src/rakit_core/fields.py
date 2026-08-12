@@ -5,8 +5,12 @@ from model metadata, while applications may declare it directly for custom
 resources.  A sensitive field is fail-closed for every public capability.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
+
+FieldParser = Callable[[object], object]
+FieldFormatter = Callable[[object], object]
 
 _SENSITIVE_NAME_PARTS = (
     "password",
@@ -34,12 +38,19 @@ class FieldDefinition:
     nullable: bool = False
     widget: str = "text"
     sensitive: bool = False
+    description: str | None = None
+    parser: FieldParser | None = None
+    formatter: FieldFormatter | None = None
 
     def __post_init__(self) -> None:
         if not self.field_id or not isinstance(self.field_id, str):
             raise ValueError("Field id must be a non-empty string")
         if not isinstance(self.python_type, type):
             raise ValueError("Field python_type must be a type")
+        if self.parser is not None and not callable(self.parser):
+            raise ValueError("Field parser must be callable")
+        if self.formatter is not None and not callable(self.formatter):
+            raise ValueError("Field formatter must be callable")
 
 
 def infer_field_security(field: FieldDefinition) -> FieldDefinition:

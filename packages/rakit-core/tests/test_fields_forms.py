@@ -3,7 +3,20 @@ from typing import cast
 
 import pytest
 from rakit_core.fields import FieldDefinition, infer_field_security
-from rakit_core.forms import FormSchema
+from rakit_core.forms import (
+    CollapsibleGroup,
+    Column,
+    CustomBlock,
+    FieldLayout,
+    FormLayout,
+    FormSchema,
+    FormValidationError,
+    RelationshipPanel,
+    Row,
+    Section,
+    Tab,
+    Tabs,
+)
 
 
 def test_sensitive_field_is_hidden_and_not_writable() -> None:
@@ -36,3 +49,87 @@ def test_form_state_has_immutable_typed_normalized_values() -> None:
     assert state.normalized == {"name": "Ada", "birthday": date(1815, 12, 10)}
     with pytest.raises(TypeError):
         cast(dict[str, object], state.normalized)["name"] = "Grace"
+
+
+def test_parser_formatter_and_typed_layout_are_applied_without_bypassing_validation() -> None:
+    schema = FormSchema(
+        fields=(
+            FieldDefinition(
+                field_id="name",
+                python_type=str,
+                parser=lambda value: str(value).strip().title(),
+                formatter=lambda value: f"User: {value}",
+            ),
+        ),
+        layout=FormLayout(
+            children=(
+                Section(
+                    layout_id="profile",
+                    title="Profile",
+                    children=(Row(children=(Column(children=(FieldLayout("name"),)),)),),
+                ),
+                Tabs(
+                    layout_id="extra",
+                    tabs=(
+                        Tab(
+                            layout_id="advanced",
+                            label="Advanced",
+                            children=(
+                                CollapsibleGroup(
+                                    layout_id="more",
+                                    label="More",
+                                    children=(RelationshipPanel("relations", "teams"),),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+                CustomBlock(layout_id="help", block_id="profile-help"),
+            )
+        ),
+    )
+
+    state = schema.parse({"name": "  ada  "})
+
+    assert state.normalized == {"name": "Ada"}
+    assert schema.format_value("name", "Ada") == "User: Ada"
+    assert schema.resolved_layout().children[0].layout_id == "profile"
+
+
+def test_parser_errors_become_field_issues_and_layout_rejects_bad_references() -> None:
+    schema = FormSchema(
+        fields=(
+            FieldDefinition(
+                field_id="count",
+                python_type=int,
+                parser=lambda _value: (_ for _ in ()).throw(ValueError()),
+            ),
+        )
+    )
+    with pytest.raises(FormValidationError) as caught:
+        schema.parse({"count": "not-a-number"})
+    assert caught.value.state.issues[0].field_id == "count"
+
+    with pytest.raises(ValueError, match="unknown field"):
+        FormSchema(
+            fields=(FieldDefinition(field_id="name", python_type=str),),
+            layout=FormLayout(children=(FieldLayout("missing"),)),
+        )
+    with pytest.raises(ValueError, match="more than once"):
+        FormSchema(
+            fields=(FieldDefinition(field_id="name", python_type=str),),
+            layout=FormLayout(children=(FieldLayout("name"), FieldLayout("name"))),
+        )
+
+
+def test_formatter_cannot_expose_sensitive_field() -> None:
+    schema = FormSchema(
+        fields=(
+            FieldDefinition(
+                field_id="password_hash",
+                python_type=str,
+                formatter=lambda _value: "leaked",
+            ),
+        )
+    )
+    assert schema.format_value("password_hash", "secret") == ""

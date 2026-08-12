@@ -3,7 +3,7 @@ from dataclasses import replace
 import httpx
 import pytest
 from rakit_core.fields import FieldDefinition
-from rakit_core.forms import FormSchema
+from rakit_core.forms import CollapsibleGroup, FieldLayout, FormLayout, FormSchema, Tab, Tabs
 from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, OperationReceipt
 from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import MutationAuthorization, MutationOperation
@@ -379,3 +379,158 @@ async def test_timed_out_idempotent_submission_releases_its_claim_for_retry() ->
     assert timed_out.status_code == 504
     assert retry.status_code == 303
     assert service.calls == 1
+
+
+@pytest.mark.anyio
+async def test_invalid_layout_form_links_errors_and_opens_invalid_tab() -> None:
+    binding = WriteResourceBinding(
+        path="/users",
+        label="User",
+        form_schema=FormSchema(
+            fields=(
+                FieldDefinition(
+                    field_id="email",
+                    python_type=str,
+                    required=True,
+                    description="We use this for notifications.",
+                ),
+            ),
+            layout=FormLayout(
+                children=(
+                    Tabs(
+                        layout_id="profile-tabs",
+                        tabs=(
+                            Tab(
+                                layout_id="contact",
+                                label="Contact",
+                                children=(
+                                    CollapsibleGroup(
+                                        layout_id="contact-details",
+                                        label="Details",
+                                        children=(FieldLayout("email"),),
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                )
+            ),
+        ),
+        mutation_service=FakeMutationService(),
+        templates=build_templates(()),
+        authorize=_allow,
+        verify_csrf=_allow,
+        verify_submission_token=_allow,
+        issue_submission_token=lambda _request: "submission",
+        mutation_authorizer=_allow_mutation,
+    )
+    app = Starlette(routes=build_write_routes(binding))
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+    ) as client:
+        response = await client.post("/users/new", data={"email": "", "csrf_token": "x"})
+
+    assert response.status_code == 422
+    assert 'for="rakit--users-email"' in response.text
+    assert 'id="rakit--users-email"' in response.text
+    assert 'aria-invalid="true"' in response.text
+    assert (
+        'aria-describedby="rakit--users-email-description rakit--users-email-error"'
+        in response.text
+    )
+    assert 'href="#rakit--users-email"' in response.text
+    assert 'data-rakit-first-invalid="rakit--users-email"' in response.text
+    assert 'aria-selected="true"' in response.text
+    assert "(1)</span>" in response.text
+    assert 'id="contact-details" open' in response.text
+
+
+@pytest.mark.anyio
+async def test_parser_normalizes_before_idempotency_fingerprint_and_htmx_result_is_semantic() -> (
+    None
+):
+    service = FakeMutationService()
+    binding = WriteResourceBinding(
+        path="/users",
+        label="User",
+        form_schema=FormSchema(
+            fields=(
+                FieldDefinition(
+                    field_id="name",
+                    python_type=str,
+                    required=True,
+                    parser=lambda value: str(value).strip().lower(),
+                ),
+            )
+        ),
+        mutation_service=service,
+        templates=build_templates(()),
+        authorize=_allow,
+        verify_csrf=_allow,
+        verify_submission_token=_allow,
+        issue_submission_token=lambda _request: "submission",
+        mutation_authorizer=_allow_mutation,
+        idempotency_store=FakeIdempotencyStore(),
+        htmx_refresh_targets=("resource-list",),
+        success_message="Saved",
+    )
+    app = Starlette(routes=build_write_routes(binding))
+    payload = {"name": " Ada ", "csrf_token": "x", "submission_token": "same"}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+    ) as client:
+        first = await client.post("/users/new", data=payload, headers={"HX-Request": "true"})
+        second = await client.post(
+            "/users/new",
+            data={**payload, "name": "ada"},
+            headers={"HX-Request": "true"},
+        )
+
+    assert first.status_code == 204
+    assert "HX-Redirect" not in first.headers
+    assert "rakit:refresh" in first.headers["HX-Trigger"]
+    assert "rakit:toast" in first.headers["HX-Trigger"]
+    assert second.status_code == 204
+    assert service.calls == 1
+
+
+@pytest.mark.anyio
+async def test_update_formatter_is_used_but_sensitive_field_is_never_rendered() -> None:
+    service = FullFakeMutationService()
+    service.record = type("Record", (), {"name": "Ada", "password_hash": "private"})()
+    binding = WriteResourceBinding(
+        path="/users",
+        label="User",
+        form_schema=FormSchema(
+            fields=(
+                FieldDefinition(
+                    field_id="name",
+                    python_type=str,
+                    required=True,
+                    formatter=lambda value: f"User: {value}",
+                ),
+                FieldDefinition(
+                    field_id="password_hash",
+                    python_type=str,
+                    formatter=lambda _value: "leaked",
+                ),
+            )
+        ),
+        mutation_service=service,
+        templates=build_templates(()),
+        authorize=_allow,
+        verify_csrf=_allow,
+        verify_submission_token=_allow,
+        issue_submission_token=lambda _request: "submission",
+        mutation_authorizer=_allow_mutation,
+    )
+    encoded = binding.codec.encode(RecordIdentity(values={"id": 1}))
+    app = Starlette(routes=build_write_routes(binding))
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+    ) as client:
+        response = await client.get(f"/users/{encoded}/edit")
+
+    assert 'value="User: Ada"' in response.text
+    assert "password_hash" not in response.text
+    assert "leaked" not in response.text

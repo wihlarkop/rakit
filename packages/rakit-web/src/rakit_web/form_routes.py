@@ -8,13 +8,27 @@ optimistic-write invariants remain in the datasource service.
 
 import hashlib
 import json
+import re
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Protocol, cast
 
 from rakit_core.errors import RakitError
-from rakit_core.forms import FormSchema, FormValidationError
+from rakit_core.forms import (
+    CollapsibleGroup,
+    Column,
+    CustomBlock,
+    FieldLayout,
+    FormLayout,
+    FormSchema,
+    FormValidationError,
+    RelationshipPanel,
+    Row,
+    Section,
+    Tab,
+    Tabs,
+)
 from rakit_core.idempotency import (
     IdempotencyReservation,
     IdempotencyStatus,
@@ -98,6 +112,8 @@ class WriteResourceBinding:
     deadline_seconds: float | None = None
     idempotency_store: IdempotencyStore | None = None
     mutation_authorizer: MutationAuthorizer | None = None
+    htmx_refresh_targets: tuple[str, ...] = ()
+    success_message: str | None = None
     codec: IdentityCodec = field(default_factory=IdentityCodec)
 
     @property
@@ -141,10 +157,96 @@ async def _parse_form(
 
 def _record_values(binding: WriteResourceBinding, record: object) -> dict[str, object]:
     return {
-        field.field_id: getattr(record, field.field_id, "")
+        field.field_id: binding.form_schema.format_value(
+            field.field_id, getattr(record, field.field_id, "")
+        )
         for field in binding.form_schema.fields
-        if field.writable
+        if field.writable and field.readable and not field.sensitive
     }
+
+
+def _field_dom_id(binding: WriteResourceBinding, field_id: str) -> str:
+    safe_resource = re.sub(r"[^a-zA-Z0-9_-]", "-", binding._route_resource_id)
+    safe_field = re.sub(r"[^a-zA-Z0-9_-]", "-", field_id)
+    return f"rakit-{safe_resource}-{safe_field}"
+
+
+def _node_fields(node: object) -> tuple[str, ...]:
+    if isinstance(node, FieldLayout):
+        return (node.field_id,)
+    if isinstance(node, Column | Section | CollapsibleGroup):
+        return tuple(field_id for child in node.children for field_id in _node_fields(child))
+    if isinstance(node, Row):
+        return tuple(field_id for column in node.children for field_id in _node_fields(column))
+    if isinstance(node, Tabs):
+        return tuple(field_id for tab in node.tabs for field_id in _node_fields(tab))
+    if isinstance(node, Tab):
+        return tuple(field_id for child in node.children for field_id in _node_fields(child))
+    return ()
+
+
+def _layout_view(
+    layout: FormLayout,
+    controls: Mapping[str, Mapping[str, object]],
+    issue_map: Mapping[str, tuple[object, ...]],
+) -> tuple[tuple[dict[str, object], ...], str | None]:
+    ordered_invalid = [
+        field_id
+        for child in layout.children
+        for field_id in _node_fields(child)
+        if field_id in issue_map and field_id in controls
+    ]
+    first_invalid = ordered_invalid[0] if ordered_invalid else None
+
+    def render(node: object) -> dict[str, object]:
+        if isinstance(node, FieldLayout):
+            return {"kind": "field", "field": controls.get(node.field_id)}
+        if isinstance(node, RelationshipPanel):
+            return {
+                "kind": "relationship",
+                "id": node.layout_id,
+                "relationship": node.relationship_id,
+            }
+        if isinstance(node, CustomBlock):
+            return {"kind": "custom", "id": node.layout_id, "block": node.block_id}
+        if isinstance(node, Column):
+            return {"kind": "column", "children": tuple(render(child) for child in node.children)}
+        if isinstance(node, Row):
+            return {"kind": "row", "children": tuple(render(child) for child in node.children)}
+        if isinstance(node, Section):
+            return {
+                "kind": "section",
+                "id": node.layout_id,
+                "title": node.title,
+                "children": tuple(render(child) for child in node.children),
+            }
+        if isinstance(node, CollapsibleGroup):
+            fields = _node_fields(node)
+            return {
+                "kind": "collapsible",
+                "id": node.layout_id,
+                "label": node.label,
+                "open": any(field_id in issue_map for field_id in fields),
+                "children": tuple(render(child) for child in node.children),
+            }
+        if isinstance(node, Tabs):
+            tabs = []
+            for tab in node.tabs:
+                fields = _node_fields(tab)
+                count = len({field_id for field_id in fields if field_id in issue_map})
+                tabs.append(
+                    {
+                        "id": tab.layout_id,
+                        "label": tab.label,
+                        "errors": count,
+                        "active": first_invalid in fields if first_invalid else tab is node.tabs[0],
+                        "children": tuple(render(child) for child in tab.children),
+                    }
+                )
+            return {"kind": "tabs", "id": node.layout_id, "tabs": tuple(tabs)}
+        raise TypeError("Unsupported form layout node")
+
+    return tuple(render(child) for child in layout.children), first_invalid
 
 
 def _form_response(
@@ -156,17 +258,56 @@ def _form_response(
     submitted: Mapping[str, object] | None = None,
     issues: tuple[object, ...] = (),
     concurrency_token: str | None = None,
+    operation: str = "create",
     status_code: int = 200,
 ) -> Response:
+    issue_map: dict[str, tuple[object, ...]] = {}
+    for issue in issues:
+        field_id = getattr(issue, "field_id", None)
+        if isinstance(field_id, str):
+            issue_map[field_id] = (*issue_map.get(field_id, ()), issue)
+    controls = {
+        field.field_id: {
+            "id": _field_dom_id(binding, field.field_id),
+            "name": field.field_id,
+            "label": field.label or field.field_id,
+            "description": field.description,
+            "description_id": f"{_field_dom_id(binding, field.field_id)}-description",
+            "error_id": f"{_field_dom_id(binding, field.field_id)}-error",
+            "value": (submitted or {}).get(field.field_id, ""),
+            "issues": issue_map.get(field.field_id, ()),
+        }
+        for field in binding.form_schema.fields
+        if field.writable and field.readable and not field.sensitive
+    }
+    layout, first_invalid = _layout_view(
+        binding.form_schema.resolved_layout(operation=operation), controls, issue_map
+    )
     return binding.templates.TemplateResponse(
         request,
         "forms/form.html",
         {
             "title": title,
             "label": binding.label,
-            "fields": tuple(field for field in binding.form_schema.fields if field.writable),
-            "submitted": submitted or {},
+            "layout": layout,
             "issues": issues,
+            "summary_issues": tuple(
+                {
+                    "message": getattr(issue, "message", "Invalid value."),
+                    "field_id": getattr(issue, "field_id", None),
+                    "anchor": (
+                        _field_dom_id(binding, field_id)
+                        if isinstance((field_id := getattr(issue, "field_id", None)), str)
+                        and field_id in controls
+                        else None
+                    ),
+                }
+                for issue in issues
+            ),
+            "global_issues": tuple(
+                issue for issue in issues if getattr(issue, "field_id", None) is None
+            ),
+            "first_invalid_id": _field_dom_id(binding, first_invalid) if first_invalid else None,
             "action_url": mounted_path(request, action_path),
             "csrf_token": request.cookies.get(CSRF_COOKIE_NAME, ""),
             "submission_token": binding.issue_submission_token(request),
@@ -251,7 +392,12 @@ async def _claim_submission(
         hashlib.sha256(token.encode()).hexdigest(), fingerprint=fingerprint
     )
     if reservation.status is IdempotencyStatus.COMPLETED:
-        return reservation, mutation_success(request, location=mounted_path(request, binding.path))
+        return reservation, mutation_success(
+            request,
+            location=mounted_path(request, binding.path),
+            refresh_targets=binding.htmx_refresh_targets,
+            message=binding.success_message,
+        )
     if not reservation.claimed:
         return reservation, _error(409, "Submission is already in progress")
     return reservation, None
@@ -291,16 +437,16 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
             return _error(400, "Invalid form")
         submitted, tokens = parsed
         try:
-            binding.form_schema.parse(submitted)
+            normalized = dict(binding.form_schema.parse(submitted).normalized)
             reservation, replay = await _claim_submission(
-                binding, request, submitted=submitted, tokens=tokens, operation="create"
+                binding, request, submitted=normalized, tokens=tokens, operation="create"
             )
             if replay is not None:
                 return replay
             await _execute_with_deadline(
                 binding,
                 request,
-                binding.mutation_service.create(submitted, authorization=authorization),
+                binding.mutation_service.create(normalized, authorization=authorization),
                 authorization,
             )
             if reservation is not None and binding.idempotency_store is not None:
@@ -339,7 +485,12 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
             ):
                 await binding.idempotency_store.release(reservation)
             return _error(400, "Invalid form")
-        return mutation_success(request, location=mounted_path(request, binding.path))
+        return mutation_success(
+            request,
+            location=mounted_path(request, binding.path),
+            refresh_targets=binding.htmx_refresh_targets,
+            message=binding.success_message,
+        )
 
     routes = [
         Route(
@@ -395,11 +546,11 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
             return _error(400, "Invalid form")
         submitted, tokens = parsed
         try:
-            binding.form_schema.parse(submitted)
+            normalized = dict(binding.form_schema.parse(submitted).normalized)
             reservation, replay = await _claim_submission(
                 binding,
                 request,
-                submitted=submitted,
+                submitted=normalized,
                 tokens=tokens,
                 operation="update",
                 identity=identity,
@@ -411,7 +562,7 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                 request,
                 mutation_service.update(
                     identity,
-                    submitted,
+                    normalized,
                     concurrency_token=tokens.get("concurrency_token"),
                     authorization=authorization,
                 ),
@@ -436,6 +587,7 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                 submitted=submitted,
                 issues=exc.state.issues,
                 concurrency_token=tokens.get("concurrency_token"),
+                operation="update",
                 status_code=422,
             )
         except RakitError as exc:
@@ -454,7 +606,12 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
             ):
                 await binding.idempotency_store.release(reservation)
             return _error(400, "Invalid form")
-        return mutation_success(request, location=mounted_path(request, binding.path))
+        return mutation_success(
+            request,
+            location=mounted_path(request, binding.path),
+            refresh_targets=binding.htmx_refresh_targets,
+            message=binding.success_message,
+        )
 
     async def delete_get(request: Request) -> Response:
         if not await binding.authorize(request):
@@ -535,7 +692,12 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
             ):
                 await binding.idempotency_store.release(reservation)
             return _error(exc.status_code, "Delete rejected")
-        return mutation_success(request, location=mounted_path(request, binding.path))
+        return mutation_success(
+            request,
+            location=mounted_path(request, binding.path),
+            refresh_targets=binding.htmx_refresh_targets,
+            message=binding.success_message,
+        )
 
     routes.extend(
         (

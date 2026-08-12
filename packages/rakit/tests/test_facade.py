@@ -282,15 +282,19 @@ def test_importing_core_plan03_facade_does_not_load_optional_sqlalchemy() -> Non
 def test_plan04_contracts_are_reexported_with_preserved_identity() -> None:
     from rakit.core import (
         AttributeVersionProvider,
+        CollapsibleGroup,
         ConcurrencyConflict,
         ConcurrencyMode,
         ConcurrencyVersionProvider,
+        CustomBlock,
         DeletionPlan,
         FieldDefinition,
+        FormLayout,
         IdempotencyStatus,
         MutationAuthorization,
         OperationContext,
         SnapshotVersionProvider,
+        Tabs,
         TransactionPolicy,
         UpdateMutationPlan,
     )
@@ -301,6 +305,10 @@ def test_plan04_contracts_are_reexported_with_preserved_identity() -> None:
     from rakit_core.concurrency import SnapshotVersionProvider as RealSnapshotVersionProvider
     from rakit_core.deletion import DeletionPlan as RealDeletionPlan
     from rakit_core.fields import FieldDefinition as RealFieldDefinition
+    from rakit_core.forms import CollapsibleGroup as RealCollapsibleGroup
+    from rakit_core.forms import CustomBlock as RealCustomBlock
+    from rakit_core.forms import FormLayout as RealFormLayout
+    from rakit_core.forms import Tabs as RealTabs
     from rakit_core.idempotency import IdempotencyStatus as RealIdempotencyStatus
     from rakit_core.mutations import MutationAuthorization as RealMutationAuthorization
     from rakit_core.mutations import UpdateMutationPlan as RealUpdateMutationPlan
@@ -308,6 +316,10 @@ def test_plan04_contracts_are_reexported_with_preserved_identity() -> None:
     from rakit_core.transactions import TransactionPolicy as RealTransactionPolicy
 
     assert FieldDefinition is RealFieldDefinition
+    assert FormLayout is RealFormLayout
+    assert Tabs is RealTabs
+    assert CollapsibleGroup is RealCollapsibleGroup
+    assert CustomBlock is RealCustomBlock
     assert MutationAuthorization is RealMutationAuthorization
     assert UpdateMutationPlan is RealUpdateMutationPlan
     assert ConcurrencyMode is RealConcurrencyMode
