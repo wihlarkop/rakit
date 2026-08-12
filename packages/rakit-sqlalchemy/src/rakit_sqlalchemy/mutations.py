@@ -606,27 +606,16 @@ class SQLAlchemyMutationService:
 
     def _concurrency_conditions(self, record: object) -> tuple[ColumnElement[bool], ...]:
         provider = self._concurrency_provider
-        if isinstance(provider, AttributeVersionProvider):
-            return (
-                cast(
-                    ColumnElement[bool],
-                    getattr(self._model, provider.field) == provider.version_for(record),
-                ),
-            )
-        if isinstance(provider, SnapshotVersionProvider):
-            return tuple(
-                cast(ColumnElement[bool], getattr(self._model, field) == getattr(record, field))
-                for field in provider.fields
-            )
-        return ()
+        if provider is None:
+            return ()
+        return tuple(
+            cast(ColumnElement[bool], getattr(self._model, field) == value)
+            for field, value in provider.predicate_values_for(record).items()
+        )
 
     def _next_concurrency_values(self, record: object) -> Mapping[str, Any]:
         provider = self._concurrency_provider
-        if isinstance(provider, AttributeVersionProvider):
-            value = provider.version_for(record)
-            if isinstance(value, int) and not isinstance(value, bool):
-                return {provider.field: value + 1}
-        return {}
+        return {} if provider is None else provider.next_values_for(record)
 
     def _safe_snapshot(self, record: object) -> dict[str, Any]:
         return {

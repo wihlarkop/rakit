@@ -24,6 +24,10 @@ class ConcurrencyVersionProvider(Protocol):
 
     def version_for(self, record: object) -> Any: ...
 
+    def predicate_values_for(self, record: object) -> Mapping[str, Any]: ...
+
+    def next_values_for(self, record: object) -> Mapping[str, Any]: ...
+
 
 @dataclass(frozen=True)
 class AttributeVersionProvider:
@@ -34,6 +38,15 @@ class AttributeVersionProvider:
     def version_for(self, record: object) -> Any:
         return getattr(record, self.field)
 
+    def predicate_values_for(self, record: object) -> Mapping[str, Any]:
+        return {self.field: self.version_for(record)}
+
+    def next_values_for(self, record: object) -> Mapping[str, Any]:
+        value = self.version_for(record)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return {self.field: value + 1}
+        return {}
+
 
 @dataclass(frozen=True)
 class SnapshotVersionProvider:
@@ -42,9 +55,18 @@ class SnapshotVersionProvider:
     fields: tuple[str, ...]
 
     def version_for(self, record: object) -> str:
-        values = {field: _canonical_value(getattr(record, field)) for field in self.fields}
+        values = {
+            field: _canonical_value(value)
+            for field, value in self.predicate_values_for(record).items()
+        }
         encoded = json.dumps(values, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    def predicate_values_for(self, record: object) -> Mapping[str, Any]:
+        return {field: getattr(record, field) for field in self.fields}
+
+    def next_values_for(self, record: object) -> Mapping[str, Any]:
+        return {}
 
 
 @dataclass(frozen=True)
