@@ -544,6 +544,36 @@ async def test_auto_mode_uses_mapper_then_snapshot_then_configured_timestamp(
 
 
 @pytest.mark.anyio
+async def test_disabled_mode_requires_no_concurrency_token(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    service = SQLAlchemyMutationService(
+        model=User,
+        session_factory=session_factory,
+        form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="name", python_type=str, required=True),)
+        ),
+        writable_fields=("name",),
+        identity_fields=("id",),
+        token_service=TokenService.single_key(
+            key_id="test", value=SecretValue("x" * 32), admin_id="admin"
+        ),
+        version_field="revision",
+        concurrency_mode=ConcurrencyMode.DISABLED,
+    )
+    create = _authorization("create")
+    created = await _authorized(create, service.create({"name": "Ada"}, authorization=create))
+    update = _authorization("update")
+
+    result = await _authorized(
+        update,
+        service.update(created.identity, {"name": "Grace"}, authorization=update),
+    )
+
+    assert result.record.name == "Grace"
+
+
+@pytest.mark.anyio
 async def test_required_mode_fails_closed_without_a_safe_provider(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
