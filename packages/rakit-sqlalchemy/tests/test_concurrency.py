@@ -1,12 +1,19 @@
 import asyncio
 from collections.abc import AsyncIterator, Awaitable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
+from enum import Enum
 from pathlib import Path
 from typing import ClassVar, cast
+from uuid import UUID
 
 import pytest
 from rakit_core.auth import Principal
-from rakit_core.concurrency import AttributeVersionProvider, ConcurrencyMode
+from rakit_core.concurrency import (
+    AttributeVersionProvider,
+    ConcurrencyMode,
+    ConcurrencyTokenService,
+)
 from rakit_core.config import SecretValue
 from rakit_core.crypto import TokenService
 from rakit_core.errors import ErrorCode, RakitError
@@ -70,6 +77,20 @@ class TimestampUser(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str]
     updated_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC))
+
+
+class SnapshotStatus(Enum):
+    ACTIVE = "active"
+
+
+class BirthdayUser(Base):
+    __tablename__ = "concurrency_birthday_users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    birthday: Mapped[date]
+    revision: Mapped[int] = mapped_column(default=1)
+    password_hash: Mapped[str] = mapped_column(default="private")
 
 
 def _authorization(
@@ -233,6 +254,93 @@ async def test_real_service_consumes_preparsed_form_state_once(
     created = await _authorized(authorization, service.create(state, authorization=authorization))
     assert calls == 1
     assert cast(User, created.record).name == "Ada"
+
+
+@pytest.mark.anyio
+async def test_safe_snapshot_canonicalizes_date_and_returns_structured_stale_conflict(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    service = SQLAlchemyMutationService(
+        model=BirthdayUser,
+        session_factory=session_factory,
+        form_schema=FormSchema(
+            fields=(
+                FieldDefinition(field_id="name", python_type=str),
+                FieldDefinition(field_id="birthday", python_type=date),
+                FieldDefinition(field_id="password_hash", python_type=str),
+            )
+        ),
+        writable_fields=("name", "birthday"),
+        identity_fields=("id",),
+        token_service=TokenService.single_key(
+            key_id="test", value=SecretValue("x" * 32), admin_id="admin"
+        ),
+        version_field="revision",
+        resource_id="concurrency_birthday_users",
+    )
+    create = _authorization("create", "concurrency_birthday_users")
+    created = await _authorized(
+        create,
+        service.create({"name": "Ada", "birthday": date(2000, 1, 1)}, authorization=create),
+    )
+    token = service.issue_update_token(created.record)
+    update = _authorization("update", "concurrency_birthday_users")
+    await _authorized(
+        update,
+        service.update(
+            created.identity,
+            {"birthday": date(2001, 1, 1)},
+            concurrency_token=token,
+            authorization=update,
+        ),
+    )
+    with pytest.raises(RakitError) as caught:
+        await _authorized(
+            update,
+            service.update(
+                created.identity,
+                {"birthday": date(2002, 1, 1)},
+                concurrency_token=token,
+                authorization=update,
+            ),
+        )
+    conflict = cast(dict[str, object], caught.value.details["conflict"])
+    base = cast(dict[str, object], conflict["base"])
+    current = cast(dict[str, object], conflict["current"])
+    proposed = cast(dict[str, object], conflict["proposed"])
+    assert conflict["base"] == {"name": "Ada", "birthday": "2000-01-01"}
+    assert conflict["current"] == {"name": "Ada", "birthday": "2001-01-01"}
+    assert conflict["proposed"] == {"name": "Ada", "birthday": "2002-01-01"}
+    assert conflict["field_conflicts"] == ["birthday"]
+    assert "password_hash" not in base
+    assert "password_hash" not in current
+    assert "password_hash" not in proposed
+
+
+def test_concurrency_snapshot_token_uses_canonical_safe_scalars() -> None:
+    token_service = TokenService.single_key(
+        key_id="test", value=SecretValue("x" * 32), admin_id="admin"
+    )
+    concurrency = ConcurrencyTokenService(token_service)
+    identity = RecordIdentity(values={"id": 1})
+    token = concurrency.issue(
+        "users",
+        identity,
+        1,
+        base_snapshot={
+            "birthday": date(2000, 1, 1),
+            "cost": Decimal("12.30"),
+            "user_id": UUID("a0ebc21a-7334-4ab2-8f01-01e5af6d8a24"),
+            "status": SnapshotStatus.ACTIVE,
+        },
+    )
+    claims = token_service.verify(token, expected_purpose="concurrency")
+    assert claims["base_snapshot"] == {
+        "birthday": "2000-01-01",
+        "cost": "12.30",
+        "user_id": "a0ebc21a-7334-4ab2-8f01-01e5af6d8a24",
+        "status": "active",
+    }
 
 
 @pytest.mark.anyio

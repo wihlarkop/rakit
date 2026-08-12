@@ -131,6 +131,11 @@ class SQLAlchemyMutationService:
         """Attach Admin's validated durable receipt store to delete confirmations."""
         self._delete_nonce_store = store
 
+    @property
+    def event_publisher(self) -> EventPublisher | None:
+        """Public deferred-event capability used by this mutation service."""
+        return self._event_publisher
+
     def bind_scoped_statement(self, statement: Callable[[], Select]) -> None:
         """Bind the owning resource's canonical visibility selectable."""
         self._scoped_statement = statement
@@ -661,17 +666,21 @@ class SQLAlchemyMutationService:
         return {} if provider is None else provider.next_values_for(record)
 
     def _safe_snapshot(self, record: object) -> dict[str, Any]:
-        return {
+        values = {
             field.field_id: getattr(record, field.field_id)
             for field in self._form_schema.fields
             if field.readable and not field.sensitive and hasattr(record, field.field_id)
         }
+        return ConcurrencyTokenService.canonical_snapshot(values)
 
     def _conflict(
         self, record: object, plan: UpdateMutationPlan, base: Mapping[str, Any]
     ) -> RakitError:
         current = self._safe_snapshot(record)
-        proposed = {**base, **dict(plan.scalar_changes)}
+        proposed = {
+            **base,
+            **ConcurrencyTokenService.canonical_snapshot(dict(plan.scalar_changes)),
+        }
         conflict = ConcurrencyConflict(
             base=dict(base),
             current=current,
