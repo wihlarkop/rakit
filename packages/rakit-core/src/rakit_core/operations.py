@@ -103,21 +103,20 @@ async def run_with_deadline[T](awaitable: Awaitable[T], deadline: Deadline) -> T
     timeout = deadline.expires_at - monotonic()
     if timeout <= 0:
         raise _timeout_error()
-    if current_operation_context() is None:
-        try:
-            with anyio.fail_after(timeout):
-                return await awaitable
-        except TimeoutError as exc:
-            raise _timeout_error() from exc
+    async def operation() -> T:
+        return await awaitable
 
-    # The operation owns cooperative checkpoints.  The request task may stop
-    # waiting at its deadline, but the operation task must reach a safe phase
-    # (rollback before commit or authoritative completion after commit) before
-    # we expose an outcome to the caller.
-    task = asyncio.create_task(awaitable)
+    # Cancellation reaches safe phases immediately.  Once it fires we shield
+    # only the final wait: UoW either rolls back before commit or shields and
+    # completes a commit that has already begun.
+    task = asyncio.create_task(operation())
     try:
         with anyio.fail_after(timeout):
             return await asyncio.shield(task)
     except TimeoutError:
+        task.cancel()
         with anyio.CancelScope(shield=True):
-            return await task
+            try:
+                return await task
+            except asyncio.CancelledError as exc:
+                raise _timeout_error() from exc
