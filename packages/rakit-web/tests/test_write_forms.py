@@ -1,9 +1,11 @@
 from collections.abc import Mapping
 from dataclasses import replace
+from datetime import date
 from typing import cast
 
 import httpx
 import pytest
+from rakit_core.auth import Principal
 from rakit_core.fields import FieldDefinition
 from rakit_core.forms import (
     CollapsibleGroup,
@@ -18,15 +20,42 @@ from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, Op
 from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import MutationAuthorization, MutationOperation
 from rakit_core.operations import OperationContext
+from rakit_sqlalchemy.mutations import SQLAlchemyMutationService
 from rakit_web.form_routes import WriteResourceBinding, build_write_routes
 from rakit_web.resource_routes import build_templates
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
 
 class FakeRecord:
     def __init__(self, name: str = "Ada", password_hash: str | None = None) -> None:
         self.name = name
         self.password_hash = password_hash
+
+
+class ParsedBase(DeclarativeBase):
+    pass
+
+
+class ParsedRecord(ParsedBase):
+    __tablename__ = "parsed_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    day: Mapped[date]
+
+
+class _PrincipalMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        request.scope.setdefault("state", {})["principal"] = Principal(
+            subject_id="tester",
+            authenticated=True,
+            permissions=frozenset({"admin.resources.parsed-records.create"}),
+        )
+        return await call_next(request)
 
 
 class FakeMutationService:
@@ -559,3 +588,75 @@ async def test_update_formatter_is_used_but_sensitive_field_is_never_rendered() 
     assert 'value="User: Ada"' in response.text
     assert "password_hash" not in response.text
     assert "leaked" not in response.text
+
+
+@pytest.mark.anyio
+async def test_web_to_sqlalchemy_parses_custom_field_once_before_execution() -> None:
+    calls = 0
+
+    def parse_day(value: object) -> date:
+        nonlocal calls
+        calls += 1
+        if not isinstance(value, str):
+            raise ValueError("transport input must be text")
+        return date.fromisoformat(value)
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(ParsedBase.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    schema = FormSchema(
+        fields=(FieldDefinition(field_id="day", python_type=date, parser=parse_day),)
+    )
+    service = SQLAlchemyMutationService(
+        model=ParsedRecord,
+        session_factory=factory,
+        form_schema=schema,
+        writable_fields=("day",),
+        identity_fields=("id",),
+        resource_id="parsed-records",
+    )
+
+    async def authorize_mutation(
+        _request: object, operation: MutationOperation, _identity: RecordIdentity | None
+    ) -> MutationAuthorization:
+        return MutationAuthorization(
+            admin_id="admin",
+            resource_id="parsed-records",
+            operation=operation,
+            principal_id="tester",
+            permissions=("admin.resources.parsed-records.create",),
+        )
+
+    binding = WriteResourceBinding(
+        path="/parsed-records",
+        label="Parsed record",
+        form_schema=schema,
+        mutation_service=service,
+        templates=build_templates(()),
+        authorize=_allow,
+        verify_csrf=_allow,
+        verify_submission_token=_allow,
+        issue_submission_token=lambda _request: "submission",
+        mutation_authorizer=authorize_mutation,
+        deadline_seconds=5,
+    )
+    app = Starlette(
+        routes=build_write_routes(binding), middleware=[Middleware(_PrincipalMiddleware)]
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+    ) as client:
+        response = await client.post(
+            "/parsed-records/new",
+            data={"day": "2026-08-12", "csrf_token": "x", "submission_token": "x"},
+            follow_redirects=False,
+        )
+    async with factory() as session:
+        persisted = (await session.execute(select(ParsedRecord))).scalar_one()
+    await engine.dispose()
+
+    assert response.status_code == 303
+    assert calls == 1
+    assert persisted.day == date(2026, 8, 12)
