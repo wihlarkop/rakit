@@ -611,6 +611,14 @@ class Admin:
                     mutation_authorizer=authorize_mutation,
                     templates=templates,
                     deadline_seconds=self._mutation_deadline_seconds,
+                    operation_services=lambda: (
+                        {"resolver": self._application_resolver}
+                        if self._application_resolver is not None
+                        else {}
+                    ),
+                    operation_events=lambda service=write_binding.mutation_service: getattr(
+                        service, "_event_publisher", None
+                    ),
                 )
                 write_routes.extend(build_write_routes(secured_binding))
 

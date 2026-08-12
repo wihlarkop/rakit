@@ -23,8 +23,8 @@
     <div class="rakit-column">{% for child in node.children %}{{ render_node(child) }}{% endfor %}</div>
   {% elif node.kind == "tabs" %}
     <div id="{{ node.id }}" data-rakit-tabs>
-      <div role="tablist">{% for tab in node.tabs %}<button type="button" role="tab" aria-selected="{{ 'true' if tab.active else 'false' }}" data-rakit-tab="{{ tab.id }}">{{ tab.label }}{% if tab.errors %} <span>({{ tab.errors }})</span>{% endif %}</button>{% endfor %}</div>
-      {% for tab in node.tabs %}<section id="{{ tab.id }}" role="tabpanel"{% if not tab.active %} hidden{% endif %}>{% for child in tab.children %}{{ render_node(child) }}{% endfor %}</section>{% endfor %}
+      <nav aria-label="Form sections">{% for tab in node.tabs %}<a href="#{{ tab.id }}" role="tab" aria-controls="{{ tab.id }}" aria-selected="{{ 'true' if tab.active else 'false' }}">{{ tab.label }}{% if tab.errors %} <span>({{ tab.errors }})</span>{% endif %}</a>{% endfor %}</nav>
+      {% for tab in node.tabs %}<section id="{{ tab.id }}" role="tabpanel">{% for child in tab.children %}{{ render_node(child) }}{% endfor %}</section>{% endfor %}
     </div>
   {% elif node.kind == "collapsible" %}
     <details id="{{ node.id }}"{% if node.open %} open{% endif %}><summary>{{ node.label }}</summary>{% for child in node.children %}{{ render_node(child) }}{% endfor %}</details>

@@ -59,7 +59,7 @@ from .security.cookies import CSRF_COOKIE_NAME
 class CreateMutationService(Protocol):
     async def create(
         self,
-        submitted: dict[str, object],
+        submitted: Mapping[str, object],
         *,
         authorization: MutationAuthorization | None = None,
     ) -> object: ...
@@ -114,6 +114,8 @@ class WriteResourceBinding:
     mutation_authorizer: MutationAuthorizer | None = None
     htmx_refresh_targets: tuple[str, ...] = ()
     success_message: str | None = None
+    operation_services: Callable[[], Mapping[str, object]] | None = None
+    operation_events: Callable[[], object | None] | None = None
     codec: IdentityCodec = field(default_factory=IdentityCodec)
 
     @property
@@ -364,6 +366,8 @@ async def _execute_with_deadline(
         resource_id=authorization.resource_id,
         operation=authorization.operation,
         permissions=authorization.permissions,
+        services=binding.operation_services() if binding.operation_services is not None else None,
+        events=binding.operation_events() if binding.operation_events is not None else None,
     )
     with activate_operation_context(context):
         return await run_with_deadline(awaitable, deadline)
@@ -442,7 +446,8 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
             return _error(400, "Invalid form")
         submitted, tokens = parsed
         try:
-            normalized = dict(binding.form_schema.parse(submitted).normalized)
+            state = binding.form_schema.parse(submitted)
+            normalized = dict(state.normalized)
             reservation, replay = await _claim_submission(
                 binding, request, submitted=normalized, tokens=tokens, operation="create"
             )
@@ -451,7 +456,7 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
             await _execute_with_deadline(
                 binding,
                 request,
-                binding.mutation_service.create(normalized, authorization=authorization),
+                binding.mutation_service.create(state, authorization=authorization),
                 authorization,
             )
             if reservation is not None and binding.idempotency_store is not None:
@@ -551,7 +556,8 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
             return _error(400, "Invalid form")
         submitted, tokens = parsed
         try:
-            normalized = dict(binding.form_schema.parse(submitted).normalized)
+            state = binding.form_schema.parse(submitted)
+            normalized = dict(state.normalized)
             reservation, replay = await _claim_submission(
                 binding,
                 request,
@@ -567,7 +573,7 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                 request,
                 mutation_service.update(
                     identity,
-                    normalized,
+                    state,
                     concurrency_token=tokens.get("concurrency_token"),
                     authorization=authorization,
                 ),

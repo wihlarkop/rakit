@@ -157,6 +157,82 @@ async def test_stale_update_returns_a_conflict_before_writing(
         )
     assert caught.value.code == ErrorCode.RESOURCE_CONFLICT
     assert caught.value.status_code == 409
+    conflict = cast(dict[str, object], caught.value.details["conflict"])
+    assert conflict["base"] == {"name": "Ada"}
+    assert conflict["current"] == {"name": "Grace"}
+    assert conflict["proposed"] == {"name": "Ada"}
+    assert conflict["field_conflicts"] == ["name"]
+
+
+@pytest.mark.anyio
+async def test_timestamp_fallback_advances_and_rejects_reused_token(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    service = SQLAlchemyMutationService(
+        model=TimestampUser,
+        session_factory=session_factory,
+        form_schema=FormSchema(fields=(FieldDefinition(field_id="name", python_type=str),)),
+        writable_fields=("name",),
+        identity_fields=("id",),
+        token_service=TokenService.single_key(
+            key_id="test", value=SecretValue("x" * 32), admin_id="admin"
+        ),
+    )
+    create = _authorization("create", "concurrency_timestamp_users")
+    created = await _authorized(create, service.create({"name": "Ada"}, authorization=create))
+    token = service.issue_update_token(created.record)
+    update = _authorization("update", "concurrency_timestamp_users")
+    first = await _authorized(
+        update,
+        service.update(
+            created.identity, {"name": "Grace"}, concurrency_token=token, authorization=update
+        ),
+    )
+    with pytest.raises(RakitError, match="changed"):
+        await _authorized(
+            update,
+            service.update(
+                created.identity, {"name": "Lin"}, concurrency_token=token, authorization=update
+            ),
+        )
+    fresh = service.issue_update_token(first.record)
+    second = await _authorized(
+        update,
+        service.update(
+            created.identity, {"name": "Lin"}, concurrency_token=fresh, authorization=update
+        ),
+    )
+    assert cast(TimestampUser, second.record).name == "Lin"
+
+
+@pytest.mark.anyio
+async def test_real_service_consumes_preparsed_form_state_once(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    calls = 0
+
+    def parse_name(value: object) -> str:
+        nonlocal calls
+        calls += 1
+        if not isinstance(value, str):
+            raise ValueError("raw strings only")
+        return value.strip()
+
+    schema = FormSchema(
+        fields=(FieldDefinition(field_id="name", python_type=str, parser=parse_name),)
+    )
+    service = SQLAlchemyMutationService(
+        model=User,
+        session_factory=session_factory,
+        form_schema=schema,
+        writable_fields=("name",),
+        identity_fields=("id",),
+    )
+    state = schema.parse({"name": " Ada "})
+    authorization = _authorization("create")
+    created = await _authorized(authorization, service.create(state, authorization=authorization))
+    assert calls == 1
+    assert cast(User, created.record).name == "Ada"
 
 
 @pytest.mark.anyio

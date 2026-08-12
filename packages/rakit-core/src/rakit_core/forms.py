@@ -85,7 +85,7 @@ class FormIssue:
 
 
 @dataclass(frozen=True)
-class FormState:
+class FormState(Mapping[str, Any]):
     initial: Mapping[str, Any]
     submitted: Mapping[str, Any]
     normalized: Mapping[str, Any]
@@ -94,6 +94,15 @@ class FormState:
     @property
     def valid(self) -> bool:
         return not self.issues
+
+    def __getitem__(self, key: str) -> Any:
+        return self.normalized[key]
+
+    def __iter__(self):
+        return iter(self.normalized)
+
+    def __len__(self) -> int:
+        return len(self.normalized)
 
 
 class FormValidationError(ValueError):
@@ -120,10 +129,15 @@ class FormSchema:
 
     def parse(
         self,
-        submitted: Mapping[str, Any],
+        submitted: Mapping[str, Any] | FormState,
         *,
         initial: Mapping[str, Any] | None = None,
     ) -> FormState:
+        # Routes parse before deriving the canonical idempotency fingerprint.
+        # The mutation executor consumes this immutable state directly so a
+        # custom transport parser is never asked to parse its own output.
+        if isinstance(submitted, FormState):
+            return submitted
         known = {field.field_id: field for field in self.fields}
         unknown = set(submitted).difference(known)
         if unknown:

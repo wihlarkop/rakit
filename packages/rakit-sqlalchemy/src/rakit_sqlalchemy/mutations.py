@@ -2,7 +2,7 @@
 
 import hashlib
 from collections.abc import Callable, Mapping
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, cast
 
 from rakit_core.concurrency import (
@@ -252,6 +252,7 @@ class SQLAlchemyMutationService:
             self._resource_id,
             self._identity_for(record),
             self._concurrency_provider.version_for(record),
+            base_snapshot=self._safe_snapshot(record),
         )
 
     async def get(self, identity: RecordIdentity) -> object | None:
@@ -319,18 +320,25 @@ class SQLAlchemyMutationService:
                             message="A concurrency token is required.",
                             status_code=409,
                         )
-                    self._concurrency.verify(
-                        concurrency_token,
-                        self._resource_id,
-                        identity,
-                        self._concurrency_provider.version_for(record),
+                    base_snapshot = self._concurrency.base_snapshot(
+                        concurrency_token, self._resource_id, identity
                     )
+                    try:
+                        self._concurrency.verify(
+                            concurrency_token,
+                            self._resource_id,
+                            identity,
+                            self._concurrency_provider.version_for(record),
+                        )
+                    except RakitError as exc:
+                        if exc.code == ErrorCode.RESOURCE_CONFLICT:
+                            raise self._conflict(record, plan, base_snapshot) from exc
+                        raise
                     # The in-memory token check above makes stale forms pleasant
                     # to reject, but it cannot protect two independent database
                     # transactions that both read the same revision.  Put the
                     # expected revision in the UPDATE predicate as well: exactly
                     # one of concurrent writers can affect a row.
-                    base_snapshot = self._safe_snapshot(record)
                     scoped_identity = (
                         self._scoped_statement()
                         .where(*self._identity_conditions(identity))
@@ -614,10 +622,10 @@ class SQLAlchemyMutationService:
             key = mapper.version_id_col.key
             if isinstance(key, str):
                 return AttributeVersionProvider(key)
-        if self._version_field is not None:
+        if self._version_field is not None and self._attribute_version_is_safe(self._version_field):
             return AttributeVersionProvider(self._version_field)
         for field in ("revision", "updated_at"):
-            if hasattr(self._model, field):
+            if hasattr(self._model, field) and self._attribute_version_is_safe(field):
                 return AttributeVersionProvider(field)
         safe_fields = tuple(
             field.field_id
@@ -625,6 +633,19 @@ class SQLAlchemyMutationService:
             if field.readable and not field.sensitive and hasattr(self._model, field.field_id)
         )
         return SnapshotVersionProvider(safe_fields) if safe_fields else None
+
+    def _attribute_version_is_safe(self, field: str) -> bool:
+        """Only auto-select scalar versions the provider can advance atomically."""
+        mapper = cast(Mapper[Any], inspect(self._model))
+        attribute = mapper.attrs.get(field)
+        columns = getattr(attribute, "columns", ())
+        if not columns:
+            return False
+        try:
+            python_type = columns[0].type.python_type
+        except (AttributeError, NotImplementedError):
+            return False
+        return python_type in (int, datetime)
 
     def _concurrency_conditions(self, record: object) -> tuple[ColumnElement[bool], ...]:
         provider = self._concurrency_provider

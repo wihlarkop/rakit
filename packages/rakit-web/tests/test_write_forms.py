@@ -1,12 +1,23 @@
+from collections.abc import Mapping
 from dataclasses import replace
+from typing import cast
 
 import httpx
 import pytest
 from rakit_core.fields import FieldDefinition
-from rakit_core.forms import CollapsibleGroup, FieldLayout, FormLayout, FormSchema, Tab, Tabs
+from rakit_core.forms import (
+    CollapsibleGroup,
+    FieldLayout,
+    FormLayout,
+    FormSchema,
+    FormState,
+    Tab,
+    Tabs,
+)
 from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, OperationReceipt
 from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import MutationAuthorization, MutationOperation
+from rakit_core.operations import OperationContext
 from rakit_web.form_routes import WriteResourceBinding, build_write_routes
 from rakit_web.resource_routes import build_templates
 from starlette.applications import Starlette
@@ -23,7 +34,7 @@ class FakeMutationService:
         self.calls = 0
 
     async def create(
-        self, submitted: dict[str, object], *, authorization: MutationAuthorization | None = None
+        self, submitted: Mapping[str, object], *, authorization: MutationAuthorization | None = None
     ) -> object:
         self.calls += 1
         return submitted
@@ -32,7 +43,7 @@ class FakeMutationService:
 class FullFakeMutationService(FakeMutationService):
     def __init__(self) -> None:
         super().__init__()
-        self.updated: tuple[RecordIdentity, dict[str, object], str | None] | None = None
+        self.updated: tuple[RecordIdentity, Mapping[str, object], str | None] | None = None
         self.deleted: tuple[str, RecordIdentity] | None = None
         self.record: object = FakeRecord()
 
@@ -46,7 +57,7 @@ class FullFakeMutationService(FakeMutationService):
     async def update(
         self,
         identity: RecordIdentity,
-        submitted: dict[str, object],
+        submitted: Mapping[str, object],
         *,
         concurrency_token: str | None,
         authorization: MutationAuthorization | None = None,
@@ -70,7 +81,7 @@ class FullFakeMutationService(FakeMutationService):
 
 class SlowMutationService(FakeMutationService):
     async def create(
-        self, submitted: dict[str, object], *, authorization: MutationAuthorization | None = None
+        self, submitted: Mapping[str, object], *, authorization: MutationAuthorization | None = None
     ) -> object:
         import asyncio
 
@@ -84,7 +95,7 @@ class ContextCapturingMutationService(FakeMutationService):
         self.operation_context: object | None = None
 
     async def create(
-        self, submitted: dict[str, object], *, authorization: MutationAuthorization | None = None
+        self, submitted: Mapping[str, object], *, authorization: MutationAuthorization | None = None
     ) -> object:
         from rakit_core.operations import current_operation_context
 
@@ -250,11 +261,11 @@ async def test_update_and_delete_routes_bind_identity_tokens_and_mount_prefix() 
             follow_redirects=False,
         )
     assert deleted.status_code == 303
-    assert service.updated == (
-        RecordIdentity(values={"id": 1}),
-        {"name": "Grace"},
-        "revision-token",
-    )
+    assert service.updated is not None
+    assert service.updated[0] == RecordIdentity(values={"id": 1})
+    assert isinstance(service.updated[1], FormState)
+    assert dict(service.updated[1].normalized) == {"name": "Grace"}
+    assert service.updated[2] == "revision-token"
     assert service.deleted == ("delete-token", RecordIdentity(values={"id": 1}))
 
 
@@ -325,6 +336,7 @@ async def test_idempotent_create_replays_without_second_mutation() -> None:
 @pytest.mark.anyio
 async def test_request_deadline_is_visible_to_the_mutation_pipeline() -> None:
     service = ContextCapturingMutationService()
+    operation_events = object()
     binding = WriteResourceBinding(
         path="/users",
         label="User",
@@ -339,6 +351,8 @@ async def test_request_deadline_is_visible_to_the_mutation_pipeline() -> None:
         issue_submission_token=lambda _request: "submission",
         mutation_authorizer=_allow_mutation,
         deadline_seconds=1,
+        operation_services=lambda: {"request-service": service},
+        operation_events=lambda: operation_events,
     )
     app = Starlette(routes=build_write_routes(binding))
     transport = httpx.ASGITransport(app=app)
@@ -350,6 +364,9 @@ async def test_request_deadline_is_visible_to_the_mutation_pipeline() -> None:
         )
     assert response.status_code == 303
     assert service.operation_context is not None
+    context = cast(OperationContext, service.operation_context)
+    assert context.services is not None and context.services["request-service"] is service
+    assert context.events is operation_events
 
 
 @pytest.mark.anyio
@@ -449,6 +466,8 @@ async def test_invalid_layout_form_links_errors_and_opens_invalid_tab() -> None:
     assert 'aria-selected="true"' in response.text
     assert "(1)</span>" in response.text
     assert 'id="contact-details" open' in response.text
+    assert 'href="#contact"' in response.text
+    assert 'id="contact" role="tabpanel" hidden' not in response.text
 
 
 @pytest.mark.anyio
