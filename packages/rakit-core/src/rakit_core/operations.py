@@ -103,6 +103,7 @@ async def run_with_deadline[T](awaitable: Awaitable[T], deadline: Deadline) -> T
     timeout = deadline.expires_at - monotonic()
     if timeout <= 0:
         raise _timeout_error()
+
     async def operation() -> T:
         return await awaitable
 
