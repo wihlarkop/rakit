@@ -2,7 +2,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import ClassVar, cast
 
 import pytest
 from rakit_core.auth import Principal
@@ -51,7 +51,9 @@ class ProviderUser(Base):
     name: Mapped[str]
     revision: Mapped[int] = mapped_column(default=1)
     explicit_revision: Mapped[int] = mapped_column(default=10)
-    __mapper_args__ = {"version_id_col": revision}  # type: ignore[invalid-assignment]
+    __mapper_args__: ClassVar[dict[str, object]] = {  # ty: ignore[invalid-attribute-override]
+        "version_id_col": revision
+    }
 
 
 class SnapshotUser(Base):
