@@ -177,6 +177,9 @@ class _SafeIdempotencyStore:
     async def release(self, reservation: IdempotencyReservation) -> None:
         return None
 
+    async def fail_final(self, reservation: IdempotencyReservation) -> None:
+        return None
+
 
 @pytest.fixture
 async def session_factory() -> AsyncIterator[async_sessionmaker]:

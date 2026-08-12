@@ -1,12 +1,14 @@
 import asyncio
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from rakit_auth_sqlalchemy.idempotency import SQLAlchemyIdempotencyStore
-from rakit_auth_sqlalchemy.models import Base
+from rakit_auth_sqlalchemy.models import Base, IdempotencyRecord
 from rakit_core.errors import ErrorCode, RakitError
-from rakit_core.idempotency import OperationReceipt
+from rakit_core.idempotency import IdempotencyStatus, OperationReceipt
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 
@@ -80,3 +82,38 @@ async def test_failed_reservation_is_released_for_a_retry(
     retry = await store.begin("retry-token", fingerprint="request")
     assert retry.status.value == "in_progress"
     assert retry.completed_receipt is None
+
+
+@pytest.mark.anyio
+async def test_stale_in_progress_claim_is_expired_then_reclaimed(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    store = SQLAlchemyIdempotencyStore(session_factory)
+    first = await store.begin("stale-token", fingerprint="request")
+    async with session_factory() as session:
+        await session.execute(
+            update(IdempotencyRecord)
+            .where(IdempotencyRecord.id == first.reservation_id)
+            .values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
+        )
+        await session.commit()
+
+    reclaimed = await store.begin("stale-token", fingerprint="request")
+
+    assert reclaimed.claimed is True
+    assert reclaimed.status is IdempotencyStatus.IN_PROGRESS
+    assert reclaimed.reservation_id == first.reservation_id
+
+
+@pytest.mark.anyio
+async def test_final_failure_is_not_reclaimed(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    store = SQLAlchemyIdempotencyStore(session_factory)
+    first = await store.begin("final-token", fingerprint="request")
+    await store.fail_final(first)
+
+    retry = await store.begin("final-token", fingerprint="request")
+
+    assert retry.claimed is False
+    assert retry.status is IdempotencyStatus.FAILED_FINAL

@@ -39,3 +39,7 @@ class IdempotencyStore(Protocol):
     async def release(self, reservation: IdempotencyReservation) -> None:
         """Release a pre-commit claim so a failed operation may be retried."""
         ...
+
+    async def fail_final(self, reservation: IdempotencyReservation) -> None:
+        """Record a non-retryable operation failure without exposing request data."""
+        ...

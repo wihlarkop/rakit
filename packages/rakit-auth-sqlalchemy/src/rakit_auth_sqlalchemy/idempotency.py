@@ -1,12 +1,15 @@
 """Database-backed duplicate-submission protection."""
 
+from datetime import UTC, datetime, timedelta
+
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.idempotency import (
     IdempotencyReservation,
     IdempotencyStatus,
     OperationReceipt,
 )
-from sqlalchemy import delete, select
+from sqlalchemy import select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -14,8 +17,16 @@ from .models import IdempotencyRecord
 
 
 class SQLAlchemyIdempotencyStore:
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        *,
+        lease: timedelta = timedelta(minutes=15),
+    ) -> None:
+        if lease <= timedelta(0):
+            raise ValueError("idempotency lease must be positive")
         self._session_factory = session_factory
+        self._lease = lease
 
     @property
     def production_safe(self) -> bool:
@@ -33,11 +44,13 @@ class SQLAlchemyIdempotencyStore:
         async with self._session_factory() as session:
             row = await self._find(session, token_hash)
             claimed = False
+            now = datetime.now(UTC)
             if row is None:
                 row = IdempotencyRecord(
                     token_hash=token_hash,
                     fingerprint=fingerprint,
                     status=IdempotencyStatus.IN_PROGRESS,
+                    expires_at=now + self._lease,
                 )
                 session.add(row)
                 try:
@@ -63,6 +76,49 @@ class SQLAlchemyIdempotencyStore:
                     status_code=400,
                 )
             status = IdempotencyStatus(row.status)
+            if status is IdempotencyStatus.IN_PROGRESS:
+                # A dead worker leaves a leased claim behind.  First record
+                # its expiration with a state-predicated transition, then let
+                # exactly one caller reclaim that durable EXPIRED state.
+                expired = await session.execute(
+                    update(IdempotencyRecord)
+                    .where(
+                        IdempotencyRecord.id == row.id,
+                        IdempotencyRecord.status == IdempotencyStatus.IN_PROGRESS,
+                        IdempotencyRecord.expires_at <= now,
+                    )
+                    .values(status=IdempotencyStatus.EXPIRED),
+                    execution_options={"synchronize_session": False},
+                )
+                await session.commit()
+                if isinstance(expired, CursorResult) and expired.rowcount == 1:
+                    await session.refresh(row)
+                    status = IdempotencyStatus(row.status)
+
+            reclaim_statement = None
+            if status in {IdempotencyStatus.FAILED_RETRYABLE, IdempotencyStatus.EXPIRED}:
+                reclaim_statement = update(IdempotencyRecord).where(
+                    IdempotencyRecord.id == row.id,
+                    IdempotencyRecord.status == status,
+                )
+            if reclaim_statement is not None:
+                transitioned = await session.execute(
+                    reclaim_statement.values(
+                        status=IdempotencyStatus.IN_PROGRESS,
+                        expires_at=now + self._lease,
+                        receipt=None,
+                    ),
+                    execution_options={"synchronize_session": False},
+                )
+                await session.commit()
+                claimed = isinstance(transitioned, CursorResult) and transitioned.rowcount == 1
+                if claimed:
+                    await session.refresh(row)
+                    status = IdempotencyStatus(row.status)
+                else:
+                    row = await self._find(session, token_hash)
+                    assert row is not None
+                    status = IdempotencyStatus(row.status)
             receipt = self._receipt(row.receipt) if status is IdempotencyStatus.COMPLETED else None
             return IdempotencyReservation(
                 reservation_id=row.id,
@@ -92,13 +148,28 @@ class SQLAlchemyIdempotencyStore:
             await session.commit()
 
     async def release(self, reservation: IdempotencyReservation) -> None:
-        """Drop only a still-in-progress claim after pre-commit failure."""
+        """Record a retryable pre-commit failure without losing audit state."""
         async with self._session_factory() as session:
             await session.execute(
-                delete(IdempotencyRecord).where(
+                update(IdempotencyRecord)
+                .where(
                     IdempotencyRecord.id == reservation.reservation_id,
                     IdempotencyRecord.status == IdempotencyStatus.IN_PROGRESS,
                 )
+                .values(status=IdempotencyStatus.FAILED_RETRYABLE, expires_at=datetime.now(UTC))
+            )
+            await session.commit()
+
+    async def fail_final(self, reservation: IdempotencyReservation) -> None:
+        """Make a non-retryable rejection terminal without storing request data."""
+        async with self._session_factory() as session:
+            await session.execute(
+                update(IdempotencyRecord)
+                .where(
+                    IdempotencyRecord.id == reservation.reservation_id,
+                    IdempotencyRecord.status == IdempotencyStatus.IN_PROGRESS,
+                )
+                .values(status=IdempotencyStatus.FAILED_FINAL)
             )
             await session.commit()
 

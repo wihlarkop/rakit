@@ -116,6 +116,9 @@ class FakeIdempotencyStore:
     async def release(self, reservation: IdempotencyReservation) -> None:
         self._claims.clear()
 
+    async def fail_final(self, reservation: IdempotencyReservation) -> None:
+        return None
+
 
 async def _allow(_request: object) -> bool:
     return True
