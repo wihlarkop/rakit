@@ -16,6 +16,8 @@ from rakit_core.crypto import TokenService
 from rakit_core.definitions import ResourceDefinition, ResourceFieldPolicy, RouteDefinition
 from rakit_core.di import ServiceRegistry, ServiceResolver
 from rakit_core.errors import ErrorCode, RakitError
+from rakit_core.identity import RecordIdentity
+from rakit_core.mutations import MutationAuthorization, MutationOperation
 from rakit_core.resources import ResourceService
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -517,6 +519,45 @@ class Admin:
                     and requirement.matches(principal, superuser_bypass=self._superuser_bypass)
                 )
 
+            async def authorize_mutation(
+                request: Request,
+                operation: MutationOperation,
+                identity: RecordIdentity | None,
+            ) -> MutationAuthorization | None:
+                principal = request.scope.get("state", {}).get("principal")
+                requirement = requirement_resolver(
+                    request.url.path.removeprefix(request.scope.get("root_path", "")),
+                    request.method,
+                )
+                if (
+                    principal is None
+                    or not principal.authenticated
+                    or requirement is None
+                    or not requirement.matches(principal, superuser_bypass=self._superuser_bypass)
+                ):
+                    return None
+                path = request.url.path.removeprefix(request.scope.get("root_path", ""))
+                resource_id = next(
+                    (
+                        candidate_id
+                        for candidate_path, candidate_id in (
+                            (definition.path, candidate_id)
+                            for candidate_id, definition in self._resource_definitions.items()
+                        )
+                        if path == candidate_path or path.startswith(f"{candidate_path}/")
+                    ),
+                    None,
+                )
+                if resource_id is None:
+                    return None
+                return MutationAuthorization(
+                    admin_id=self.config.admin_id,
+                    resource_id=resource_id,
+                    operation=operation,
+                    principal_id=principal.subject_id,
+                    permissions=requirement.permissions,
+                )
+
             async def verify_write_csrf(request: Request) -> bool:
                 session_id = request.scope.get("state", {}).get("session_id")
                 return isinstance(session_id, str) and await _verify_csrf(
@@ -560,6 +601,7 @@ class Admin:
                     verify_csrf=verify_write_csrf,
                     verify_submission_token=verify_submission_token,
                     issue_submission_token=issue_submission_token,
+                    mutation_authorizer=authorize_mutation,
                     templates=templates,
                     deadline_seconds=self._mutation_deadline_seconds,
                 )

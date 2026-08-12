@@ -14,6 +14,7 @@ from rakit_core.forms import FormSchema, FormValidationError
 from rakit_core.idempotency import IdempotencyStore, OperationReceipt
 from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import (
+    MutationAuthorization,
     MutationHooks,
     MutationResult,
     ResourceCreated,
@@ -95,6 +96,26 @@ class SQLAlchemyMutationService:
         """Attach Admin's validated durable receipt store to delete confirmations."""
         self._delete_nonce_store = store
 
+    def _require_authorization(
+        self,
+        authorization: MutationAuthorization | None,
+        operation: str,
+    ) -> MutationAuthorization:
+        if (
+            authorization is None
+            or authorization.resource_id != self._resource_id
+            or authorization.operation != operation
+            or not authorization.admin_id
+            or not authorization.principal_id
+            or not authorization.permissions
+        ):
+            raise RakitError(
+                code=ErrorCode.AUTH_FORBIDDEN,
+                message="Mutation is not authorized.",
+                status_code=403,
+            )
+        return authorization
+
     def prepare_create(self, submitted: Mapping[str, Any]) -> ResourceMutationPlan:
         try:
             state = self._form_schema.parse(submitted)
@@ -107,13 +128,19 @@ class SQLAlchemyMutationService:
             raise _validation_error(ValueError("Field is not writable"))
         return ResourceMutationPlan(operation="create", values=values)
 
-    async def create(self, submitted: Mapping[str, Any]) -> MutationResult:
+    async def create(
+        self,
+        submitted: Mapping[str, Any],
+        *,
+        authorization: MutationAuthorization | None = None,
+    ) -> MutationResult:
         plan = self.prepare_create(submitted)
         try:
             await run_mutation_hooks(self._hooks.normalize, plan)
             await run_mutation_hooks(self._hooks.business_validate, plan)
             await run_mutation_hooks(self._hooks.prepare, plan)
-            await run_mutation_hooks(self._hooks.authorize, plan)
+            authorized = self._require_authorization(authorization, "create")
+            await run_mutation_hooks(self._hooks.authorize, authorized)
             await run_mutation_hooks(self._hooks.pre_event, plan)
             await run_mutation_hooks(self._hooks.before_execute, plan)
             async with SQLAlchemyUnitOfWork(
@@ -163,6 +190,7 @@ class SQLAlchemyMutationService:
         submitted: Mapping[str, Any],
         *,
         concurrency_token: str | None = None,
+        authorization: MutationAuthorization | None = None,
     ) -> MutationResult:
         plan = self.prepare_create(submitted)
         if set(identity.values) != set(self._identity_fields):
@@ -175,7 +203,8 @@ class SQLAlchemyMutationService:
             await run_mutation_hooks(self._hooks.normalize, plan)
             await run_mutation_hooks(self._hooks.business_validate, plan)
             await run_mutation_hooks(self._hooks.prepare, plan)
-            await run_mutation_hooks(self._hooks.authorize, plan)
+            authorized = self._require_authorization(authorization, "update")
+            await run_mutation_hooks(self._hooks.authorize, authorized)
             await run_mutation_hooks(self._hooks.pre_event, plan)
             await run_mutation_hooks(self._hooks.before_execute, plan)
             async with SQLAlchemyUnitOfWork(
@@ -231,6 +260,7 @@ class SQLAlchemyMutationService:
                             status_code=409,
                         )
                     await uow.session.refresh(record)
+                    await uow.session.flush()
                 else:
                     for name, value in plan.values.items():
                         setattr(record, name, value)
@@ -286,7 +316,11 @@ class SQLAlchemyMutationService:
         )
 
     async def delete(
-        self, confirmation_token: str, *, identity: RecordIdentity | None = None
+        self,
+        confirmation_token: str,
+        *,
+        identity: RecordIdentity | None = None,
+        authorization: MutationAuthorization | None = None,
     ) -> None:
         if self._token_service is None or self._version_field is None:
             raise RuntimeError("Delete requires a configured token and version provider")
@@ -296,6 +330,7 @@ class SQLAlchemyMutationService:
                 message="Delete requires a durable confirmation store.",
                 status_code=500,
             )
+        authorized = self._require_authorization(authorization, "delete")
         target_identity = identity
         reservation = None
         try:
@@ -306,11 +341,13 @@ class SQLAlchemyMutationService:
             expected_version = claims["expected_version"]
             relationship_impact = tuple(claims["relationship_impact"])
             required_permission = claims["required_permission"]
-            if claims.get("resource_id") != self._resource_id or set(
-                confirmed_identity.values
-            ) != set(self._identity_fields) or (
-                relationship_impact != self._delete_relationship_impact
-                or required_permission != self._delete_permission
+            if (
+                claims.get("resource_id") != self._resource_id
+                or set(confirmed_identity.values) != set(self._identity_fields)
+                or (
+                    relationship_impact != self._delete_relationship_impact
+                    or required_permission != self._delete_permission
+                )
             ):
                 raise ValueError
         except (KeyError, TypeError, ValueError) as exc:
@@ -326,6 +363,9 @@ class SQLAlchemyMutationService:
                 message="Invalid delete confirmation.",
                 status_code=400,
             )
+        await run_mutation_hooks(self._hooks.normalize, confirmed_identity)
+        await run_mutation_hooks(self._hooks.business_validate, confirmed_identity)
+        await run_mutation_hooks(self._hooks.prepare, confirmed_identity)
         reservation = await self._delete_nonce_store.begin(
             hashlib.sha256(confirmation_token.encode()).hexdigest(),
             fingerprint=f"{self._resource_id}:{dict(confirmed_identity.values)}",
@@ -337,6 +377,8 @@ class SQLAlchemyMutationService:
                 status_code=409,
             )
         try:
+            await run_mutation_hooks(self._hooks.authorize, authorized)
+            await run_mutation_hooks(self._hooks.pre_event, confirmed_identity)
             await run_mutation_hooks(self._hooks.before_execute, confirmed_identity)
             async with SQLAlchemyUnitOfWork(
                 self._session_factory,

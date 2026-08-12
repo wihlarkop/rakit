@@ -11,8 +11,26 @@ from rakit_core.events import DomainEvent
 from rakit_core.identity import RecordIdentity
 
 MutationHook = Callable[[object], object | Awaitable[object]]
+MutationOperation = Literal["create", "update", "delete"]
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class MutationAuthorization:
+    """A server-derived authorization decision for one mutation operation.
+
+    This is deliberately an explicit call argument rather than ambient state:
+    the web boundary creates it only after its normal RBAC decision succeeds,
+    while direct pipeline callers must consciously provide an equivalent
+    authorization decision.
+    """
+
+    admin_id: str
+    resource_id: str
+    operation: MutationOperation
+    principal_id: str
+    permissions: tuple[str, ...]
 
 
 @dataclass(frozen=True)

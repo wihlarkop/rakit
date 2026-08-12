@@ -7,6 +7,7 @@ from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.fields import FieldDefinition
 from rakit_core.forms import FormSchema
 from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, OperationReceipt
+from rakit_core.mutations import MutationAuthorization, MutationOperation
 from rakit_sqlalchemy.mutations import SQLAlchemyMutationService
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -23,6 +24,18 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str]
     revision: Mapped[int] = mapped_column(default=1)
+
+
+def _authorization(
+    operation: MutationOperation, resource_id: str = "users"
+) -> MutationAuthorization:
+    return MutationAuthorization(
+        admin_id="admin",
+        resource_id=resource_id,
+        operation=operation,
+        principal_id="tester",
+        permissions=(f"admin.resources.{resource_id}.{operation}",),
+    )
 
 
 class _NonceStore:
@@ -78,10 +91,10 @@ async def test_hard_delete_uses_a_signed_confirmation_plan(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     service = _service(session_factory)
-    created = await service.create({"name": "Ada"})
+    created = await service.create({"name": "Ada"}, authorization=_authorization("create"))
 
     token = await service.issue_delete_token(created.identity)
-    await service.delete(token)
+    await service.delete(token, authorization=_authorization("delete"))
 
     async with session_factory() as session:
         assert (await session.scalars(select(User))).one_or_none() is None
@@ -92,13 +105,18 @@ async def test_changed_record_invalidates_delete_plan(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     service = _service(session_factory)
-    created = await service.create({"name": "Ada"})
+    created = await service.create({"name": "Ada"}, authorization=_authorization("create"))
     token = await service.issue_delete_token(created.identity)
     update_token = service.issue_update_token(created.record)
-    await service.update(created.identity, {"name": "Grace"}, concurrency_token=update_token)
+    await service.update(
+        created.identity,
+        {"name": "Grace"},
+        concurrency_token=update_token,
+        authorization=_authorization("update"),
+    )
 
     with pytest.raises(RakitError) as caught:
-        await service.delete(token)
+        await service.delete(token, authorization=_authorization("delete"))
     assert caught.value.code == ErrorCode.RESOURCE_CONFLICT
 
 
@@ -108,14 +126,31 @@ async def test_delete_confirmation_is_bound_to_resource_and_consumed_once(
 ) -> None:
     users = _service(session_factory, resource_id="users")
     other = _service(session_factory, resource_id="other_users")
-    created = await users.create({"name": "Ada"})
+    created = await users.create({"name": "Ada"}, authorization=_authorization("create"))
     token = await users.issue_delete_token(created.identity)
 
     with pytest.raises(RakitError) as wrong_resource:
-        await other.delete(token, identity=created.identity)
+        await other.delete(
+            token, identity=created.identity, authorization=_authorization("delete", "other_users")
+        )
     assert wrong_resource.value.status_code == 400
 
-    await users.delete(token, identity=created.identity)
+    await users.delete(token, identity=created.identity, authorization=_authorization("delete"))
     with pytest.raises(RakitError) as replay:
-        await users.delete(token, identity=created.identity)
+        await users.delete(token, identity=created.identity, authorization=_authorization("delete"))
     assert replay.value.status_code == 409
+
+
+@pytest.mark.anyio
+async def test_delete_nonce_does_not_authorize_direct_delete(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    service = _service(session_factory)
+    created = await service.create({"name": "Ada"}, authorization=_authorization("create"))
+    token = await service.issue_delete_token(created.identity)
+
+    with pytest.raises(RakitError) as caught:
+        await service.delete(token)
+    assert caught.value.code == ErrorCode.AUTH_FORBIDDEN
+    async with session_factory() as session:
+        assert await session.get(User, 1) is not None

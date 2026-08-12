@@ -6,6 +6,7 @@ from rakit_core.fields import FieldDefinition
 from rakit_core.forms import FormSchema
 from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, OperationReceipt
 from rakit_core.identity import RecordIdentity
+from rakit_core.mutations import MutationAuthorization, MutationOperation
 from rakit_web.form_routes import WriteResourceBinding, build_write_routes
 from rakit_web.resource_routes import build_templates
 from starlette.applications import Starlette
@@ -15,7 +16,9 @@ class FakeMutationService:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def create(self, submitted: dict[str, object]) -> object:
+    async def create(
+        self, submitted: dict[str, object], *, authorization: MutationAuthorization | None = None
+    ) -> object:
         self.calls += 1
         return submitted
 
@@ -40,6 +43,7 @@ class FullFakeMutationService(FakeMutationService):
         submitted: dict[str, object],
         *,
         concurrency_token: str | None,
+        authorization: MutationAuthorization | None = None,
     ) -> object:
         self.updated = (identity, submitted, concurrency_token)
         return self.record
@@ -48,16 +52,24 @@ class FullFakeMutationService(FakeMutationService):
         assert identity.values == {"id": 1}
         return "delete-token"
 
-    async def delete(self, confirmation_token: str, *, identity: RecordIdentity) -> None:
+    async def delete(
+        self,
+        confirmation_token: str,
+        *,
+        identity: RecordIdentity,
+        authorization: MutationAuthorization | None = None,
+    ) -> None:
         self.deleted = (confirmation_token, identity)
 
 
 class SlowMutationService(FakeMutationService):
-    async def create(self, submitted: dict[str, object]) -> object:
+    async def create(
+        self, submitted: dict[str, object], *, authorization: MutationAuthorization | None = None
+    ) -> object:
         import asyncio
 
         await asyncio.sleep(0.05)
-        return await super().create(submitted)
+        return await super().create(submitted, authorization=authorization)
 
 
 class ContextCapturingMutationService(FakeMutationService):
@@ -65,11 +77,13 @@ class ContextCapturingMutationService(FakeMutationService):
         super().__init__()
         self.operation_context: object | None = None
 
-    async def create(self, submitted: dict[str, object]) -> object:
+    async def create(
+        self, submitted: dict[str, object], *, authorization: MutationAuthorization | None = None
+    ) -> object:
         from rakit_core.operations import current_operation_context
 
         self.operation_context = current_operation_context()
-        return await super().create(submitted)
+        return await super().create(submitted, authorization=authorization)
 
 
 class FakeIdempotencyStore:
@@ -107,6 +121,18 @@ async def _allow(_request: object) -> bool:
     return True
 
 
+async def _allow_mutation(
+    _request: object, operation: MutationOperation, _identity: RecordIdentity | None
+) -> MutationAuthorization:
+    return MutationAuthorization(
+        admin_id="admin",
+        resource_id="/users",
+        operation=operation,
+        principal_id="tester",
+        permissions=(f"admin.resources.users.{operation}",),
+    )
+
+
 @pytest.mark.anyio
 async def test_invalid_form_returns_accessible_422() -> None:
     binding = WriteResourceBinding(
@@ -121,6 +147,7 @@ async def test_invalid_form_returns_accessible_422() -> None:
         verify_csrf=_allow,
         verify_submission_token=_allow,
         issue_submission_token=lambda _request: "submission",
+        mutation_authorizer=_allow_mutation,
     )
     app = Starlette(routes=build_write_routes(binding))
     transport = httpx.ASGITransport(app=app)
@@ -151,6 +178,7 @@ async def test_invalid_submission_token_is_rejected_before_mutation() -> None:
         verify_csrf=_allow,
         verify_submission_token=reject_submission,
         issue_submission_token=lambda _request: "submission",
+        mutation_authorizer=_allow_mutation,
     )
     app = Starlette(routes=build_write_routes(binding))
     transport = httpx.ASGITransport(app=app)
@@ -179,6 +207,7 @@ async def test_update_and_delete_routes_bind_identity_tokens_and_mount_prefix() 
         verify_csrf=_allow,
         verify_submission_token=_allow,
         issue_submission_token=lambda _request: "submission",
+        mutation_authorizer=_allow_mutation,
     )
     encoded = binding.codec.encode(RecordIdentity(values={"id": 1}))
     app = Starlette(routes=build_write_routes(binding))
@@ -235,6 +264,7 @@ async def test_mutation_deadline_returns_504_before_the_service_completes() -> N
         verify_csrf=_allow,
         verify_submission_token=_allow,
         issue_submission_token=lambda _request: "submission",
+        mutation_authorizer=_allow_mutation,
         deadline_seconds=0.001,
     )
     app = Starlette(routes=build_write_routes(binding))
@@ -263,6 +293,7 @@ async def test_idempotent_create_replays_without_second_mutation() -> None:
         verify_csrf=_allow,
         verify_submission_token=_allow,
         issue_submission_token=lambda _request: "submission",
+        mutation_authorizer=_allow_mutation,
         idempotency_store=FakeIdempotencyStore(),
     )
     app = Starlette(routes=build_write_routes(binding))
@@ -297,6 +328,7 @@ async def test_request_deadline_is_visible_to_the_mutation_pipeline() -> None:
         verify_csrf=_allow,
         verify_submission_token=_allow,
         issue_submission_token=lambda _request: "submission",
+        mutation_authorizer=_allow_mutation,
         deadline_seconds=1,
     )
     app = Starlette(routes=build_write_routes(binding))
@@ -327,6 +359,7 @@ async def test_timed_out_idempotent_submission_releases_its_claim_for_retry() ->
         verify_csrf=_allow,
         verify_submission_token=_allow,
         issue_submission_token=lambda _request: "submission",
+        mutation_authorizer=_allow_mutation,
         deadline_seconds=0.001,
         idempotency_store=store,
     )

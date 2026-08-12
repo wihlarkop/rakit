@@ -9,6 +9,7 @@ from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.fields import FieldDefinition
 from rakit_core.forms import FormSchema
 from rakit_core.identity import RecordIdentity
+from rakit_core.mutations import MutationAuthorization, MutationOperation
 from rakit_sqlalchemy.mutations import SQLAlchemyMutationService
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -24,6 +25,16 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str]
     revision: Mapped[int] = mapped_column(default=1)
+
+
+def _authorization(operation: MutationOperation) -> MutationAuthorization:
+    return MutationAuthorization(
+        admin_id="admin",
+        resource_id="concurrency_users",
+        operation=operation,
+        principal_id="tester",
+        permissions=(f"admin.resources.concurrency_users.{operation}",),
+    )
 
 
 @pytest.fixture
@@ -52,13 +63,23 @@ async def test_stale_update_returns_a_conflict_before_writing(
         ),
         version_field="revision",
     )
-    created = await service.create({"name": "Ada"})
+    created = await service.create({"name": "Ada"}, authorization=_authorization("create"))
     token = service.issue_update_token(created.record)
 
-    await service.update(created.identity, {"name": "Grace"}, concurrency_token=token)
+    await service.update(
+        created.identity,
+        {"name": "Grace"},
+        concurrency_token=token,
+        authorization=_authorization("update"),
+    )
 
     with pytest.raises(RakitError) as caught:
-        await service.update(created.identity, {"name": "Ada"}, concurrency_token=token)
+        await service.update(
+            created.identity,
+            {"name": "Ada"},
+            concurrency_token=token,
+            authorization=_authorization("update"),
+        )
     assert caught.value.code == ErrorCode.RESOURCE_CONFLICT
     assert caught.value.status_code == 409
 
@@ -95,12 +116,22 @@ async def test_concurrent_updates_with_the_same_token_have_exactly_one_winner(
         ),
         version_field="revision",
     )
-    created = await service.create({"name": "Ada"})
+    created = await service.create({"name": "Ada"}, authorization=_authorization("create"))
     token = service.issue_update_token(created.record)
 
     outcomes = await asyncio.gather(
-        service.update(created.identity, {"name": "Grace"}, concurrency_token=token),
-        service.update(created.identity, {"name": "Lin"}, concurrency_token=token),
+        service.update(
+            created.identity,
+            {"name": "Grace"},
+            concurrency_token=token,
+            authorization=_authorization("update"),
+        ),
+        service.update(
+            created.identity,
+            {"name": "Lin"},
+            concurrency_token=token,
+            authorization=_authorization("update"),
+        ),
         return_exceptions=True,
     )
 

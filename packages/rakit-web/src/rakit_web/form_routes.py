@@ -22,6 +22,7 @@ from rakit_core.idempotency import (
     OperationReceipt,
 )
 from rakit_core.identity import IdentityCodec, RecordIdentity
+from rakit_core.mutations import MutationAuthorization, MutationOperation
 from rakit_core.operations import (
     CancellationContext,
     Deadline,
@@ -41,7 +42,12 @@ from .security.cookies import CSRF_COOKIE_NAME
 
 
 class CreateMutationService(Protocol):
-    async def create(self, submitted: dict[str, object]) -> object: ...
+    async def create(
+        self,
+        submitted: dict[str, object],
+        *,
+        authorization: MutationAuthorization | None = None,
+    ) -> object: ...
 
 
 class WriteMutationService(CreateMutationService, Protocol):
@@ -55,15 +61,25 @@ class WriteMutationService(CreateMutationService, Protocol):
         submitted: Mapping[str, object],
         *,
         concurrency_token: str | None,
+        authorization: MutationAuthorization | None = None,
     ) -> object: ...
 
     async def issue_delete_token(self, identity: RecordIdentity) -> str: ...
 
-    async def delete(self, confirmation_token: str, *, identity: RecordIdentity) -> None: ...
+    async def delete(
+        self,
+        confirmation_token: str,
+        *,
+        identity: RecordIdentity,
+        authorization: MutationAuthorization | None = None,
+    ) -> None: ...
 
 
 Verifier = Callable[[Request], Awaitable[bool]]
 SubmissionTokenIssuer = Callable[[Request], str]
+MutationAuthorizer = Callable[
+    [Request, MutationOperation, RecordIdentity | None], Awaitable[MutationAuthorization | None]
+]
 
 
 @dataclass(frozen=True)
@@ -80,6 +96,7 @@ class WriteResourceBinding:
     resource_id: str | None = None
     deadline_seconds: float | None = None
     idempotency_store: IdempotencyStore | None = None
+    mutation_authorizer: MutationAuthorizer | None = None
     codec: IdentityCodec = field(default_factory=IdentityCodec)
 
     @property
@@ -225,6 +242,17 @@ async def _claim_submission(
     return reservation, None
 
 
+async def _authorization(
+    binding: WriteResourceBinding,
+    request: Request,
+    operation: MutationOperation,
+    identity: RecordIdentity | None,
+) -> MutationAuthorization | None:
+    if binding.mutation_authorizer is None:
+        return None
+    return await binding.mutation_authorizer(request, operation, identity)
+
+
 def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
     async def create_get(request: Request) -> Response:
         if not await binding.authorize(request):
@@ -235,6 +263,9 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
 
     async def create_post(request: Request) -> Response:
         if not await binding.authorize(request):
+            return _error(403, "Forbidden")
+        authorization = await _authorization(binding, request, "create", None)
+        if authorization is None:
             return _error(403, "Forbidden")
         if not await binding.verify_csrf(request):
             return _error(403, "Invalid CSRF token")
@@ -251,7 +282,9 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
             )
             if replay is not None:
                 return replay
-            await _execute_with_deadline(binding, binding.mutation_service.create(submitted))
+            await _execute_with_deadline(
+                binding, binding.mutation_service.create(submitted, authorization=authorization)
+            )
             if reservation is not None and binding.idempotency_store is not None:
                 await binding.idempotency_store.complete(
                     reservation,
@@ -332,6 +365,9 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
         identity = _identity(binding, request.path_params["identity"])
         if identity is None:
             return _error(400, "Invalid resource identity")
+        authorization = await _authorization(binding, request, "update", identity)
+        if authorization is None:
+            return _error(403, "Forbidden")
         if not await binding.verify_csrf(request):
             return _error(403, "Invalid CSRF token")
         if not await binding.verify_submission_token(request):
@@ -355,7 +391,10 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
             await _execute_with_deadline(
                 binding,
                 mutation_service.update(
-                    identity, submitted, concurrency_token=tokens.get("concurrency_token")
+                    identity,
+                    submitted,
+                    concurrency_token=tokens.get("concurrency_token"),
+                    authorization=authorization,
                 ),
             )
             if reservation is not None and binding.idempotency_store is not None:
@@ -427,6 +466,9 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
         identity = _identity(binding, request.path_params["identity"])
         if identity is None:
             return _error(400, "Invalid resource identity")
+        authorization = await _authorization(binding, request, "delete", identity)
+        if authorization is None:
+            return _error(403, "Forbidden")
         if not await binding.verify_csrf(request):
             return _error(403, "Invalid CSRF token")
         if not await binding.verify_submission_token(request):
@@ -449,7 +491,10 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
             )
             if replay is not None:
                 return replay
-            await _execute_with_deadline(binding, mutation_service.delete(token, identity=identity))
+            await _execute_with_deadline(
+                binding,
+                mutation_service.delete(token, identity=identity, authorization=authorization),
+            )
             if reservation is not None and binding.idempotency_store is not None:
                 await binding.idempotency_store.complete(
                     reservation,
