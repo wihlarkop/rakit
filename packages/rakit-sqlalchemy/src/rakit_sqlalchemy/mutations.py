@@ -20,6 +20,7 @@ from rakit_core.mutations import (
     ResourceDeleted,
     ResourceMutationPlan,
     ResourceUpdated,
+    run_after_commit_hooks,
     run_mutation_hooks,
 )
 from rakit_core.operations import current_operation_context
@@ -118,7 +119,7 @@ class SQLAlchemyMutationService:
             await run_mutation_hooks(self._hooks.after_rollback, exc)
             raise
         result = MutationResult(identity=identity, record=record)
-        await run_mutation_hooks(self._hooks.after_commit, result)
+        await run_after_commit_hooks(self._hooks.after_commit, result)
         return result
 
     def issue_update_token(self, record: object) -> str:
@@ -221,7 +222,7 @@ class SQLAlchemyMutationService:
             await run_mutation_hooks(self._hooks.after_rollback, exc)
             raise
         mutation_result = MutationResult(identity=identity, record=record)
-        await run_mutation_hooks(self._hooks.after_commit, mutation_result)
+        await run_after_commit_hooks(self._hooks.after_commit, mutation_result)
         return mutation_result
 
     async def preview_delete(self, identity: RecordIdentity) -> DeletionPlan:
@@ -337,7 +338,7 @@ class SQLAlchemyMutationService:
                     result_kind="delete",
                 ),
             )
-        await run_mutation_hooks(self._hooks.after_commit, confirmed_identity)
+        await run_after_commit_hooks(self._hooks.after_commit, confirmed_identity)
 
     async def _load(self, session: AsyncSession, identity: RecordIdentity) -> object | None:
         return (

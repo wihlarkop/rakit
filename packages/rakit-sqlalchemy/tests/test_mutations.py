@@ -137,3 +137,32 @@ async def test_mutation_hooks_run_in_commit_order_and_pre_commit_failure_rolls_b
     async with session_factory() as session:
         names = list((await session.scalars(select(User.name))).all())
     assert names == ["Ada"]
+
+
+@pytest.mark.anyio
+async def test_post_commit_hook_failure_does_not_reclassify_a_durable_write(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    calls: list[str] = []
+
+    async def fail_after_commit(_result: object) -> None:
+        calls.append("after_commit")
+        raise RuntimeError("observer unavailable")
+
+    service = SQLAlchemyMutationService(
+        model=User,
+        session_factory=session_factory,
+        form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="name", python_type=str, required=True),)
+        ),
+        writable_fields=("name",),
+        identity_fields=("id",),
+        hooks=MutationHooks(after_commit=(fail_after_commit,)),
+    )
+
+    result = await service.create({"name": "Ada"})
+
+    assert result.identity.values == {"id": 1}
+    assert calls == ["after_commit"]
+    async with session_factory() as session:
+        assert list((await session.scalars(select(User.name))).all()) == ["Ada"]

@@ -1,6 +1,7 @@
 """Backend-neutral mutation plans and resource lifecycle events."""
 
 import inspect
+import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -10,6 +11,8 @@ from rakit_core.events import DomainEvent
 from rakit_core.identity import RecordIdentity
 
 MutationHook = Callable[[object], object | Awaitable[object]]
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -27,6 +30,17 @@ async def run_mutation_hooks(hooks: tuple[MutationHook, ...], value: object) -> 
         result = hook(value)
         if inspect.isawaitable(result):
             await result
+
+
+async def run_after_commit_hooks(hooks: tuple[MutationHook, ...], value: object) -> None:
+    """Run observers without converting a durable mutation back into a failure."""
+    for hook in hooks:
+        try:
+            result = hook(value)
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            logger.exception("Post-commit mutation hook failed; continuing.")
 
 
 def _freeze(values: Mapping[str, Any]) -> Mapping[str, Any]:
