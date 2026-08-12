@@ -113,6 +113,7 @@ class RequestContextMiddleware:
             return
 
         request_id = str(uuid.uuid4())
+        scope.setdefault("state", {})["request_id"] = request_id
         tokens = bind_request_context(request_id=request_id, admin_id=self.admin_id)
         try:
             logger.info("http.request.started", path=scope.get("path"))

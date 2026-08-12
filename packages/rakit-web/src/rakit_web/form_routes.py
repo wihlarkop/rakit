@@ -210,6 +210,7 @@ async def _execute_with_deadline(
     context = OperationContext(
         deadline=deadline,
         cancellation=CancellationContext(),
+        request_id=cast(str, request.scope.get("state", {}).get("request_id", "")),
         operation_id=new_operation_id(),
         principal=request.scope.get("state", {}).get("principal"),
         principal_id=authorization.principal_id,
