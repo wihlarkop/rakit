@@ -27,6 +27,10 @@ class IdempotencyReservation:
     status: IdempotencyStatus
     completed_receipt: OperationReceipt | None = None
     claimed: bool = True
+    # A reclaimed reservation is the same durable row, but it is not owned by
+    # the worker that held an earlier lease.  Every terminal transition must
+    # therefore include this generation in its database predicate.
+    claim_generation: int = 0
 
 
 class IdempotencyStore(Protocol):

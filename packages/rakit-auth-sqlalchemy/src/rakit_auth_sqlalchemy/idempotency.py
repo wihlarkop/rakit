@@ -51,6 +51,7 @@ class SQLAlchemyIdempotencyStore:
                     fingerprint=fingerprint,
                     status=IdempotencyStatus.IN_PROGRESS,
                     expires_at=now + self._lease,
+                    claim_generation=1,
                 )
                 session.add(row)
                 try:
@@ -94,6 +95,13 @@ class SQLAlchemyIdempotencyStore:
                 if isinstance(expired, CursorResult) and expired.rowcount == 1:
                     await session.refresh(row)
                     status = IdempotencyStatus(row.status)
+                else:
+                    # A concurrent worker may already have materialized the
+                    # lease expiry or reclaimed it.  Never return the stale
+                    # ORM snapshot as authoritative state.
+                    row = await self._find(session, token_hash)
+                    assert row is not None
+                    status = IdempotencyStatus(row.status)
 
             reclaim_statement = None
             if status in {IdempotencyStatus.FAILED_RETRYABLE, IdempotencyStatus.EXPIRED}:
@@ -107,6 +115,7 @@ class SQLAlchemyIdempotencyStore:
                         status=IdempotencyStatus.IN_PROGRESS,
                         expires_at=now + self._lease,
                         receipt=None,
+                        claim_generation=IdempotencyRecord.claim_generation + 1,
                     ),
                     execution_options={"synchronize_session": False},
                 )
@@ -125,27 +134,39 @@ class SQLAlchemyIdempotencyStore:
                 status=status,
                 completed_receipt=receipt,
                 claimed=claimed,
+                claim_generation=row.claim_generation,
             )
 
     async def complete(
         self, reservation: IdempotencyReservation, receipt: OperationReceipt
     ) -> None:
         async with self._session_factory() as session:
-            row = await session.get(IdempotencyRecord, reservation.reservation_id)
-            if row is None:
-                raise RakitError(
-                    code=ErrorCode.VALIDATION_FAILED,
-                    message="Unknown submission reservation.",
-                    status_code=400,
+            transitioned = await session.execute(
+                update(IdempotencyRecord)
+                .where(
+                    IdempotencyRecord.id == reservation.reservation_id,
+                    IdempotencyRecord.status == IdempotencyStatus.IN_PROGRESS,
+                    IdempotencyRecord.claim_generation == reservation.claim_generation,
                 )
-            row.status = IdempotencyStatus.COMPLETED
-            row.receipt = {
-                "operation_id": receipt.operation_id,
-                "status": receipt.status,
-                "result_kind": receipt.result_kind,
-                "redirect_route": receipt.redirect_route,
-            }
+                .values(
+                    status=IdempotencyStatus.COMPLETED,
+                    receipt={
+                        "operation_id": receipt.operation_id,
+                        "status": receipt.status,
+                        "result_kind": receipt.result_kind,
+                        "redirect_route": receipt.redirect_route,
+                    },
+                    expires_at=None,
+                ),
+                execution_options={"synchronize_session": False},
+            )
             await session.commit()
+            if not isinstance(transitioned, CursorResult) or transitioned.rowcount != 1:
+                raise RakitError(
+                    code=ErrorCode.RESOURCE_CONFLICT,
+                    message="Submission reservation is no longer active.",
+                    status_code=409,
+                )
 
     async def release(self, reservation: IdempotencyReservation) -> None:
         """Record a retryable pre-commit failure without losing audit state."""
@@ -155,6 +176,7 @@ class SQLAlchemyIdempotencyStore:
                 .where(
                     IdempotencyRecord.id == reservation.reservation_id,
                     IdempotencyRecord.status == IdempotencyStatus.IN_PROGRESS,
+                    IdempotencyRecord.claim_generation == reservation.claim_generation,
                 )
                 .values(status=IdempotencyStatus.FAILED_RETRYABLE, expires_at=datetime.now(UTC))
             )
@@ -168,6 +190,7 @@ class SQLAlchemyIdempotencyStore:
                 .where(
                     IdempotencyRecord.id == reservation.reservation_id,
                     IdempotencyRecord.status == IdempotencyStatus.IN_PROGRESS,
+                    IdempotencyRecord.claim_generation == reservation.claim_generation,
                 )
                 .values(status=IdempotencyStatus.FAILED_FINAL)
             )

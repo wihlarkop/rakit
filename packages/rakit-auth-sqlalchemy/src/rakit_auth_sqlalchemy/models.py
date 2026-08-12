@@ -143,3 +143,4 @@ class IdempotencyRecord(Base):
     receipt: Mapped[dict[str, str | None] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    claim_generation: Mapped[int] = mapped_column(default=1)
