@@ -36,6 +36,7 @@ from rakit_core.mutations import (
 from rakit_core.operations import current_operation_context
 from rakit_core.transactions import TransactionPolicy
 from sqlalchemy import Select, inspect, select
+from sqlalchemy import delete as sqlalchemy_delete
 from sqlalchemy import update as sqlalchemy_update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -534,7 +535,28 @@ class SQLAlchemyMutationService:
                         message="The resource has changed since deletion was confirmed.",
                         status_code=409,
                     )
-                await uow.session.delete(record)
+                scoped_identity = (
+                    self._scoped_statement()
+                    .where(*self._identity_conditions(confirmed_identity))
+                    .with_only_columns(getattr(self._model, self._identity_fields[0]))
+                )
+                result = cast(
+                    CursorResult[Any],
+                    await uow.session.execute(
+                        sqlalchemy_delete(self._model).where(
+                            getattr(self._model, self._identity_fields[0]).in_(
+                                scoped_identity.scalar_subquery()
+                            ),
+                            *self._concurrency_conditions(record),
+                        )
+                    ),
+                )
+                if result.rowcount != 1:
+                    raise RakitError(
+                        code=ErrorCode.RESOURCE_CONFLICT,
+                        message="The resource was changed by another request.",
+                        status_code=409,
+                    )
                 await uow.session.flush()
                 if self._event_publisher is not None:
                     self._event_publisher.publish(ResourceDeleted(identity=confirmed_identity))
