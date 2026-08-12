@@ -22,7 +22,13 @@ from rakit_core.idempotency import (
     OperationReceipt,
 )
 from rakit_core.identity import IdentityCodec, RecordIdentity
-from rakit_core.operations import Deadline, run_with_deadline
+from rakit_core.operations import (
+    CancellationContext,
+    Deadline,
+    OperationContext,
+    activate_operation_context,
+    run_with_deadline,
+)
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
@@ -179,7 +185,10 @@ async def _execute_with_deadline(
 ) -> object:
     if binding.deadline_seconds is None:
         return await awaitable
-    return await run_with_deadline(awaitable, Deadline.after(binding.deadline_seconds))
+    deadline = Deadline.after(binding.deadline_seconds)
+    context = OperationContext(deadline=deadline, cancellation=CancellationContext())
+    with activate_operation_context(context):
+        return await run_with_deadline(awaitable, deadline)
 
 
 async def _claim_submission(

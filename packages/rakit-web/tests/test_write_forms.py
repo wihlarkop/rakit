@@ -58,6 +58,18 @@ class SlowMutationService(FakeMutationService):
         return await super().create(submitted)
 
 
+class ContextCapturingMutationService(FakeMutationService):
+    def __init__(self) -> None:
+        super().__init__()
+        self.operation_context: object | None = None
+
+    async def create(self, submitted: dict[str, object]) -> object:
+        from rakit_core.operations import current_operation_context
+
+        self.operation_context = current_operation_context()
+        return await super().create(submitted)
+
+
 class FakeIdempotencyStore:
     def __init__(self) -> None:
         self._claims: dict[str, tuple[str, OperationReceipt | None]] = {}
@@ -266,3 +278,32 @@ async def test_idempotent_create_replays_without_second_mutation() -> None:
     assert second.status_code == 303
     assert mismatch.status_code == 400
     assert service.calls == 1
+
+
+@pytest.mark.anyio
+async def test_request_deadline_is_visible_to_the_mutation_pipeline() -> None:
+    service = ContextCapturingMutationService()
+    binding = WriteResourceBinding(
+        path="/users",
+        label="User",
+        form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="email", python_type=str, required=True),)
+        ),
+        mutation_service=service,
+        templates=build_templates(()),
+        authorize=_allow,
+        verify_csrf=_allow,
+        verify_submission_token=_allow,
+        issue_submission_token=lambda _request: "submission",
+        deadline_seconds=1,
+    )
+    app = Starlette(routes=build_write_routes(binding))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+        response = await client.post(
+            "/users/new",
+            data={"email": "ada@example.com", "csrf_token": "x", "submission_token": "x"},
+            follow_redirects=False,
+        )
+    assert response.status_code == 303
+    assert service.operation_context is not None

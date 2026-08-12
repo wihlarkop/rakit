@@ -1,7 +1,9 @@
 """Operation deadlines and cooperative cancellation checkpoints."""
 
 import asyncio
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from time import monotonic
 
@@ -50,6 +52,25 @@ class OperationContext:
 
     def checkpoint(self) -> None:
         self.cancellation.check(self.deadline)
+
+
+_current_operation_context: ContextVar[OperationContext | None] = ContextVar(
+    "rakit_current_operation_context", default=None
+)
+
+
+def current_operation_context() -> OperationContext | None:
+    """The request operation context, available to adapters in this task only."""
+    return _current_operation_context.get()
+
+
+@contextmanager
+def activate_operation_context(context: OperationContext) -> Iterator[None]:
+    token: Token[OperationContext | None] = _current_operation_context.set(context)
+    try:
+        yield
+    finally:
+        _current_operation_context.reset(token)
 
 
 async def run_with_deadline[T](awaitable: Awaitable[T], deadline: Deadline) -> T:

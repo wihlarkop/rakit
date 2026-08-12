@@ -14,12 +14,15 @@ from rakit_core.forms import FormSchema, FormValidationError
 from rakit_core.idempotency import IdempotencyStore, OperationReceipt
 from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import (
+    MutationHooks,
     MutationResult,
     ResourceCreated,
     ResourceDeleted,
     ResourceMutationPlan,
     ResourceUpdated,
+    run_mutation_hooks,
 )
+from rakit_core.operations import current_operation_context
 from rakit_core.transactions import TransactionPolicy
 from sqlalchemy import select
 from sqlalchemy import update as sqlalchemy_update
@@ -60,6 +63,7 @@ class SQLAlchemyMutationService:
         version_field: str | None = None,
         resource_id: str | None = None,
         delete_nonce_store: IdempotencyStore | None = None,
+        hooks: MutationHooks | None = None,
     ) -> None:
         if not writable_fields or not identity_fields:
             raise ValueError("Writable and identity fields must be explicitly declared")
@@ -77,6 +81,7 @@ class SQLAlchemyMutationService:
         self._token_service = token_service
         self._resource_id = resource_id or str(getattr(model, "__tablename__", model.__name__))
         self._delete_nonce_store = delete_nonce_store
+        self._hooks = hooks or MutationHooks()
         self._concurrency = (
             ConcurrencyTokenService(token_service) if token_service is not None else None
         )
@@ -93,19 +98,28 @@ class SQLAlchemyMutationService:
 
     async def create(self, submitted: Mapping[str, Any]) -> MutationResult:
         plan = self.prepare_create(submitted)
-        async with SQLAlchemyUnitOfWork(
-            self._session_factory,
-            policy=TransactionPolicy.AUTO,
-            event_publisher=self._event_publisher,
-        ) as uow:
-            record = self._model(**dict(plan.values))
-            uow.session.add(record)
-            await uow.session.flush()
-            identity = self._identity_for(record)
-            if self._event_publisher is not None:
-                self._event_publisher.publish(ResourceCreated(identity=identity))
-            await uow.mark_success()
-        return MutationResult(identity=identity, record=record)
+        try:
+            await run_mutation_hooks(self._hooks.before_execute, plan)
+            async with SQLAlchemyUnitOfWork(
+                self._session_factory,
+                policy=TransactionPolicy.AUTO,
+                event_publisher=self._event_publisher,
+                operation_context=current_operation_context(),
+            ) as uow:
+                record = self._model(**dict(plan.values))
+                uow.session.add(record)
+                await uow.session.flush()
+                identity = self._identity_for(record)
+                if self._event_publisher is not None:
+                    self._event_publisher.publish(ResourceCreated(identity=identity))
+                await run_mutation_hooks(self._hooks.before_commit, plan)
+                await uow.mark_success()
+        except BaseException as exc:
+            await run_mutation_hooks(self._hooks.after_rollback, exc)
+            raise
+        result = MutationResult(identity=identity, record=record)
+        await run_mutation_hooks(self._hooks.after_commit, result)
+        return result
 
     def issue_update_token(self, record: object) -> str:
         if self._concurrency is None or self._version_field is None:
@@ -139,64 +153,76 @@ class SQLAlchemyMutationService:
                 message="Invalid resource identity",
                 status_code=400,
             )
-        async with SQLAlchemyUnitOfWork(
-            self._session_factory,
-            policy=TransactionPolicy.AUTO,
-            event_publisher=self._event_publisher,
-        ) as uow:
-            record = await self._load(uow.session, identity)
-            if record is None:
-                raise RakitError(
-                    code=ErrorCode.RESOURCE_NOT_FOUND,
-                    message="Resource was not found",
-                    status_code=404,
-                )
-            if self._concurrency is not None and self._version_field is not None:
-                if not concurrency_token:
+        try:
+            await run_mutation_hooks(self._hooks.before_execute, plan)
+            async with SQLAlchemyUnitOfWork(
+                self._session_factory,
+                policy=TransactionPolicy.AUTO,
+                event_publisher=self._event_publisher,
+                operation_context=current_operation_context(),
+            ) as uow:
+                record = await self._load(uow.session, identity)
+                if record is None:
                     raise RakitError(
-                        code=ErrorCode.RESOURCE_CONFLICT,
-                        message="A concurrency token is required.",
-                        status_code=409,
+                        code=ErrorCode.RESOURCE_NOT_FOUND,
+                        message="Resource was not found",
+                        status_code=404,
                     )
-                self._concurrency.verify(
-                    concurrency_token, identity, getattr(record, self._version_field)
-                )
-                current_version = getattr(record, self._version_field)
-                if not isinstance(current_version, int):
-                    raise RuntimeError("Configured version field must contain an integer")
-                # The in-memory token check above makes stale forms pleasant
-                # to reject, but it cannot protect two independent database
-                # transactions that both read the same revision.  Put the
-                # expected revision in the UPDATE predicate as well: exactly
-                # one of concurrent writers can affect a row.
-                result = cast(
-                    CursorResult[Any],
-                    await uow.session.execute(
-                        sqlalchemy_update(self._model)
-                        .where(
-                            *self._identity_conditions(identity),
-                            getattr(self._model, self._version_field) == current_version,
+                if self._concurrency is not None and self._version_field is not None:
+                    if not concurrency_token:
+                        raise RakitError(
+                            code=ErrorCode.RESOURCE_CONFLICT,
+                            message="A concurrency token is required.",
+                            status_code=409,
                         )
-                        .values(**dict(plan.values), **{self._version_field: current_version + 1})
-                    ),
-                )
-                if result.rowcount != 1:
-                    raise RakitError(
-                        code=ErrorCode.RESOURCE_CONFLICT,
-                        message="The resource was changed by another request.",
-                        status_code=409,
+                    self._concurrency.verify(
+                        concurrency_token, identity, getattr(record, self._version_field)
                     )
-                await uow.session.refresh(record)
-            else:
-                for name, value in plan.values.items():
-                    setattr(record, name, value)
-                await uow.session.flush()
-            if self._event_publisher is not None:
-                self._event_publisher.publish(
-                    ResourceUpdated(identity=identity, changed_fields=tuple(plan.values))
-                )
-            await uow.mark_success()
-        return MutationResult(identity=identity, record=record)
+                    current_version = getattr(record, self._version_field)
+                    if not isinstance(current_version, int):
+                        raise RuntimeError("Configured version field must contain an integer")
+                    # The in-memory token check above makes stale forms pleasant
+                    # to reject, but it cannot protect two independent database
+                    # transactions that both read the same revision.  Put the
+                    # expected revision in the UPDATE predicate as well: exactly
+                    # one of concurrent writers can affect a row.
+                    result = cast(
+                        CursorResult[Any],
+                        await uow.session.execute(
+                            sqlalchemy_update(self._model)
+                            .where(
+                                *self._identity_conditions(identity),
+                                getattr(self._model, self._version_field) == current_version,
+                            )
+                            .values(
+                                **dict(plan.values),
+                                **{self._version_field: current_version + 1},
+                            )
+                        ),
+                    )
+                    if result.rowcount != 1:
+                        raise RakitError(
+                            code=ErrorCode.RESOURCE_CONFLICT,
+                            message="The resource was changed by another request.",
+                            status_code=409,
+                        )
+                    await uow.session.refresh(record)
+                else:
+                    for name, value in plan.values.items():
+                        setattr(record, name, value)
+                    await uow.session.flush()
+                if self._event_publisher is not None:
+                    self._event_publisher.publish(
+                        ResourceUpdated(identity=identity, changed_fields=tuple(plan.values))
+                    )
+                await run_mutation_hooks(self._hooks.before_commit, plan)
+                await uow.mark_success()
+        except BaseException as exc:
+            await run_mutation_hooks(self._hooks.after_rollback, exc)
+            raise
+        mutation_result = MutationResult(identity=identity, record=record)
+        await run_mutation_hooks(self._hooks.after_commit, mutation_result)
+        return mutation_result
 
     async def preview_delete(self, identity: RecordIdentity) -> DeletionPlan:
         if self._token_service is None or self._version_field is None:
@@ -242,10 +268,9 @@ class SQLAlchemyMutationService:
             )
             confirmed_identity = RecordIdentity(values=claims["identity"])
             expected_version = claims["expected_version"]
-            if (
-                claims.get("resource_id") != self._resource_id
-                or set(confirmed_identity.values) != set(self._identity_fields)
-            ):
+            if claims.get("resource_id") != self._resource_id or set(
+                confirmed_identity.values
+            ) != set(self._identity_fields):
                 raise ValueError
         except (KeyError, TypeError, ValueError) as exc:
             raise RakitError(
@@ -272,10 +297,12 @@ class SQLAlchemyMutationService:
                     status_code=409,
                 )
         try:
+            await run_mutation_hooks(self._hooks.before_execute, confirmed_identity)
             async with SQLAlchemyUnitOfWork(
                 self._session_factory,
                 policy=TransactionPolicy.AUTO,
                 event_publisher=self._event_publisher,
+                operation_context=current_operation_context(),
             ) as uow:
                 record = await self._load(uow.session, confirmed_identity)
                 if record is None:
@@ -294,10 +321,12 @@ class SQLAlchemyMutationService:
                 await uow.session.flush()
                 if self._event_publisher is not None:
                     self._event_publisher.publish(ResourceDeleted(identity=confirmed_identity))
+                await run_mutation_hooks(self._hooks.before_commit, confirmed_identity)
                 await uow.mark_success()
-        except BaseException:
+        except BaseException as exc:
             if reservation is not None and self._delete_nonce_store is not None:
                 await self._delete_nonce_store.release(reservation)
+            await run_mutation_hooks(self._hooks.after_rollback, exc)
             raise
         if reservation is not None and self._delete_nonce_store is not None:
             await self._delete_nonce_store.complete(
@@ -308,6 +337,7 @@ class SQLAlchemyMutationService:
                     result_kind="delete",
                 ),
             )
+        await run_mutation_hooks(self._hooks.after_commit, confirmed_identity)
 
     async def _load(self, session: AsyncSession, identity: RecordIdentity) -> object | None:
         return (

@@ -6,7 +6,9 @@ from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.events import EventBus, EventPublisher
 from rakit_core.fields import FieldDefinition
 from rakit_core.forms import FormSchema
+from rakit_core.mutations import MutationHooks
 from rakit_sqlalchemy.mutations import ResourceCreated, SQLAlchemyMutationService
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -81,3 +83,57 @@ async def test_invalid_create_does_not_execute_or_mass_assign(
     with pytest.raises(RakitError) as caught:
         await service.create({"name": "Ada", "password_hash": "forged"})
     assert caught.value.code == ErrorCode.VALIDATION_FAILED
+
+
+@pytest.mark.anyio
+async def test_mutation_hooks_run_in_commit_order_and_pre_commit_failure_rolls_back(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    order: list[str] = []
+
+    async def before_execute(_plan: object) -> None:
+        order.append("before_execute")
+
+    async def before_commit(_plan: object) -> None:
+        order.append("before_commit")
+
+    async def after_commit(_result: object) -> None:
+        order.append("after_commit")
+
+    service = SQLAlchemyMutationService(
+        model=User,
+        session_factory=session_factory,
+        form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="name", python_type=str, required=True),)
+        ),
+        writable_fields=("name",),
+        identity_fields=("id",),
+        hooks=MutationHooks(
+            before_execute=(before_execute,),
+            before_commit=(before_commit,),
+            after_commit=(after_commit,),
+        ),
+    )
+
+    await service.create({"name": "Ada"})
+    assert order == ["before_execute", "before_commit", "after_commit"]
+
+    async def reject(_plan: object) -> None:
+        raise RuntimeError("stop before commit")
+
+    blocked = SQLAlchemyMutationService(
+        model=User,
+        session_factory=session_factory,
+        form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="name", python_type=str, required=True),)
+        ),
+        writable_fields=("name",),
+        identity_fields=("id",),
+        hooks=MutationHooks(before_commit=(reject,)),
+    )
+    with pytest.raises(RuntimeError, match="stop before commit"):
+        await blocked.create({"name": "Grace"})
+
+    async with session_factory() as session:
+        names = list((await session.scalars(select(User.name))).all())
+    assert names == ["Ada"]
