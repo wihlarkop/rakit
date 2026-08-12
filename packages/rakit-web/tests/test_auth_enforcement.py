@@ -394,6 +394,7 @@ async def test_admin_wires_authenticated_create_update_and_signed_delete(session
             data={
                 "csrf_token": csrf,
                 "delete_token": hidden_value(delete_form.text, "delete_token"),
+                "submission_token": hidden_value(delete_form.text, "submission_token"),
             },
             follow_redirects=False,
         )
