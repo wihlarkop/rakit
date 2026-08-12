@@ -6,6 +6,7 @@ from rakit_core.crypto import TokenService
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.fields import FieldDefinition
 from rakit_core.forms import FormSchema
+from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, OperationReceipt
 from rakit_sqlalchemy.mutations import SQLAlchemyMutationService
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -24,6 +25,25 @@ class User(Base):
     revision: Mapped[int] = mapped_column(default=1)
 
 
+class _NonceStore:
+    def __init__(self) -> None:
+        self.claimed: set[str] = set()
+
+    async def begin(self, token_hash: str, *, fingerprint: str) -> IdempotencyReservation:
+        if token_hash in self.claimed:
+            return IdempotencyReservation(1, IdempotencyStatus.COMPLETED, claimed=False)
+        self.claimed.add(token_hash)
+        return IdempotencyReservation(1, IdempotencyStatus.IN_PROGRESS)
+
+    async def complete(
+        self, reservation: IdempotencyReservation, receipt: OperationReceipt
+    ) -> None:
+        return None
+
+    async def release(self, reservation: IdempotencyReservation) -> None:
+        self.claimed.clear()
+
+
 @pytest.fixture
 async def session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -33,7 +53,9 @@ async def session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     await engine.dispose()
 
 
-def _service(session_factory: async_sessionmaker[AsyncSession]) -> SQLAlchemyMutationService:
+def _service(
+    session_factory: async_sessionmaker[AsyncSession], *, resource_id: str = "users"
+) -> SQLAlchemyMutationService:
     return SQLAlchemyMutationService(
         model=User,
         session_factory=session_factory,
@@ -46,6 +68,8 @@ def _service(session_factory: async_sessionmaker[AsyncSession]) -> SQLAlchemyMut
             key_id="test", value=SecretValue("x" * 32), admin_id="admin"
         ),
         version_field="revision",
+        resource_id=resource_id,
+        delete_nonce_store=_NonceStore(),
     )
 
 
@@ -76,3 +100,22 @@ async def test_changed_record_invalidates_delete_plan(
     with pytest.raises(RakitError) as caught:
         await service.delete(token)
     assert caught.value.code == ErrorCode.RESOURCE_CONFLICT
+
+
+@pytest.mark.anyio
+async def test_delete_confirmation_is_bound_to_resource_and_consumed_once(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    users = _service(session_factory, resource_id="users")
+    other = _service(session_factory, resource_id="other_users")
+    created = await users.create({"name": "Ada"})
+    token = await users.issue_delete_token(created.identity)
+
+    with pytest.raises(RakitError) as wrong_resource:
+        await other.delete(token, identity=created.identity)
+    assert wrong_resource.value.status_code == 400
+
+    await users.delete(token, identity=created.identity)
+    with pytest.raises(RakitError) as replay:
+        await users.delete(token, identity=created.identity)
+    assert replay.value.status_code == 409
