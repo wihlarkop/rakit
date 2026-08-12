@@ -140,6 +140,7 @@ class Admin:
         trusted_proxies: tuple[str, ...] = (),
         superuser_bypass: bool = True,
         mutation_deadline_seconds: float = 30.0,
+        event_bus: EventBus | None = None,
     ) -> None:
         security_config: dict[str, object] = {
             "secret_key": secret_key,
@@ -194,14 +195,13 @@ class Admin:
             auth_enabled=auth_backend is not None,
         )
         self._builder = ApplicationBuilder()
-        if not any(key.service_type is EventBus for key in self._builder.registry.providers):
-            self._builder.registry.add_value(EventBus, EventBus(), scope=ServiceScope.APPLICATION)
-        if not any(key.service_type is EventPublisher for key in self._builder.registry.providers):
-            self._builder.registry.add_factory(
-                EventPublisher,
-                lambda resolver: EventPublisher(resolver.require(EventBus)),
-                scope=ServiceScope.OPERATION,
-            )
+        self._event_bus = event_bus if event_bus is not None else EventBus()
+        self._builder.registry.add_value(EventBus, self._event_bus, scope=ServiceScope.APPLICATION)
+        self._builder.registry.add_factory(
+            EventPublisher,
+            lambda resolver: EventPublisher(resolver.require(EventBus)),
+            scope=ServiceScope.OPERATION,
+        )
         self._builder.add_route(
             RouteDefinition(
                 route_name="rakit.home",
@@ -244,6 +244,11 @@ class Admin:
     @property
     def builder(self) -> ApplicationBuilder:
         return self._builder
+
+    @property
+    def event_bus(self) -> EventBus:
+        """The application-scoped bus used by every mutation operation."""
+        return self._event_bus
 
     def install(self, plugin: Plugin) -> None:
         if self.compiled is not None:
@@ -383,6 +388,14 @@ class Admin:
         validate_idempotency_store_for_production(
             binding.idempotency_store, debug=self.config.debug
         )
+        declared_event_bus = getattr(binding.mutation_service, "event_bus", None)
+        if declared_event_bus is not None and declared_event_bus is not self._event_bus:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="Mutation service event bus must match the Admin event bus.",
+                status_code=500,
+                details={"resource_id": resource_id, "reason": "event_bus_mismatch"},
+            )
         bind_scope = getattr(binding.mutation_service, "bind_scoped_statement", None)
         scoped_statement = getattr(
             self._resource_services[resource_id].data_source, "scoped_statement", None

@@ -16,7 +16,7 @@ from rakit_core.concurrency import (
 from rakit_core.crypto import TokenService
 from rakit_core.deletion import DeletionPlan
 from rakit_core.errors import ErrorCode, RakitError
-from rakit_core.events import EventPublisher
+from rakit_core.events import EventBus, EventPublisher
 from rakit_core.forms import FormSchema, FormValidationError
 from rakit_core.idempotency import IdempotencyStore, OperationReceipt
 from rakit_core.identity import RecordIdentity
@@ -134,6 +134,11 @@ class SQLAlchemyMutationService:
     def bind_delete_nonce_store(self, store: IdempotencyStore) -> None:
         """Attach Admin's validated durable receipt store to delete confirmations."""
         self._delete_nonce_store = store
+
+    @property
+    def event_bus(self) -> EventBus | None:
+        """Optional direct-host bus declaration, never deferred event state."""
+        return self._event_bus
 
     def _operation_event_publisher(self) -> EventPublisher | None:
         context = current_operation_context()

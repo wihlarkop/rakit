@@ -17,12 +17,13 @@ import pytest
 from rakit import Admin, ModelAdmin, SecretValue
 from rakit_core.auth import Principal, SessionRecord
 from rakit_core.crypto import TokenService
+from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.events import EventBus, EventPublisher
 from rakit_core.fields import FieldDefinition
 from rakit_core.forms import FormSchema
 from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, OperationReceipt
 from rakit_core.identity import IdentityCodec, RecordIdentity
-from rakit_core.mutations import MutationHooks
+from rakit_core.mutations import MutationHooks, ResourceCreated
 from rakit_core.operations import OperationContext, current_operation_context
 from rakit_sqlalchemy.mutations import SQLAlchemyMutationService
 from rakit_web.form_routes import WriteResourceBinding
@@ -197,7 +198,12 @@ async def session_factory() -> AsyncIterator[async_sessionmaker]:
     await engine.dispose()
 
 
-def _build_admin(session_factory, backend: _ConfigurableAuthBackend) -> Admin:
+def _build_admin(
+    session_factory,
+    backend: _ConfigurableAuthBackend,
+    *,
+    event_bus: EventBus | None = None,
+) -> Admin:
     from rakit.sqlalchemy import SQLAlchemyPlugin
 
     admin = Admin(
@@ -208,6 +214,7 @@ def _build_admin(session_factory, backend: _ConfigurableAuthBackend) -> Admin:
         auth_backend=backend,
         session_store=_FakeSessionStore(),
         login_rate_limiter=_TestRateLimiter(),
+        event_bus=event_bus,
     )
     admin.install(SQLAlchemyPlugin(session_factory=session_factory))
     admin.register(WidgetAdmin)
@@ -219,8 +226,10 @@ def _build_write_admin(
     backend: _ConfigurableAuthBackend,
     *,
     operation_contexts: list[OperationContext] | None = None,
+    event_bus: EventBus | None = None,
+    service_event_bus: EventBus | None = None,
 ) -> Admin:
-    admin = _build_admin(session_factory, backend)
+    admin = _build_admin(session_factory, backend, event_bus=event_bus)
     form_schema = FormSchema(
         fields=(FieldDefinition(field_id="name", python_type=str, required=True),)
     )
@@ -241,6 +250,9 @@ def _build_write_admin(
             key_id="test", value=SecretValue("x" * 32), admin_id="operations"
         ),
         version_field="revision",
+        event_publisher=(
+            EventPublisher(service_event_bus) if service_event_bus is not None else None
+        ),
         hooks=MutationHooks(pre_event=(capture_context,))
         if operation_contexts is not None
         else None,
@@ -471,6 +483,62 @@ async def test_admin_write_uses_an_operation_scoped_event_publisher(session_fact
     assert context.services is not None
     assert context.events is context.services.require(EventPublisher)
     assert context.events.bus is context.services.require(EventBus)
+    assert context.events.bus is admin.event_bus
+
+
+@pytest.mark.anyio
+async def test_admin_write_dispatches_to_the_configured_canonical_event_bus(
+    session_factory,
+) -> None:
+    contexts: list[OperationContext] = []
+    received: list[ResourceCreated] = []
+    event_bus = EventBus()
+    event_bus.subscribe(ResourceCreated, received.append)
+    permissions = frozenset({"operations.access", "operations.resources.widgets.create"})
+    admin = _build_write_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=permissions),
+        operation_contexts=contexts,
+        event_bus=event_bus,
+        service_event_bus=event_bus,
+    )
+    app, client = await _client_for(admin)
+
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        form = await client.get("/widgets/new")
+        submission = re.search(r'name="submission_token" value="([^"]+)"', form.text)
+        assert submission is not None
+        response = await client.post(
+            "/widgets/new",
+            data={
+                "name": "Published",
+                "csrf_token": csrf,
+                "submission_token": submission.group(1),
+            },
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 303
+    assert len(received) == 1
+    assert received[0].identity.values == {"id": 2}
+    assert len(contexts) == 1
+    assert contexts[0].events is not None
+    assert contexts[0].events.bus is event_bus
+
+
+@pytest.mark.anyio
+async def test_admin_rejects_a_write_service_with_a_conflicting_event_bus(session_factory) -> None:
+    with pytest.raises(RakitError) as caught:
+        _build_write_admin(
+            session_factory,
+            _ConfigurableAuthBackend(),
+            event_bus=EventBus(),
+            service_event_bus=EventBus(),
+        )
+
+    assert caught.value.code == ErrorCode.CONFIG_INVALID
+    assert caught.value.details == {"resource_id": "widgets", "reason": "event_bus_mismatch"}
 
 
 @pytest.mark.anyio
