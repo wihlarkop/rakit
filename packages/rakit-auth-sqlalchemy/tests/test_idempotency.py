@@ -189,3 +189,50 @@ async def test_concurrent_expired_lease_reclaims_have_one_owner(tmp_path: Path) 
     assert sum(reservation.claimed for reservation in (left, right)) == 1
     assert {left.status, right.status} == {IdempotencyStatus.IN_PROGRESS}
     await engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_completed_replay_is_terminal_under_concurrent_attempts(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'completed.db'}")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    store = SQLAlchemyIdempotencyStore(factory)
+    owner = await store.begin("completed-token", fingerprint="request")
+    receipt = OperationReceipt(operation_id="op-1", status="succeeded", result_kind="redirect")
+    await store.complete(owner, receipt)
+
+    left, right = await asyncio.gather(
+        store.begin("completed-token", fingerprint="request"),
+        store.begin("completed-token", fingerprint="request"),
+    )
+
+    assert not left.claimed and not right.claimed
+    assert left.completed_receipt == receipt
+    assert right.completed_receipt == receipt
+    await engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_different_fingerprint_is_rejected_under_initial_claim_contention(
+    tmp_path: Path,
+) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'mismatch.db'}")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    store = SQLAlchemyIdempotencyStore(factory)
+
+    results = await asyncio.gather(
+        store.begin("same-token", fingerprint="first"),
+        store.begin("same-token", fingerprint="second"),
+        return_exceptions=True,
+    )
+
+    assert sum(isinstance(result, RakitError) for result in results) == 1
+    assert sum(not isinstance(result, Exception) for result in results) == 1
+    assert (
+        next(result for result in results if isinstance(result, RakitError)).code
+        == ErrorCode.VALIDATION_FAILED
+    )
+    await engine.dispose()

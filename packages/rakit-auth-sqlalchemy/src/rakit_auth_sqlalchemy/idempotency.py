@@ -99,6 +99,7 @@ class SQLAlchemyIdempotencyStore:
                     # A concurrent worker may already have materialized the
                     # lease expiry or reclaimed it.  Never return the stale
                     # ORM snapshot as authoritative state.
+                    session.expire_all()
                     row = await self._find(session, token_hash)
                     assert row is not None
                     status = IdempotencyStatus(row.status)
@@ -125,6 +126,7 @@ class SQLAlchemyIdempotencyStore:
                     await session.refresh(row)
                     status = IdempotencyStatus(row.status)
                 else:
+                    session.expire_all()
                     row = await self._find(session, token_hash)
                     assert row is not None
                     status = IdempotencyStatus(row.status)
