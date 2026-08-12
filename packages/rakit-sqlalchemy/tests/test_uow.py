@@ -125,3 +125,42 @@ async def test_cancellation_at_the_pre_commit_checkpoint_rolls_back() -> None:
     assert caught.value.code == ErrorCode.OPERATION_TIMEOUT
     assert session.committed is False
     assert session.rolled_back is True
+
+
+@pytest.mark.anyio
+async def test_commit_failure_rolls_back_without_delivering_after_commit() -> None:
+    """A failed durable commit is not a successful mutation outcome."""
+
+    class Session:
+        rolled_back = False
+
+        async def commit(self) -> None:
+            raise RuntimeError("database unavailable")
+
+        async def rollback(self) -> None:
+            self.rolled_back = True
+
+        async def close(self) -> None:
+            return None
+
+    class Publisher:
+        after_commit_calls = 0
+        after_rollback_calls = 0
+
+        async def after_commit(self) -> None:
+            self.after_commit_calls += 1
+
+        def after_rollback(self) -> None:
+            self.after_rollback_calls += 1
+
+    session = Session()
+    publisher = Publisher()
+    factory = cast(async_sessionmaker[AsyncSession], lambda: session)
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        async with SQLAlchemyUnitOfWork(factory, event_publisher=cast(object, publisher)) as uow:
+            await uow.mark_success()
+
+    assert session.rolled_back is True
+    assert publisher.after_commit_calls == 0
+    assert publisher.after_rollback_calls == 1
