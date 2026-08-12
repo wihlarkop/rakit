@@ -41,6 +41,7 @@ from .security.middleware import SecurityMiddleware
 from .security.rate_limit import LoginRateLimiter, RateLimiter
 from .security.validation import (
     parse_trusted_proxy_networks,
+    validate_idempotency_store_for_production,
     validate_production_config,
     validate_rate_limiter_for_production,
     validate_session_store_for_production,
@@ -361,6 +362,15 @@ class Admin:
                 message="Write resources require configured authentication.",
                 status_code=500,
             )
+        if binding.idempotency_store is None:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="Write resources require a durable idempotency store.",
+                status_code=500,
+            )
+        validate_idempotency_store_for_production(
+            binding.idempotency_store, debug=self.config.debug
+        )
         if resource_id in self._write_resource_bindings:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,

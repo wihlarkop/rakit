@@ -19,6 +19,7 @@ from rakit_core.auth import Principal, SessionRecord
 from rakit_core.crypto import TokenService
 from rakit_core.fields import FieldDefinition
 from rakit_core.forms import FormSchema
+from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, OperationReceipt
 from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_sqlalchemy.mutations import SQLAlchemyMutationService
 from rakit_web.form_routes import WriteResourceBinding
@@ -162,6 +163,21 @@ class _FakeSessionStore:
         self._tokens = {t: sid for t, sid in self._tokens.items() if sid != session_id}
 
 
+class _SafeIdempotencyStore:
+    production_safe = True
+
+    async def begin(self, token_hash: str, *, fingerprint: str) -> IdempotencyReservation:
+        return IdempotencyReservation(1, IdempotencyStatus.IN_PROGRESS)
+
+    async def complete(
+        self, reservation: IdempotencyReservation, receipt: OperationReceipt
+    ) -> None:
+        return None
+
+    async def release(self, reservation: IdempotencyReservation) -> None:
+        return None
+
+
 @pytest.fixture
 async def session_factory() -> AsyncIterator[async_sessionmaker]:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -224,6 +240,7 @@ def _build_write_admin(session_factory, backend: _ConfigurableAuthBackend) -> Ad
             verify_csrf=allowed,
             verify_submission_token=allowed,
             issue_submission_token=lambda _request: "placeholder",
+            idempotency_store=_SafeIdempotencyStore(),
         ),
     )
     return admin

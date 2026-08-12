@@ -131,3 +131,28 @@ def validate_session_store_for_production(
             inspect.signature(method).bind(*arguments)
         except (TypeError, ValueError) as error:
             raise _invalid_production_config(reason) from error
+
+
+def validate_idempotency_store_for_production(store: object, *, debug: bool) -> None:
+    """Require a durable, fully callable claim store before serving writes."""
+    if debug:
+        return
+    if getattr(store, "production_safe", False) is not True:
+        raise _invalid_production_config("development_only_idempotency_store")
+    calls = {
+        "begin": ("",),
+        "complete": (object(), object()),
+        "release": (object(),),
+    }
+    for method_name, arguments in calls.items():
+        method = getattr(store, method_name, None)
+        reason = f"idempotency_store_{method_name}_not_callable"
+        if not callable(method) or not inspect.iscoroutinefunction(method):
+            raise _invalid_production_config(reason)
+        try:
+            if method_name == "begin":
+                inspect.signature(method).bind(*arguments, fingerprint="")
+            else:
+                inspect.signature(method).bind(*arguments)
+        except (TypeError, ValueError) as error:
+            raise _invalid_production_config(reason) from error

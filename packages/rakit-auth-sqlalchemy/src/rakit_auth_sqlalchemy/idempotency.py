@@ -8,16 +8,26 @@ from rakit_core.idempotency import (
 )
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, async_sessionmaker
 
 from .models import IdempotencyRecord
 
 
 class SQLAlchemyIdempotencyStore:
-    production_safe = True
-
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._session_factory = session_factory
+
+    @property
+    def production_safe(self) -> bool:
+        """Derive deployment safety from the *current* session-factory bind."""
+        bind = self._session_factory.kw.get("bind")
+        dialect = getattr(bind, "dialect", None)
+        dialect_name = getattr(dialect, "name", None)
+        return (
+            isinstance(bind, AsyncEngine | AsyncConnection)
+            and isinstance(dialect_name, str)
+            and dialect_name != "sqlite"
+        )
 
     async def begin(self, token_hash: str, *, fingerprint: str) -> IdempotencyReservation:
         async with self._session_factory() as session:
