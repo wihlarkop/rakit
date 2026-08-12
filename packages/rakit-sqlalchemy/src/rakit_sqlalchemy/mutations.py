@@ -130,13 +130,17 @@ class SQLAlchemyMutationService:
                 status_code=403,
             )
         context = current_operation_context()
-        if context is not None and any(
-            (
-                context.admin_id != authorization.admin_id,
-                context.resource_id != authorization.resource_id,
-                context.operation != authorization.operation,
-                context.principal_id != authorization.principal_id,
-                context.permissions != authorization.permissions,
+        if (
+            context is None
+            or context.principal is None
+            or any(
+                (
+                    context.admin_id != authorization.admin_id,
+                    context.resource_id != authorization.resource_id,
+                    context.operation != authorization.operation,
+                    context.principal.subject_id != authorization.principal_id,
+                    context.permissions != authorization.permissions,
+                )
             )
         ):
             raise RakitError(
@@ -266,12 +270,13 @@ class SQLAlchemyMutationService:
                 plan = self.prepare_update(
                     identity, record, submitted, concurrency_token=concurrency_token
                 )
-                await run_mutation_hooks(self._hooks.normalize, plan)
-                await run_mutation_hooks(self._hooks.business_validate, plan)
-                await run_mutation_hooks(self._hooks.prepare, plan)
+                await run_mutation_hooks(self._hooks.normalize_update, plan)
+                await run_mutation_hooks(self._hooks.business_validate_update, plan)
+                await run_mutation_hooks(self._hooks.prepare_update, plan)
                 authorized = self._require_authorization(authorization, "update")
                 await run_mutation_hooks(self._hooks.authorize, authorized)
                 await run_mutation_hooks(self._hooks.pre_event, plan)
+                await run_mutation_hooks(self._hooks.execute_update, plan)
                 await run_mutation_hooks(self._hooks.before_execute, plan)
                 if self._concurrency is not None and self._version_field is not None:
                     if not concurrency_token:

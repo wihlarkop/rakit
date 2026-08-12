@@ -200,6 +200,7 @@ def _write_routes_available(binding: WriteResourceBinding) -> bool:
 
 async def _execute_with_deadline(
     binding: WriteResourceBinding,
+    request: Request,
     awaitable: Awaitable[object],
     authorization: MutationAuthorization,
 ) -> object:
@@ -210,6 +211,7 @@ async def _execute_with_deadline(
         deadline=deadline,
         cancellation=CancellationContext(),
         operation_id=new_operation_id(),
+        principal=request.scope.get("state", {}).get("principal"),
         principal_id=authorization.principal_id,
         admin_id=authorization.admin_id,
         resource_id=authorization.resource_id,
@@ -296,6 +298,7 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                 return replay
             await _execute_with_deadline(
                 binding,
+                request,
                 binding.mutation_service.create(submitted, authorization=authorization),
                 authorization,
             )
@@ -404,6 +407,7 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                 return replay
             await _execute_with_deadline(
                 binding,
+                request,
                 mutation_service.update(
                     identity,
                     submitted,
@@ -508,6 +512,7 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                 return replay
             await _execute_with_deadline(
                 binding,
+                request,
                 mutation_service.delete(token, identity=identity, authorization=authorization),
                 authorization,
             )

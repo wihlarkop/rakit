@@ -48,6 +48,12 @@ class MutationHooks:
     before_commit: tuple[MutationHook, ...] = ()
     after_commit: tuple[MutationHook, ...] = ()
     after_rollback: tuple[MutationHook, ...] = ()
+    # Update phases intentionally do not alias create phases: update domain
+    # policy needs both the durable current record and proposed changes.
+    normalize_update: tuple[MutationHook, ...] = ()
+    business_validate_update: tuple[MutationHook, ...] = ()
+    prepare_update: tuple[MutationHook, ...] = ()
+    execute_update: tuple[MutationHook, ...] = ()
 
 
 async def run_mutation_hooks(hooks: tuple[MutationHook, ...], value: object) -> None:
