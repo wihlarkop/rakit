@@ -371,6 +371,20 @@ class Admin:
         validate_idempotency_store_for_production(
             binding.idempotency_store, debug=self.config.debug
         )
+        delete_capable = all(
+            callable(getattr(binding.mutation_service, name, None))
+            for name in ("issue_delete_token", "delete")
+        )
+        if delete_capable:
+            bind_nonce_store = getattr(binding.mutation_service, "bind_delete_nonce_store", None)
+            if not callable(bind_nonce_store):
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+                    message="Delete resources require durable confirmation storage.",
+                    status_code=500,
+                    details={"resource_id": resource_id, "reason": "missing_delete_nonce_store"},
+                )
+            bind_nonce_store(binding.idempotency_store)
         if resource_id in self._write_resource_bindings:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,

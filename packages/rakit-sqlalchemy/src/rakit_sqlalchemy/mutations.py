@@ -64,6 +64,8 @@ class SQLAlchemyMutationService:
         version_field: str | None = None,
         resource_id: str | None = None,
         delete_nonce_store: IdempotencyStore | None = None,
+        delete_permission: str | None = None,
+        delete_relationship_impact: tuple[str, ...] = (),
         hooks: MutationHooks | None = None,
     ) -> None:
         if not writable_fields or not identity_fields:
@@ -82,10 +84,16 @@ class SQLAlchemyMutationService:
         self._token_service = token_service
         self._resource_id = resource_id or str(getattr(model, "__tablename__", model.__name__))
         self._delete_nonce_store = delete_nonce_store
+        self._delete_permission = delete_permission or f"resources.{self._resource_id}.delete"
+        self._delete_relationship_impact = delete_relationship_impact
         self._hooks = hooks or MutationHooks()
         self._concurrency = (
             ConcurrencyTokenService(token_service) if token_service is not None else None
         )
+
+    def bind_delete_nonce_store(self, store: IdempotencyStore) -> None:
+        """Attach Admin's validated durable receipt store to delete confirmations."""
+        self._delete_nonce_store = store
 
     def prepare_create(self, submitted: Mapping[str, Any]) -> ResourceMutationPlan:
         try:
@@ -239,6 +247,8 @@ class SQLAlchemyMutationService:
             return DeletionPlan(
                 identity=identity,
                 expected_version=getattr(record, self._version_field),
+                relationship_impact=self._delete_relationship_impact,
+                required_permission=self._delete_permission,
             )
 
     async def issue_delete_token(self, identity: RecordIdentity) -> str:
@@ -251,6 +261,8 @@ class SQLAlchemyMutationService:
                 "resource_id": self._resource_id,
                 "identity": dict(plan.identity.values),
                 "expected_version": plan.expected_version,
+                "relationship_impact": plan.relationship_impact,
+                "required_permission": plan.required_permission,
                 "nonce": plan.nonce,
             },
             timedelta(minutes=15),
@@ -261,6 +273,12 @@ class SQLAlchemyMutationService:
     ) -> None:
         if self._token_service is None or self._version_field is None:
             raise RuntimeError("Delete requires a configured token and version provider")
+        if self._delete_nonce_store is None:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="Delete requires a durable confirmation store.",
+                status_code=500,
+            )
         target_identity = identity
         reservation = None
         try:
@@ -269,9 +287,14 @@ class SQLAlchemyMutationService:
             )
             confirmed_identity = RecordIdentity(values=claims["identity"])
             expected_version = claims["expected_version"]
+            relationship_impact = tuple(claims["relationship_impact"])
+            required_permission = claims["required_permission"]
             if claims.get("resource_id") != self._resource_id or set(
                 confirmed_identity.values
-            ) != set(self._identity_fields):
+            ) != set(self._identity_fields) or (
+                relationship_impact != self._delete_relationship_impact
+                or required_permission != self._delete_permission
+            ):
                 raise ValueError
         except (KeyError, TypeError, ValueError) as exc:
             raise RakitError(
@@ -286,17 +309,16 @@ class SQLAlchemyMutationService:
                 message="Invalid delete confirmation.",
                 status_code=400,
             )
-        if self._delete_nonce_store is not None:
-            reservation = await self._delete_nonce_store.begin(
-                hashlib.sha256(confirmation_token.encode()).hexdigest(),
-                fingerprint=f"{self._resource_id}:{dict(confirmed_identity.values)}",
+        reservation = await self._delete_nonce_store.begin(
+            hashlib.sha256(confirmation_token.encode()).hexdigest(),
+            fingerprint=f"{self._resource_id}:{dict(confirmed_identity.values)}",
+        )
+        if not reservation.claimed:
+            raise RakitError(
+                code=ErrorCode.RESOURCE_CONFLICT,
+                message="Delete confirmation has already been used.",
+                status_code=409,
             )
-            if not reservation.claimed:
-                raise RakitError(
-                    code=ErrorCode.RESOURCE_CONFLICT,
-                    message="Delete confirmation has already been used.",
-                    status_code=409,
-                )
         try:
             await run_mutation_hooks(self._hooks.before_execute, confirmed_identity)
             async with SQLAlchemyUnitOfWork(
@@ -325,19 +347,17 @@ class SQLAlchemyMutationService:
                 await run_mutation_hooks(self._hooks.before_commit, confirmed_identity)
                 await uow.mark_success()
         except BaseException as exc:
-            if reservation is not None and self._delete_nonce_store is not None:
-                await self._delete_nonce_store.release(reservation)
+            await self._delete_nonce_store.release(reservation)
             await run_mutation_hooks(self._hooks.after_rollback, exc)
             raise
-        if reservation is not None and self._delete_nonce_store is not None:
-            await self._delete_nonce_store.complete(
-                reservation,
-                OperationReceipt(
-                    operation_id=reservation.reservation_id.__str__(),
-                    status="succeeded",
-                    result_kind="delete",
-                ),
-            )
+        await self._delete_nonce_store.complete(
+            reservation,
+            OperationReceipt(
+                operation_id=reservation.reservation_id.__str__(),
+                status="succeeded",
+                result_kind="delete",
+            ),
+        )
         await run_after_commit_hooks(self._hooks.after_commit, confirmed_identity)
 
     async def _load(self, session: AsyncSession, identity: RecordIdentity) -> object | None:

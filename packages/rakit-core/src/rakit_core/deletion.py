@@ -19,4 +19,6 @@ HardDeletePolicy = DeletePolicy.HARD_DELETE
 class DeletionPlan:
     identity: RecordIdentity
     expected_version: Any
+    relationship_impact: tuple[str, ...] = ()
+    required_permission: str = ""
     nonce: str = field(default_factory=lambda: secrets.token_urlsafe(16))
