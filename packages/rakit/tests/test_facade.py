@@ -277,3 +277,42 @@ def test_importing_core_plan03_facade_does_not_load_optional_sqlalchemy() -> Non
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_plan04_contracts_are_reexported_with_preserved_identity() -> None:
+    from rakit.core import (
+        ConcurrencyMode,
+        DeletionPlan,
+        FieldDefinition,
+        IdempotencyStatus,
+        MutationAuthorization,
+        OperationContext,
+        TransactionPolicy,
+        UpdateMutationPlan,
+    )
+    from rakit_core.concurrency import ConcurrencyMode as RealConcurrencyMode
+    from rakit_core.deletion import DeletionPlan as RealDeletionPlan
+    from rakit_core.fields import FieldDefinition as RealFieldDefinition
+    from rakit_core.idempotency import IdempotencyStatus as RealIdempotencyStatus
+    from rakit_core.mutations import MutationAuthorization as RealMutationAuthorization
+    from rakit_core.mutations import UpdateMutationPlan as RealUpdateMutationPlan
+    from rakit_core.operations import OperationContext as RealOperationContext
+    from rakit_core.transactions import TransactionPolicy as RealTransactionPolicy
+
+    assert FieldDefinition is RealFieldDefinition
+    assert MutationAuthorization is RealMutationAuthorization
+    assert UpdateMutationPlan is RealUpdateMutationPlan
+    assert ConcurrencyMode is RealConcurrencyMode
+    assert IdempotencyStatus is RealIdempotencyStatus
+    assert DeletionPlan is RealDeletionPlan
+    assert OperationContext is RealOperationContext
+    assert TransactionPolicy is RealTransactionPolicy
+
+
+def test_sqlalchemy_plan04_facade_reexports_concrete_implementations() -> None:
+    from rakit.sqlalchemy import SQLAlchemyMutationService, SQLAlchemyUnitOfWork
+    from rakit_sqlalchemy.mutations import SQLAlchemyMutationService as RealMutationService
+    from rakit_sqlalchemy.uow import SQLAlchemyUnitOfWork as RealUnitOfWork
+
+    assert SQLAlchemyMutationService is RealMutationService
+    assert SQLAlchemyUnitOfWork is RealUnitOfWork
