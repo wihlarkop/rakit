@@ -10,10 +10,15 @@ from rakit_core.concurrency import AttributeVersionProvider, ConcurrencyMode
 from rakit_core.config import SecretValue
 from rakit_core.crypto import TokenService
 from rakit_core.errors import ErrorCode, RakitError
+from rakit_core.events import EventBus, EventPublisher
 from rakit_core.fields import FieldDefinition
 from rakit_core.forms import FormSchema
 from rakit_core.identity import RecordIdentity
-from rakit_core.mutations import MutationAuthorization, MutationOperation
+from rakit_core.mutations import (
+    MutationAuthorization,
+    MutationOperation,
+    ResourceForceOverwritten,
+)
 from rakit_core.operations import (
     CancellationContext,
     Deadline,
@@ -393,6 +398,9 @@ async def test_atomic_conflict_exposes_only_safe_structured_values(
 async def test_force_overwrite_requires_dedicated_permission_and_confirmation(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
+    events: list[ResourceForceOverwritten] = []
+    event_bus = EventBus()
+    event_bus.subscribe(ResourceForceOverwritten, events.append)
     service = SQLAlchemyMutationService(
         model=User,
         session_factory=session_factory,
@@ -405,6 +413,7 @@ async def test_force_overwrite_requires_dedicated_permission_and_confirmation(
             key_id="test", value=SecretValue("x" * 32), admin_id="admin"
         ),
         version_field="revision",
+        event_publisher=EventPublisher(event_bus),
     )
     create_authorization = _authorization("create")
     created = await _authorized(
@@ -431,6 +440,7 @@ async def test_force_overwrite_requires_dedicated_permission_and_confirmation(
             ),
         )
     assert caught.value.code == ErrorCode.AUTH_FORBIDDEN
+    assert events == []
 
     force_permission = "resources.concurrency_users.force_overwrite"
     forced = MutationAuthorization(
@@ -462,6 +472,7 @@ async def test_force_overwrite_requires_dedicated_permission_and_confirmation(
         ),
     )
     assert result.record.name == "Lin"
+    assert events == [ResourceForceOverwritten(identity=created.identity, changed_fields=("name",))]
 
 
 @pytest.mark.anyio
