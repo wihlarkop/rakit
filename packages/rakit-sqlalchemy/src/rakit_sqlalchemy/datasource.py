@@ -386,6 +386,14 @@ class SQLAlchemyDataSource:
     def _base_statement(self) -> Select:
         return select(self._model)
 
+    def scoped_statement(self) -> Select:
+        """The resource visibility selectable, reusable by write operations.
+
+        Subclasses may narrow ``_base_statement`` for tenancy or visibility;
+        mutations consume this public seam rather than bypassing that scope.
+        """
+        return self._base_statement()
+
     def _apply_filter(self, statement: Select, filter_: Filter) -> Select:
         column = getattr(self._model, filter_.field)
         if filter_.operator is FilterOperator.CONTAINS and not _is_string_type(column.type):

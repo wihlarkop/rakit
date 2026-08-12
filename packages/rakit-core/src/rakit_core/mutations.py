@@ -83,6 +83,24 @@ class ResourceMutationPlan:
 
 
 @dataclass(frozen=True)
+class UpdateMutationPlan:
+    """The update-specific state visible to lifecycle phases."""
+
+    identity: RecordIdentity
+    current_record: object
+    scalar_changes: Mapping[str, Any]
+    relationship_changes: Mapping[str, Any]
+    concurrency_token: str | None
+    concurrency_metadata: Mapping[str, Any]
+    operation: Literal["update"] = "update"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "scalar_changes", _freeze(self.scalar_changes))
+        object.__setattr__(self, "relationship_changes", _freeze(self.relationship_changes))
+        object.__setattr__(self, "concurrency_metadata", _freeze(self.concurrency_metadata))
+
+
+@dataclass(frozen=True)
 class MutationResult:
     identity: RecordIdentity
     record: object

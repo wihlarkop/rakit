@@ -373,6 +373,12 @@ class Admin:
         validate_idempotency_store_for_production(
             binding.idempotency_store, debug=self.config.debug
         )
+        bind_scope = getattr(binding.mutation_service, "bind_scoped_statement", None)
+        scoped_statement = getattr(
+            self._resource_services[resource_id].data_source, "scoped_statement", None
+        )
+        if callable(bind_scope) and callable(scoped_statement):
+            bind_scope(scoped_statement)
         delete_capable = all(
             callable(getattr(binding.mutation_service, name, None))
             for name in ("issue_delete_token", "delete")

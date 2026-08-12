@@ -1,7 +1,7 @@
 """SQLAlchemy execution for the framework-neutral write pipeline."""
 
 import hashlib
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import timedelta
 from typing import Any, cast
 
@@ -21,12 +21,13 @@ from rakit_core.mutations import (
     ResourceDeleted,
     ResourceMutationPlan,
     ResourceUpdated,
+    UpdateMutationPlan,
     run_after_commit_hooks,
     run_mutation_hooks,
 )
 from rakit_core.operations import current_operation_context
 from rakit_core.transactions import TransactionPolicy
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy import update as sqlalchemy_update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -68,6 +69,7 @@ class SQLAlchemyMutationService:
         delete_permission: str | None = None,
         delete_relationship_impact: tuple[str, ...] = (),
         hooks: MutationHooks | None = None,
+        scoped_statement: Callable[[], Select] | None = None,
     ) -> None:
         if not writable_fields or not identity_fields:
             raise ValueError("Writable and identity fields must be explicitly declared")
@@ -88,6 +90,7 @@ class SQLAlchemyMutationService:
         self._delete_permission = delete_permission or f"resources.{self._resource_id}.delete"
         self._delete_relationship_impact = delete_relationship_impact
         self._hooks = hooks or MutationHooks()
+        self._scoped_statement = scoped_statement or (lambda: select(self._model))
         self._concurrency = (
             ConcurrencyTokenService(token_service) if token_service is not None else None
         )
@@ -95,6 +98,10 @@ class SQLAlchemyMutationService:
     def bind_delete_nonce_store(self, store: IdempotencyStore) -> None:
         """Attach Admin's validated durable receipt store to delete confirmations."""
         self._delete_nonce_store = store
+
+    def bind_scoped_statement(self, statement: Callable[[], Select]) -> None:
+        """Bind the owning resource's canonical visibility selectable."""
+        self._scoped_statement = statement
 
     def _require_authorization(
         self,
@@ -127,6 +134,27 @@ class SQLAlchemyMutationService:
         if not set(values).issubset(self._writable_fields):
             raise _validation_error(ValueError("Field is not writable"))
         return ResourceMutationPlan(operation="create", values=values)
+
+    def prepare_update(
+        self,
+        identity: RecordIdentity,
+        current_record: object,
+        submitted: Mapping[str, Any],
+        *,
+        concurrency_token: str | None,
+    ) -> UpdateMutationPlan:
+        create_plan = self.prepare_create(submitted)
+        metadata: dict[str, Any] = {}
+        if self._version_field is not None:
+            metadata["version"] = getattr(current_record, self._version_field)
+        return UpdateMutationPlan(
+            identity=identity,
+            current_record=current_record,
+            scalar_changes=create_plan.values,
+            relationship_changes={},
+            concurrency_token=concurrency_token,
+            concurrency_metadata=metadata,
+        )
 
     async def create(
         self,
@@ -192,7 +220,6 @@ class SQLAlchemyMutationService:
         concurrency_token: str | None = None,
         authorization: MutationAuthorization | None = None,
     ) -> MutationResult:
-        plan = self.prepare_create(submitted)
         if set(identity.values) != set(self._identity_fields):
             raise RakitError(
                 code=ErrorCode.VALIDATION_FAILED,
@@ -200,13 +227,6 @@ class SQLAlchemyMutationService:
                 status_code=400,
             )
         try:
-            await run_mutation_hooks(self._hooks.normalize, plan)
-            await run_mutation_hooks(self._hooks.business_validate, plan)
-            await run_mutation_hooks(self._hooks.prepare, plan)
-            authorized = self._require_authorization(authorization, "update")
-            await run_mutation_hooks(self._hooks.authorize, authorized)
-            await run_mutation_hooks(self._hooks.pre_event, plan)
-            await run_mutation_hooks(self._hooks.before_execute, plan)
             async with SQLAlchemyUnitOfWork(
                 self._session_factory,
                 policy=TransactionPolicy.AUTO,
@@ -220,6 +240,16 @@ class SQLAlchemyMutationService:
                         message="Resource was not found",
                         status_code=404,
                     )
+                plan = self.prepare_update(
+                    identity, record, submitted, concurrency_token=concurrency_token
+                )
+                await run_mutation_hooks(self._hooks.normalize, plan)
+                await run_mutation_hooks(self._hooks.business_validate, plan)
+                await run_mutation_hooks(self._hooks.prepare, plan)
+                authorized = self._require_authorization(authorization, "update")
+                await run_mutation_hooks(self._hooks.authorize, authorized)
+                await run_mutation_hooks(self._hooks.pre_event, plan)
+                await run_mutation_hooks(self._hooks.before_execute, plan)
                 if self._concurrency is not None and self._version_field is not None:
                     if not concurrency_token:
                         raise RakitError(
@@ -238,16 +268,23 @@ class SQLAlchemyMutationService:
                     # transactions that both read the same revision.  Put the
                     # expected revision in the UPDATE predicate as well: exactly
                     # one of concurrent writers can affect a row.
+                    scoped_identity = (
+                        self._scoped_statement()
+                        .where(*self._identity_conditions(identity))
+                        .with_only_columns(getattr(self._model, self._identity_fields[0]))
+                    )
                     result = cast(
                         CursorResult[Any],
                         await uow.session.execute(
                             sqlalchemy_update(self._model)
                             .where(
-                                *self._identity_conditions(identity),
+                                getattr(self._model, self._identity_fields[0]).in_(
+                                    scoped_identity.scalar_subquery()
+                                ),
                                 getattr(self._model, self._version_field) == current_version,
                             )
                             .values(
-                                **dict(plan.values),
+                                **dict(plan.scalar_changes),
                                 **{self._version_field: current_version + 1},
                             )
                         ),
@@ -262,14 +299,16 @@ class SQLAlchemyMutationService:
                     await uow.session.refresh(record)
                     await uow.session.flush()
                 else:
-                    for name, value in plan.values.items():
+                    for name, value in plan.scalar_changes.items():
                         setattr(record, name, value)
                     await uow.session.flush()
                     await run_mutation_hooks(self._hooks.after_execute, plan)
                 await run_mutation_hooks(self._hooks.after_flush, plan)
                 if self._event_publisher is not None:
                     self._event_publisher.publish(
-                        ResourceUpdated(identity=identity, changed_fields=tuple(plan.values))
+                        ResourceUpdated(
+                            identity=identity, changed_fields=tuple(plan.scalar_changes)
+                        )
                     )
                 await run_mutation_hooks(self._hooks.before_commit, plan)
                 await uow.mark_success()
@@ -421,7 +460,9 @@ class SQLAlchemyMutationService:
 
     async def _load(self, session: AsyncSession, identity: RecordIdentity) -> object | None:
         return (
-            await session.scalars(select(self._model).where(*self._identity_conditions(identity)))
+            await session.scalars(
+                self._scoped_statement().where(*self._identity_conditions(identity))
+            )
         ).one_or_none()
 
     def _identity_conditions(self, identity: RecordIdentity) -> list[ColumnElement[bool]]:

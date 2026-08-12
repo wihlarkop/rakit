@@ -6,6 +6,7 @@ from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.events import EventBus, EventPublisher
 from rakit_core.fields import FieldDefinition
 from rakit_core.forms import FormSchema
+from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import MutationAuthorization, MutationHooks, MutationOperation
 from rakit_sqlalchemy.mutations import ResourceCreated, SQLAlchemyMutationService
 from sqlalchemy import select
@@ -272,3 +273,32 @@ async def test_direct_update_rejects_a_create_authorization_before_writing(
         record = await session.get(User, 1)
         assert record is not None
         assert record.name == "Ada"
+
+
+@pytest.mark.anyio
+async def test_update_uses_the_bound_resource_scope_for_load_and_atomic_write(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    service = SQLAlchemyMutationService(
+        model=User,
+        session_factory=session_factory,
+        form_schema=FormSchema(fields=(FieldDefinition(field_id="name", python_type=str),)),
+        writable_fields=("name",),
+        identity_fields=("id",),
+        scoped_statement=lambda: select(User).where(User.name == "visible"),
+    )
+    async with session_factory() as session:
+        session.add_all((User(name="visible"), User(name="hidden")))
+        await session.commit()
+
+    with pytest.raises(RakitError) as caught:
+        await service.update(
+            RecordIdentity(values={"id": 2}),
+            {"name": "changed"},
+            authorization=_authorization("update"),
+        )
+    assert caught.value.code == ErrorCode.RESOURCE_NOT_FOUND
+    async with session_factory() as session:
+        hidden = await session.get(User, 2)
+        assert hidden is not None
+        assert hidden.name == "hidden"
