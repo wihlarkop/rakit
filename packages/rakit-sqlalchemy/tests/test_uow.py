@@ -227,6 +227,24 @@ async def test_nested_failure_without_savepoint_poison_parent_transaction(
 
 
 @pytest.mark.anyio
+async def test_explicit_savepoint_is_rejected_when_active_session_lacks_capability() -> None:
+    class Session:
+        async def rollback(self) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    session = Session()
+    factory = cast(async_sessionmaker[AsyncSession], lambda: session)
+
+    async with SQLAlchemyUnitOfWork(factory):
+        with pytest.raises(RuntimeError, match="does not support savepoints"):
+            async with SQLAlchemyUnitOfWork(factory, savepoint=True):
+                pass
+
+
+@pytest.mark.anyio
 async def test_anyio_timeout_waits_for_a_commit_that_has_already_begun() -> None:
     entered = asyncio.Event()
 
