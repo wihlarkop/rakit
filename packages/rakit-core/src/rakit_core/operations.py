@@ -1,5 +1,6 @@
 """Operation deadlines and cooperative cancellation checkpoints."""
 
+import asyncio
 import uuid
 from collections.abc import Awaitable, Iterator, Mapping
 from contextlib import contextmanager
@@ -102,8 +103,21 @@ async def run_with_deadline[T](awaitable: Awaitable[T], deadline: Deadline) -> T
     timeout = deadline.expires_at - monotonic()
     if timeout <= 0:
         raise _timeout_error()
+    if current_operation_context() is None:
+        try:
+            with anyio.fail_after(timeout):
+                return await awaitable
+        except TimeoutError as exc:
+            raise _timeout_error() from exc
+
+    # The operation owns cooperative checkpoints.  The request task may stop
+    # waiting at its deadline, but the operation task must reach a safe phase
+    # (rollback before commit or authoritative completion after commit) before
+    # we expose an outcome to the caller.
+    task = asyncio.create_task(awaitable)
     try:
         with anyio.fail_after(timeout):
-            return await awaitable
-    except TimeoutError as exc:
-        raise _timeout_error() from exc
+            return await asyncio.shield(task)
+    except TimeoutError:
+        with anyio.CancelScope(shield=True):
+            return await task

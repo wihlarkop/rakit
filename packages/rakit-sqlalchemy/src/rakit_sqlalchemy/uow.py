@@ -4,6 +4,7 @@ import asyncio
 from contextvars import ContextVar, Token
 from typing import Self
 
+import anyio
 from rakit_core.events import EventPublisher
 from rakit_core.operations import OperationContext
 from rakit_core.transactions import TransactionPolicy
@@ -99,9 +100,11 @@ class SQLAlchemyUnitOfWork:
         """
         commit_task = asyncio.create_task(self.session.commit())
         try:
-            await asyncio.shield(commit_task)
+            with anyio.CancelScope(shield=True):
+                await asyncio.shield(commit_task)
         except asyncio.CancelledError:
-            await asyncio.shield(commit_task)
+            with anyio.CancelScope(shield=True):
+                await asyncio.shield(commit_task)
 
     async def __aexit__(
         self,

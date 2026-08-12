@@ -5,7 +5,13 @@ from typing import cast
 import pytest
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.events import EventPublisher
-from rakit_core.operations import CancellationContext, Deadline, OperationContext
+from rakit_core.operations import (
+    CancellationContext,
+    Deadline,
+    OperationContext,
+    activate_operation_context,
+    run_with_deadline,
+)
 from rakit_core.transactions import TransactionPolicy
 from rakit_sqlalchemy.uow import SQLAlchemyUnitOfWork
 from sqlalchemy import func, select
@@ -218,3 +224,39 @@ async def test_nested_failure_without_savepoint_poison_parent_transaction(
 
     async with session_factory() as session:
         assert list((await session.scalars(select(User.name))).all()) == []
+
+
+@pytest.mark.anyio
+async def test_anyio_timeout_waits_for_a_commit_that_has_already_begun() -> None:
+    entered = asyncio.Event()
+
+    class Session:
+        committed = False
+        rolled_back = False
+
+        async def commit(self) -> None:
+            entered.set()
+            await asyncio.sleep(0.02)
+            self.committed = True
+
+        async def rollback(self) -> None:
+            self.rolled_back = True
+
+        async def close(self) -> None:
+            return None
+
+    session = Session()
+    factory = cast(async_sessionmaker[AsyncSession], lambda: session)
+
+    async def operation() -> None:
+        async with SQLAlchemyUnitOfWork(factory) as uow:
+            await uow.mark_success()
+
+    deadline = Deadline.after(0.001)
+    context = OperationContext(deadline=deadline, cancellation=CancellationContext())
+    with activate_operation_context(context):
+        await run_with_deadline(operation(), deadline)
+
+    assert entered.is_set()
+    assert session.committed is True
+    assert session.rolled_back is False
