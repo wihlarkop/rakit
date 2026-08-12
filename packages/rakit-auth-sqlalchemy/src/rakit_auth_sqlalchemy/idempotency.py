@@ -6,7 +6,8 @@ from rakit_core.idempotency import (
     IdempotencyStatus,
     OperationReceipt,
 )
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .models import IdempotencyRecord
@@ -21,6 +22,7 @@ class SQLAlchemyIdempotencyStore:
     async def begin(self, token_hash: str, *, fingerprint: str) -> IdempotencyReservation:
         async with self._session_factory() as session:
             row = await self._find(session, token_hash)
+            claimed = False
             if row is None:
                 row = IdempotencyRecord(
                     token_hash=token_hash,
@@ -28,8 +30,22 @@ class SQLAlchemyIdempotencyStore:
                     status=IdempotencyStatus.IN_PROGRESS,
                 )
                 session.add(row)
-                await session.commit()
-                await session.refresh(row)
+                try:
+                    await session.commit()
+                    await session.refresh(row)
+                    claimed = True
+                except IntegrityError:
+                    # Another transaction won the unique-token race.  Roll
+                    # back the failed insert before reading its authoritative
+                    # claim; this remains correct across workers/processes.
+                    await session.rollback()
+                    row = await self._find(session, token_hash)
+                    if row is None:
+                        raise RakitError(
+                            code=ErrorCode.INTERNAL_ERROR,
+                            message="Could not establish submission claim.",
+                            status_code=500,
+                        ) from None
             if row.fingerprint != fingerprint:
                 raise RakitError(
                     code=ErrorCode.VALIDATION_FAILED,
@@ -42,6 +58,7 @@ class SQLAlchemyIdempotencyStore:
                 reservation_id=row.id,
                 status=status,
                 completed_receipt=receipt,
+                claimed=claimed,
             )
 
     async def complete(
@@ -62,6 +79,17 @@ class SQLAlchemyIdempotencyStore:
                 "result_kind": receipt.result_kind,
                 "redirect_route": receipt.redirect_route,
             }
+            await session.commit()
+
+    async def release(self, reservation: IdempotencyReservation) -> None:
+        """Drop only a still-in-progress claim after pre-commit failure."""
+        async with self._session_factory() as session:
+            await session.execute(
+                delete(IdempotencyRecord).where(
+                    IdempotencyRecord.id == reservation.reservation_id,
+                    IdempotencyRecord.status == IdempotencyStatus.IN_PROGRESS,
+                )
+            )
             await session.commit()
 
     @staticmethod

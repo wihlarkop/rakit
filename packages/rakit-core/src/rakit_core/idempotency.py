@@ -26,6 +26,7 @@ class IdempotencyReservation:
     reservation_id: int
     status: IdempotencyStatus
     completed_receipt: OperationReceipt | None = None
+    claimed: bool = True
 
 
 class IdempotencyStore(Protocol):
@@ -34,3 +35,7 @@ class IdempotencyStore(Protocol):
     async def complete(
         self, reservation: IdempotencyReservation, receipt: OperationReceipt
     ) -> None: ...
+
+    async def release(self, reservation: IdempotencyReservation) -> None:
+        """Release a pre-commit claim so a failed operation may be retried."""
+        ...

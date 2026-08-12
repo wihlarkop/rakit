@@ -3,6 +3,7 @@
 <h1>Confirm deletion</h1>
 <form method="post" action="{{ action_url }}">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+  <input type="hidden" name="submission_token" value="{{ submission_token }}" />
   <input type="hidden" name="delete_token" value="{{ delete_token }}" />
   <button type="submit">Delete</button>
 </form>

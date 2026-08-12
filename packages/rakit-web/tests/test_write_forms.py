@@ -2,6 +2,7 @@ import httpx
 import pytest
 from rakit_core.fields import FieldDefinition
 from rakit_core.forms import FormSchema
+from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, OperationReceipt
 from rakit_core.identity import RecordIdentity
 from rakit_web.form_routes import WriteResourceBinding, build_write_routes
 from rakit_web.resource_routes import build_templates
@@ -55,6 +56,37 @@ class SlowMutationService(FakeMutationService):
 
         await asyncio.sleep(0.05)
         return await super().create(submitted)
+
+
+class FakeIdempotencyStore:
+    def __init__(self) -> None:
+        self._claims: dict[str, tuple[str, OperationReceipt | None]] = {}
+
+    async def begin(self, token_hash: str, *, fingerprint: str) -> IdempotencyReservation:
+        claim = self._claims.get(token_hash)
+        if claim is None:
+            self._claims[token_hash] = (fingerprint, None)
+            return IdempotencyReservation(1, IdempotencyStatus.IN_PROGRESS)
+        if claim[0] != fingerprint:
+            from rakit_core.errors import ErrorCode, RakitError
+
+            raise RakitError(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="Submission token does not match this request.",
+                status_code=400,
+            )
+        if claim[1] is not None:
+            return IdempotencyReservation(1, IdempotencyStatus.COMPLETED, claim[1], False)
+        return IdempotencyReservation(1, IdempotencyStatus.IN_PROGRESS, claimed=False)
+
+    async def complete(
+        self, reservation: IdempotencyReservation, receipt: OperationReceipt
+    ) -> None:
+        for token, (fingerprint, _receipt) in self._claims.items():
+            self._claims[token] = (fingerprint, receipt)
+
+    async def release(self, reservation: IdempotencyReservation) -> None:
+        self._claims.clear()
 
 
 async def _allow(_request: object) -> bool:
@@ -200,3 +232,37 @@ async def test_mutation_deadline_returns_504_before_the_service_completes() -> N
         )
     assert response.status_code == 504
     assert service.calls == 0
+
+
+@pytest.mark.anyio
+async def test_idempotent_create_replays_without_second_mutation() -> None:
+    service = FakeMutationService()
+    binding = WriteResourceBinding(
+        path="/users",
+        label="User",
+        form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="email", python_type=str, required=True),)
+        ),
+        mutation_service=service,
+        templates=build_templates(()),
+        authorize=_allow,
+        verify_csrf=_allow,
+        verify_submission_token=_allow,
+        issue_submission_token=lambda _request: "submission",
+        idempotency_store=FakeIdempotencyStore(),
+    )
+    app = Starlette(routes=build_write_routes(binding))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+        payload = {"email": "ada@example.com", "csrf_token": "x", "submission_token": "same"}
+        first = await client.post("/users/new", data=payload, follow_redirects=False)
+        second = await client.post("/users/new", data=payload, follow_redirects=False)
+        mismatch = await client.post(
+            "/users/new",
+            data={**payload, "email": "grace@example.com"},
+            follow_redirects=False,
+        )
+    assert first.status_code == 303
+    assert second.status_code == 303
+    assert mismatch.status_code == 400
+    assert service.calls == 1

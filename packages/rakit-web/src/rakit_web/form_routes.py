@@ -6,12 +6,21 @@ decoding, duplicate form fields, redirects) stay here; writable-field and
 optimistic-write invariants remain in the datasource service.
 """
 
+import hashlib
+import json
+import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Protocol, cast
 
 from rakit_core.errors import RakitError
 from rakit_core.forms import FormSchema, FormValidationError
+from rakit_core.idempotency import (
+    IdempotencyReservation,
+    IdempotencyStatus,
+    IdempotencyStore,
+    OperationReceipt,
+)
 from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_core.operations import Deadline, run_with_deadline
 from starlette.exceptions import HTTPException
@@ -64,6 +73,7 @@ class WriteResourceBinding:
     issue_submission_token: SubmissionTokenIssuer
     resource_id: str | None = None
     deadline_seconds: float | None = None
+    idempotency_store: IdempotencyStore | None = None
     codec: IdentityCodec = field(default_factory=IdentityCodec)
 
     @property
@@ -172,6 +182,40 @@ async def _execute_with_deadline(
     return await run_with_deadline(awaitable, Deadline.after(binding.deadline_seconds))
 
 
+async def _claim_submission(
+    binding: WriteResourceBinding,
+    request: Request,
+    *,
+    submitted: Mapping[str, object],
+    tokens: Mapping[str, str],
+    operation: str,
+    identity: RecordIdentity | None = None,
+) -> tuple[IdempotencyReservation | None, Response | None]:
+    """Atomically claim a verified submission token for one canonical operation."""
+    if binding.idempotency_store is None:
+        return None, None
+    token = tokens.get("submission_token")
+    if not token:
+        return None, _error(409, "Invalid submission token")
+    payload = {
+        "operation": operation,
+        "path": binding.path,
+        "identity": dict(identity.values) if identity is not None else None,
+        "values": dict(sorted(submitted.items())),
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+    ).hexdigest()
+    reservation = await binding.idempotency_store.begin(
+        hashlib.sha256(token.encode()).hexdigest(), fingerprint=fingerprint
+    )
+    if reservation.status is IdempotencyStatus.COMPLETED:
+        return reservation, mutation_success(request, location=mounted_path(request, binding.path))
+    if not reservation.claimed:
+        return reservation, _error(409, "Submission is already in progress")
+    return reservation, None
+
+
 def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
     async def create_get(request: Request) -> Response:
         if not await binding.authorize(request):
@@ -190,10 +234,25 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
         parsed = await _parse_form(request, binding.form_schema)
         if parsed is None:
             return _error(400, "Invalid form")
-        submitted, _tokens = parsed
+        submitted, tokens = parsed
         try:
             binding.form_schema.parse(submitted)
+            reservation, replay = await _claim_submission(
+                binding, request, submitted=submitted, tokens=tokens, operation="create"
+            )
+            if replay is not None:
+                return replay
             await _execute_with_deadline(binding, binding.mutation_service.create(submitted))
+            if reservation is not None and binding.idempotency_store is not None:
+                await binding.idempotency_store.complete(
+                    reservation,
+                    OperationReceipt(
+                        operation_id=str(uuid.uuid4()),
+                        status="succeeded",
+                        result_kind="redirect",
+                        redirect_route=binding.path,
+                    ),
+                )
         except FormValidationError as exc:
             return _form_response(
                 binding,
@@ -205,8 +264,20 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                 status_code=422,
             )
         except RakitError as exc:
+            if (
+                "reservation" in locals()
+                and reservation is not None
+                and binding.idempotency_store is not None
+            ):
+                await binding.idempotency_store.release(reservation)
             return _error(exc.status_code, "Invalid form")
         except ValueError:
+            if (
+                "reservation" in locals()
+                and reservation is not None
+                and binding.idempotency_store is not None
+            ):
+                await binding.idempotency_store.release(reservation)
             return _error(400, "Invalid form")
         return mutation_success(request, location=mounted_path(request, binding.path))
 
@@ -262,12 +333,32 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
         submitted, tokens = parsed
         try:
             binding.form_schema.parse(submitted)
+            reservation, replay = await _claim_submission(
+                binding,
+                request,
+                submitted=submitted,
+                tokens=tokens,
+                operation="update",
+                identity=identity,
+            )
+            if replay is not None:
+                return replay
             await _execute_with_deadline(
                 binding,
                 mutation_service.update(
                     identity, submitted, concurrency_token=tokens.get("concurrency_token")
                 ),
             )
+            if reservation is not None and binding.idempotency_store is not None:
+                await binding.idempotency_store.complete(
+                    reservation,
+                    OperationReceipt(
+                        operation_id=str(uuid.uuid4()),
+                        status="succeeded",
+                        result_kind="redirect",
+                        redirect_route=binding.path,
+                    ),
+                )
         except FormValidationError as exc:
             return _form_response(
                 binding,
@@ -280,8 +371,20 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                 status_code=422,
             )
         except RakitError as exc:
+            if (
+                "reservation" in locals()
+                and reservation is not None
+                and binding.idempotency_store is not None
+            ):
+                await binding.idempotency_store.release(reservation)
             return _error(exc.status_code, "Mutation rejected")
         except ValueError:
+            if (
+                "reservation" in locals()
+                and reservation is not None
+                and binding.idempotency_store is not None
+            ):
+                await binding.idempotency_store.release(reservation)
             return _error(400, "Invalid form")
         return mutation_success(request, location=mounted_path(request, binding.path))
 
@@ -304,6 +407,7 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                 ),
                 "csrf_token": request.cookies.get(CSRF_COOKIE_NAME, ""),
                 "delete_token": token,
+                "submission_token": binding.issue_submission_token(request),
             },
             headers={"Cache-Control": "no-store"},
         )
@@ -316,16 +420,44 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
             return _error(400, "Invalid resource identity")
         if not await binding.verify_csrf(request):
             return _error(403, "Invalid CSRF token")
+        if not await binding.verify_submission_token(request):
+            return _error(409, "Invalid submission token")
         parsed = await _parse_form(request, binding.form_schema)
         if parsed is None:
             return _error(400, "Invalid form")
-        _submitted, tokens = parsed
+        submitted, tokens = parsed
         token = tokens.get("delete_token")
         if not token:
             return _error(400, "Invalid delete confirmation")
         try:
+            reservation, replay = await _claim_submission(
+                binding,
+                request,
+                submitted=submitted,
+                tokens=tokens,
+                operation="delete",
+                identity=identity,
+            )
+            if replay is not None:
+                return replay
             await _execute_with_deadline(binding, mutation_service.delete(token, identity=identity))
+            if reservation is not None and binding.idempotency_store is not None:
+                await binding.idempotency_store.complete(
+                    reservation,
+                    OperationReceipt(
+                        operation_id=str(uuid.uuid4()),
+                        status="succeeded",
+                        result_kind="redirect",
+                        redirect_route=binding.path,
+                    ),
+                )
         except RakitError as exc:
+            if (
+                "reservation" in locals()
+                and reservation is not None
+                and binding.idempotency_store is not None
+            ):
+                await binding.idempotency_store.release(reservation)
             return _error(exc.status_code, "Delete rejected")
         return mutation_success(request, location=mounted_path(request, binding.path))
 
