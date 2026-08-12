@@ -460,3 +460,33 @@ initialization errors affected only unknown/inactive identifiers. Authentication
 now requires successful dummy initialization before querying any identifier, so
 a persistent/transient initializer failure has the same external outcome for
 known and unknown accounts while retaining retry-after-failure behavior.
+
+Plan 04 final verification and packaging evidence (implementation HEAD
+`34349b2231f8d28f8aabd39af293fcf2480a6997`, externally source-approved):
+
+- Full source verification passed: 1062 tests passed with four existing
+  Alembic `Config` path-separator deprecation warnings; Ruff format/check,
+  ty, and `git diff --check` passed.
+- The eight configured distributions (`rakit`, `rakit-core`, `rakit-web`,
+  `rakit-sqlalchemy`, `rakit-auth-sqlalchemy`, `rakit-storage`,
+  `rakit-storage-local`, and `rakit-server-uvicorn`) all build as version
+  `0.1.0a1` for Python `>=3.12`: a fresh external build produced exactly
+  eight wheels and eight sdists. Archive metadata, dependency metadata,
+  `py.typed`, resource hygiene, and wheel/sdist version parity were verified;
+  every sdist also rebuilt cleanly into a wheel. The Plan 04 runtime
+  dependency change is `rakit-core -> anyio>=4.0`; no other dependency change
+  was found.
+- Clean installed-wheel environments proved source-tree isolation, the
+  documented optional-integration boundary, canonical facade identity, all
+  eight distribution versions, the public Admin/form contract, the minimal
+  example construction path, and `rakit --help`. `rakit` intentionally imports
+  its required `rakit-web`/Starlette dependency; SQLAlchemy, Alembic, Argon2,
+  and Uvicorn remain unloaded by the minimal import path.
+- Built `rakit-web` artifacts contain and render the Plan 04 form templates
+  and bundled assets. Built `rakit-auth-sqlalchemy` artifacts contain the
+  isolated, forward-only Alembic chain `0001 -> 0002 -> 0003`; installed
+  resource discovery and a fresh SQLite upgrade reached `0003`, including
+  `0003_idempotency_claim_generation` and its `claim_generation` column.
+
+Plan 04 is verified locally and packaged for the next authorized integration
+step. It has not been merged, tagged, published, or released.
