@@ -5,7 +5,7 @@ from typing import cast
 import pytest
 from rakit_core.auth import Principal
 from rakit_core.errors import ErrorCode, RakitError
-from rakit_core.events import EventBus, EventPublisher
+from rakit_core.events import DomainEvent, EventBus, EventPublisher
 from rakit_core.fields import FieldDefinition
 from rakit_core.forms import FormSchema
 from rakit_core.identity import RecordIdentity
@@ -49,7 +49,12 @@ def _authorization(operation: MutationOperation) -> MutationAuthorization:
     )
 
 
-async def _authorized[T](authorization: MutationAuthorization, awaitable: Awaitable[T]) -> T:
+async def _authorized[T](
+    authorization: MutationAuthorization,
+    awaitable: Awaitable[T],
+    *,
+    events: EventPublisher | None = None,
+) -> T:
     context = OperationContext(
         deadline=Deadline.after(30),
         cancellation=CancellationContext(),
@@ -62,6 +67,7 @@ async def _authorized[T](authorization: MutationAuthorization, awaitable: Awaita
         resource_id=authorization.resource_id,
         operation=authorization.operation,
         permissions=authorization.permissions,
+        events=events,
     )
     with activate_operation_context(context):
         return await awaitable
@@ -109,6 +115,55 @@ async def test_create_commits_only_whitelisted_values_and_emits_event(
     assert result.identity.values == {"id": 1}
     assert cast(User, result.record).name == "Ada"
     assert [type(event).__name__ for event in received] == ["ResourceCreated"]
+
+
+@pytest.mark.anyio
+async def test_long_lived_mutation_service_uses_each_operation_publisher(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    class RecordingPublisher(EventPublisher):
+        def __init__(self, bus: EventBus) -> None:
+            super().__init__(bus)
+            self.published = 0
+            self.committed = 0
+
+        def publish(self, event: DomainEvent, *, version: int = 1) -> None:
+            self.published += 1
+            super().publish(event, version=version)
+
+        async def after_commit(self) -> None:
+            self.committed += 1
+            await super().after_commit()
+
+    bus = EventBus()
+    service = SQLAlchemyMutationService(
+        model=User,
+        session_factory=session_factory,
+        form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="name", python_type=str, required=True),)
+        ),
+        writable_fields=("name",),
+        identity_fields=("id",),
+        event_publisher=EventPublisher(bus),
+    )
+    first = RecordingPublisher(bus)
+    second = RecordingPublisher(bus)
+    authorization = _authorization("create")
+
+    await _authorized(
+        authorization,
+        service.create({"name": "Ada"}, authorization=authorization),
+        events=first,
+    )
+    await _authorized(
+        authorization,
+        service.create({"name": "Grace"}, authorization=authorization),
+        events=second,
+    )
+
+    assert first is not second
+    assert (first.published, first.committed) == (1, 1)
+    assert (second.published, second.committed) == (1, 1)
 
 
 @pytest.mark.anyio

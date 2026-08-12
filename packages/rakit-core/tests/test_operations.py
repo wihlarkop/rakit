@@ -1,9 +1,11 @@
+from dataclasses import dataclass
+
 import anyio
 import pytest
 from rakit_core.auth import Principal
 from rakit_core.di import ServiceRegistry, ServiceScope
 from rakit_core.errors import ErrorCode, RakitError
-from rakit_core.events import EventBus, EventPublisher
+from rakit_core.events import DomainEvent, EventBus, EventPublisher
 from rakit_core.operations import (
     CancellationContext,
     Deadline,
@@ -25,6 +27,11 @@ class _RequestProbe:
 
 class _OperationProbe:
     pass
+
+
+@dataclass(frozen=True)
+class _OperationEvent(DomainEvent):
+    order_id: str
 
 
 @pytest.mark.anyio
@@ -52,12 +59,19 @@ async def test_operation_context_carries_real_service_and_event_capabilities() -
     registry = ServiceRegistry()
     mailer = object()
     registry.add_value(object, mailer, scope=ServiceScope.APPLICATION)
-    publisher = EventPublisher(EventBus())
+    event_bus = EventBus()
+    registry.add_value(EventBus, event_bus, scope=ServiceScope.APPLICATION)
+    registry.add_factory(
+        EventPublisher,
+        lambda resolver: EventPublisher(resolver.require(EventBus)),
+        scope=ServiceScope.OPERATION,
+    )
     async with (
         registry.application_scope() as application,
         application.request_scope() as request,
         request.operation_scope() as services,
     ):
+        publisher = services.require(EventPublisher)
         context = OperationContext(
             deadline=Deadline.after(30),
             cancellation=CancellationContext(),
@@ -76,6 +90,7 @@ async def test_operation_context_carries_real_service_and_event_capabilities() -
         assert context.services is services
         assert context.services.require(object) is mailer
         assert context.events is publisher
+        assert context.events.bus is event_bus
 
 
 @pytest.mark.anyio
@@ -111,3 +126,34 @@ async def test_operation_context_uses_real_di_scope_identity_and_cleanup() -> No
             assert second.require(_RequestProbe) is request.require(_RequestProbe)
             assert second.require(_ApplicationProbe) is application_probe
     assert cleanup == ["operation", "operation"]
+
+
+@pytest.mark.anyio
+async def test_operation_scoped_publishers_isolate_deferred_events() -> None:
+    received: list[str] = []
+    registry = ServiceRegistry()
+    bus = EventBus()
+    bus.subscribe(_OperationEvent, lambda event: received.append(event.order_id))
+    registry.add_value(EventBus, bus, scope=ServiceScope.APPLICATION)
+    registry.add_factory(
+        EventPublisher,
+        lambda resolver: EventPublisher(resolver.require(EventBus)),
+        scope=ServiceScope.OPERATION,
+    )
+
+    async with (
+        registry.application_scope() as application,
+        application.request_scope() as request,
+        request.operation_scope() as operation_a,
+        request.operation_scope() as operation_b,
+    ):
+        publisher_a = operation_a.require(EventPublisher)
+        publisher_b = operation_b.require(EventPublisher)
+        assert publisher_a is not publisher_b
+
+        publisher_a.publish(_OperationEvent("a"))
+        publisher_b.publish(_OperationEvent("b"))
+        await publisher_b.after_commit()
+        publisher_a.after_rollback()
+
+    assert received == ["b"]

@@ -14,8 +14,9 @@ from rakit_core.compiler import ApplicationBuilder, CompiledApplication, Plugin,
 from rakit_core.config import RakitConfig, SecretValue
 from rakit_core.crypto import TokenService
 from rakit_core.definitions import ResourceDefinition, ResourceFieldPolicy, RouteDefinition
-from rakit_core.di import ServiceRegistry, ServiceResolver
+from rakit_core.di import ServiceRegistry, ServiceResolver, ServiceScope
 from rakit_core.errors import ErrorCode, RakitError
+from rakit_core.events import EventBus, EventPublisher
 from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import MutationAuthorization, MutationOperation
 from rakit_core.resources import ResourceService
@@ -193,6 +194,14 @@ class Admin:
             auth_enabled=auth_backend is not None,
         )
         self._builder = ApplicationBuilder()
+        if not any(key.service_type is EventBus for key in self._builder.registry.providers):
+            self._builder.registry.add_value(EventBus, EventBus(), scope=ServiceScope.APPLICATION)
+        if not any(key.service_type is EventPublisher for key in self._builder.registry.providers):
+            self._builder.registry.add_factory(
+                EventPublisher,
+                lambda resolver: EventPublisher(resolver.require(EventBus)),
+                scope=ServiceScope.OPERATION,
+            )
         self._builder.add_route(
             RouteDefinition(
                 route_name="rakit.home",
@@ -623,9 +632,6 @@ class Admin:
                     templates=templates,
                     deadline_seconds=self._mutation_deadline_seconds,
                     operation_scope=operation_scope,
-                    event_publisher=getattr(
-                        write_binding.mutation_service, "event_publisher", None
-                    ),
                 )
                 write_routes.extend(build_write_routes(secured_binding))
 

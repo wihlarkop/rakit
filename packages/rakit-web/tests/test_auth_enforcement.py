@@ -17,10 +17,13 @@ import pytest
 from rakit import Admin, ModelAdmin, SecretValue
 from rakit_core.auth import Principal, SessionRecord
 from rakit_core.crypto import TokenService
+from rakit_core.events import EventBus, EventPublisher
 from rakit_core.fields import FieldDefinition
 from rakit_core.forms import FormSchema
 from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, OperationReceipt
 from rakit_core.identity import IdentityCodec, RecordIdentity
+from rakit_core.mutations import MutationHooks
+from rakit_core.operations import OperationContext, current_operation_context
 from rakit_sqlalchemy.mutations import SQLAlchemyMutationService
 from rakit_web.form_routes import WriteResourceBinding
 from rakit_web.resource_routes import build_templates
@@ -211,11 +214,23 @@ def _build_admin(session_factory, backend: _ConfigurableAuthBackend) -> Admin:
     return admin
 
 
-def _build_write_admin(session_factory, backend: _ConfigurableAuthBackend) -> Admin:
+def _build_write_admin(
+    session_factory,
+    backend: _ConfigurableAuthBackend,
+    *,
+    operation_contexts: list[OperationContext] | None = None,
+) -> Admin:
     admin = _build_admin(session_factory, backend)
     form_schema = FormSchema(
         fields=(FieldDefinition(field_id="name", python_type=str, required=True),)
     )
+
+    async def capture_context(_plan: object) -> None:
+        if operation_contexts is not None:
+            context = current_operation_context()
+            assert context is not None
+            operation_contexts.append(context)
+
     service = SQLAlchemyMutationService(
         model=Widget,
         session_factory=session_factory,
@@ -226,6 +241,9 @@ def _build_write_admin(session_factory, backend: _ConfigurableAuthBackend) -> Ad
             key_id="test", value=SecretValue("x" * 32), admin_id="operations"
         ),
         version_field="revision",
+        hooks=MutationHooks(pre_event=(capture_context,))
+        if operation_contexts is not None
+        else None,
     )
 
     async def allowed(_request: object) -> bool:
@@ -419,6 +437,40 @@ async def test_admin_wires_authenticated_create_update_and_signed_delete(session
             follow_redirects=False,
         )
     assert deleted.status_code == 303
+
+
+@pytest.mark.anyio
+async def test_admin_write_uses_an_operation_scoped_event_publisher(session_factory) -> None:
+    contexts: list[OperationContext] = []
+    permissions = frozenset({"operations.access", "operations.resources.widgets.create"})
+    admin = _build_write_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=permissions),
+        operation_contexts=contexts,
+    )
+    app, client = await _client_for(admin)
+
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        form = await client.get("/widgets/new")
+        submission = re.search(r'name="submission_token" value="([^"]+)"', form.text)
+        assert submission is not None
+        response = await client.post(
+            "/widgets/new",
+            data={
+                "name": "Scoped",
+                "csrf_token": csrf,
+                "submission_token": submission.group(1),
+            },
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 303
+    assert len(contexts) == 1
+    context = contexts[0]
+    assert context.services is not None
+    assert context.events is context.services.require(EventPublisher)
+    assert context.events.bus is context.services.require(EventBus)
 
 
 @pytest.mark.anyio

@@ -53,7 +53,7 @@ class CancellationContext:
 
 @dataclass(frozen=True)
 class OperationContext:
-    deadline: Deadline
+    deadline: Deadline | None
     cancellation: CancellationContext
     request_id: str = ""
     operation_id: str = ""

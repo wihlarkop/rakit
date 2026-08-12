@@ -119,7 +119,6 @@ class WriteResourceBinding:
     htmx_refresh_targets: tuple[str, ...] = ()
     success_message: str | None = None
     operation_scope: OperationScopeFactory | None = None
-    event_publisher: EventPublisher | None = None
     codec: IdentityCodec = field(default_factory=IdentityCodec)
 
     @property
@@ -358,7 +357,9 @@ async def _execute_with_deadline(
 ) -> object:
     if binding.deadline_seconds is None and binding.operation_scope is None:
         return await awaitable
-    deadline = Deadline.after(binding.deadline_seconds or 30.0)
+    deadline = (
+        Deadline.after(binding.deadline_seconds) if binding.deadline_seconds is not None else None
+    )
 
     @asynccontextmanager
     async def scoped_services() -> AsyncIterator[ServiceResolver | None]:
@@ -381,9 +382,11 @@ async def _execute_with_deadline(
             operation=authorization.operation,
             permissions=authorization.permissions,
             services=services,
-            events=binding.event_publisher,
+            events=services.require(EventPublisher) if services is not None else None,
         )
         with activate_operation_context(context):
+            if deadline is None:
+                return await awaitable
             return await run_with_deadline(awaitable, deadline)
 
 

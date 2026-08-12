@@ -93,7 +93,11 @@ class SQLAlchemyMutationService:
         self._form_schema = form_schema
         self._writable_fields = frozenset(writable_fields)
         self._identity_fields = identity_fields
-        self._event_publisher = event_publisher
+        # A publisher owns deferred transaction state and cannot be shared by
+        # this long-lived service.  Keep only its application-scoped bus as a
+        # compatibility source for direct host calls without an operation
+        # context; each such call receives a fresh publisher below.
+        self._event_bus = event_publisher.bus if event_publisher is not None else None
         mode = concurrency_mode or (
             ConcurrencyMode.AUTO if token_service is not None else ConcurrencyMode.DISABLED
         )
@@ -131,10 +135,13 @@ class SQLAlchemyMutationService:
         """Attach Admin's validated durable receipt store to delete confirmations."""
         self._delete_nonce_store = store
 
-    @property
-    def event_publisher(self) -> EventPublisher | None:
-        """Public deferred-event capability used by this mutation service."""
-        return self._event_publisher
+    def _operation_event_publisher(self) -> EventPublisher | None:
+        context = current_operation_context()
+        if context is not None and context.events is not None:
+            return context.events
+        if self._event_bus is not None:
+            return EventPublisher(self._event_bus)
+        return None
 
     def bind_scoped_statement(self, statement: Callable[[], Select]) -> None:
         """Bind the owning resource's canonical visibility selectable."""
@@ -219,6 +226,7 @@ class SQLAlchemyMutationService:
         authorization: MutationAuthorization | None = None,
     ) -> MutationResult:
         plan = self.prepare_create(submitted)
+        event_publisher = self._operation_event_publisher()
         try:
             await run_mutation_hooks(self._hooks.normalize, plan)
             await run_mutation_hooks(self._hooks.business_validate, plan)
@@ -230,7 +238,7 @@ class SQLAlchemyMutationService:
             async with SQLAlchemyUnitOfWork(
                 self._session_factory,
                 policy=TransactionPolicy.AUTO,
-                event_publisher=self._event_publisher,
+                event_publisher=event_publisher,
                 operation_context=current_operation_context(),
             ) as uow:
                 record = self._model(**dict(plan.values))
@@ -239,8 +247,8 @@ class SQLAlchemyMutationService:
                 await uow.session.flush()
                 await run_mutation_hooks(self._hooks.after_flush, plan)
                 identity = self._identity_for(record)
-                if self._event_publisher is not None:
-                    self._event_publisher.publish(ResourceCreated(identity=identity))
+                if event_publisher is not None:
+                    event_publisher.publish(ResourceCreated(identity=identity))
                 await run_mutation_hooks(self._hooks.before_commit, plan)
                 await uow.mark_success()
         except BaseException as exc:
@@ -287,11 +295,12 @@ class SQLAlchemyMutationService:
                 message="Invalid resource identity",
                 status_code=400,
             )
+        event_publisher = self._operation_event_publisher()
         try:
             async with SQLAlchemyUnitOfWork(
                 self._session_factory,
                 policy=TransactionPolicy.AUTO,
-                event_publisher=self._event_publisher,
+                event_publisher=event_publisher,
                 operation_context=current_operation_context(),
             ) as uow:
                 record = await self._load(uow.session, identity)
@@ -400,7 +409,7 @@ class SQLAlchemyMutationService:
                     await run_mutation_hooks(self._hooks.after_execute, plan)
                     await uow.session.flush()
                 await run_mutation_hooks(self._hooks.after_flush, plan)
-                if self._event_publisher is not None:
+                if event_publisher is not None:
                     event = (
                         ResourceForceOverwritten(
                             identity=identity, changed_fields=tuple(plan.scalar_changes)
@@ -410,7 +419,7 @@ class SQLAlchemyMutationService:
                             identity=identity, changed_fields=tuple(plan.scalar_changes)
                         )
                     )
-                    self._event_publisher.publish(event)
+                    event_publisher.publish(event)
                 await run_mutation_hooks(self._hooks.before_commit, plan)
                 await uow.mark_success()
         except BaseException as exc:
@@ -480,6 +489,7 @@ class SQLAlchemyMutationService:
                 status_code=500,
             )
         authorized = self._require_authorization(authorization, "delete")
+        event_publisher = self._operation_event_publisher()
         target_identity = identity
         reservation = None
         try:
@@ -532,7 +542,7 @@ class SQLAlchemyMutationService:
             async with SQLAlchemyUnitOfWork(
                 self._session_factory,
                 policy=TransactionPolicy.AUTO,
-                event_publisher=self._event_publisher,
+                event_publisher=event_publisher,
                 operation_context=current_operation_context(),
             ) as uow:
                 record = await self._load(uow.session, confirmed_identity)
@@ -571,8 +581,8 @@ class SQLAlchemyMutationService:
                         status_code=409,
                     )
                 await uow.session.flush()
-                if self._event_publisher is not None:
-                    self._event_publisher.publish(ResourceDeleted(identity=confirmed_identity))
+                if event_publisher is not None:
+                    event_publisher.publish(ResourceDeleted(identity=confirmed_identity))
                 await run_mutation_hooks(self._hooks.before_commit, confirmed_identity)
                 await uow.mark_success()
         except BaseException as exc:

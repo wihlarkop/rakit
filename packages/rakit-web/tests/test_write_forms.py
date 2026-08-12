@@ -21,7 +21,7 @@ from rakit_core.forms import (
 from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, OperationReceipt
 from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import MutationAuthorization, MutationOperation
-from rakit_core.operations import OperationContext
+from rakit_core.operations import Deadline, OperationContext
 from rakit_sqlalchemy.mutations import SQLAlchemyMutationService
 from rakit_web.form_routes import WriteResourceBinding, build_write_routes
 from rakit_web.resource_routes import build_templates
@@ -367,9 +367,15 @@ async def test_idempotent_create_replays_without_second_mutation() -> None:
 @pytest.mark.anyio
 async def test_request_deadline_is_visible_to_the_mutation_pipeline() -> None:
     service = ContextCapturingMutationService()
-    operation_events = EventPublisher(EventBus())
     registry = ServiceRegistry()
     registry.add_value(object, service, scope=ServiceScope.APPLICATION)
+    event_bus = EventBus()
+    registry.add_value(EventBus, event_bus, scope=ServiceScope.APPLICATION)
+    registry.add_factory(
+        EventPublisher,
+        lambda resolver: EventPublisher(resolver.require(EventBus)),
+        scope=ServiceScope.OPERATION,
+    )
     async with (
         registry.application_scope() as application,
         application.request_scope() as request_services,
@@ -389,7 +395,6 @@ async def test_request_deadline_is_visible_to_the_mutation_pipeline() -> None:
             mutation_authorizer=_allow_mutation,
             deadline_seconds=1,
             operation_scope=request_services.operation_scope,
-            event_publisher=operation_events,
         )
         app = Starlette(routes=build_write_routes(binding))
         transport = httpx.ASGITransport(app=app)
@@ -403,7 +408,105 @@ async def test_request_deadline_is_visible_to_the_mutation_pipeline() -> None:
     assert service.operation_context is not None
     context = cast(OperationContext, service.operation_context)
     assert context.services is not None and context.services.require(object) is service
-    assert context.events is operation_events
+    assert context.events is not None and context.events.bus is event_bus
+
+
+@pytest.mark.anyio
+async def test_operation_scope_resolves_an_operation_event_publisher() -> None:
+    service = ContextCapturingMutationService()
+    registry = ServiceRegistry()
+    bus = EventBus()
+    registry.add_value(EventBus, bus, scope=ServiceScope.APPLICATION)
+    registry.add_factory(
+        EventPublisher,
+        lambda resolver: EventPublisher(resolver.require(EventBus)),
+        scope=ServiceScope.OPERATION,
+    )
+    async with (
+        registry.application_scope() as application,
+        application.request_scope() as request_services,
+    ):
+        binding = WriteResourceBinding(
+            path="/users",
+            label="User",
+            form_schema=FormSchema(
+                fields=(FieldDefinition(field_id="email", python_type=str, required=True),)
+            ),
+            mutation_service=service,
+            templates=build_templates(()),
+            authorize=_allow,
+            verify_csrf=_allow,
+            verify_submission_token=_allow,
+            issue_submission_token=lambda _request: "submission",
+            mutation_authorizer=_allow_mutation,
+            deadline_seconds=1,
+            operation_scope=request_services.operation_scope,
+        )
+        app = Starlette(routes=build_write_routes(binding))
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+        ) as client:
+            response = await client.post(
+                "/users/new",
+                data={"email": "ada@example.com", "csrf_token": "x", "submission_token": "x"},
+                follow_redirects=False,
+            )
+    assert response.status_code == 303
+    context = cast(OperationContext, service.operation_context)
+    assert context.events is not None
+    assert context.events.bus is bus
+
+
+@pytest.mark.anyio
+async def test_operation_scope_without_deadline_remains_unbounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ContextCapturingMutationService()
+    registry = ServiceRegistry()
+    registry.add_value(EventBus, EventBus(), scope=ServiceScope.APPLICATION)
+    registry.add_factory(
+        EventPublisher,
+        lambda resolver: EventPublisher(resolver.require(EventBus)),
+        scope=ServiceScope.OPERATION,
+    )
+
+    def unexpected_deadline(seconds: float) -> Deadline:
+        raise AssertionError(f"unexpected deadline: {seconds}")
+
+    monkeypatch.setattr(Deadline, "after", unexpected_deadline)
+    async with (
+        registry.application_scope() as application,
+        application.request_scope() as request_services,
+    ):
+        binding = WriteResourceBinding(
+            path="/users",
+            label="User",
+            form_schema=FormSchema(
+                fields=(FieldDefinition(field_id="email", python_type=str, required=True),)
+            ),
+            mutation_service=service,
+            templates=build_templates(()),
+            authorize=_allow,
+            verify_csrf=_allow,
+            verify_submission_token=_allow,
+            issue_submission_token=lambda _request: "submission",
+            mutation_authorizer=_allow_mutation,
+            operation_scope=request_services.operation_scope,
+        )
+        app = Starlette(routes=build_write_routes(binding))
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+        ) as client:
+            response = await client.post(
+                "/users/new",
+                data={"email": "ada@example.com", "csrf_token": "x", "submission_token": "x"},
+                follow_redirects=False,
+            )
+    assert response.status_code == 303
+    context = cast(OperationContext, service.operation_context)
+    assert context.deadline is None
+    assert context.services is not None
+    assert context.events is not None
 
 
 @pytest.mark.anyio
