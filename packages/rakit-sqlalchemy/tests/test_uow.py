@@ -3,6 +3,8 @@ from collections.abc import AsyncIterator
 from typing import cast
 
 import pytest
+from rakit_core.errors import ErrorCode, RakitError
+from rakit_core.operations import CancellationContext, Deadline, OperationContext
 from rakit_core.transactions import TransactionPolicy
 from rakit_sqlalchemy.uow import SQLAlchemyUnitOfWork
 from sqlalchemy import func, select
@@ -91,3 +93,35 @@ async def test_cancellation_during_commit_waits_for_the_durable_outcome() -> Non
 
     assert session.committed is True
     assert session.rolled_back is False
+
+
+@pytest.mark.anyio
+async def test_cancellation_at_the_pre_commit_checkpoint_rolls_back() -> None:
+    """The last cooperative checkpoint must abort before commit starts."""
+
+    class Session:
+        committed = False
+        rolled_back = False
+
+        async def commit(self) -> None:
+            self.committed = True
+
+        async def rollback(self) -> None:
+            self.rolled_back = True
+
+        async def close(self) -> None:
+            return None
+
+    session = Session()
+    cancellation = CancellationContext()
+    context = OperationContext(deadline=Deadline.after(30), cancellation=cancellation)
+    factory = cast(async_sessionmaker[AsyncSession], lambda: session)
+
+    with pytest.raises(RakitError) as caught:
+        async with SQLAlchemyUnitOfWork(factory, operation_context=context) as uow:
+            await uow.mark_success()
+            cancellation.cancel()
+
+    assert caught.value.code == ErrorCode.OPERATION_TIMEOUT
+    assert session.committed is False
+    assert session.rolled_back is True

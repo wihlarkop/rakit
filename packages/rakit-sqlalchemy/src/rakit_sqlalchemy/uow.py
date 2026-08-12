@@ -75,11 +75,20 @@ class SQLAlchemyUnitOfWork:
             if exc_type is not None:
                 await self.rollback()
             elif self.policy is TransactionPolicy.AUTO and self._success:
-                if self.operation_context is not None:
-                    # A commit already in progress is never force-cancelled;
-                    # this is the last cooperative checkpoint before it starts.
-                    self.operation_context.checkpoint()
-                await self._commit_critical()
+                try:
+                    if self.operation_context is not None:
+                        # A commit already in progress is never force-cancelled;
+                        # this is the last cooperative checkpoint before it starts.
+                        self.operation_context.checkpoint()
+                    await self._commit_critical()
+                except BaseException:
+                    # A deadline or driver failure before the durable outcome
+                    # is known must leave the session in a safe rolled-back
+                    # state.  `_commit_critical` only returns after a started
+                    # commit has finished, so this cannot roll back a commit
+                    # that completed while cancellation was pending.
+                    await self.rollback()
+                    raise
                 self._completed = True
                 if self.event_publisher is not None:
                     await self.event_publisher.after_commit()
