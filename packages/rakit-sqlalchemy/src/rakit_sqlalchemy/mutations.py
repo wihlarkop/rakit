@@ -121,6 +121,21 @@ class SQLAlchemyMutationService:
                 message="Mutation is not authorized.",
                 status_code=403,
             )
+        context = current_operation_context()
+        if context is not None and any(
+            (
+                context.admin_id != authorization.admin_id,
+                context.resource_id != authorization.resource_id,
+                context.operation != authorization.operation,
+                context.principal_id != authorization.principal_id,
+                context.permissions != authorization.permissions,
+            )
+        ):
+            raise RakitError(
+                code=ErrorCode.AUTH_FORBIDDEN,
+                message="Mutation authorization does not match this operation.",
+                status_code=403,
+            )
         return authorization
 
     def prepare_create(self, submitted: Mapping[str, Any]) -> ResourceMutationPlan:
@@ -198,7 +213,7 @@ class SQLAlchemyMutationService:
         if self._concurrency is None or self._version_field is None:
             raise RuntimeError("This resource has no configured concurrency provider")
         return self._concurrency.issue(
-            self._identity_for(record), getattr(record, self._version_field)
+            self._resource_id, self._identity_for(record), getattr(record, self._version_field)
         )
 
     async def get(self, identity: RecordIdentity) -> object | None:
@@ -258,7 +273,10 @@ class SQLAlchemyMutationService:
                             status_code=409,
                         )
                     self._concurrency.verify(
-                        concurrency_token, identity, getattr(record, self._version_field)
+                        concurrency_token,
+                        self._resource_id,
+                        identity,
+                        getattr(record, self._version_field),
                     )
                     current_version = getattr(record, self._version_field)
                     if not isinstance(current_version, int):

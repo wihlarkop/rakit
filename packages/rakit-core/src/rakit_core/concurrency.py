@@ -24,19 +24,23 @@ class ConcurrencyTokenService:
         self._token_service = token_service
         self._ttl = ttl
 
-    def issue(self, identity: RecordIdentity, version: Any) -> str:
+    def issue(self, resource_id: str, identity: RecordIdentity, version: Any) -> str:
         return self._token_service.issue_in(
             "concurrency",
-            {"identity": dict(identity.values), "version": version},
+            {"resource_id": resource_id, "identity": dict(identity.values), "version": version},
             self._ttl,
         )
 
-    def verify(self, token: str, identity: RecordIdentity, version: Any) -> None:
+    def verify(self, token: str, resource_id: str, identity: RecordIdentity, version: Any) -> None:
         try:
             claims = self._token_service.verify(token, expected_purpose="concurrency")
         except ValueError as exc:
             raise self._conflict() from exc
-        if claims.get("identity") != dict(identity.values) or claims.get("version") != version:
+        if (
+            claims.get("resource_id") != resource_id
+            or claims.get("identity") != dict(identity.values)
+            or claims.get("version") != version
+        ):
             raise self._conflict()
 
     @staticmethod

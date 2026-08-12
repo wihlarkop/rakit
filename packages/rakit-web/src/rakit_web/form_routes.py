@@ -28,6 +28,7 @@ from rakit_core.operations import (
     Deadline,
     OperationContext,
     activate_operation_context,
+    new_operation_id,
     run_with_deadline,
 )
 from starlette.exceptions import HTTPException
@@ -198,12 +199,23 @@ def _write_routes_available(binding: WriteResourceBinding) -> bool:
 
 
 async def _execute_with_deadline(
-    binding: WriteResourceBinding, awaitable: Awaitable[object]
+    binding: WriteResourceBinding,
+    awaitable: Awaitable[object],
+    authorization: MutationAuthorization,
 ) -> object:
     if binding.deadline_seconds is None:
         return await awaitable
     deadline = Deadline.after(binding.deadline_seconds)
-    context = OperationContext(deadline=deadline, cancellation=CancellationContext())
+    context = OperationContext(
+        deadline=deadline,
+        cancellation=CancellationContext(),
+        operation_id=new_operation_id(),
+        principal_id=authorization.principal_id,
+        admin_id=authorization.admin_id,
+        resource_id=authorization.resource_id,
+        operation=authorization.operation,
+        permissions=authorization.permissions,
+    )
     with activate_operation_context(context):
         return await run_with_deadline(awaitable, deadline)
 
@@ -283,7 +295,9 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
             if replay is not None:
                 return replay
             await _execute_with_deadline(
-                binding, binding.mutation_service.create(submitted, authorization=authorization)
+                binding,
+                binding.mutation_service.create(submitted, authorization=authorization),
+                authorization,
             )
             if reservation is not None and binding.idempotency_store is not None:
                 await binding.idempotency_store.complete(
@@ -396,6 +410,7 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                     concurrency_token=tokens.get("concurrency_token"),
                     authorization=authorization,
                 ),
+                authorization,
             )
             if reservation is not None and binding.idempotency_store is not None:
                 await binding.idempotency_store.complete(
@@ -494,6 +509,7 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
             await _execute_with_deadline(
                 binding,
                 mutation_service.delete(token, identity=identity, authorization=authorization),
+                authorization,
             )
             if reservation is not None and binding.idempotency_store is not None:
                 await binding.idempotency_store.complete(

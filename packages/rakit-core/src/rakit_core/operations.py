@@ -1,6 +1,7 @@
 """Operation deadlines and cooperative cancellation checkpoints."""
 
 import asyncio
+import uuid
 from collections.abc import Awaitable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
@@ -49,6 +50,15 @@ class CancellationContext:
 class OperationContext:
     deadline: Deadline
     cancellation: CancellationContext
+    request_id: str = ""
+    operation_id: str = ""
+    principal_id: str = ""
+    admin_id: str = ""
+    resource_id: str = ""
+    operation: str = ""
+    permissions: tuple[str, ...] = ()
+    services: object | None = None
+    events: object | None = None
 
     def checkpoint(self) -> None:
         self.cancellation.check(self.deadline)
@@ -62,6 +72,11 @@ _current_operation_context: ContextVar[OperationContext | None] = ContextVar(
 def current_operation_context() -> OperationContext | None:
     """The request operation context, available to adapters in this task only."""
     return _current_operation_context.get()
+
+
+def new_operation_id() -> str:
+    """Create a backend-neutral correlation identifier for one operation."""
+    return str(uuid.uuid4())
 
 
 @contextmanager
