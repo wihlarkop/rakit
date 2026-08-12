@@ -5,7 +5,14 @@ from collections.abc import Callable, Mapping
 from datetime import timedelta
 from typing import Any, cast
 
-from rakit_core.concurrency import ConcurrencyTokenService
+from rakit_core.concurrency import (
+    AttributeVersionProvider,
+    ConcurrencyConflict,
+    ConcurrencyMode,
+    ConcurrencyTokenService,
+    ConcurrencyVersionProvider,
+    SnapshotVersionProvider,
+)
 from rakit_core.crypto import TokenService
 from rakit_core.deletion import DeletionPlan
 from rakit_core.errors import ErrorCode, RakitError
@@ -19,6 +26,7 @@ from rakit_core.mutations import (
     MutationResult,
     ResourceCreated,
     ResourceDeleted,
+    ResourceForceOverwritten,
     ResourceMutationPlan,
     ResourceUpdated,
     UpdateMutationPlan,
@@ -65,9 +73,12 @@ class SQLAlchemyMutationService:
         event_publisher: EventPublisher | None = None,
         token_service: TokenService | None = None,
         version_field: str | None = None,
+        concurrency_mode: ConcurrencyMode | None = None,
+        concurrency_provider: ConcurrencyVersionProvider | None = None,
         resource_id: str | None = None,
         delete_nonce_store: IdempotencyStore | None = None,
         delete_permission: str | None = None,
+        force_overwrite_permission: str | None = None,
         delete_relationship_impact: tuple[str, ...] = (),
         hooks: MutationHooks | None = None,
         scoped_statement: Callable[[], Select] | None = None,
@@ -82,13 +93,19 @@ class SQLAlchemyMutationService:
         self._writable_fields = frozenset(writable_fields)
         self._identity_fields = identity_fields
         self._event_publisher = event_publisher
-        if (token_service is None) != (version_field is None):
-            raise ValueError("token_service and version_field must be supplied together")
+        mode = concurrency_mode or (
+            ConcurrencyMode.AUTO if token_service is not None else ConcurrencyMode.DISABLED
+        )
+        if mode is not ConcurrencyMode.DISABLED and token_service is None:
+            raise ValueError("Configured concurrency requires a token service")
         self._version_field = version_field
         self._token_service = token_service
         self._resource_id = resource_id or str(getattr(model, "__tablename__", model.__name__))
         self._delete_nonce_store = delete_nonce_store
         self._delete_permission = delete_permission or f"resources.{self._resource_id}.delete"
+        self._force_overwrite_permission = force_overwrite_permission or (
+            f"resources.{self._resource_id}.force_overwrite"
+        )
         # Relationship/cascade impact is derived from mapped metadata, not
         # caller-supplied presentation text.  Keep the legacy argument only
         # as a declaration guard while Plan 04 callers migrate: it may not
@@ -99,8 +116,14 @@ class SQLAlchemyMutationService:
         self._delete_relationship_impact = mapper_impact
         self._hooks = hooks or MutationHooks()
         self._scoped_statement = scoped_statement or (lambda: select(self._model))
+        self._concurrency_mode = mode
+        self._concurrency_provider = self._resolve_concurrency_provider(concurrency_provider)
+        if mode is ConcurrencyMode.REQUIRED and self._concurrency_provider is None:
+            raise ValueError("Required concurrency has no safe provider")
         self._concurrency = (
-            ConcurrencyTokenService(token_service) if token_service is not None else None
+            ConcurrencyTokenService(token_service)
+            if token_service is not None and self._concurrency_provider is not None
+            else None
         )
 
     def bind_delete_nonce_store(self, store: IdempotencyStore) -> None:
@@ -172,8 +195,8 @@ class SQLAlchemyMutationService:
     ) -> UpdateMutationPlan:
         create_plan = self.prepare_create(submitted)
         metadata: dict[str, Any] = {}
-        if self._version_field is not None:
-            metadata["version"] = getattr(current_record, self._version_field)
+        if self._concurrency_provider is not None:
+            metadata["version"] = self._concurrency_provider.version_for(current_record)
         return UpdateMutationPlan(
             identity=identity,
             current_record=current_record,
@@ -222,10 +245,12 @@ class SQLAlchemyMutationService:
         return result
 
     def issue_update_token(self, record: object) -> str:
-        if self._concurrency is None or self._version_field is None:
+        if self._concurrency is None or self._concurrency_provider is None:
             raise RuntimeError("This resource has no configured concurrency provider")
         return self._concurrency.issue(
-            self._resource_id, self._identity_for(record), getattr(record, self._version_field)
+            self._resource_id,
+            self._identity_for(record),
+            self._concurrency_provider.version_for(record),
         )
 
     async def get(self, identity: RecordIdentity) -> object | None:
@@ -246,6 +271,8 @@ class SQLAlchemyMutationService:
         *,
         concurrency_token: str | None = None,
         authorization: MutationAuthorization | None = None,
+        force_overwrite: bool = False,
+        force_overwrite_confirmation: str | None = None,
     ) -> MutationResult:
         if set(identity.values) != set(self._identity_fields):
             raise RakitError(
@@ -274,11 +301,17 @@ class SQLAlchemyMutationService:
                 await run_mutation_hooks(self._hooks.business_validate_update, plan)
                 await run_mutation_hooks(self._hooks.prepare_update, plan)
                 authorized = self._require_authorization(authorization, "update")
+                if force_overwrite:
+                    self._verify_force_overwrite(force_overwrite_confirmation, identity, authorized)
                 await run_mutation_hooks(self._hooks.authorize, authorized)
                 await run_mutation_hooks(self._hooks.pre_event, plan)
                 await run_mutation_hooks(self._hooks.execute_update, plan)
                 await run_mutation_hooks(self._hooks.before_execute, plan)
-                if self._concurrency is not None and self._version_field is not None:
+                if (
+                    not force_overwrite
+                    and self._concurrency is not None
+                    and self._concurrency_provider is not None
+                ):
                     if not concurrency_token:
                         raise RakitError(
                             code=ErrorCode.RESOURCE_CONFLICT,
@@ -289,16 +322,14 @@ class SQLAlchemyMutationService:
                         concurrency_token,
                         self._resource_id,
                         identity,
-                        getattr(record, self._version_field),
+                        self._concurrency_provider.version_for(record),
                     )
-                    current_version = getattr(record, self._version_field)
-                    if not isinstance(current_version, int):
-                        raise RuntimeError("Configured version field must contain an integer")
                     # The in-memory token check above makes stale forms pleasant
                     # to reject, but it cannot protect two independent database
                     # transactions that both read the same revision.  Put the
                     # expected revision in the UPDATE predicate as well: exactly
                     # one of concurrent writers can affect a row.
+                    base_snapshot = self._safe_snapshot(record)
                     scoped_identity = (
                         self._scoped_statement()
                         .where(*self._identity_conditions(identity))
@@ -312,35 +343,60 @@ class SQLAlchemyMutationService:
                                 getattr(self._model, self._identity_fields[0]).in_(
                                     scoped_identity.scalar_subquery()
                                 ),
-                                getattr(self._model, self._version_field) == current_version,
+                                *self._concurrency_conditions(record),
                             )
                             .values(
                                 **dict(plan.scalar_changes),
-                                **{self._version_field: current_version + 1},
+                                **self._next_concurrency_values(record),
                             )
                         ),
                     )
                     await run_mutation_hooks(self._hooks.after_execute, plan)
                     if result.rowcount != 1:
-                        raise RakitError(
-                            code=ErrorCode.RESOURCE_CONFLICT,
-                            message="The resource was changed by another request.",
-                            status_code=409,
-                        )
+                        await uow.session.refresh(record)
+                        raise self._conflict(record, plan, base_snapshot)
                     await uow.session.refresh(record)
                     await uow.session.flush()
                 else:
-                    for name, value in plan.scalar_changes.items():
-                        setattr(record, name, value)
-                    await uow.session.flush()
+                    # A force overwrite intentionally omits the stale-version
+                    # predicate, but it must never omit the resource scope at
+                    # the actual write boundary.
+                    base_snapshot = self._safe_snapshot(record)
+                    scoped_identity = (
+                        self._scoped_statement()
+                        .where(*self._identity_conditions(identity))
+                        .with_only_columns(getattr(self._model, self._identity_fields[0]))
+                    )
+                    result = cast(
+                        CursorResult[Any],
+                        await uow.session.execute(
+                            sqlalchemy_update(self._model)
+                            .where(
+                                getattr(self._model, self._identity_fields[0]).in_(
+                                    scoped_identity.scalar_subquery()
+                                )
+                            )
+                            .values(**dict(plan.scalar_changes))
+                        ),
+                    )
+                    if result.rowcount != 1:
+                        await uow.session.refresh(record)
+                        raise self._conflict(record, plan, base_snapshot)
+                    await uow.session.refresh(record)
                     await run_mutation_hooks(self._hooks.after_execute, plan)
+                    await uow.session.flush()
                 await run_mutation_hooks(self._hooks.after_flush, plan)
                 if self._event_publisher is not None:
-                    self._event_publisher.publish(
-                        ResourceUpdated(
+                    event = (
+                        ResourceForceOverwritten(
+                            identity=identity, changed_fields=tuple(plan.scalar_changes)
+                        )
+                        if force_overwrite
+                        else ResourceUpdated(
                             identity=identity, changed_fields=tuple(plan.scalar_changes)
                         )
                     )
+                    self._event_publisher.publish(event)
                 await run_mutation_hooks(self._hooks.before_commit, plan)
                 await uow.mark_success()
         except BaseException as exc:
@@ -351,7 +407,7 @@ class SQLAlchemyMutationService:
         return mutation_result
 
     async def preview_delete(self, identity: RecordIdentity) -> DeletionPlan:
-        if self._token_service is None or self._version_field is None:
+        if self._token_service is None or self._concurrency_provider is None:
             raise RuntimeError("Delete requires a configured token and version provider")
         async with self._session_factory() as session:
             record = await self._load(session, identity)
@@ -363,10 +419,19 @@ class SQLAlchemyMutationService:
                 )
             return DeletionPlan(
                 identity=identity,
-                expected_version=getattr(record, self._version_field),
+                expected_version=self._concurrency_provider.version_for(record),
                 relationship_impact=self._delete_relationship_impact,
                 required_permission=self._delete_permission,
             )
+
+    def issue_force_overwrite_confirmation(self, identity: RecordIdentity) -> str:
+        if self._token_service is None:
+            raise RuntimeError("Force overwrite requires a configured token service")
+        return self._token_service.issue_in(
+            "force_overwrite",
+            {"resource_id": self._resource_id, "identity": dict(identity.values)},
+            timedelta(minutes=5),
+        )
 
     async def issue_delete_token(self, identity: RecordIdentity) -> str:
         if self._token_service is None:
@@ -392,7 +457,7 @@ class SQLAlchemyMutationService:
         identity: RecordIdentity | None = None,
         authorization: MutationAuthorization | None = None,
     ) -> None:
-        if self._token_service is None or self._version_field is None:
+        if self._token_service is None or self._concurrency_provider is None:
             raise RuntimeError("Delete requires a configured token and version provider")
         if self._delete_nonce_store is None:
             raise RakitError(
@@ -463,7 +528,7 @@ class SQLAlchemyMutationService:
                         message="Resource was not found",
                         status_code=404,
                     )
-                if getattr(record, self._version_field) != expected_version:
+                if self._concurrency_provider.version_for(record) != expected_version:
                     raise RakitError(
                         code=ErrorCode.RESOURCE_CONFLICT,
                         message="The resource has changed since deletion was confirmed.",
@@ -515,10 +580,119 @@ class SQLAlchemyMutationService:
             for relationship in sorted(mapper.relationships, key=lambda item: item.key)
         )
 
+    def _resolve_concurrency_provider(
+        self, explicit: ConcurrencyVersionProvider | None
+    ) -> ConcurrencyVersionProvider | None:
+        if self._concurrency_mode is ConcurrencyMode.DISABLED:
+            return None
+        if explicit is not None:
+            return explicit
+        mapper = cast(Mapper[Any], inspect(self._model))
+        if mapper.version_id_col is not None:
+            key = mapper.version_id_col.key
+            if isinstance(key, str):
+                return AttributeVersionProvider(key)
+        if self._version_field is not None:
+            return AttributeVersionProvider(self._version_field)
+        for field in ("revision", "updated_at"):
+            if hasattr(self._model, field):
+                return AttributeVersionProvider(field)
+        safe_fields = tuple(
+            field.field_id
+            for field in self._form_schema.fields
+            if field.readable and not field.sensitive and hasattr(self._model, field.field_id)
+        )
+        return SnapshotVersionProvider(safe_fields) if safe_fields else None
+
+    def _concurrency_conditions(self, record: object) -> tuple[ColumnElement[bool], ...]:
+        provider = self._concurrency_provider
+        if isinstance(provider, AttributeVersionProvider):
+            return (
+                cast(
+                    ColumnElement[bool],
+                    getattr(self._model, provider.field) == provider.version_for(record),
+                ),
+            )
+        if isinstance(provider, SnapshotVersionProvider):
+            return tuple(
+                cast(ColumnElement[bool], getattr(self._model, field) == getattr(record, field))
+                for field in provider.fields
+            )
+        return ()
+
+    def _next_concurrency_values(self, record: object) -> Mapping[str, Any]:
+        provider = self._concurrency_provider
+        if isinstance(provider, AttributeVersionProvider):
+            value = provider.version_for(record)
+            if isinstance(value, int) and not isinstance(value, bool):
+                return {provider.field: value + 1}
+        return {}
+
+    def _safe_snapshot(self, record: object) -> dict[str, Any]:
+        return {
+            field.field_id: getattr(record, field.field_id)
+            for field in self._form_schema.fields
+            if field.readable and not field.sensitive and hasattr(record, field.field_id)
+        }
+
+    def _conflict(
+        self, record: object, plan: UpdateMutationPlan, base: Mapping[str, Any]
+    ) -> RakitError:
+        current = self._safe_snapshot(record)
+        proposed = {**base, **dict(plan.scalar_changes)}
+        conflict = ConcurrencyConflict(
+            base=dict(base),
+            current=current,
+            proposed=proposed,
+            field_conflicts=tuple(
+                name
+                for name, value in plan.scalar_changes.items()
+                if base.get(name) != current.get(name) and current.get(name) != value
+            ),
+        )
+        return RakitError(
+            code=ErrorCode.RESOURCE_CONFLICT,
+            message="The resource was changed by another request.",
+            status_code=409,
+            details={"conflict": conflict.to_public_dict()},
+        )
+
+    def _verify_force_overwrite(
+        self,
+        confirmation: str | None,
+        identity: RecordIdentity,
+        authorization: MutationAuthorization,
+    ) -> None:
+        if self._token_service is None or confirmation is None:
+            raise RakitError(
+                code=ErrorCode.AUTH_FORBIDDEN,
+                message="Force overwrite requires confirmed authorization.",
+                status_code=403,
+            )
+        try:
+            claims = self._token_service.verify(confirmation, expected_purpose="force_overwrite")
+        except ValueError as exc:
+            raise RakitError(
+                code=ErrorCode.AUTH_FORBIDDEN,
+                message="Force overwrite requires confirmed authorization.",
+                status_code=403,
+            ) from exc
+        if (
+            self._force_overwrite_permission not in authorization.permissions
+            or claims.get("resource_id") != self._resource_id
+            or claims.get("identity") != dict(identity.values)
+        ):
+            raise RakitError(
+                code=ErrorCode.AUTH_FORBIDDEN,
+                message="Force overwrite requires confirmed authorization.",
+                status_code=403,
+            )
+
 
 __all__ = [
     "ResourceCreated",
     "ResourceDeleted",
+    "ResourceForceOverwritten",
     "ResourceUpdated",
     "SQLAlchemyMutationService",
 ]

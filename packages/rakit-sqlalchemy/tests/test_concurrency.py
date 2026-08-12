@@ -1,9 +1,12 @@
 import asyncio
 from collections.abc import AsyncIterator, Awaitable
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 from rakit_core.auth import Principal
+from rakit_core.concurrency import AttributeVersionProvider, ConcurrencyMode
 from rakit_core.config import SecretValue
 from rakit_core.crypto import TokenService
 from rakit_core.errors import ErrorCode, RakitError
@@ -33,15 +36,44 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str]
     revision: Mapped[int] = mapped_column(default=1)
+    password_hash: Mapped[str] = mapped_column(default="private")
 
 
-def _authorization(operation: MutationOperation) -> MutationAuthorization:
+class ProviderUser(Base):
+    __tablename__ = "concurrency_provider_users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    revision: Mapped[int] = mapped_column(default=1)
+    explicit_revision: Mapped[int] = mapped_column(default=10)
+    __mapper_args__: ClassVar[dict[str, object]] = {"version_id_col": revision}
+
+
+class SnapshotUser(Base):
+    __tablename__ = "concurrency_snapshot_users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    password_hash: Mapped[str] = mapped_column(default="private")
+
+
+class TimestampUser(Base):
+    __tablename__ = "concurrency_timestamp_users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    updated_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC))
+
+
+def _authorization(
+    operation: MutationOperation, resource_id: str = "concurrency_users"
+) -> MutationAuthorization:
     return MutationAuthorization(
         admin_id="admin",
-        resource_id="concurrency_users",
+        resource_id=resource_id,
         operation=operation,
         principal_id="tester",
-        permissions=(f"admin.resources.concurrency_users.{operation}",),
+        permissions=(f"admin.resources.{resource_id}.{operation}",),
     )
 
 
@@ -118,6 +150,36 @@ async def test_stale_update_returns_a_conflict_before_writing(
         )
     assert caught.value.code == ErrorCode.RESOURCE_CONFLICT
     assert caught.value.status_code == 409
+
+
+@pytest.mark.anyio
+async def test_explicit_provider_has_priority_over_mapper_version_metadata(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """An explicit provider, not incidental mapper metadata, owns the token."""
+    service = SQLAlchemyMutationService(
+        model=ProviderUser,
+        session_factory=session_factory,
+        form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="name", python_type=str, required=True),)
+        ),
+        writable_fields=("name",),
+        identity_fields=("id",),
+        token_service=TokenService.single_key(
+            key_id="test", value=SecretValue("x" * 32), admin_id="admin"
+        ),
+        concurrency_mode=ConcurrencyMode.AUTO,
+        concurrency_provider=AttributeVersionProvider("explicit_revision"),
+    )
+    authorization = _authorization("create", "concurrency_provider_users")
+    created = await _authorized(
+        authorization, service.create({"name": "Ada"}, authorization=authorization)
+    )
+
+    token = service.issue_update_token(created.record)
+    claims = service._token_service.verify(token, expected_purpose="concurrency")
+
+    assert claims["version"] == 10
 
 
 @pytest.mark.anyio
@@ -254,3 +316,237 @@ async def test_atomic_update_rechecks_scope_after_target_load(
         assert record is not None
         assert record.name == "hidden"
     await engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_atomic_conflict_exposes_only_safe_structured_values(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "conflict.db"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{database}")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    class ChangingService(SQLAlchemyMutationService):
+        change_after_load = False
+
+        async def _load(self, session: AsyncSession, identity: RecordIdentity) -> object | None:
+            record = await super()._load(session, identity)
+            if record is not None and self.change_after_load:
+                self.change_after_load = False
+                async with factory() as changer:
+                    current = await changer.get(User, identity.values["id"])
+                    assert current is not None
+                    current.name = "Grace"
+                    current.revision += 1
+                    current.password_hash = "changed-private"
+                    await changer.commit()
+            return record
+
+    service = ChangingService(
+        model=User,
+        session_factory=factory,
+        form_schema=FormSchema(
+            fields=(
+                FieldDefinition(field_id="name", python_type=str, required=True),
+                FieldDefinition(field_id="password_hash", python_type=str),
+            )
+        ),
+        writable_fields=("name",),
+        identity_fields=("id",),
+        token_service=TokenService.single_key(
+            key_id="test", value=SecretValue("x" * 32), admin_id="admin"
+        ),
+        version_field="revision",
+    )
+    async with factory() as session:
+        session.add(User(name="Ada"))
+        await session.commit()
+        record = await session.get(User, 1)
+        assert record is not None
+        token = service.issue_update_token(record)
+
+    service.change_after_load = True
+    authorization = _authorization("update")
+    with pytest.raises(RakitError) as caught:
+        await _authorized(
+            authorization,
+            service.update(
+                RecordIdentity(values={"id": 1}),
+                {"name": "Lin"},
+                concurrency_token=token,
+                authorization=authorization,
+            ),
+        )
+
+    conflict = caught.value.details["conflict"]
+    assert conflict["base"] == {"name": "Ada"}
+    assert conflict["current"] == {"name": "Grace"}
+    assert conflict["proposed"] == {"name": "Lin"}
+    assert conflict["field_conflicts"] == ["name"]
+    assert "password_hash" not in repr(conflict)
+    await engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_force_overwrite_requires_dedicated_permission_and_confirmation(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    service = SQLAlchemyMutationService(
+        model=User,
+        session_factory=session_factory,
+        form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="name", python_type=str, required=True),)
+        ),
+        writable_fields=("name",),
+        identity_fields=("id",),
+        token_service=TokenService.single_key(
+            key_id="test", value=SecretValue("x" * 32), admin_id="admin"
+        ),
+        version_field="revision",
+    )
+    create_authorization = _authorization("create")
+    created = await _authorized(
+        create_authorization, service.create({"name": "Ada"}, authorization=create_authorization)
+    )
+    async with session_factory() as session:
+        record = await session.get(User, created.identity.values["id"])
+        assert record is not None
+        record.name = "Grace"
+        record.revision += 1
+        await session.commit()
+
+    regular = _authorization("update")
+    confirmation = service.issue_force_overwrite_confirmation(created.identity)
+    with pytest.raises(RakitError) as caught:
+        await _authorized(
+            regular,
+            service.update(
+                created.identity,
+                {"name": "Lin"},
+                authorization=regular,
+                force_overwrite=True,
+                force_overwrite_confirmation=confirmation,
+            ),
+        )
+    assert caught.value.code == ErrorCode.AUTH_FORBIDDEN
+
+    force_permission = "resources.concurrency_users.force_overwrite"
+    forced = MutationAuthorization(
+        admin_id="admin",
+        resource_id="concurrency_users",
+        operation="update",
+        principal_id="tester",
+        permissions=("admin.resources.concurrency_users.update", force_permission),
+    )
+    with pytest.raises(RakitError):
+        await _authorized(
+            forced,
+            service.update(
+                created.identity,
+                {"name": "Lin"},
+                authorization=forced,
+                force_overwrite=True,
+            ),
+        )
+
+    result = await _authorized(
+        forced,
+        service.update(
+            created.identity,
+            {"name": "Lin"},
+            authorization=forced,
+            force_overwrite=True,
+            force_overwrite_confirmation=confirmation,
+        ),
+    )
+    assert result.record.name == "Lin"
+
+
+@pytest.mark.anyio
+async def test_auto_mode_uses_mapper_then_snapshot_then_configured_timestamp(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    signer = TokenService.single_key(key_id="test", value=SecretValue("x" * 32), admin_id="admin")
+    schema = FormSchema(fields=(FieldDefinition(field_id="name", python_type=str, required=True),))
+    mapper_service = SQLAlchemyMutationService(
+        model=ProviderUser,
+        session_factory=session_factory,
+        form_schema=schema,
+        writable_fields=("name",),
+        identity_fields=("id",),
+        token_service=signer,
+        concurrency_mode=ConcurrencyMode.AUTO,
+    )
+    snapshot_service = SQLAlchemyMutationService(
+        model=SnapshotUser,
+        session_factory=session_factory,
+        form_schema=schema,
+        writable_fields=("name",),
+        identity_fields=("id",),
+        token_service=signer,
+        concurrency_mode=ConcurrencyMode.AUTO,
+    )
+    timestamp_service = SQLAlchemyMutationService(
+        model=TimestampUser,
+        session_factory=session_factory,
+        form_schema=schema,
+        writable_fields=("name",),
+        identity_fields=("id",),
+        token_service=signer,
+        concurrency_mode=ConcurrencyMode.AUTO,
+    )
+
+    mapper_auth = _authorization("create", "concurrency_provider_users")
+    mapper = await _authorized(
+        mapper_auth, mapper_service.create({"name": "mapper"}, authorization=mapper_auth)
+    )
+    snapshot_auth = _authorization("create", "concurrency_snapshot_users")
+    snapshot = await _authorized(
+        snapshot_auth, snapshot_service.create({"name": "snapshot"}, authorization=snapshot_auth)
+    )
+    timestamp_auth = _authorization("create", "concurrency_timestamp_users")
+    timestamp = await _authorized(
+        timestamp_auth,
+        timestamp_service.create({"name": "timestamp"}, authorization=timestamp_auth),
+    )
+
+    assert (
+        signer.verify(
+            mapper_service.issue_update_token(mapper.record), expected_purpose="concurrency"
+        )["version"]
+        == 1
+    )
+    assert isinstance(
+        signer.verify(
+            snapshot_service.issue_update_token(snapshot.record), expected_purpose="concurrency"
+        )["version"],
+        str,
+    )
+    assert (
+        signer.verify(
+            timestamp_service.issue_update_token(timestamp.record), expected_purpose="concurrency"
+        )["version"]
+        == timestamp.record.updated_at.isoformat()
+    )
+
+
+@pytest.mark.anyio
+async def test_required_mode_fails_closed_without_a_safe_provider(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    with pytest.raises(ValueError, match="Required concurrency"):
+        SQLAlchemyMutationService(
+            model=SnapshotUser,
+            session_factory=session_factory,
+            form_schema=FormSchema(
+                fields=(FieldDefinition(field_id="password_hash", python_type=str),)
+            ),
+            writable_fields=("password_hash",),
+            identity_fields=("id",),
+            token_service=TokenService.single_key(
+                key_id="test", value=SecretValue("x" * 32), admin_id="admin"
+            ),
+            concurrency_mode=ConcurrencyMode.REQUIRED,
+        )

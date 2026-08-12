@@ -124,5 +124,13 @@ class ResourceUpdated(DomainEvent):
 
 
 @dataclass(frozen=True)
+class ResourceForceOverwritten(DomainEvent):
+    """Security/audit event emitted only after a confirmed force overwrite commits."""
+
+    identity: RecordIdentity
+    changed_fields: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class ResourceDeleted(DomainEvent):
     identity: RecordIdentity

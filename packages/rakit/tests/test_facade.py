@@ -281,16 +281,24 @@ def test_importing_core_plan03_facade_does_not_load_optional_sqlalchemy() -> Non
 
 def test_plan04_contracts_are_reexported_with_preserved_identity() -> None:
     from rakit.core import (
+        AttributeVersionProvider,
+        ConcurrencyConflict,
         ConcurrencyMode,
+        ConcurrencyVersionProvider,
         DeletionPlan,
         FieldDefinition,
         IdempotencyStatus,
         MutationAuthorization,
         OperationContext,
+        SnapshotVersionProvider,
         TransactionPolicy,
         UpdateMutationPlan,
     )
+    from rakit_core.concurrency import AttributeVersionProvider as RealAttributeVersionProvider
+    from rakit_core.concurrency import ConcurrencyConflict as RealConcurrencyConflict
     from rakit_core.concurrency import ConcurrencyMode as RealConcurrencyMode
+    from rakit_core.concurrency import ConcurrencyVersionProvider as RealConcurrencyVersionProvider
+    from rakit_core.concurrency import SnapshotVersionProvider as RealSnapshotVersionProvider
     from rakit_core.deletion import DeletionPlan as RealDeletionPlan
     from rakit_core.fields import FieldDefinition as RealFieldDefinition
     from rakit_core.idempotency import IdempotencyStatus as RealIdempotencyStatus
@@ -303,6 +311,10 @@ def test_plan04_contracts_are_reexported_with_preserved_identity() -> None:
     assert MutationAuthorization is RealMutationAuthorization
     assert UpdateMutationPlan is RealUpdateMutationPlan
     assert ConcurrencyMode is RealConcurrencyMode
+    assert AttributeVersionProvider is RealAttributeVersionProvider
+    assert SnapshotVersionProvider is RealSnapshotVersionProvider
+    assert ConcurrencyConflict is RealConcurrencyConflict
+    assert ConcurrencyVersionProvider is RealConcurrencyVersionProvider
     assert IdempotencyStatus is RealIdempotencyStatus
     assert DeletionPlan is RealDeletionPlan
     assert OperationContext is RealOperationContext

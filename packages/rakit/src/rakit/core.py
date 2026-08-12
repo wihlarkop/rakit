@@ -7,7 +7,14 @@ from rakit_core.auth import (
 )
 from rakit_core.compatibility import validate_official_package_versions
 from rakit_core.compiler import ApplicationBuilder, CompiledApplication, Plugin
-from rakit_core.concurrency import ConcurrencyMode, ConcurrencyTokenService
+from rakit_core.concurrency import (
+    AttributeVersionProvider,
+    ConcurrencyConflict,
+    ConcurrencyMode,
+    ConcurrencyTokenService,
+    ConcurrencyVersionProvider,
+    SnapshotVersionProvider,
+)
 from rakit_core.config import (
     LifecycleConfig,
     RakitConfig,
@@ -74,13 +81,16 @@ from rakit_core.transactions import TransactionPolicy
 __all__ = [
     "ANONYMOUS_PRINCIPAL",
     "ApplicationBuilder",
+    "AttributeVersionProvider",
     "AuthBackend",
     "AuthorizationDecision",
     "AuthorizationPolicy",
     "CancellationContext",
     "CompiledApplication",
+    "ConcurrencyConflict",
     "ConcurrencyMode",
     "ConcurrencyTokenService",
+    "ConcurrencyVersionProvider",
     "CountPolicy",
     "DataSource",
     "DataSourceCapabilities",
@@ -140,6 +150,7 @@ __all__ = [
     "SessionRecord",
     "SessionStore",
     "SigningKey",
+    "SnapshotVersionProvider",
     "Sort",
     "SortDirection",
     "TokenService",
