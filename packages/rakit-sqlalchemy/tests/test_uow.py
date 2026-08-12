@@ -4,6 +4,7 @@ from typing import cast
 
 import pytest
 from rakit_core.errors import ErrorCode, RakitError
+from rakit_core.events import EventPublisher
 from rakit_core.operations import CancellationContext, Deadline, OperationContext
 from rakit_core.transactions import TransactionPolicy
 from rakit_sqlalchemy.uow import SQLAlchemyUnitOfWork
@@ -158,7 +159,9 @@ async def test_commit_failure_rolls_back_without_delivering_after_commit() -> No
     factory = cast(async_sessionmaker[AsyncSession], lambda: session)
 
     with pytest.raises(RuntimeError, match="database unavailable"):
-        async with SQLAlchemyUnitOfWork(factory, event_publisher=cast(object, publisher)) as uow:
+        async with SQLAlchemyUnitOfWork(
+            factory, event_publisher=cast(EventPublisher, publisher)
+        ) as uow:
             await uow.mark_success()
 
     assert session.rolled_back is True

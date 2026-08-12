@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import httpx
 import pytest
 from rakit_core.fields import FieldDefinition
@@ -333,7 +335,7 @@ async def test_timed_out_idempotent_submission_releases_its_claim_for_retry() ->
     payload = {"email": "ada@example.com", "csrf_token": "x", "submission_token": "same"}
     async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
         timed_out = await client.post("/users/new", data=payload)
-        retry_binding = WriteResourceBinding(**{**binding.__dict__, "deadline_seconds": 1})
+        retry_binding = replace(binding, deadline_seconds=1)
         retry_app = Starlette(routes=build_write_routes(retry_binding))
         retry = await httpx.AsyncClient(
             transport=httpx.ASGITransport(app=retry_app), base_url="http://localhost"
