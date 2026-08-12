@@ -166,3 +166,45 @@ async def test_post_commit_hook_failure_does_not_reclassify_a_durable_write(
     assert calls == ["after_commit"]
     async with session_factory() as session:
         assert list((await session.scalars(select(User.name))).all()) == ["Ada"]
+
+
+@pytest.mark.anyio
+async def test_create_runs_the_explicit_mutation_pipeline_in_order(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    phases: list[str] = []
+
+    def phase(name: str):
+        def record(_value: object) -> None:
+            phases.append(name)
+
+        return record
+
+    service = SQLAlchemyMutationService(
+        model=User,
+        session_factory=session_factory,
+        form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="name", python_type=str, required=True),)
+        ),
+        writable_fields=("name",),
+        identity_fields=("id",),
+        hooks=MutationHooks(
+            normalize=(phase("normalize"),),
+            business_validate=(phase("validate"),),
+            prepare=(phase("prepare"),),
+            authorize=(phase("authorize"),),
+            pre_event=(phase("pre_event"),),
+            before_execute=(phase("execute"),),
+            after_execute=(phase("executed"),),
+            after_flush=(phase("flush"),),
+            before_commit=(phase("before_commit"),),
+            after_commit=(phase("post_event"),),
+        ),
+    )
+
+    await service.create({"name": "Ada"})
+
+    assert phases == [
+        "normalize", "validate", "prepare", "authorize", "pre_event", "execute",
+        "executed", "flush", "before_commit", "post_event",
+    ]

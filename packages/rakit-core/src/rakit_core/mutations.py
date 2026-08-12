@@ -19,7 +19,14 @@ logger = logging.getLogger(__name__)
 class MutationHooks:
     """Explicit write-pipeline hooks; none receives a transaction commit API."""
 
+    normalize: tuple[MutationHook, ...] = ()
+    business_validate: tuple[MutationHook, ...] = ()
+    prepare: tuple[MutationHook, ...] = ()
+    authorize: tuple[MutationHook, ...] = ()
+    pre_event: tuple[MutationHook, ...] = ()
     before_execute: tuple[MutationHook, ...] = ()
+    after_execute: tuple[MutationHook, ...] = ()
+    after_flush: tuple[MutationHook, ...] = ()
     before_commit: tuple[MutationHook, ...] = ()
     after_commit: tuple[MutationHook, ...] = ()
     after_rollback: tuple[MutationHook, ...] = ()

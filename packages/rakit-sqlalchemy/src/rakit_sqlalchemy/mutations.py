@@ -101,6 +101,8 @@ class SQLAlchemyMutationService:
         except (FormValidationError, ValueError) as exc:
             raise _validation_error(exc) from exc
         values = dict(state.normalized)
+        # parse is FormSchema.parse; the remaining pre-persistence phases
+        # receive the immutable plan in create/update below.
         if not set(values).issubset(self._writable_fields):
             raise _validation_error(ValueError("Field is not writable"))
         return ResourceMutationPlan(operation="create", values=values)
@@ -108,6 +110,11 @@ class SQLAlchemyMutationService:
     async def create(self, submitted: Mapping[str, Any]) -> MutationResult:
         plan = self.prepare_create(submitted)
         try:
+            await run_mutation_hooks(self._hooks.normalize, plan)
+            await run_mutation_hooks(self._hooks.business_validate, plan)
+            await run_mutation_hooks(self._hooks.prepare, plan)
+            await run_mutation_hooks(self._hooks.authorize, plan)
+            await run_mutation_hooks(self._hooks.pre_event, plan)
             await run_mutation_hooks(self._hooks.before_execute, plan)
             async with SQLAlchemyUnitOfWork(
                 self._session_factory,
@@ -117,7 +124,9 @@ class SQLAlchemyMutationService:
             ) as uow:
                 record = self._model(**dict(plan.values))
                 uow.session.add(record)
+                await run_mutation_hooks(self._hooks.after_execute, plan)
                 await uow.session.flush()
+                await run_mutation_hooks(self._hooks.after_flush, plan)
                 identity = self._identity_for(record)
                 if self._event_publisher is not None:
                     self._event_publisher.publish(ResourceCreated(identity=identity))
@@ -163,6 +172,11 @@ class SQLAlchemyMutationService:
                 status_code=400,
             )
         try:
+            await run_mutation_hooks(self._hooks.normalize, plan)
+            await run_mutation_hooks(self._hooks.business_validate, plan)
+            await run_mutation_hooks(self._hooks.prepare, plan)
+            await run_mutation_hooks(self._hooks.authorize, plan)
+            await run_mutation_hooks(self._hooks.pre_event, plan)
             await run_mutation_hooks(self._hooks.before_execute, plan)
             async with SQLAlchemyUnitOfWork(
                 self._session_factory,
@@ -209,6 +223,7 @@ class SQLAlchemyMutationService:
                             )
                         ),
                     )
+                    await run_mutation_hooks(self._hooks.after_execute, plan)
                     if result.rowcount != 1:
                         raise RakitError(
                             code=ErrorCode.RESOURCE_CONFLICT,
@@ -220,6 +235,8 @@ class SQLAlchemyMutationService:
                     for name, value in plan.values.items():
                         setattr(record, name, value)
                     await uow.session.flush()
+                    await run_mutation_hooks(self._hooks.after_execute, plan)
+                await run_mutation_hooks(self._hooks.after_flush, plan)
                 if self._event_publisher is not None:
                     self._event_publisher.publish(
                         ResourceUpdated(identity=identity, changed_fields=tuple(plan.values))
