@@ -7,6 +7,7 @@ from rakit_core.auth import (
 )
 from rakit_core.compatibility import validate_official_package_versions
 from rakit_core.compiler import ApplicationBuilder, CompiledApplication, Plugin
+from rakit_core.concurrency import ConcurrencyMode, ConcurrencyTokenService
 from rakit_core.config import (
     LifecycleConfig,
     RakitConfig,
@@ -16,6 +17,7 @@ from rakit_core.config import (
 from rakit_core.crypto import KeyRing, SigningKey, TokenService
 from rakit_core.datasource import DataSource, DataSourceCapabilities
 from rakit_core.definitions import ResourceFieldPolicy
+from rakit_core.deletion import DeletePolicy, DeletionPlan, HardDeletePolicy
 from rakit_core.di import ServiceKey, ServiceRegistry, ServiceResolver, ServiceScope
 from rakit_core.errors import (
     ErrorCode,
@@ -28,7 +30,23 @@ from rakit_core.errors import (
     RakitWarning,
 )
 from rakit_core.events import DomainEvent, EventBus, EventPublisher
+from rakit_core.fields import FieldDefinition, infer_field_security
+from rakit_core.forms import FormIssue, FormSchema, FormState, FormValidationError
+from rakit_core.idempotency import (
+    IdempotencyReservation,
+    IdempotencyStatus,
+    IdempotencyStore,
+    OperationReceipt,
+)
 from rakit_core.identity import IdentityCodec, RecordIdentity
+from rakit_core.mutations import (
+    MutationAuthorization,
+    MutationHooks,
+    MutationResult,
+    ResourceMutationPlan,
+    UpdateMutationPlan,
+)
+from rakit_core.operations import CancellationContext, Deadline, OperationContext
 from rakit_core.permission_catalogue import (
     PermissionCatalogue,
     PermissionDefinition,
@@ -51,6 +69,7 @@ from rakit_core.query import (
     SortDirection,
 )
 from rakit_core.resources import ResourceService
+from rakit_core.transactions import TransactionPolicy
 
 __all__ = [
     "ANONYMOUS_PRINCIPAL",
@@ -58,22 +77,42 @@ __all__ = [
     "AuthBackend",
     "AuthorizationDecision",
     "AuthorizationPolicy",
+    "CancellationContext",
     "CompiledApplication",
+    "ConcurrencyMode",
+    "ConcurrencyTokenService",
     "CountPolicy",
     "DataSource",
     "DataSourceCapabilities",
+    "Deadline",
+    "DeletePolicy",
+    "DeletionPlan",
     "DomainEvent",
     "ErrorCode",
     "ErrorDetail",
     "EventBus",
     "EventPublisher",
+    "FieldDefinition",
     "Filter",
     "FilterOperator",
+    "FormIssue",
+    "FormSchema",
+    "FormState",
+    "FormValidationError",
+    "HardDeletePolicy",
+    "IdempotencyReservation",
+    "IdempotencyStatus",
+    "IdempotencyStore",
     "IdentityCodec",
     "KeyRing",
     "LifecycleConfig",
+    "MutationAuthorization",
+    "MutationHooks",
+    "MutationResult",
     "NullPlacement",
     "OffsetPagination",
+    "OperationContext",
+    "OperationReceipt",
     "PageResult",
     "PermissionCatalogue",
     "PermissionDefinition",
@@ -89,6 +128,7 @@ __all__ = [
     "RakitWarning",
     "RecordIdentity",
     "ResourceFieldPolicy",
+    "ResourceMutationPlan",
     "ResourceQuery",
     "ResourceService",
     "SecretValue",
@@ -103,6 +143,9 @@ __all__ = [
     "Sort",
     "SortDirection",
     "TokenService",
+    "TransactionPolicy",
+    "UpdateMutationPlan",
     "generate_permission_catalogue",
+    "infer_field_security",
     "validate_official_package_versions",
 ]
