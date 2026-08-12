@@ -27,10 +27,11 @@ from rakit_core.mutations import (
 )
 from rakit_core.operations import current_operation_context
 from rakit_core.transactions import TransactionPolicy
-from sqlalchemy import Select, select
+from sqlalchemy import Select, inspect, select
 from sqlalchemy import update as sqlalchemy_update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import Mapper
 from sqlalchemy.sql.elements import ColumnElement
 
 from .uow import SQLAlchemyUnitOfWork
@@ -88,7 +89,14 @@ class SQLAlchemyMutationService:
         self._resource_id = resource_id or str(getattr(model, "__tablename__", model.__name__))
         self._delete_nonce_store = delete_nonce_store
         self._delete_permission = delete_permission or f"resources.{self._resource_id}.delete"
-        self._delete_relationship_impact = delete_relationship_impact
+        # Relationship/cascade impact is derived from mapped metadata, not
+        # caller-supplied presentation text.  Keep the legacy argument only
+        # as a declaration guard while Plan 04 callers migrate: it may not
+        # claim impact which the mapper does not actually expose.
+        mapper_impact = self._relationship_impact()
+        if delete_relationship_impact and delete_relationship_impact != mapper_impact:
+            raise ValueError("Delete relationship impact must match mapped relationships")
+        self._delete_relationship_impact = mapper_impact
         self._hooks = hooks or MutationHooks()
         self._scoped_statement = scoped_statement or (lambda: select(self._model))
         self._concurrency = (
@@ -492,6 +500,14 @@ class SQLAlchemyMutationService:
     def _identity_for(self, record: object) -> RecordIdentity:
         return RecordIdentity(
             values={name: getattr(record, name) for name in self._identity_fields}
+        )
+
+    def _relationship_impact(self) -> tuple[str, ...]:
+        """Return a stable, signed summary of ORM-owned delete impact."""
+        mapper = cast(Mapper[Any], inspect(self._model))
+        return tuple(
+            f"{relationship.key}:{','.join(sorted(relationship.cascade))}"
+            for relationship in sorted(mapper.relationships, key=lambda item: item.key)
         )
 
 

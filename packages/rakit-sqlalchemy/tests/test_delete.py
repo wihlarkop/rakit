@@ -9,9 +9,9 @@ from rakit_core.forms import FormSchema
 from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, OperationReceipt
 from rakit_core.mutations import MutationAuthorization, MutationOperation
 from rakit_sqlalchemy.mutations import SQLAlchemyMutationService
-from sqlalchemy import select
+from sqlalchemy import ForeignKey, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
@@ -24,6 +24,22 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str]
     revision: Mapped[int] = mapped_column(default=1)
+
+
+class Parent(Base):
+    __tablename__ = "delete_parents"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    revision: Mapped[int] = mapped_column(default=1)
+    children: Mapped[list["Child"]] = relationship(cascade="all, delete-orphan")
+
+
+class Child(Base):
+    __tablename__ = "delete_children"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    parent_id: Mapped[int] = mapped_column(ForeignKey("delete_parents.id"))
 
 
 def _authorization(
@@ -157,3 +173,33 @@ async def test_delete_nonce_does_not_authorize_direct_delete(
     assert caught.value.code == ErrorCode.AUTH_FORBIDDEN
     async with session_factory() as session:
         assert await session.get(User, 1) is not None
+
+
+@pytest.mark.anyio
+async def test_delete_preview_derives_relationship_impact_from_mapper_metadata(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    service = SQLAlchemyMutationService(
+        model=Parent,
+        session_factory=session_factory,
+        form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="name", python_type=str, required=True),)
+        ),
+        writable_fields=("name",),
+        identity_fields=("id",),
+        token_service=TokenService.single_key(
+            key_id="test", value=SecretValue("x" * 32), admin_id="admin"
+        ),
+        version_field="revision",
+        resource_id="parents",
+        delete_nonce_store=_NonceStore(),
+    )
+    created = await service.create(
+        {"name": "Ada"}, authorization=_authorization("create", "parents")
+    )
+
+    plan = await service.preview_delete(created.identity)
+
+    assert plan.relationship_impact == (
+        "children:delete,delete-orphan,expunge,merge,refresh-expire,save-update",
+    )
