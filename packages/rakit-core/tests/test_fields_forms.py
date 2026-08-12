@@ -93,7 +93,9 @@ def test_parser_formatter_and_typed_layout_are_applied_without_bypassing_validat
 
     assert state.normalized == {"name": "Ada"}
     assert schema.format_value("name", "Ada") == "User: Ada"
-    assert schema.resolved_layout().children[0].layout_id == "profile"
+    first = schema.resolved_layout().children[0]
+    assert isinstance(first, Section)
+    assert first.layout_id == "profile"
 
 
 def test_parser_errors_become_field_issues_and_layout_rejects_bad_references() -> None:
@@ -119,6 +121,16 @@ def test_parser_errors_become_field_issues_and_layout_rejects_bad_references() -
         FormSchema(
             fields=(FieldDefinition(field_id="name", python_type=str),),
             layout=FormLayout(children=(FieldLayout("name"), FieldLayout("name"))),
+        )
+    with pytest.raises(ValueError, match="ids must be unique"):
+        FormSchema(
+            fields=(FieldDefinition(field_id="name", python_type=str),),
+            layout=FormLayout(
+                children=(
+                    Section(layout_id="duplicate", title="One", children=()),
+                    CustomBlock(layout_id="duplicate", block_id="two"),
+                )
+            ),
         )
 
 

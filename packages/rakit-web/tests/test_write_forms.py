@@ -12,6 +12,12 @@ from rakit_web.resource_routes import build_templates
 from starlette.applications import Starlette
 
 
+class FakeRecord:
+    def __init__(self, name: str = "Ada", password_hash: str | None = None) -> None:
+        self.name = name
+        self.password_hash = password_hash
+
+
 class FakeMutationService:
     def __init__(self) -> None:
         self.calls = 0
@@ -28,7 +34,7 @@ class FullFakeMutationService(FakeMutationService):
         super().__init__()
         self.updated: tuple[RecordIdentity, dict[str, object], str | None] | None = None
         self.deleted: tuple[str, RecordIdentity] | None = None
-        self.record = type("Record", (), {"name": "Ada"})()
+        self.record: object = FakeRecord()
 
     async def get(self, identity: RecordIdentity) -> object | None:
         return self.record if identity.values == {"id": 1} else None
@@ -497,7 +503,7 @@ async def test_parser_normalizes_before_idempotency_fingerprint_and_htmx_result_
 @pytest.mark.anyio
 async def test_update_formatter_is_used_but_sensitive_field_is_never_rendered() -> None:
     service = FullFakeMutationService()
-    service.record = type("Record", (), {"name": "Ada", "password_hash": "private"})()
+    service.record = FakeRecord(password_hash="private")
     binding = WriteResourceBinding(
         path="/users",
         label="User",

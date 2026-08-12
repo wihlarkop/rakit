@@ -2,7 +2,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import ClassVar
+from typing import cast
 
 import pytest
 from rakit_core.auth import Principal
@@ -51,7 +51,7 @@ class ProviderUser(Base):
     name: Mapped[str]
     revision: Mapped[int] = mapped_column(default=1)
     explicit_revision: Mapped[int] = mapped_column(default=10)
-    __mapper_args__: ClassVar[dict[str, object]] = {"version_id_col": revision}
+    __mapper_args__ = {"version_id_col": revision}  # type: ignore[invalid-assignment]
 
 
 class SnapshotUser(Base):
@@ -182,6 +182,7 @@ async def test_explicit_provider_has_priority_over_mapper_version_metadata(
     )
 
     token = service.issue_update_token(created.record)
+    assert service._token_service is not None
     claims = service._token_service.verify(token, expected_purpose="concurrency")
 
     assert claims["version"] == 10
@@ -471,7 +472,7 @@ async def test_force_overwrite_requires_dedicated_permission_and_confirmation(
             force_overwrite_confirmation=confirmation,
         ),
     )
-    assert result.record.name == "Lin"
+    assert cast(User, result.record).name == "Lin"
     assert events == [ResourceForceOverwritten(identity=created.identity, changed_fields=("name",))]
 
 
@@ -539,7 +540,7 @@ async def test_auto_mode_uses_mapper_then_snapshot_then_configured_timestamp(
         signer.verify(
             timestamp_service.issue_update_token(timestamp.record), expected_purpose="concurrency"
         )["version"]
-        == timestamp.record.updated_at.isoformat()
+        == cast(TimestampUser, timestamp.record).updated_at.isoformat()
     )
 
 
@@ -570,7 +571,7 @@ async def test_disabled_mode_requires_no_concurrency_token(
         service.update(created.identity, {"name": "Grace"}, authorization=update),
     )
 
-    assert result.record.name == "Grace"
+    assert cast(User, result.record).name == "Grace"
 
 
 @pytest.mark.anyio

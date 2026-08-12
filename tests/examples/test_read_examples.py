@@ -427,7 +427,7 @@ def test_auth_migration_history_coexists_with_a_host_alembic_version_table(
     # 3. rakit_auth_alembic_version reaches the current Rakit auth head.
     assert "rakit_auth_alembic_version" in table_names
     assert conn.execute("SELECT version_num FROM rakit_auth_alembic_version").fetchall() == [
-        ("0002",)
+        ("0003",)
     ]
     assert "rakit_auth_idempotency" in table_names
 
@@ -496,7 +496,7 @@ def test_auth_migration_history_coexists_with_a_host_alembic_version_table(
     }
     assert expected_rakit_tables <= final_tables
     assert conn.execute("SELECT version_num FROM rakit_auth_alembic_version").fetchall() == [
-        ("0002",)
+        ("0003",)
     ]
     assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [("host_0001",)]
     for table_name in expected_rakit_tables - {

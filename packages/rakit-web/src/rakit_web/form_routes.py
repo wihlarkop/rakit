@@ -295,10 +295,15 @@ def _form_response(
                 {
                     "message": getattr(issue, "message", "Invalid value."),
                     "field_id": getattr(issue, "field_id", None),
-                    "anchor": (
-                        _field_dom_id(binding, field_id)
+                    "label": (
+                        controls[field_id]["label"]
                         if isinstance((field_id := getattr(issue, "field_id", None)), str)
                         and field_id in controls
+                        else None
+                    ),
+                    "anchor": (
+                        _field_dom_id(binding, field_id)
+                        if isinstance(field_id, str) and field_id in controls
                         else None
                     ),
                 }
