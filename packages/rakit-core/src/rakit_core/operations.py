@@ -1,13 +1,16 @@
 """Operation deadlines and cooperative cancellation checkpoints."""
 
-import asyncio
 import uuid
-from collections.abc import Awaitable, Iterator
+from collections.abc import Awaitable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from time import monotonic
+from types import MappingProxyType
 
+import anyio
+
+from rakit_core.auth import Principal
 from rakit_core.errors import ErrorCode, RakitError
 
 
@@ -52,13 +55,20 @@ class OperationContext:
     cancellation: CancellationContext
     request_id: str = ""
     operation_id: str = ""
+    principal: Principal | None = None
     principal_id: str = ""
     admin_id: str = ""
     resource_id: str = ""
     operation: str = ""
     permissions: tuple[str, ...] = ()
-    services: object | None = None
+    services: Mapping[str, object] | None = None
     events: object | None = None
+
+    def __post_init__(self) -> None:
+        if self.principal is not None and not self.principal_id:
+            object.__setattr__(self, "principal_id", self.principal.subject_id)
+        if self.services is not None:
+            object.__setattr__(self, "services", MappingProxyType(dict(self.services)))
 
     def checkpoint(self) -> None:
         self.cancellation.check(self.deadline)
@@ -93,7 +103,7 @@ async def run_with_deadline[T](awaitable: Awaitable[T], deadline: Deadline) -> T
     if timeout <= 0:
         raise _timeout_error()
     try:
-        async with asyncio.timeout(timeout):
+        with anyio.fail_after(timeout):
             return await awaitable
     except TimeoutError as exc:
         raise _timeout_error() from exc

@@ -740,12 +740,14 @@ name = "rakit-core"
 version = "0.1.0a1"
 source = { editable = "packages/rakit-core" }
 dependencies = [
+    { name = "anyio" },
     { name = "cryptography" },
     { name = "pydantic" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", specifier = ">=4.0" },
     { name = "cryptography", specifier = ">=43" },
     { name = "pydantic", specifier = ">=2.11,<3" },
 ]

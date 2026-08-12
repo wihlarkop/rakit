@@ -167,3 +167,54 @@ async def test_commit_failure_rolls_back_without_delivering_after_commit() -> No
     assert session.rolled_back is True
     assert publisher.after_commit_calls == 0
     assert publisher.after_rollback_calls == 1
+
+
+@pytest.mark.anyio
+async def test_nested_uow_inherits_parent_session_and_outermost_owner_commits(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with SQLAlchemyUnitOfWork(session_factory) as outer:
+        outer.session.add(User(name="outer"))
+        async with SQLAlchemyUnitOfWork(session_factory) as nested:
+            assert nested.session is outer.session
+            nested.session.add(User(name="nested"))
+            await nested.mark_success()
+        # The child must not commit the parent transaction early.
+        async with session_factory() as observer:
+            assert await observer.scalar(select(func.count(User.id))) == 0
+        await outer.mark_success()
+
+    async with session_factory() as session:
+        assert await session.scalar(select(func.count(User.id))) == 2
+
+
+@pytest.mark.anyio
+async def test_explicit_nested_savepoint_rolls_back_only_child_changes(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with SQLAlchemyUnitOfWork(session_factory) as outer:
+        outer.session.add(User(name="outer"))
+        with pytest.raises(RuntimeError, match="child failure"):
+            async with SQLAlchemyUnitOfWork(session_factory, savepoint=True) as nested:
+                nested.session.add(User(name="child"))
+                raise RuntimeError("child failure")
+        await outer.mark_success()
+
+    async with session_factory() as session:
+        assert list((await session.scalars(select(User.name))).all()) == ["outer"]
+
+
+@pytest.mark.anyio
+async def test_nested_failure_without_savepoint_poison_parent_transaction(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with SQLAlchemyUnitOfWork(session_factory) as outer:
+        outer.session.add(User(name="outer"))
+        with pytest.raises(RuntimeError, match="child failure"):
+            async with SQLAlchemyUnitOfWork(session_factory) as nested:
+                nested.session.add(User(name="child"))
+                raise RuntimeError("child failure")
+        await outer.mark_success()
+
+    async with session_factory() as session:
+        assert list((await session.scalars(select(User.name))).all()) == []
