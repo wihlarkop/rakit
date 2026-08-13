@@ -708,6 +708,15 @@ class SQLAlchemyRelationshipMutationService:
                 message="Relationship mapper metadata is unavailable.",
                 status_code=500,
             )
+        if entry.definition.kind is RelationshipKind.ASSOCIATION_OBJECT and plan.kind in {
+            RelationshipMutationKind.REMOVE,
+            RelationshipMutationKind.REPLACE,
+        }:
+            # Phase 2 association-object REMOVE/REPLACE operations delete the
+            # edge object, not the semantic end target.  Parent-side
+            # delete-orphan therefore cleans up the association row only;
+            # target deletion would require a distinct semantic operation.
+            return ()
         # ``delete`` cascade applies when the parent itself is deleted.  This
         # operation only de-associates children, so only delete-orphan can
         # make the related target disappear here.

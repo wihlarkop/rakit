@@ -96,7 +96,9 @@ class Student(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     version: Mapped[int] = mapped_column(default=1)
-    enrollments: Mapped[list["Enrollment"]] = relationship(back_populates="student")
+    enrollments: Mapped[list["Enrollment"]] = relationship(
+        back_populates="student", cascade="all, delete-orphan"
+    )
 
 
 class Course(Base):
@@ -831,7 +833,7 @@ async def test_association_object_update_changes_only_declared_scalar(
     with activate_operation_context(
         _relationship_context(resource_id="students", operation=operation, requirement=requirement)
     ):
-        await service.execute(
+        result = await service.execute(
             plan,
             authorization=_relationship_authorization(
                 resource_id="students",
@@ -841,6 +843,8 @@ async def test_association_object_update_changes_only_declared_scalar(
             ),
         )
 
+    assert result.target_identities == (_identity(1),)
+    assert result.deleted_target_identities == ()
     async with session_factory() as session:
         enrollment = (await session.scalars(select(Enrollment))).one()
         assert enrollment.grade == "A"
@@ -886,6 +890,8 @@ async def test_association_object_unlink_deletes_edge_but_preserves_target(
         )
 
     assert result.target_identities == ()
+    assert result.removed_target_identities == (_identity(1),)
+    assert result.deleted_target_identities == ()
     async with session_factory() as session:
         assert list((await session.scalars(select(Enrollment))).all()) == []
         assert list((await session.scalars(select(Course.name))).all()) == ["Math"]
@@ -896,12 +902,14 @@ async def test_association_object_replace_reconciles_add_retain_update_and_remov
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     async with session_factory() as session:
-        student = Student()
         first, second, third = Course(name="First"), Course(name="Second"), Course(name="Third")
+        session.add_all((first, second, third))
+        await session.flush()
+        student = Student()
         student.enrollments.extend(
             (Enrollment(course=first, grade="B"), Enrollment(course=third, grade="C"))
         )
-        session.add_all((student, second))
+        session.add(student)
         await session.commit()
 
     service, requirement, _tokens, _store = await _association_service(session_factory)
@@ -936,6 +944,9 @@ async def test_association_object_replace_reconciles_add_retain_update_and_remov
         )
 
     assert result.target_identities == (_identity(1), _identity(2))
+    assert result.added_target_identities == (_identity(2),)
+    assert result.removed_target_identities == (_identity(3),)
+    assert result.deleted_target_identities == ()
     async with session_factory() as session:
         enrollments = list(
             (await session.scalars(select(Enrollment).order_by(Enrollment.course_id))).all()
@@ -1172,9 +1183,7 @@ async def _destructive_service(
         cardinality=RelationshipCardinality.TO_MANY,
         edit_mode=RelationshipEditMode.LINK,
         writable=True,
-        destructive_policy=RelationshipDestructivePolicy(
-            allow_delete_orphan=True, allow_destructive_cascade=True
-        ),
+        destructive_policy=RelationshipDestructivePolicy(allow_delete_orphan=True),
     )
     compiled = CompiledRelationship(
         source_resource_id="parents",
