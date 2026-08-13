@@ -569,6 +569,109 @@ def test_plan05_definition_routes_collide_and_only_global_namespaces_are_reserve
     assert caught.value.code == ErrorCode.CONFIG_RESERVED_PATH
 
 
+@pytest.mark.parametrize(
+    ("kind", "path"),
+    (
+        ("page", "/orders/_actions/custom"),
+        ("endpoint", "/orders/_actions/custom"),
+        ("page", "/orders/{identity}/_actions/custom"),
+        ("endpoint", "/orders/{identity}/_actions/custom"),
+        ("page", "/orders/{identity}/_relationships/custom"),
+        ("endpoint", "/orders/{identity}/_relationships/custom"),
+    ),
+)
+def test_application_definitions_cannot_claim_resource_reserved_subpaths(
+    kind: str, path: str
+) -> None:
+    builder = ApplicationBuilder()
+    builder.add_resource(_resource("orders", "/orders"), _DataSource())
+    if kind == "page":
+        builder.add_page(PageDefinition(page_id="custom", path=path, label="Custom"))
+    else:
+        builder.add_endpoint(
+            EndpointDefinition(endpoint_id="custom", path=path, methods=(EndpointMethod.GET,))
+        )
+
+    with pytest.raises(RakitError) as caught:
+        compile_application(builder)
+    assert caught.value.code == ErrorCode.CONFIG_RESERVED_PATH
+
+
+def test_resource_reservation_is_scoped_and_generated_routes_remain_valid() -> None:
+    relationship = RelationshipDefinition(
+        relationship_id="customer",
+        target_resource_id="customers",
+        label="Customer",
+        kind=RelationshipKind.MANY_TO_ONE,
+        cardinality=RelationshipCardinality.TO_ONE,
+    )
+    builder = ApplicationBuilder()
+    builder.add_resource(
+        _resource("orders", "/orders", relationships=(relationship,)), _DataSource()
+    )
+    builder.add_resource(_resource("customers", "/customers"), _DataSource())
+    builder.add_action(
+        ActionDefinition(
+            action_id="archive",
+            label="Archive",
+            scope=ActionScope.RESOURCE,
+            resource_id="orders",
+        )
+    )
+    builder.add_action(
+        ActionDefinition(
+            action_id="approve",
+            label="Approve",
+            scope=ActionScope.RECORD,
+            resource_id="orders",
+        )
+    )
+    builder.add_page(
+        PageDefinition(page_id="internal", path="/internal/_actions-report", label="Internal")
+    )
+    builder.add_endpoint(
+        EndpointDefinition(
+            endpoint_id="summary",
+            path="/reports/_relationships-summary",
+            methods=(EndpointMethod.GET,),
+        )
+    )
+    builder.add_route(
+        RouteDefinition(
+            route_name="host.custom.actions",
+            methods=("GET",),
+            path="/custom/_actions",
+            owner_id="host",
+        )
+    )
+    builder.add_route(
+        RouteDefinition(
+            route_name="host.custom.relationships",
+            methods=("GET",),
+            path="/custom/_relationships",
+            owner_id="host",
+        )
+    )
+    builder.add_route(
+        RouteDefinition(
+            route_name="host.orders.normal-child",
+            methods=("GET",),
+            path="/orders/foo/bar",
+            owner_id="host",
+        )
+    )
+
+    compiled = compile_application(builder)
+    expected = {
+        "/orders/_actions/archive",
+        "/orders/{identity}/_actions/approve",
+        "/orders/{identity}/_relationships/customer",
+    }
+    generated = [route for route in compiled.routes if route.path in expected]
+    assert {route.path for route in generated} == expected
+    assert all(not route.framework_owned for route in generated)
+
+
 def test_bulk_defaults_are_safe() -> None:
     policy = BulkPolicy()
     assert policy.execution is BulkExecutionPolicy.ATOMIC

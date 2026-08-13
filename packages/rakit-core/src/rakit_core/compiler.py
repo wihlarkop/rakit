@@ -76,6 +76,42 @@ def _has_path_parameter(path: str) -> bool:
     return any(_is_path_parameter(segment) for segment in path.split("/"))
 
 
+def _path_segments(path: str) -> tuple[str, ...]:
+    return () if path == "/" else tuple(path.removeprefix("/").split("/"))
+
+
+def _path_prefixes_overlap(prefix: tuple[str, ...], path: tuple[str, ...]) -> bool:
+    """Return whether an application path enters a route-pattern subtree."""
+
+    if len(path) < len(prefix):
+        return False
+    return all(
+        first == second or _is_path_parameter(first) or _is_path_parameter(second)
+        for first, second in zip(prefix, path[: len(prefix)], strict=True)
+    )
+
+
+def _uses_resource_reserved_subpath(path: str, resources: tuple[ResourceDefinition, ...]) -> bool:
+    """Keep Plan 05 resource child namespaces out of application route ownership.
+
+    `_actions` and `_relationships` are meaningful only below a compiled
+    resource's collection/record route shapes.  They are not global framework
+    namespaces, so unrelated paths can use those names without being blocked.
+    """
+
+    route_segments = _path_segments(path)
+    for resource in resources:
+        collection = _path_segments(resource.path)
+        reserved_subtrees = (
+            (*collection, RESOURCE_ACTION_SEGMENT),
+            (*collection, "{identity}", RESOURCE_ACTION_SEGMENT),
+            (*collection, "{identity}", RESOURCE_RELATIONSHIP_SEGMENT),
+        )
+        if any(_path_prefixes_overlap(prefix, route_segments) for prefix in reserved_subtrees):
+            return True
+    return False
+
+
 def _is_safe_owned_static_precedence(
     first_path: str,
     first_owner: str,
@@ -566,9 +602,8 @@ def _validate_plan05_definitions(
     )
 
 
-def _definition_routes(builder: ApplicationBuilder) -> tuple[RouteDefinition, ...]:
+def _application_definition_routes(builder: ApplicationBuilder) -> tuple[RouteDefinition, ...]:
     routes: list[RouteDefinition] = []
-    resources = {resource.resource_id: resource for resource in builder.resources}
     for page in builder.pages:
         routes.append(
             RouteDefinition(
@@ -587,6 +622,24 @@ def _definition_routes(builder: ApplicationBuilder) -> tuple[RouteDefinition, ..
                 owner_id=endpoint.endpoint_id,
             )
         )
+    for action in builder.actions:
+        if action.scope.value != "page":
+            continue
+        page = next(page for page in builder.pages if page.page_id == action.page_id)
+        routes.append(
+            RouteDefinition(
+                route_name=f"page:{page.page_id}:action:{action.action_id}",
+                methods=("GET", "POST") if action.mutating else ("GET",),
+                path=f"{page.path.rstrip('/')}/{RESOURCE_ACTION_SEGMENT}/{action.action_id}",
+                owner_id=page.page_id,
+            )
+        )
+    return tuple(routes)
+
+
+def _resource_definition_routes(builder: ApplicationBuilder) -> tuple[RouteDefinition, ...]:
+    routes: list[RouteDefinition] = []
+    resources = {resource.resource_id: resource for resource in builder.resources}
     for resource in builder.resources:
         for relationship in resource.relationships:
             routes.append(
@@ -604,21 +657,17 @@ def _definition_routes(builder: ApplicationBuilder) -> tuple[RouteDefinition, ..
             )
     for action in builder.actions:
         if action.scope.value == "page":
-            page = next(page for page in builder.pages if page.page_id == action.page_id)
-            path = f"{page.path.rstrip('/')}/{RESOURCE_ACTION_SEGMENT}/{action.action_id}"
-            owner_id = page.page_id
-            route_name = f"page:{page.page_id}:action:{action.action_id}"
-        else:
-            assert action.resource_id is not None
-            resource = resources[action.resource_id]
-            suffix = (
-                f"{{identity}}/{RESOURCE_ACTION_SEGMENT}"
-                if action.scope.value == "record"
-                else RESOURCE_ACTION_SEGMENT
-            )
-            path = f"{resource.path}/{suffix}/{action.action_id}"
-            owner_id = resource.resource_id
-            route_name = f"resource:{resource.resource_id}:action:{action.action_id}"
+            continue
+        assert action.resource_id is not None
+        resource = resources[action.resource_id]
+        suffix = (
+            f"{{identity}}/{RESOURCE_ACTION_SEGMENT}"
+            if action.scope.value == "record"
+            else RESOURCE_ACTION_SEGMENT
+        )
+        path = f"{resource.path}/{suffix}/{action.action_id}"
+        owner_id = resource.resource_id
+        route_name = f"resource:{resource.resource_id}:action:{action.action_id}"
         routes.append(
             RouteDefinition(
                 route_name=route_name,
@@ -655,7 +704,8 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
 
     seen: dict[str, list[tuple[str, str, str]]] = {}
     seen_route_names: dict[str, RouteDefinition] = {}
-    all_routes = (*builder.routes, *_definition_routes(builder))
+    application_routes = (*builder.routes, *_application_definition_routes(builder))
+    all_routes = (*application_routes, *_resource_definition_routes(builder))
     for route in all_routes:
         if not route.framework_owned and any(
             route.path == prefix or route.path.startswith(f"{prefix}/")
@@ -664,6 +714,16 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
             raise RakitError(
                 code=ErrorCode.CONFIG_RESERVED_PATH,
                 message=f'Route path "{route.path}" is reserved for framework use.',
+                status_code=500,
+                details={"path": route.path, "route_name": route.route_name},
+            )
+
+        if route in application_routes and _uses_resource_reserved_subpath(
+            route.path, builder.resources
+        ):
+            raise RakitError(
+                code=ErrorCode.CONFIG_RESERVED_PATH,
+                message=f'Route path "{route.path}" is reserved for compiled resource operations.',
                 status_code=500,
                 details={"path": route.path, "route_name": route.route_name},
             )
