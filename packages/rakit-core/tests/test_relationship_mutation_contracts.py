@@ -141,7 +141,13 @@ def test_graph_relationship_steps_are_typed_immutable_and_fingerprint_safe() -> 
 
 def test_graph_delete_step_rejects_the_removed_redundant_concurrency_field() -> None:
     with pytest.raises(ValueError, match="concurrency_token"):
-        DeleteRelated(identity=_identity(5), concurrency_token="ignored")  # type: ignore[call-arg]
+        DeleteRelated.model_validate(
+            {
+                "kind": "delete",
+                "identity": {"values": {"id": 5}},
+                "concurrency_token": "ignored",
+            }
+        )
 
 
 def test_graph_relationship_steps_reject_empty_or_duplicate_reorder_input() -> None:

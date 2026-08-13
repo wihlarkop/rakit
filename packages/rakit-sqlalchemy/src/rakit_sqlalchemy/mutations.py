@@ -683,7 +683,13 @@ class SQLAlchemyMutationService:
         # reservation the real update-normalized scalar intent without
         # running create preparation (or any form parser) a second time.
         async with self._session_factory() as preparation_session:
-            preparation_record = await self._load(preparation_session, identity)
+            # Keep this preparatory scoped read free of subclass lifecycle
+            # hooks.  The root UoW still performs the authoritative `_load`
+            # and final scoped predicate, preserving the normal scope-race
+            # conflict behavior while avoiding a second form preparation.
+            preparation_record = await preparation_session.scalar(
+                self._scoped_statement().where(*self._identity_conditions(identity))
+            )
             if preparation_record is None:
                 raise RakitError(
                     code=ErrorCode.RESOURCE_NOT_FOUND,
