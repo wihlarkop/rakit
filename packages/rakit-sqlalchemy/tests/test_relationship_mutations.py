@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from datetime import timedelta
 
 import pytest
 from rakit_auth_sqlalchemy.idempotency import SQLAlchemyIdempotencyStore
@@ -1755,3 +1756,127 @@ async def test_relationship_execution_replays_through_the_durable_idempotency_st
     async with session_factory() as session:
         record = (await session.scalars(select(IdempotencyRecord))).one()
         assert record.status == IdempotencyStatus.COMPLETED
+
+
+@pytest.mark.anyio
+async def test_destructive_confirmation_rejects_every_bound_context_dimension(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        parent = DeleteParent()
+        parent.children.append(DeleteChild(name="child"))
+        session.add(parent)
+        await session.commit()
+
+    service, relationship_requirement, delete_requirement = await _destructive_service(
+        session_factory
+    )
+    plan = await _destructive_plan(
+        service, relationship_requirement, submission="confirmation-bindings"
+    )
+    authorization = _relationship_authorization(
+        resource_id="parents",
+        operation=plan.operation_id,
+        parent_identity=_identity(1),
+        requirement=relationship_requirement,
+    )
+    delete_authorization = _target_delete_authorization(
+        operation=f"{plan.operation_id}:target-delete", requirement=delete_requirement
+    )
+    context = _relationship_context(
+        resource_id="parents",
+        operation=plan.operation_id,
+        requirement=relationship_requirement,
+        session_id="session-a",
+    )
+    with activate_operation_context(context):
+        valid_confirmation = await service.issue_destructive_confirmation(
+            plan, authorization=authorization
+        )
+    claims = service._token_service.verify(
+        valid_confirmation, expected_purpose="relationship_destructive_confirmation"
+    )
+    replacements = {
+        "admin_id": "other-admin",
+        "principal_id": "other-principal",
+        "session_id": "other-session",
+        "parent_resource_id": "other-parents",
+        "parent_identity": {"id": 2},
+        "relationship_id": "other-relationship",
+        "kind": RelationshipMutationKind.REPLACE.value,
+        "targets": [],
+        "relationship_state_digest": "other-snapshot",
+        "impact_digest": "other-impact",
+    }
+    for key, value in replacements.items():
+        invalid_claims = {**claims, key: value}
+        invalid_confirmation = service._token_service.issue_in(
+            "relationship_destructive_confirmation", invalid_claims, timedelta(minutes=15)
+        )
+        invalid_plan = plan.model_copy(update={"destructive_confirmation": invalid_confirmation})
+        with activate_operation_context(context), pytest.raises(RakitError) as caught:
+            await service.execute(
+                invalid_plan,
+                authorization=authorization,
+                target_delete_authorizations=(delete_authorization,),
+            )
+        assert caught.value.code == "auth.forbidden"
+
+
+@pytest.mark.anyio
+async def test_consumed_destructive_confirmation_nonce_cannot_be_claimed_twice(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        parent = DeleteParent()
+        parent.children.append(DeleteChild(name="child"))
+        session.add(parent)
+        await session.commit()
+
+    service, relationship_requirement, delete_requirement = await _destructive_service(
+        session_factory
+    )
+    plan = await _destructive_plan(service, relationship_requirement, submission="nonce-replay")
+    authorization = _relationship_authorization(
+        resource_id="parents",
+        operation=plan.operation_id,
+        parent_identity=_identity(1),
+        requirement=relationship_requirement,
+    )
+    delete_authorization = _target_delete_authorization(
+        operation=f"{plan.operation_id}:target-delete", requirement=delete_requirement
+    )
+    context = _destructive_context(plan.operation_id, relationship_requirement)
+    with activate_operation_context(context):
+        confirmation = await service.issue_destructive_confirmation(
+            plan, authorization=authorization
+        )
+        confirmed = plan.model_copy(update={"destructive_confirmation": confirmation})
+        entry = service._entry("children")
+        async with SQLAlchemyUnitOfWork(
+            session_factory, policy=TransactionPolicy.AUTO, operation_context=context
+        ) as uow:
+            parent = await service._parent_data_source.resolve_scoped(uow.session, _identity(1))
+            assert parent is not None
+            digest = await service._state_digest(uow.session, parent, entry)
+            await service._verify_destructive_execution(
+                uow, confirmed, entry, context, (_identity(1),), (delete_authorization,), digest
+            )
+            await uow.mark_success()
+        async with SQLAlchemyUnitOfWork(
+            session_factory, policy=TransactionPolicy.AUTO, operation_context=context
+        ) as uow:
+            parent = await service._parent_data_source.resolve_scoped(uow.session, _identity(1))
+            assert parent is not None
+            digest = await service._state_digest(uow.session, parent, entry)
+            with pytest.raises(RakitError) as caught:
+                await service._verify_destructive_execution(
+                    uow,
+                    confirmed,
+                    entry,
+                    context,
+                    (_identity(1),),
+                    (delete_authorization,),
+                    digest,
+                )
+            assert caught.value.code == "resource.conflict"
