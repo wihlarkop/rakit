@@ -1,5 +1,12 @@
 import pytest
-from rakit_core.actions import ActionScope
+from pydantic import BaseModel
+from rakit_core.actions import (
+    ActionRedirect,
+    ActionRefresh,
+    ActionRejected,
+    ActionScope,
+    ActionSuccess,
+)
 from rakit_core.auth import Principal
 from rakit_core.bulk import BulkExecutionPolicy, BulkPolicy
 from rakit_core.compiler import ApplicationBuilder, compile_application
@@ -12,7 +19,11 @@ from rakit_core.definitions import (
     ResourceFieldPolicy,
     RouteDefinition,
 )
-from rakit_core.endpoints import EndpointMethod
+from rakit_core.endpoints import (
+    EndpointAccessPolicy,
+    EndpointMethod,
+    EndpointResponseKind,
+)
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import OperationAuthorization
@@ -30,6 +41,7 @@ from rakit_core.relationships import (
     RelationshipDefinition,
     RelationshipDestructivePolicy,
     RelationshipKind,
+    resolve_record_label,
 )
 from rakit_core.transactions import TransactionPolicy
 
@@ -100,6 +112,7 @@ async def test_operation_plan_reuses_exact_context_authorization_and_typed_resul
         resource_id="orders",
         operation="action:approve",
         permissions=("admin.actions.approve.execute",),
+        permission_requirement=PermissionRequirement.all_of("admin.actions.approve.execute"),
     )
 
     assert await execute_operation_plan(plan, context) == 4
@@ -139,6 +152,112 @@ async def test_operation_plan_fails_closed_for_context_mismatch() -> None:
     )
     with pytest.raises(RakitError) as caught:
         await execute_operation_plan(plan, context)
+    assert caught.value.code == ErrorCode.AUTH_FORBIDDEN
+
+
+@pytest.mark.anyio
+async def test_operation_authorization_binds_the_exact_requirement_without_rechecking_rbac(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = PermissionRequirement.any_of("approve", "override")
+    authorization = OperationAuthorization(
+        "admin",
+        "orders",
+        "action:approve",
+        "operator",
+        ("approve", "override"),
+        permission_mode="any",
+    )
+    plan = OperationPlan(
+        operation_id="approve",
+        kind=OperationKind.ACTION,
+        input=None,
+        authorization=authorization,
+        execute=lambda _context, _input: "ok",
+    )
+    context = OperationContext(
+        deadline=None,
+        cancellation=CancellationContext(),
+        admin_id="admin",
+        resource_id="orders",
+        operation="action:approve",
+        principal_id="operator",
+        permission_requirement=expected,
+    )
+
+    monkeypatch.setattr(
+        PermissionRequirement,
+        "matches",
+        lambda _self, _principal: (_ for _ in ()).throw(AssertionError("RBAC was re-run")),
+    )
+    assert await execute_operation_plan(plan, context) == "ok"
+
+    all_mode_context = OperationContext(
+        deadline=None,
+        cancellation=CancellationContext(),
+        admin_id="admin",
+        resource_id="orders",
+        operation="action:approve",
+        principal_id="operator",
+        permission_requirement=PermissionRequirement.all_of("approve", "override"),
+    )
+    with pytest.raises(RakitError) as caught:
+        await execute_operation_plan(plan, all_mode_context)
+    assert caught.value.code == ErrorCode.AUTH_FORBIDDEN
+
+
+@pytest.mark.anyio
+async def test_operation_authorization_requires_a_capability_and_binds_record_targets() -> None:
+    requirement = PermissionRequirement.all_of("approve")
+    target = RecordIdentity(values={"id": 7})
+    authorization = OperationAuthorization.for_requirement(
+        admin_id="admin",
+        resource_id="orders",
+        operation="action:approve",
+        principal_id="operator",
+        requirement=requirement,
+        target_identity=target,
+    )
+    context = OperationContext(
+        deadline=None,
+        cancellation=CancellationContext(),
+        admin_id="admin",
+        resource_id="orders",
+        operation="action:approve",
+        principal_id="operator",
+        permission_requirement=requirement,
+    )
+    plan = OperationPlan(
+        operation_id="approve",
+        kind=OperationKind.ACTION,
+        input=None,
+        authorization=authorization,
+        target_identity=target,
+        execute=lambda _context, _input: "ok",
+    )
+    assert await execute_operation_plan(plan, context) == "ok"
+
+    missing = OperationPlan(
+        operation_id="missing",
+        kind=OperationKind.ACTION,
+        input=None,
+        authorization=None,
+        execute=lambda _context, _input: "never",
+    )
+    with pytest.raises(RakitError) as caught:
+        await execute_operation_plan(missing, context)
+    assert caught.value.code == ErrorCode.AUTH_FORBIDDEN
+
+    mismatched_target = plan.__class__(
+        operation_id=plan.operation_id,
+        kind=plan.kind,
+        input=plan.input,
+        authorization=plan.authorization,
+        target_identity=RecordIdentity(values={"id": 8}),
+        execute=plan.execute,
+    )
+    with pytest.raises(RakitError) as caught:
+        await execute_operation_plan(mismatched_target, context)
     assert caught.value.code == ErrorCode.AUTH_FORBIDDEN
 
 
@@ -198,6 +317,156 @@ def test_compiles_plan05_definitions_routes_and_permission_metadata() -> None:
     )
 
 
+def test_page_actions_have_explicit_page_ownership_and_compiled_routes() -> None:
+    builder = ApplicationBuilder()
+    builder.add_page(PageDefinition(page_id="report", path="/reports", label="Report"))
+    builder.add_action(
+        ActionDefinition(
+            action_id="refresh",
+            label="Refresh",
+            scope=ActionScope.PAGE,
+            page_id="report",
+        )
+    )
+
+    compiled = compile_application(builder)
+    assert any(route.path == "/reports/_actions/refresh" for route in compiled.routes)
+    assert not next(
+        route for route in compiled.routes if route.path == "/reports/_actions/refresh"
+    ).framework_owned
+
+    with pytest.raises(ValueError, match="page_id"):
+        ActionDefinition(action_id="orphan", label="Orphan", scope=ActionScope.PAGE)
+
+    unknown = ApplicationBuilder()
+    unknown.add_action(
+        ActionDefinition(
+            action_id="unknown", label="Unknown", scope=ActionScope.PAGE, page_id="missing"
+        )
+    )
+    with pytest.raises(RakitError) as caught:
+        compile_application(unknown)
+    assert caught.value.details["reason"] == "page_owner_not_registered"
+
+    colliding = ApplicationBuilder()
+    colliding.add_page(PageDefinition(page_id="report", path="/reports", label="Report"))
+    colliding.add_action(
+        ActionDefinition(
+            action_id="refresh", label="Refresh", scope=ActionScope.PAGE, page_id="report"
+        )
+    )
+    colliding.add_endpoint(
+        EndpointDefinition(
+            endpoint_id="same_path",
+            path="/reports/_actions/refresh",
+            methods=(EndpointMethod.GET,),
+        )
+    )
+    with pytest.raises(RakitError) as caught:
+        compile_application(colliding)
+    assert caught.value.code == ErrorCode.CONFIG_ROUTE_COLLISION
+
+
+def test_action_and_endpoint_semantic_contracts_are_explicit() -> None:
+    assert ActionSuccess(payload={"ok": True}).payload == {"ok": True}
+    assert ActionRedirect(location="/orders").location == "/orders"
+    assert ActionRefresh(target="orders-table").target == "orders-table"
+    assert ActionRejected(errors={"reason": "not allowed"}).errors == {"reason": "not allowed"}
+    with pytest.raises(ValueError, match="absolute"):
+        ActionRedirect(location="orders")
+    with pytest.raises(ValueError, match="requires errors"):
+        ActionRejected(errors={})
+
+    class EndpointInput(BaseModel):
+        order_id: int
+
+    class EndpointOutput(BaseModel):
+        accepted: bool
+
+    typed = EndpointDefinition(
+        endpoint_id="typed",
+        path="/typed",
+        methods=(EndpointMethod.GET,),
+        input_schema=EndpointInput,
+        input_source="query",
+        output_schema=EndpointOutput,
+    )
+    assert typed.output_schema is EndpointOutput
+    assert typed.response_kind is EndpointResponseKind.JSON
+
+    public = EndpointDefinition(
+        endpoint_id="public", path="/public", methods=(EndpointMethod.GET,), access_policy="public"
+    )
+    assert public.access_policy is EndpointAccessPolicy.PUBLIC
+
+    endpoint = EndpointDefinition(
+        endpoint_id="download",
+        path="/exports/orders",
+        methods=(EndpointMethod.GET,),
+        output_schema=None,
+        response_kind=EndpointResponseKind.FILE,
+        allow_response_escape_hatch=True,
+    )
+    assert endpoint.access_policy is EndpointAccessPolicy.PRIVATE
+    assert endpoint.response_kind is EndpointResponseKind.FILE
+    with pytest.raises(ValueError, match="escape hatch"):
+        EndpointDefinition(
+            endpoint_id="unsafe",
+            path="/unsafe",
+            methods=(EndpointMethod.GET,),
+            response_kind=EndpointResponseKind.STREAM,
+        )
+
+
+def test_relationship_labels_validate_declared_fields_and_resolver_output() -> None:
+    relationship = RelationshipDefinition(
+        relationship_id="customer",
+        target_resource_id="customers",
+        label="Customer",
+        kind=RelationshipKind.MANY_TO_ONE,
+        cardinality=RelationshipCardinality.TO_ONE,
+        record_label_field="name",
+    )
+    assert resolve_record_label(relationship, {"name": "Ada"}) == "Ada"
+
+    custom = relationship.model_copy(
+        update={"record_label_field": None, "record_label_resolver": lambda record: record["code"]}
+    )
+    assert resolve_record_label(custom, {"code": "C-1"}) == "C-1"
+    invalid = custom.model_copy(update={"record_label_resolver": lambda _record: 3})
+    with pytest.raises(TypeError, match="must return str"):
+        resolve_record_label(invalid, {})
+    with pytest.raises(ValueError, match="either"):
+        RelationshipDefinition(
+            relationship_id="bad_label",
+            target_resource_id="customers",
+            label="Bad",
+            kind=RelationshipKind.MANY_TO_ONE,
+            cardinality=RelationshipCardinality.TO_ONE,
+            record_label_field="name",
+            record_label_resolver=lambda _record: "name",
+        )
+
+
+def test_compilation_rejects_unknown_record_label_fields() -> None:
+    relationship = RelationshipDefinition(
+        relationship_id="customer",
+        target_resource_id="customers",
+        label="Customer",
+        kind=RelationshipKind.MANY_TO_ONE,
+        cardinality=RelationshipCardinality.TO_ONE,
+        record_label_field="missing",
+    )
+    builder = ApplicationBuilder()
+    builder.add_resource(
+        _resource("orders", "/orders", relationships=(relationship,)), _DataSource()
+    )
+    builder.add_resource(_resource("customers", "/customers"), _DataSource())
+    with pytest.raises(RakitError) as caught:
+        compile_application(builder)
+    assert caught.value.details["reason"] == "record_label_field_not_found"
+
+
 def test_destructive_relationship_compiles_target_delete_requirement() -> None:
     relationship = RelationshipDefinition(
         relationship_id="customer",
@@ -247,7 +516,7 @@ def test_relationship_permission_override_and_missing_target_fail_closed() -> No
     assert caught.value.details["reason"] == "target_resource_not_registered"
 
 
-def test_plan05_definition_routes_collide_and_framework_segments_remain_reserved() -> None:
+def test_plan05_definition_routes_collide_and_only_global_namespaces_are_reserved() -> None:
     builder = ApplicationBuilder()
     builder.add_page(PageDefinition(page_id="status", path="/status", label="Status"))
     builder.add_route(
@@ -262,17 +531,41 @@ def test_plan05_definition_routes_collide_and_framework_segments_remain_reserved
         compile_application(builder)
     assert collision.value.code == ErrorCode.CONFIG_ROUTE_COLLISION
 
-    reserved = ApplicationBuilder()
-    reserved.add_route(
+    unrelated = ApplicationBuilder()
+    unrelated.add_route(
         RouteDefinition(
             route_name="host.action",
             methods=("GET",),
-            path="/orders/{identity}/_actions/export",
+            path="/internal/_actions-report",
+            owner_id="host",
+        )
+    )
+    assert compile_application(unrelated).routes[0].path == "/internal/_actions-report"
+
+    reserved = ApplicationBuilder()
+    reserved.add_route(
+        RouteDefinition(
+            route_name="host.auth",
+            methods=("GET",),
+            path="/auth/custom",
             owner_id="host",
         )
     )
     with pytest.raises(RakitError) as caught:
         compile_application(reserved)
+    assert caught.value.code == ErrorCode.CONFIG_RESERVED_PATH
+
+    system = ApplicationBuilder()
+    system.add_route(
+        RouteDefinition(
+            route_name="host.system",
+            methods=("GET",),
+            path="/_system/health",
+            owner_id="host",
+        )
+    )
+    with pytest.raises(RakitError) as caught:
+        compile_application(system)
     assert caught.value.code == ErrorCode.CONFIG_RESERVED_PATH
 
 
@@ -282,3 +575,11 @@ def test_bulk_defaults_are_safe() -> None:
     assert policy.confirmation_threshold == 25
     assert policy.synchronous_maximum == 1000
     assert policy.require_concurrency_snapshot is True
+    assert (
+        BulkPolicy(confirmation_threshold=10, synchronous_maximum=500).confirmation_threshold == 10
+    )
+    with pytest.raises(ValueError):
+        BulkPolicy(confirmation_threshold=26)
+    with pytest.raises(ValueError):
+        BulkPolicy(synchronous_maximum=1001)
+    assert BulkPolicy(execution=BulkExecutionPolicy.BEST_EFFORT).synchronous_maximum == 1000

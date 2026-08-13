@@ -33,12 +33,50 @@ class OperationAuthorization:
     principal_id: str
     permissions: tuple[str, ...]
     permission_mode: Literal["all", "any"] = "all"
+    permission_requirement: PermissionRequirement | None = None
+    target_identity: RecordIdentity | None = None
+
+    def __post_init__(self) -> None:
+        derived_requirement = PermissionRequirement(
+            mode=self.permission_mode, permissions=self.permissions
+        )
+        if self.permission_requirement is None:
+            object.__setattr__(self, "permission_requirement", derived_requirement)
+        elif self.permission_requirement != derived_requirement:
+            raise ValueError(
+                "permission_requirement must exactly match permissions and permission_mode"
+            )
 
     @property
     def requirement(self) -> PermissionRequirement:
         """The exact compiled requirement represented by this trusted capability."""
 
-        return PermissionRequirement(mode=self.permission_mode, permissions=self.permissions)
+        assert self.permission_requirement is not None
+        return self.permission_requirement
+
+    @classmethod
+    def for_requirement(
+        cls,
+        *,
+        admin_id: str,
+        resource_id: str,
+        operation: str,
+        principal_id: str,
+        requirement: PermissionRequirement,
+        target_identity: RecordIdentity | None = None,
+    ) -> "OperationAuthorization":
+        """Construct a capability from the canonical compiled requirement."""
+
+        return cls(
+            admin_id=admin_id,
+            resource_id=resource_id,
+            operation=operation,
+            principal_id=principal_id,
+            permissions=requirement.permissions,
+            permission_mode=requirement.mode,
+            permission_requirement=requirement,
+            target_identity=target_identity,
+        )
 
 
 # Kept as an alias: existing CRUD signatures and public imports retain their

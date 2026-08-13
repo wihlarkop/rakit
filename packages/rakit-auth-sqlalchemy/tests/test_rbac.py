@@ -4,8 +4,14 @@ import pytest
 from rakit_auth_sqlalchemy.models import Base, Permission
 from rakit_auth_sqlalchemy.rbac import BuiltinAuthorizationPolicy, sync_permissions
 from rakit_core.auth import Principal
+from rakit_core.definitions import ResourceDefinition
 from rakit_core.permission_catalogue import PermissionCatalogue, PermissionDefinition
 from rakit_core.permissions import PermissionRequirement
+from rakit_core.relationships import (
+    RelationshipCardinality,
+    RelationshipDefinition,
+    RelationshipKind,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -114,7 +120,54 @@ async def test_resync_clears_orphaned_flag_when_definition_returns(session_facto
 
     async with session_factory() as session:
         permission = (await session.execute(select(Permission))).scalar_one()
-        assert permission.orphaned is False
+    assert permission.orphaned is False
+
+
+async def test_removing_a_granular_relationship_permission_orphans_its_catalogue_key(
+    session_factory,
+) -> None:
+    relationship = RelationshipDefinition(
+        relationship_id="approvers",
+        target_resource_id="users",
+        label="Approvers",
+        kind=RelationshipKind.MANY_TO_MANY,
+        cardinality=RelationshipCardinality.TO_MANY,
+        permission=PermissionRequirement.all_of("operations.relationships.approvers.manage"),
+    )
+    configured = ResourceDefinition(
+        resource_id="orders",
+        path="/orders",
+        label="Orders",
+        singular_label="Order",
+        relationships=(relationship,),
+    )
+    removed = configured.model_copy(update={"relationships": ()})
+    from rakit_core.permission_catalogue import generate_permission_catalogue
+
+    async with session_factory() as session:
+        await sync_permissions(
+            session,
+            generate_permission_catalogue(
+                admin_id="operations", admin_label="Operations", resources=(configured,)
+            ),
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        await sync_permissions(
+            session,
+            generate_permission_catalogue(
+                admin_id="operations", admin_label="Operations", resources=(removed,)
+            ),
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        permission = await session.scalar(
+            select(Permission).where(Permission.key == "operations.relationships.approvers.manage")
+        )
+    assert permission is not None
+    assert permission.orphaned is True
 
 
 async def test_sync_updates_label_and_group_for_existing_key(session_factory) -> None:

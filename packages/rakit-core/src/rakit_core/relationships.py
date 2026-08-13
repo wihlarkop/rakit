@@ -1,5 +1,6 @@
 """Backend-neutral relationship declarations compiled by data-source adapters."""
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -7,6 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from rakit_core.config import MachineId
 from rakit_core.permissions import PermissionRequirement
+
+type RecordLabelResolver = Callable[[object], str]
 
 
 class RelationshipKind(StrEnum):
@@ -33,7 +36,7 @@ class RelationshipEditMode(StrEnum):
 class RelationshipDestructivePolicy(BaseModel):
     """Host policy; mapper cascade facts never enable this automatically."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     allow_child_delete: bool = False
     allow_delete_orphan: bool = False
@@ -72,6 +75,7 @@ class RelationshipDefinition(BaseModel):
     association_fields: tuple[str, ...] = ()
     association_target_resource_id: MachineId | None = None
     record_label_field: str | None = None
+    record_label_resolver: RecordLabelResolver | None = None
     loading_strategy: str = "selectin"
     max_nested_depth: int = Field(default=1, ge=1)
 
@@ -96,6 +100,8 @@ class RelationshipDefinition(BaseModel):
                 raise ValueError("association objects require association_target_resource_id")
         elif self.association_target_resource_id is not None:
             raise ValueError("association_target_resource_id requires an association object")
+        if self.record_label_field is not None and self.record_label_resolver is not None:
+            raise ValueError("Specify either record_label_field or record_label_resolver, not both")
         return self
 
     @property
@@ -104,6 +110,27 @@ class RelationshipDefinition(BaseModel):
             RelationshipEditMode.READ_ONLY,
             RelationshipEditMode.HIDDEN,
         }
+
+
+def resolve_record_label(definition: RelationshipDefinition, record: object) -> str:
+    """Resolve a plain-text label from an already-visible safe record view.
+
+    This helper does not grant visibility and deliberately returns text only;
+    any future HTML escaping/rendering remains a web-adapter responsibility.
+    """
+
+    if definition.record_label_resolver is not None:
+        value = definition.record_label_resolver(record)
+    elif definition.record_label_field is not None:
+        if isinstance(record, Mapping):
+            value = record.get(definition.record_label_field)
+        else:
+            value = getattr(record, definition.record_label_field, None)
+    else:
+        raise ValueError("Relationship does not declare a record label resolver")
+    if not isinstance(value, str):
+        raise TypeError("Record label resolver must return str")
+    return value
 
 
 class RelationshipMetadata(BaseModel):

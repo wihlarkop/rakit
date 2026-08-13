@@ -7,7 +7,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .actions import ActionScope
 from .bulk import BulkPolicy
 from .config import MachineId
-from .endpoints import EndpointInputSource, EndpointMethod
+from .endpoints import (
+    EndpointAccessPolicy,
+    EndpointInputSource,
+    EndpointMethod,
+    EndpointResponseKind,
+)
 from .permissions import PermissionRequirement
 from .relationships import RelationshipDefinition
 from .transactions import TransactionPolicy
@@ -69,6 +74,10 @@ class EndpointDefinition(BaseModel):
     permission: PermissionRequirement | None = None
     input_schema: type[BaseModel] | None = None
     input_source: EndpointInputSource | None = None
+    output_schema: type[BaseModel] | None = None
+    access_policy: EndpointAccessPolicy = EndpointAccessPolicy.PRIVATE
+    response_kind: EndpointResponseKind = EndpointResponseKind.JSON
+    allow_response_escape_hatch: bool = False
     handler: Callable[..., object] | None = None
     mutating: bool = False
     transaction_policy: TransactionPolicy = TransactionPolicy.READ_ONLY
@@ -78,6 +87,17 @@ class EndpointDefinition(BaseModel):
         _validate_operation_transaction_policy(self.mutating, self.transaction_policy)
         if EndpointMethod.POST in self.methods and not self.mutating:
             raise ValueError("POST endpoints must explicitly declare mutating behavior")
+        if self.access_policy is EndpointAccessPolicy.PUBLIC and self.permission is not None:
+            raise ValueError(
+                "Public endpoints cannot also declare a private permission requirement"
+            )
+        if (
+            self.response_kind is not EndpointResponseKind.JSON
+            and not self.allow_response_escape_hatch
+        ):
+            raise ValueError("Non-JSON endpoint responses require explicit escape hatch opt-in")
+        if self.response_kind is not EndpointResponseKind.JSON and self.output_schema is not None:
+            raise ValueError("Non-JSON endpoint responses cannot declare a JSON output schema")
         return self
 
 
@@ -88,6 +108,7 @@ class ActionDefinition(BaseModel):
     label: str
     scope: ActionScope
     resource_id: MachineId | None = None
+    page_id: MachineId | None = None
     permission: PermissionRequirement | None = None
     input_schema: type[BaseModel] | None = None
     handler: Callable[..., object] | None = None
@@ -95,12 +116,25 @@ class ActionDefinition(BaseModel):
     transaction_policy: TransactionPolicy = TransactionPolicy.READ_ONLY
     confirmation_required: bool = False
     bulk_policy: BulkPolicy | None = None
+    allow_response_escape_hatch: bool = False
 
     @model_validator(mode="after")
     def _validate_action_contract(self) -> "ActionDefinition":
         _validate_operation_transaction_policy(self.mutating, self.transaction_policy)
         if self.scope is ActionScope.BULK and self.bulk_policy is None:
             object.__setattr__(self, "bulk_policy", BulkPolicy())
+        if self.scope is ActionScope.PAGE:
+            if self.page_id is None:
+                raise ValueError("PAGE actions require page_id")
+            if self.resource_id is not None:
+                raise ValueError("PAGE actions cannot also declare resource_id")
+        else:
+            if self.resource_id is None:
+                raise ValueError("Resource, record, and bulk actions require resource_id")
+            if self.page_id is not None:
+                raise ValueError("Only PAGE actions may declare page_id")
+        if self.scope is not ActionScope.BULK and self.bulk_policy is not None:
+            raise ValueError("Only BULK actions may declare bulk_policy")
         return self
 
 

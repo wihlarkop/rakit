@@ -343,32 +343,46 @@ def test_sqlalchemy_plan04_facade_reexports_concrete_implementations() -> None:
 
 
 def test_plan05_foundation_contracts_preserve_facade_identity() -> None:
-    from rakit import ActionResult
+    from rakit import ActionResult, ActionSuccess
     from rakit.core import (
+        ActionRedirect,
         ActionDefinition,
         BulkPolicy,
+        EndpointAccessPolicy,
+        EndpointResponseKind,
         OperationAuthorization,
         OperationPlan,
         RelationshipDefinition,
         RelationshipKind,
+        resolve_record_label,
     )
     from rakit_core.actions import ActionResult as RealActionResult
+    from rakit_core.actions import ActionRedirect as RealActionRedirect
+    from rakit_core.actions import ActionSuccess as RealActionSuccess
     from rakit_core.bulk import BulkPolicy as RealBulkPolicy
     from rakit_core.definitions import ActionDefinition as RealActionDefinition
+    from rakit_core.endpoints import EndpointAccessPolicy as RealEndpointAccessPolicy
+    from rakit_core.endpoints import EndpointResponseKind as RealEndpointResponseKind
     from rakit_core.mutations import OperationAuthorization as RealOperationAuthorization
     from rakit_core.operations import OperationPlan as RealOperationPlan
     from rakit_core.relationships import (
         RelationshipDefinition as RealRelationshipDefinition,
     )
     from rakit_core.relationships import RelationshipKind as RealRelationshipKind
+    from rakit_core.relationships import resolve_record_label as RealResolveRecordLabel
 
     assert ActionResult is RealActionResult
+    assert ActionSuccess is RealActionSuccess
+    assert ActionRedirect is RealActionRedirect
     assert ActionDefinition is RealActionDefinition
     assert BulkPolicy is RealBulkPolicy
     assert OperationAuthorization is RealOperationAuthorization
     assert OperationPlan is RealOperationPlan
     assert RelationshipDefinition is RealRelationshipDefinition
     assert RelationshipKind is RealRelationshipKind
+    assert EndpointAccessPolicy is RealEndpointAccessPolicy
+    assert EndpointResponseKind is RealEndpointResponseKind
+    assert resolve_record_label is RealResolveRecordLabel
 
 
 def test_sqlalchemy_plan05_facade_reexports_relationship_inspection() -> None:

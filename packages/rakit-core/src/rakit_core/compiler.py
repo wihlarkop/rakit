@@ -27,7 +27,10 @@ from .relationships import CompiledRelationship
 # would be served to anonymous callers with no permission check at all.
 # Only routes flagged `framework_owned` may live here.
 RESERVED_PATH_PREFIXES = ("/_system", "/auth")
-RESERVED_RESOURCE_SEGMENTS = frozenset({"_actions", "_relationships"})
+# These are static children that only compiled resource definitions claim.
+# They are intentionally not global framework namespaces like `/auth`.
+RESOURCE_ACTION_SEGMENT = "_actions"
+RESOURCE_RELATIONSHIP_SEGMENT = "_relationships"
 
 OFFICIAL_PACKAGE_NAMES = (
     "rakit",
@@ -71,10 +74,6 @@ def _path_patterns_overlap(first: str, second: str) -> bool:
 
 def _has_path_parameter(path: str) -> bool:
     return any(_is_path_parameter(segment) for segment in path.split("/"))
-
-
-def _uses_reserved_resource_segment(path: str) -> bool:
-    return bool(RESERVED_RESOURCE_SEGMENTS.intersection(path.removeprefix("/").split("/")))
 
 
 def _is_safe_owned_static_precedence(
@@ -349,6 +348,15 @@ def _duplicate_definition(kind: str, identifier: str) -> RakitError:
     )
 
 
+def _invalid_definition(kind: str, identifier: str, reason: str) -> RakitError:
+    return RakitError(
+        code=ErrorCode.CONFIG_INVALID,
+        message=f'Invalid {kind} definition "{identifier}".',
+        status_code=500,
+        details={"kind": kind, "identifier": identifier, "reason": reason},
+    )
+
+
 def _invalid_relationship(resource_id: str, relationship_id: str, reason: str) -> RakitError:
     return RakitError(
         code=ErrorCode.CONFIG_INVALID,
@@ -455,10 +463,14 @@ def _validate_plan05_definitions(
                     relationship.relationship_id,
                     "target_resource_not_registered",
                 )
-            if relationship.destructive_policy.permits_persistent_delete and target is None:
-                raise _invalid_relationship(
-                    resource.resource_id, relationship.relationship_id, "target_delete_unresolvable"
-                )
+            if relationship.record_label_field is not None:
+                target_fields = tuple(builder._resource_data_sources[target.resource_id].fields)
+                if relationship.record_label_field not in target_fields:
+                    raise _invalid_relationship(
+                        resource.resource_id,
+                        relationship.relationship_id,
+                        "record_label_field_not_found",
+                    )
             if relationship.association_fields and relationship.kind.value != "association_object":
                 raise _invalid_relationship(
                     resource.resource_id,
@@ -507,18 +519,19 @@ def _validate_plan05_definitions(
                     mutation_permission=mutation_permission,
                     target_delete_permission=target_delete_permission,
                     route_path=(
-                        f"{resource.path}/{{identity}}/_relationships/{relationship.relationship_id}"
+                        f"{resource.path}/{{identity}}/{RESOURCE_RELATIONSHIP_SEGMENT}/"
+                        f"{relationship.relationship_id}"
                     ),
                 )
             )
 
+    pages = {page.page_id: page for page in builder.pages}
     for action in builder.actions:
-        if action.scope.value in {"resource", "record", "bulk"} and (
-            action.resource_id is None or action.resource_id not in resources
-        ):
-            raise _duplicate_definition("action", action.action_id)
-        if action.scope.value != "bulk" and action.bulk_policy is not None:
-            raise _duplicate_definition("action", action.action_id)
+        if action.scope.value == "page":
+            if action.page_id not in pages:
+                raise _invalid_definition("action", action.action_id, "page_owner_not_registered")
+        elif action.resource_id not in resources:
+            raise _invalid_definition("action", action.action_id, "resource_owner_not_registered")
         compiled_actions.append(
             CompiledActionDefinition(
                 definition=action,
@@ -583,27 +596,35 @@ def _definition_routes(builder: ApplicationBuilder) -> tuple[RouteDefinition, ..
                     ),
                     methods=("GET", "POST"),
                     path=(
-                        f"{resource.path}/{{identity}}/_relationships/"
+                        f"{resource.path}/{{identity}}/{RESOURCE_RELATIONSHIP_SEGMENT}/"
                         f"{relationship.relationship_id}"
                     ),
                     owner_id=resource.resource_id,
-                    framework_owned=True,
                 )
             )
     for action in builder.actions:
         if action.scope.value == "page":
-            continue
-        if action.resource_id is None:
-            continue
-        resource = resources[action.resource_id]
-        suffix = "{identity}/_actions" if action.scope.value == "record" else "_actions"
+            page = next(page for page in builder.pages if page.page_id == action.page_id)
+            path = f"{page.path.rstrip('/')}/{RESOURCE_ACTION_SEGMENT}/{action.action_id}"
+            owner_id = page.page_id
+            route_name = f"page:{page.page_id}:action:{action.action_id}"
+        else:
+            assert action.resource_id is not None
+            resource = resources[action.resource_id]
+            suffix = (
+                f"{{identity}}/{RESOURCE_ACTION_SEGMENT}"
+                if action.scope.value == "record"
+                else RESOURCE_ACTION_SEGMENT
+            )
+            path = f"{resource.path}/{suffix}/{action.action_id}"
+            owner_id = resource.resource_id
+            route_name = f"resource:{resource.resource_id}:action:{action.action_id}"
         routes.append(
             RouteDefinition(
-                route_name=f"resource:{resource.resource_id}:action:{action.action_id}",
+                route_name=route_name,
                 methods=("GET", "POST") if action.mutating else ("GET",),
-                path=f"{resource.path}/{suffix}/{action.action_id}",
-                owner_id=resource.resource_id,
-                framework_owned=True,
+                path=path,
+                owner_id=owner_id,
             )
         )
     return tuple(routes)
@@ -643,14 +664,6 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
             raise RakitError(
                 code=ErrorCode.CONFIG_RESERVED_PATH,
                 message=f'Route path "{route.path}" is reserved for framework use.',
-                status_code=500,
-                details={"path": route.path, "route_name": route.route_name},
-            )
-
-        if not route.framework_owned and _uses_reserved_resource_segment(route.path):
-            raise RakitError(
-                code=ErrorCode.CONFIG_RESERVED_PATH,
-                message=f'Route path "{route.path}" uses a reserved framework segment.',
                 status_code=500,
                 details={"path": route.path, "route_name": route.route_name},
             )

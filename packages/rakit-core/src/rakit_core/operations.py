@@ -19,6 +19,7 @@ from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.events import EventPublisher
 from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import OperationAuthorization
+from rakit_core.permissions import PermissionRequirement
 from rakit_core.transactions import TransactionPolicy
 
 
@@ -83,7 +84,7 @@ class OperationPlan[TInput, TResult]:
     operation_id: str
     kind: OperationKind
     input: TInput
-    authorization: OperationAuthorization
+    authorization: OperationAuthorization | None
     execute: OperationExecutor[TInput, TResult]
     target_identity: RecordIdentity | None = None
     mutating: bool = False
@@ -107,22 +108,29 @@ def validate_operation_authorization[TInput, TResult](
     """Fail closed before a generic operation executor calls application code."""
 
     authorization = plan.authorization
+    if authorization is None:
+        raise RakitError(
+            code=ErrorCode.AUTH_FORBIDDEN,
+            message="Operation execution requires an explicit authorization capability.",
+            status_code=403,
+        )
     if (
         context.admin_id != authorization.admin_id
         or context.operation != authorization.operation
         or context.principal_id != authorization.principal_id
         or context.resource_id != authorization.resource_id
-        or context.permissions != authorization.permissions
+        or authorization.target_identity != plan.target_identity
     ):
         raise RakitError(
             code=ErrorCode.AUTH_FORBIDDEN,
             message="Operation authorization does not match the active context.",
             status_code=403,
         )
-    if context.principal is None or not authorization.requirement.matches(context.principal):
+    expected_requirement = context.permission_requirement
+    if expected_requirement is None or authorization.requirement != expected_requirement:
         raise RakitError(
             code=ErrorCode.AUTH_FORBIDDEN,
-            message="The active principal is not authorized for this operation.",
+            message="Operation authorization does not bind the expected permission requirement.",
             status_code=403,
         )
 
@@ -152,6 +160,7 @@ class OperationContext:
     resource_id: str = ""
     operation: str = ""
     permissions: tuple[str, ...] = ()
+    permission_requirement: PermissionRequirement | None = None
     services: ServiceResolver | None = None
     events: EventPublisher | None = None
 

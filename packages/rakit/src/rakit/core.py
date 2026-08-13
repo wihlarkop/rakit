@@ -1,4 +1,15 @@
-from rakit_core.actions import ActionAvailability, ActionResult, ActionScope
+from rakit_core.actions import (
+    ActionAdvancedResponse,
+    ActionAvailability,
+    ActionRedirect,
+    ActionRefresh,
+    ActionRejected,
+    ActionRendered,
+    ActionResponseKind,
+    ActionResult,
+    ActionScope,
+    ActionSuccess,
+)
 from rakit_core.auth import (
     ANONYMOUS_PRINCIPAL,
     AuthBackend,
@@ -6,7 +17,12 @@ from rakit_core.auth import (
     SessionRecord,
     SessionStore,
 )
-from rakit_core.bulk import BulkExecutionPolicy, BulkPolicy
+from rakit_core.bulk import (
+    BULK_CONFIRMATION_THRESHOLD_MAXIMUM,
+    SYNCHRONOUS_BULK_TARGETS_MAXIMUM,
+    BulkExecutionPolicy,
+    BulkPolicy,
+)
 from rakit_core.compatibility import validate_official_package_versions
 from rakit_core.compiler import ApplicationBuilder, CompiledApplication, Plugin
 from rakit_core.concurrency import (
@@ -33,6 +49,12 @@ from rakit_core.definitions import (
 )
 from rakit_core.deletion import DeletePolicy, DeletionPlan, HardDeletePolicy
 from rakit_core.di import ServiceKey, ServiceRegistry, ServiceResolver, ServiceScope
+from rakit_core.endpoints import (
+    EndpointAccessPolicy,
+    EndpointInputSource,
+    EndpointMethod,
+    EndpointResponseKind,
+)
 from rakit_core.errors import (
     ErrorCode,
     ErrorDetail,
@@ -111,22 +133,33 @@ from rakit_core.query import (
     SortDirection,
 )
 from rakit_core.relationships import (
+    RecordLabelResolver,
     RelationshipCardinality,
     RelationshipDefinition,
     RelationshipDestructivePolicy,
     RelationshipEditMode,
     RelationshipKind,
     RelationshipMetadata,
+    resolve_record_label,
 )
 from rakit_core.resources import ResourceService
 from rakit_core.transactions import TransactionPolicy
 
 __all__ = [
     "ANONYMOUS_PRINCIPAL",
+    "BULK_CONFIRMATION_THRESHOLD_MAXIMUM",
+    "SYNCHRONOUS_BULK_TARGETS_MAXIMUM",
+    "ActionAdvancedResponse",
     "ActionAvailability",
     "ActionDefinition",
+    "ActionRedirect",
+    "ActionRefresh",
+    "ActionRejected",
+    "ActionRendered",
+    "ActionResponseKind",
     "ActionResult",
     "ActionScope",
+    "ActionSuccess",
     "ApplicationBuilder",
     "AttributeVersionProvider",
     "AuthBackend",
@@ -150,7 +183,11 @@ __all__ = [
     "DeletePolicy",
     "DeletionPlan",
     "DomainEvent",
+    "EndpointAccessPolicy",
     "EndpointDefinition",
+    "EndpointInputSource",
+    "EndpointMethod",
+    "EndpointResponseKind",
     "ErrorCode",
     "ErrorDetail",
     "EventBus",
@@ -198,6 +235,7 @@ __all__ = [
     "RakitSecurityWarning",
     "RakitWarning",
     "RecordIdentity",
+    "RecordLabelResolver",
     "RelationshipCardinality",
     "RelationshipDefinition",
     "RelationshipDestructivePolicy",
@@ -231,5 +269,6 @@ __all__ = [
     "execute_operation_plan",
     "generate_permission_catalogue",
     "infer_field_security",
+    "resolve_record_label",
     "validate_official_package_versions",
 ]
