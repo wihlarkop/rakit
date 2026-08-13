@@ -20,6 +20,7 @@ from rakit_core.query import (
     Sort,
     SortDirection,
 )
+from rakit_core.relationships import RelationshipDefinition, RelationshipMetadata
 from sqlalchemy import (
     Boolean,
     Date,
@@ -46,6 +47,7 @@ from .introspection import (
     UnsupportedFieldPolicyError,
     inspect_model,
 )
+from .relationships import inspect_relationships, validate_relationship_definition
 
 _OPERATOR_HANDLERS = {
     FilterOperator.EQ: lambda column, value: column == value,
@@ -382,6 +384,34 @@ class SQLAlchemyDataSource:
     @property
     def identity_fields(self) -> tuple[str, ...]:
         return (self._metadata.identity_field,)
+
+    @property
+    def relationship_metadata(self) -> dict[str, RelationshipMetadata]:
+        return inspect_relationships(self._model)
+
+    def validate_relationship(
+        self,
+        definition: RelationshipDefinition,
+        target_data_source: object,
+        association_target_data_source: object | None = None,
+    ) -> None:
+        if not isinstance(target_data_source, SQLAlchemyDataSource):
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="Relationship target must use the SQLAlchemy adapter.",
+                status_code=500,
+                details={"relationship_id": definition.relationship_id},
+            )
+        validate_relationship_definition(
+            definition,
+            source_model=self._model,
+            target_model=target_data_source._model,
+            association_target_model=(
+                association_target_data_source._model
+                if isinstance(association_target_data_source, SQLAlchemyDataSource)
+                else None
+            ),
+        )
 
     def _base_statement(self) -> Select:
         return select(self._model)

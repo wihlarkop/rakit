@@ -340,3 +340,39 @@ def test_sqlalchemy_plan04_facade_reexports_concrete_implementations() -> None:
 
     assert SQLAlchemyMutationService is RealMutationService
     assert SQLAlchemyUnitOfWork is RealUnitOfWork
+
+
+def test_plan05_foundation_contracts_preserve_facade_identity() -> None:
+    from rakit import ActionResult
+    from rakit.core import (
+        ActionDefinition,
+        BulkPolicy,
+        OperationAuthorization,
+        OperationPlan,
+        RelationshipDefinition,
+        RelationshipKind,
+    )
+    from rakit_core.actions import ActionResult as RealActionResult
+    from rakit_core.bulk import BulkPolicy as RealBulkPolicy
+    from rakit_core.definitions import ActionDefinition as RealActionDefinition
+    from rakit_core.mutations import OperationAuthorization as RealOperationAuthorization
+    from rakit_core.operations import OperationPlan as RealOperationPlan
+    from rakit_core.relationships import (
+        RelationshipDefinition as RealRelationshipDefinition,
+    )
+    from rakit_core.relationships import RelationshipKind as RealRelationshipKind
+
+    assert ActionResult is RealActionResult
+    assert ActionDefinition is RealActionDefinition
+    assert BulkPolicy is RealBulkPolicy
+    assert OperationAuthorization is RealOperationAuthorization
+    assert OperationPlan is RealOperationPlan
+    assert RelationshipDefinition is RealRelationshipDefinition
+    assert RelationshipKind is RealRelationshipKind
+
+
+def test_sqlalchemy_plan05_facade_reexports_relationship_inspection() -> None:
+    from rakit.sqlalchemy import inspect_relationships
+    from rakit_sqlalchemy.relationships import inspect_relationships as RealInspectRelationships
+
+    assert inspect_relationships is RealInspectRelationships
