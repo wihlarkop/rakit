@@ -80,15 +80,25 @@ def _path_segments(path: str) -> tuple[str, ...]:
     return () if path == "/" else tuple(path.removeprefix("/").split("/"))
 
 
-def _path_prefixes_overlap(prefix: tuple[str, ...], path: tuple[str, ...]) -> bool:
+def _path_prefixes_overlap(
+    prefix: tuple[str, ...], path: tuple[str, ...], *, reserved_segment_index: int
+) -> bool:
     """Return whether an application path enters a route-pattern subtree."""
 
     if len(path) < len(prefix):
         return False
-    return all(
-        first == second or _is_path_parameter(first) or _is_path_parameter(second)
-        for first, second in zip(prefix, path[: len(prefix)], strict=True)
-    )
+    for index, (first, second) in enumerate(zip(prefix, path[: len(prefix)], strict=True)):
+        # A dynamic application parameter cannot reserve the resource child
+        # namespace on its own: `/orders/{identity}` is the normal record
+        # route, not `/orders/_actions`. Only the reserved child segment
+        # itself is literal; the resource and record identity shape retain
+        # normalized dynamic-route overlap semantics.
+        if index == reserved_segment_index:
+            if first != second:
+                return False
+        elif first != second and not (_is_path_parameter(first) or _is_path_parameter(second)):
+            return False
+    return True
 
 
 def _uses_resource_reserved_subpath(path: str, resources: tuple[ResourceDefinition, ...]) -> bool:
@@ -103,11 +113,19 @@ def _uses_resource_reserved_subpath(path: str, resources: tuple[ResourceDefiniti
     for resource in resources:
         collection = _path_segments(resource.path)
         reserved_subtrees = (
-            (*collection, RESOURCE_ACTION_SEGMENT),
-            (*collection, "{identity}", RESOURCE_ACTION_SEGMENT),
-            (*collection, "{identity}", RESOURCE_RELATIONSHIP_SEGMENT),
+            ((*collection, RESOURCE_ACTION_SEGMENT), len(collection)),
+            ((*collection, "{identity}", RESOURCE_ACTION_SEGMENT), len(collection) + 1),
+            (
+                (*collection, "{identity}", RESOURCE_RELATIONSHIP_SEGMENT),
+                len(collection) + 1,
+            ),
         )
-        if any(_path_prefixes_overlap(prefix, route_segments) for prefix in reserved_subtrees):
+        if any(
+            _path_prefixes_overlap(
+                prefix, route_segments, reserved_segment_index=reserved_segment_index
+            )
+            for prefix, reserved_segment_index in reserved_subtrees
+        ):
             return True
     return False
 
