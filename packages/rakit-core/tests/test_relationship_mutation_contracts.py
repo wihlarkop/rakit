@@ -5,6 +5,7 @@ from rakit_core.identity import RecordIdentity
 from rakit_core.permissions import PermissionRequirement
 from rakit_core.relationship_mutations import (
     AssociationScalarChange,
+    ClearRelated,
     CreateRelated,
     DeleteRelated,
     LinkRelated,
@@ -13,7 +14,9 @@ from rakit_core.relationship_mutations import (
     RelationshipMutationKind,
     RelationshipMutationPlan,
     ReorderRelated,
+    SetRelated,
     UnlinkRelated,
+    UpdateAssociationRelated,
     UpdateRelated,
 )
 
@@ -97,10 +100,11 @@ def test_graph_relationship_steps_are_typed_immutable_and_fingerprint_safe() -> 
                 identity=_identity(2), values={"name": "changed"}, concurrency_token="v2"
             ),
             LinkRelated(identity=_identity(3)),
+            SetRelated(identity=_identity(6)),
+            ClearRelated(),
             UnlinkRelated(identity=_identity(4)),
-            DeleteRelated(
-                identity=_identity(5), concurrency_token="v5", confirmation_token="confirm"
-            ),
+            DeleteRelated(identity=_identity(5), confirmation_token="confirm"),
+            UpdateAssociationRelated(target_identity=_identity(7), values={"grade": "A"}),
             ReorderRelated(identities=(_identity(3), _identity(2))),
         ),
     )
@@ -113,8 +117,16 @@ def test_graph_relationship_steps_are_typed_immutable_and_fingerprint_safe() -> 
             "values": {"name": "changed"},
         },
         {"kind": "link", "identity": {"id": {"type": "int", "value": 3}}},
+        {"kind": "set", "identity": {"id": {"type": "int", "value": 6}}},
+        {"kind": "clear"},
         {"kind": "unlink", "identity": {"id": {"type": "int", "value": 4}}},
         {"kind": "delete", "identity": {"id": {"type": "int", "value": 5}}},
+        {
+            "kind": "association_update",
+            "target_identity": {"id": {"type": "int", "value": 7}},
+            "association_identity": None,
+            "values": {"grade": "A"},
+        },
         {
             "kind": "reorder",
             "identities": [
@@ -125,6 +137,11 @@ def test_graph_relationship_steps_are_typed_immutable_and_fingerprint_safe() -> 
     ]
     with pytest.raises(TypeError):
         cast(dict[str, Any], cast(CreateRelated, change.steps[0]).values)["name"] = "forged"
+
+
+def test_graph_delete_step_rejects_the_removed_redundant_concurrency_field() -> None:
+    with pytest.raises(ValueError, match="concurrency_token"):
+        DeleteRelated(identity=_identity(5), concurrency_token="ignored")  # type: ignore[call-arg]
 
 
 def test_graph_relationship_steps_reject_empty_or_duplicate_reorder_input() -> None:

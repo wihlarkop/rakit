@@ -36,7 +36,7 @@ class RelationshipMutationKind(StrEnum):
 class RelationshipGraphStep(BaseModel):
     """Base for the explicit child/edge intents of a composed resource write."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
 
 class CreateRelated(RelationshipGraphStep):
@@ -70,16 +70,51 @@ class LinkRelated(RelationshipGraphStep):
     identity: RecordIdentity
 
 
+class SetRelated(RelationshipGraphStep):
+    """Set the single target of a to-one relationship."""
+
+    kind: Literal["set"] = "set"
+    identity: RecordIdentity
+
+
+class ClearRelated(RelationshipGraphStep):
+    """Clear the target of a nullable to-one relationship."""
+
+    kind: Literal["clear"] = "clear"
+
+
 class UnlinkRelated(RelationshipGraphStep):
     kind: Literal["unlink"] = "unlink"
     identity: RecordIdentity
 
 
 class DeleteRelated(RelationshipGraphStep):
+    """Delete a related child using its signed delete confirmation.
+
+    The confirmation's resource/identity/expected-version binding is the
+    authoritative child-delete concurrency proof.  A separate update token
+    would be redundant and is deliberately not accepted by this model.
+    """
+
     kind: Literal["delete"] = "delete"
     identity: RecordIdentity
-    concurrency_token: str | None = None
     confirmation_token: str | None = None
+
+
+class UpdateAssociationRelated(RelationshipGraphStep):
+    """Change explicitly approved scalar values on one association edge."""
+
+    kind: Literal["association_update"] = "association_update"
+    target_identity: RecordIdentity
+    values: Mapping[str, Any]
+    association_identity: RecordIdentity | None = None
+
+    @field_validator("values")
+    @classmethod
+    def _freeze_values(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        if not value or any(not isinstance(key, str) or not key for key in value):
+            raise ValueError("association scalar values must have non-empty field identifiers")
+        return freeze_mapping(ConcurrencyTokenService.canonical_snapshot(value))
 
 
 class ReorderRelated(RelationshipGraphStep):
@@ -97,7 +132,15 @@ class ReorderRelated(RelationshipGraphStep):
 
 
 type RelationshipMutationStep = Annotated[
-    CreateRelated | UpdateRelated | LinkRelated | UnlinkRelated | DeleteRelated | ReorderRelated,
+    CreateRelated
+    | UpdateRelated
+    | LinkRelated
+    | SetRelated
+    | ClearRelated
+    | UnlinkRelated
+    | DeleteRelated
+    | UpdateAssociationRelated
+    | ReorderRelated,
     Field(discriminator="kind"),
 ]
 
@@ -147,8 +190,18 @@ class RelationshipChangePlan(BaseModel):
                 payload["values"] = dict(step.values)
             elif isinstance(step, UpdateRelated):
                 payload.update(identity=identity(step.identity), values=dict(step.values))
-            elif isinstance(step, LinkRelated | UnlinkRelated | DeleteRelated):
+            elif isinstance(step, LinkRelated | SetRelated | UnlinkRelated | DeleteRelated):
                 payload["identity"] = identity(step.identity)
+            elif isinstance(step, UpdateAssociationRelated):
+                payload.update(
+                    target_identity=identity(step.target_identity),
+                    association_identity=(
+                        identity(step.association_identity)
+                        if step.association_identity is not None
+                        else None
+                    ),
+                    values=dict(step.values),
+                )
             elif isinstance(step, ReorderRelated):
                 payload["identities"] = [identity(value) for value in step.identities]
             values.append(payload)
@@ -338,6 +391,7 @@ class RelationshipChanged(DomainEvent):
 
 __all__ = [
     "AssociationScalarChange",
+    "ClearRelated",
     "CreateRelated",
     "DeleteRelated",
     "LinkRelated",
@@ -349,6 +403,8 @@ __all__ = [
     "RelationshipMutationResult",
     "RelationshipMutationStep",
     "ReorderRelated",
+    "SetRelated",
     "UnlinkRelated",
+    "UpdateAssociationRelated",
     "UpdateRelated",
 ]

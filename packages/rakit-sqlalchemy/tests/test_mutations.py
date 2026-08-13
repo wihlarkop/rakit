@@ -190,6 +190,67 @@ async def test_invalid_create_does_not_execute_or_mass_assign(
 
 
 @pytest.mark.anyio
+async def test_normal_update_prepares_submitted_fields_exactly_once(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    calls = 0
+
+    def parse_once(value: object) -> object:
+        nonlocal calls
+        calls += 1
+        return str(value).strip()
+
+    service = SQLAlchemyMutationService(
+        model=User,
+        session_factory=session_factory,
+        form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="name", python_type=str, parser=parse_once),)
+        ),
+        writable_fields=("name",),
+        identity_fields=("id",),
+    )
+    async with session_factory() as session:
+        session.add(User(name="before"))
+        await session.commit()
+
+    authorization = _authorization("update")
+    await _authorized(
+        authorization,
+        service.update(
+            RecordIdentity(values={"id": 1}), {"name": " after "}, authorization=authorization
+        ),
+    )
+    assert calls == 1
+    async with session_factory() as session:
+        assert (await session.scalars(select(User.name))).one() == "after"
+
+
+@pytest.mark.anyio
+async def test_normal_create_prepares_submitted_fields_exactly_once(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    calls = 0
+
+    def parse_once(value: object) -> object:
+        nonlocal calls
+        calls += 1
+        return str(value).strip()
+
+    service = SQLAlchemyMutationService(
+        model=User,
+        session_factory=session_factory,
+        form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="name", python_type=str, parser=parse_once),)
+        ),
+        writable_fields=("name",),
+        identity_fields=("id",),
+    )
+    authorization = _authorization("create")
+    await _authorized(authorization, service.create({"name": " Ada "}, authorization=authorization))
+    assert calls == 1
+
+
+@pytest.mark.anyio
 async def test_mutation_hooks_run_in_commit_order_and_pre_commit_failure_rolls_back(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

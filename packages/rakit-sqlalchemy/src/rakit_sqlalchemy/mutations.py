@@ -300,14 +300,95 @@ class SQLAlchemyMutationService:
         *,
         authorization: MutationAuthorization | None = None,
     ) -> MutationResult:
+        if authorization is None:
+            raise RakitError(
+                code=ErrorCode.AUTH_FORBIDDEN,
+                message="Mutation is not authorized.",
+                status_code=403,
+            )
+        graph_result = await self.create_graph(
+            submitted,
+            authorizations=OperationAuthorizationSet(root=authorization),
+        )
+        assert graph_result.record is not None
+        return MutationResult(identity=graph_result.identity, record=graph_result.record)
+
+    async def create_graph(
+        self,
+        submitted: Mapping[str, Any],
+        *,
+        relationship_changes: tuple[RelationshipChangePlan, ...] = (),
+        authorizations: OperationAuthorizationSet | None = None,
+        idempotency_token: str | None = None,
+    ) -> GraphMutationResult:
+        """Create a parent and its relationship graph in one root UoW.
+
+        A parent identity exists only after the initial flush.  Relationship
+        work therefore runs afterwards inside this same UoW, deliberately
+        without an update-style parent version claim for the new row.
+        """
+
+        if authorizations is None:
+            raise RakitError(
+                code=ErrorCode.AUTH_FORBIDDEN,
+                message="Graph mutation requires explicit authorization capabilities.",
+                status_code=403,
+            )
+        root_authorization = self._require_authorization(authorizations.root, "create")
+        self._validate_graph_changes(relationship_changes)
+        if relationship_changes and self._relationship_mutation_service is None:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="Graph relationship mutation service is not configured.",
+                status_code=500,
+            )
+        if relationship_changes and (
+            not idempotency_token or self._graph_idempotency_store is None
+        ):
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="Graph relationship mutation requires durable idempotency.",
+                status_code=500,
+            )
+
+        # CREATE parsing happens exactly once, before any reservation or
+        # persistence side effect.  Its immutable normalized values are also
+        # the canonical scalar component of graph idempotency.
         plan = self.prepare_create(submitted)
+        graph_store = cast(IdempotencyStore, self._graph_idempotency_store)
+        relationship_service = self._relationship_mutation_service
+        reservation = None
+        if relationship_changes:
+            fingerprint = self._create_graph_fingerprint(
+                plan.values, relationship_changes, root_authorization
+            )
+            try:
+                reservation = await graph_store.begin(
+                    hashlib.sha256(cast(str, idempotency_token).encode("utf-8")).hexdigest(),
+                    fingerprint=fingerprint,
+                )
+            except ValueError as exc:
+                raise RakitError(
+                    code=ErrorCode.RESOURCE_CONFLICT,
+                    message="Graph submission token is bound to another mutation.",
+                    status_code=409,
+                ) from exc
+            if reservation.status is IdempotencyStatus.COMPLETED:
+                return self._graph_result_from_receipt(reservation.completed_receipt)
+            if not reservation.claimed:
+                raise RakitError(
+                    code=ErrorCode.RESOURCE_CONFLICT,
+                    message="Graph submission is already in progress or final.",
+                    status_code=409,
+                )
+
         event_publisher = self._operation_event_publisher()
+        callbacks_registered = False
         try:
             await run_mutation_hooks(self._hooks.normalize, plan)
             await run_mutation_hooks(self._hooks.business_validate, plan)
             await run_mutation_hooks(self._hooks.prepare, plan)
-            authorized = self._require_authorization(authorization, "create")
-            await run_mutation_hooks(self._hooks.authorize, authorized)
+            await run_mutation_hooks(self._hooks.authorize, root_authorization)
             await run_mutation_hooks(self._hooks.pre_event, plan)
             await run_mutation_hooks(self._hooks.before_execute, plan)
             async with SQLAlchemyUnitOfWork(
@@ -316,20 +397,46 @@ class SQLAlchemyMutationService:
                 event_publisher=event_publisher,
                 operation_context=current_operation_context(),
             ) as uow:
+                if reservation is not None:
+                    uow.after_rollback(lambda: graph_store.release(reservation))
+                    callbacks_registered = True
                 record = self._model(**dict(plan.values))
                 uow.session.add(record)
                 await run_mutation_hooks(self._hooks.after_execute, plan)
                 await uow.session.flush()
                 await run_mutation_hooks(self._hooks.after_flush, plan)
                 identity = self._identity_for(record)
+                relationship_results: list[object] = []
+                for change in relationship_changes:
+                    assert relationship_service is not None
+                    relationship_results.append(
+                        await relationship_service.execute_in_uow(
+                            uow,
+                            parent=record,
+                            parent_identity=identity,
+                            change=change,
+                            authorizations=authorizations,
+                            expected_parent_version=None,
+                            new_parent=True,
+                        )
+                    )
                 if event_publisher is not None:
                     event_publisher.publish(ResourceCreated(identity=identity))
                 await run_mutation_hooks(self._hooks.before_commit, plan)
+                result = GraphMutationResult(
+                    identity=identity,
+                    record=record,
+                    relationship_results=tuple(relationship_results),
+                )
+                if reservation is not None:
+                    receipt = self._graph_receipt(result, relationship_changes)
+                    uow.after_commit(lambda: graph_store.complete(reservation, receipt))
                 await uow.mark_success()
         except BaseException as exc:
+            if reservation is not None and not callbacks_registered:
+                await graph_store.release(reservation)
             await run_mutation_hooks(self._hooks.after_rollback, exc)
             raise
-        result = MutationResult(identity=identity, record=record)
         await run_after_commit_hooks(self._hooks.after_commit, result)
         return result
 
@@ -549,14 +656,7 @@ class SQLAlchemyMutationService:
                 status_code=403,
             )
         root_authorization = self._require_authorization(authorizations.root, "update")
-        if len({change.relationship_id for change in relationship_changes}) != len(
-            relationship_changes
-        ):
-            raise RakitError(
-                code=ErrorCode.VALIDATION_FAILED,
-                message="A graph mutation may contain only one change plan per relationship.",
-                status_code=422,
-            )
+        self._validate_graph_changes(relationship_changes)
         if relationship_changes and self._relationship_mutation_service is None:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
@@ -578,7 +678,25 @@ class SQLAlchemyMutationService:
                 status_code=500,
             )
 
-        normalized_scalar_changes = self.prepare_create(submitted).values
+        # Prepare UPDATE intent once, using a scoped read before the
+        # idempotency reservation.  This is read-only work: it gives the
+        # reservation the real update-normalized scalar intent without
+        # running create preparation (or any form parser) a second time.
+        async with self._session_factory() as preparation_session:
+            preparation_record = await self._load(preparation_session, identity)
+            if preparation_record is None:
+                raise RakitError(
+                    code=ErrorCode.RESOURCE_NOT_FOUND,
+                    message="Resource was not found",
+                    status_code=404,
+                )
+            prepared_update = self.prepare_update(
+                identity,
+                preparation_record,
+                submitted,
+                concurrency_token=concurrency_token,
+            )
+        normalized_scalar_changes = prepared_update.scalar_changes
         graph_store = cast(IdempotencyStore, self._graph_idempotency_store)
         relationship_service = self._relationship_mutation_service
 
@@ -626,19 +744,20 @@ class SQLAlchemyMutationService:
                         message="Resource was not found",
                         status_code=404,
                     )
-                plan = self.prepare_update(
-                    identity, record, submitted, concurrency_token=concurrency_token
-                )
                 plan = UpdateMutationPlan(
-                    identity=plan.identity,
-                    current_record=plan.current_record,
-                    scalar_changes=plan.scalar_changes,
+                    identity=identity,
+                    current_record=record,
+                    scalar_changes=normalized_scalar_changes,
                     relationship_changes={
                         change.relationship_id: change.fingerprint_payload
                         for change in relationship_changes
                     },
-                    concurrency_token=plan.concurrency_token,
-                    concurrency_metadata=plan.concurrency_metadata,
+                    concurrency_token=prepared_update.concurrency_token,
+                    concurrency_metadata=(
+                        {"version": self._concurrency_provider.version_for(record)}
+                        if self._concurrency_provider is not None
+                        else {}
+                    ),
                 )
                 await run_mutation_hooks(self._hooks.normalize_update, plan)
                 await run_mutation_hooks(self._hooks.business_validate_update, plan)
@@ -807,6 +926,32 @@ class SQLAlchemyMutationService:
                 status_code=409,
             )
         await uow.session.refresh(record)
+
+    @staticmethod
+    def _validate_graph_changes(changes: tuple[RelationshipChangePlan, ...]) -> None:
+        if len({change.relationship_id for change in changes}) != len(changes):
+            raise RakitError(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="A graph mutation may contain only one change plan per relationship.",
+                status_code=422,
+            )
+
+    def _create_graph_fingerprint(
+        self,
+        submitted: Mapping[str, Any],
+        changes: tuple[RelationshipChangePlan, ...],
+        authorization: MutationAuthorization,
+    ) -> str:
+        payload = {
+            "resource_id": self._resource_id,
+            "operation": "create",
+            "scalar_changes": ConcurrencyTokenService.canonical_snapshot(submitted),
+            "relationships": [change.fingerprint_payload for change in changes],
+            "admin_id": authorization.admin_id,
+            "principal_id": authorization.principal_id,
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     def _graph_fingerprint(
         self,

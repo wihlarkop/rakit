@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
 import pytest
 from rakit_core.auth import Principal
@@ -15,12 +15,15 @@ from rakit_core.mutations import OperationAuthorization, OperationAuthorizationS
 from rakit_core.operations import CancellationContext, OperationContext, activate_operation_context
 from rakit_core.permissions import PermissionRequirement
 from rakit_core.relationship_mutations import (
+    ClearRelated,
     CreateRelated,
     DeleteRelated,
     LinkRelated,
     RelationshipChangePlan,
     ReorderRelated,
+    SetRelated,
     UnlinkRelated,
+    UpdateAssociationRelated,
     UpdateRelated,
 )
 from rakit_core.relationships import (
@@ -44,12 +47,22 @@ class Base(DeclarativeBase):
     pass
 
 
+class Customer(Base):
+    __tablename__ = "graph_mutation_customers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    version: Mapped[int] = mapped_column(default=1)
+    name: Mapped[str]
+
+
 class Parent(Base):
     __tablename__ = "graph_mutation_parents"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     version: Mapped[int] = mapped_column(default=1)
     name: Mapped[str]
+    customer_id: Mapped[int | None] = mapped_column(ForeignKey("graph_mutation_customers.id"))
+    customer: Mapped[Customer | None] = relationship()
     children: Mapped[list["Child"]] = relationship(
         back_populates="parent", order_by="Child.position"
     )
@@ -64,6 +77,35 @@ class Child(Base):
     name: Mapped[str]
     position: Mapped[int] = mapped_column(default=0)
     parent: Mapped[Parent | None] = relationship(back_populates="children")
+
+
+class AssociationParent(Base):
+    __tablename__ = "graph_mutation_association_parents"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    version: Mapped[int] = mapped_column(default=1)
+    name: Mapped[str]
+    enrollments: Mapped[list["AssociationEnrollment"]] = relationship(
+        back_populates="parent", cascade="all, delete-orphan"
+    )
+
+
+class AssociationCourse(Base):
+    __tablename__ = "graph_mutation_association_courses"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+
+
+class AssociationEnrollment(Base):
+    __tablename__ = "graph_mutation_association_enrollments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    parent_id: Mapped[int] = mapped_column(ForeignKey("graph_mutation_association_parents.id"))
+    course_id: Mapped[int] = mapped_column(ForeignKey("graph_mutation_association_courses.id"))
+    grade: Mapped[str]
+    parent: Mapped[AssociationParent] = relationship(back_populates="enrollments")
+    course: Mapped[AssociationCourse] = relationship()
 
 
 class MemoryIdempotencyStore:
@@ -135,6 +177,7 @@ def _services(
     factory: async_sessionmaker[AsyncSession],
     *,
     allow_child_delete: bool = False,
+    parent_parser: Callable[[object], object] | None = None,
 ) -> tuple[
     SQLAlchemyMutationService, SQLAlchemyMutationService, SQLAlchemyRelationshipMutationService
 ]:
@@ -145,7 +188,9 @@ def _services(
     parent_writer = SQLAlchemyMutationService(
         model=Parent,
         session_factory=factory,
-        form_schema=FormSchema(fields=(FieldDefinition(field_id="name", python_type=str),)),
+        form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="name", python_type=str, parser=parent_parser),)
+        ),
         writable_fields=("name",),
         identity_fields=("id",),
         resource_id="parents",
@@ -206,6 +251,137 @@ def _services(
     return parent_writer, child_writer, relationship_writer
 
 
+def _to_one_services(
+    factory: async_sessionmaker[AsyncSession],
+) -> tuple[SQLAlchemyMutationService, SQLAlchemyRelationshipMutationService]:
+    token_service = TokenService.single_key(
+        key_id="graph", value=SecretValue("x" * 32), admin_id="admin"
+    )
+    store = MemoryIdempotencyStore()
+    parent_writer = SQLAlchemyMutationService(
+        model=Parent,
+        session_factory=factory,
+        form_schema=FormSchema(fields=(FieldDefinition(field_id="name", python_type=str),)),
+        writable_fields=("name",),
+        identity_fields=("id",),
+        resource_id="parents",
+        token_service=token_service,
+        concurrency_provider=AttributeVersionProvider("version"),
+        graph_idempotency_store=store,
+    )
+    requirement = PermissionRequirement.all_of("admin.resources.parents.update")
+    definition = RelationshipDefinition(
+        relationship_id="customer",
+        target_resource_id="customers",
+        label="Customer",
+        kind=RelationshipKind.MANY_TO_ONE,
+        cardinality=RelationshipCardinality.TO_ONE,
+        nullable=True,
+        edit_mode=RelationshipEditMode.LINK,
+        writable=True,
+    )
+    relationship_writer = SQLAlchemyRelationshipMutationService(
+        session_factory=factory,
+        parent_data_source=_source(Parent, factory),
+        relationships=(
+            CompiledRelationship(
+                source_resource_id="parents",
+                definition=definition,
+                mutation_permission=requirement,
+                target_delete_permission=None,
+                route_path="/parents/{identity}/_relationships/customer",
+            ),
+        ),
+        target_data_sources={"customers": _source(Customer, factory)},
+        token_service=token_service,
+        concurrency_provider=AttributeVersionProvider("version"),
+        idempotency_store=store,
+    )
+    parent_writer.bind_graph_relationship_service(relationship_writer, idempotency_store=store)
+    return parent_writer, relationship_writer
+
+
+def _association_services(
+    factory: async_sessionmaker[AsyncSession],
+) -> tuple[SQLAlchemyMutationService, SQLAlchemyRelationshipMutationService]:
+    token_service = TokenService.single_key(
+        key_id="graph", value=SecretValue("x" * 32), admin_id="admin"
+    )
+    store = MemoryIdempotencyStore()
+    parent_writer = SQLAlchemyMutationService(
+        model=AssociationParent,
+        session_factory=factory,
+        form_schema=FormSchema(fields=(FieldDefinition(field_id="name", python_type=str),)),
+        writable_fields=("name",),
+        identity_fields=("id",),
+        resource_id="association_parents",
+        token_service=token_service,
+        concurrency_provider=AttributeVersionProvider("version"),
+        graph_idempotency_store=store,
+    )
+    requirement = PermissionRequirement.all_of("admin.resources.association_parents.update")
+    definition = RelationshipDefinition(
+        relationship_id="enrollments",
+        target_resource_id="enrollments",
+        association_target_resource_id="courses",
+        association_fields=("grade",),
+        label="Courses",
+        kind=RelationshipKind.ASSOCIATION_OBJECT,
+        cardinality=RelationshipCardinality.TO_MANY,
+        nullable=True,
+        edit_mode=RelationshipEditMode.INLINE,
+        writable=True,
+    )
+    relationship_writer = SQLAlchemyRelationshipMutationService(
+        session_factory=factory,
+        parent_data_source=_source(AssociationParent, factory),
+        relationships=(
+            CompiledRelationship(
+                source_resource_id="association_parents",
+                definition=definition,
+                mutation_permission=requirement,
+                target_delete_permission=None,
+                route_path="/association-parents/{identity}/_relationships/enrollments",
+            ),
+        ),
+        target_data_sources={
+            "enrollments": _source(AssociationEnrollment, factory),
+            "courses": _source(AssociationCourse, factory),
+        },
+        token_service=token_service,
+        concurrency_provider=AttributeVersionProvider("version"),
+        idempotency_store=store,
+    )
+    parent_writer.bind_graph_relationship_service(relationship_writer, idempotency_store=store)
+    return parent_writer, relationship_writer
+
+
+def _relationship_capabilities(
+    parent: RecordIdentity, change: RelationshipChangePlan
+) -> OperationAuthorizationSet:
+    requirement = PermissionRequirement.all_of("admin.resources.parents.update")
+    root = OperationAuthorization.for_requirement(
+        admin_id="admin",
+        resource_id="parents",
+        operation="update",
+        principal_id="operator",
+        requirement=requirement,
+    )
+    return OperationAuthorizationSet(
+        root=root,
+        capabilities=(
+            OperationAuthorization.for_requirement(
+                admin_id="admin",
+                resource_id="parents",
+                operation=change.operation_id,
+                principal_id="operator",
+                requirement=requirement,
+                target_identity=parent,
+            ),
+        ),
+    )
+
+
 def _capabilities(
     parent: RecordIdentity,
     change: RelationshipChangePlan,
@@ -243,6 +419,68 @@ def _capabilities(
         )
         capabilities.append(capability)
     return OperationAuthorizationSet(root=root, capabilities=tuple(capabilities))
+
+
+def _create_capabilities(
+    change: RelationshipChangePlan,
+    *,
+    child_operation: str | None = None,
+) -> OperationAuthorizationSet:
+    root = OperationAuthorization.for_requirement(
+        admin_id="admin",
+        resource_id="parents",
+        operation="create",
+        principal_id="operator",
+        requirement=PermissionRequirement.all_of("admin.resources.parents.create"),
+    )
+    relationship = OperationAuthorization.for_requirement(
+        admin_id="admin",
+        resource_id="parents",
+        operation=change.operation_id,
+        principal_id="operator",
+        requirement=PermissionRequirement.all_of("admin.resources.parents.update"),
+    )
+    capabilities = [relationship]
+    if child_operation is not None:
+        capabilities.append(
+            OperationAuthorization.for_requirement(
+                admin_id="admin",
+                resource_id="children",
+                operation=f"{change.operation_id}:{child_operation}",
+                principal_id="operator",
+                requirement=PermissionRequirement.all_of(
+                    f"admin.resources.children.{child_operation.removeprefix('target-')}"
+                ),
+            )
+        )
+    return OperationAuthorizationSet(root=root, capabilities=tuple(capabilities))
+
+
+async def _create_graph_call(
+    writer: SQLAlchemyMutationService,
+    *,
+    change: RelationshipChangePlan,
+    capabilities: OperationAuthorizationSet,
+    submission: str,
+):
+    root = capabilities.root
+    context = OperationContext(
+        deadline=None,
+        cancellation=CancellationContext(),
+        principal=Principal(subject_id="operator", authenticated=True),
+        admin_id="admin",
+        resource_id="parents",
+        operation="create",
+        permissions=root.permissions,
+        permission_requirement=root.requirement,
+    )
+    with activate_operation_context(context):
+        return await writer.create_graph(
+            {"name": "created-parent"},
+            relationship_changes=(change,),
+            authorizations=capabilities,
+            idempotency_token=submission,
+        )
 
 
 async def _graph_call(
@@ -310,6 +548,378 @@ async def test_graph_update_creates_child_with_one_parent_version_advance(
         children = list((await session.scalars(select(Child))).all())
     assert (persisted.name, persisted.version) == ("changed", 2)
     assert [(child.name, child.parent_id) for child in children] == [("created", 1)]
+
+
+@pytest.mark.anyio
+async def test_graph_update_prepares_parent_fields_exactly_once(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    calls = 0
+
+    def parse_once(value: object) -> object:
+        nonlocal calls
+        calls += 1
+        return str(value).strip()
+
+    async with session_factory() as session:
+        session.add_all((Parent(name="before"), Child(name="detached", position=0)))
+        await session.commit()
+        parent = (await session.scalars(select(Parent))).one()
+    writer, _child_writer, relationships = _services(session_factory, parent_parser=parse_once)
+    parent_identity = _identity(parent.id)
+    change = RelationshipChangePlan(
+        operation_id="graph:parents:children:parse-once",
+        relationship_id="children",
+        steps=(LinkRelated(identity=_identity(1)),),
+        authorization_requirement=PermissionRequirement.all_of("admin.resources.parents.update"),
+        concurrency_token=await relationships.issue_concurrency_token(parent_identity, "children"),
+    )
+    await _graph_call(
+        writer,
+        parent=parent_identity,
+        scalar_token=writer.issue_update_token(parent),
+        change=change,
+        capabilities=_capabilities(parent_identity, change),
+        submission="graph-parse-once",
+        name=" after ",
+    )
+    assert calls == 1
+
+
+@pytest.mark.anyio
+async def test_graph_create_flushes_parent_then_creates_child_once_and_replays(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    writer, _child_writer, _relationships = _services(session_factory)
+    change = RelationshipChangePlan(
+        operation_id="graph:parents:children:create",
+        relationship_id="children",
+        steps=(CreateRelated(values={"name": "created-child"}),),
+        authorization_requirement=PermissionRequirement.all_of("admin.resources.parents.update"),
+    )
+    capabilities = _create_capabilities(change, child_operation="target-create")
+    first = await _create_graph_call(
+        writer, change=change, capabilities=capabilities, submission="create-graph"
+    )
+    replay = await _create_graph_call(
+        writer, change=change, capabilities=capabilities, submission="create-graph"
+    )
+
+    assert not first.replayed and replay.replayed
+    assert first.relationship_results[0].added_target_identities
+    async with session_factory() as session:
+        parents = list((await session.scalars(select(Parent))).all())
+        children = list((await session.scalars(select(Child))).all())
+    assert [(parent.name, parent.version) for parent in parents] == [("created-parent", 1)]
+    assert [(child.name, child.parent_id) for child in children] == [("created-child", 1)]
+
+
+@pytest.mark.anyio
+async def test_graph_create_links_existing_child_and_rolls_back_on_child_validation_failure(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        session.add(Child(name="detached", position=0))
+        await session.commit()
+    writer, _child_writer, _relationships = _services(session_factory)
+    link = RelationshipChangePlan(
+        operation_id="graph:parents:children:create-link",
+        relationship_id="children",
+        steps=(LinkRelated(identity=_identity(1)),),
+        authorization_requirement=PermissionRequirement.all_of("admin.resources.parents.update"),
+    )
+    await _create_graph_call(
+        writer,
+        change=link,
+        capabilities=_create_capabilities(link),
+        submission="create-graph-link",
+    )
+    invalid = RelationshipChangePlan(
+        operation_id="graph:parents:children:create-invalid",
+        relationship_id="children",
+        steps=(CreateRelated(values={"position": 99}),),
+        authorization_requirement=PermissionRequirement.all_of("admin.resources.parents.update"),
+    )
+    with pytest.raises(RakitError) as caught:
+        await _create_graph_call(
+            writer,
+            change=invalid,
+            capabilities=_create_capabilities(invalid, child_operation="target-create"),
+            submission="create-graph-invalid",
+        )
+    assert caught.value.code == ErrorCode.VALIDATION_FAILED
+    forbidden = RelationshipChangePlan(
+        operation_id="graph:parents:children:create-forbidden",
+        relationship_id="children",
+        steps=(CreateRelated(values={"name": "forbidden"}),),
+        authorization_requirement=PermissionRequirement.all_of("admin.resources.parents.update"),
+    )
+    with pytest.raises(RakitError) as caught:
+        await _create_graph_call(
+            writer,
+            change=forbidden,
+            capabilities=_create_capabilities(forbidden),
+            submission="create-graph-forbidden",
+        )
+    assert caught.value.code == ErrorCode.AUTH_FORBIDDEN
+    async with session_factory() as session:
+        parents = list((await session.scalars(select(Parent))).all())
+        child = (await session.scalars(select(Child))).one()
+    assert len(parents) == 1
+    assert child.parent_id == parents[0].id
+
+
+@pytest.mark.anyio
+async def test_graph_to_one_set_and_clear_share_the_parent_uow(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        session.add_all((Parent(name="before"), Customer(name="Ada")))
+        await session.commit()
+        parent = (await session.scalars(select(Parent))).one()
+
+    writer, relationships = _to_one_services(session_factory)
+    parent_identity = _identity(parent.id)
+    set_change = RelationshipChangePlan(
+        operation_id="graph:parents:customer:set",
+        relationship_id="customer",
+        steps=(SetRelated(identity=_identity(1)),),
+        authorization_requirement=PermissionRequirement.all_of("admin.resources.parents.update"),
+        concurrency_token=await relationships.issue_concurrency_token(parent_identity, "customer"),
+    )
+    await _graph_call(
+        writer,
+        parent=parent_identity,
+        scalar_token=writer.issue_update_token(parent),
+        change=set_change,
+        capabilities=_relationship_capabilities(parent_identity, set_change),
+        submission="to-one-set",
+    )
+    async with session_factory() as session:
+        persisted = (await session.scalars(select(Parent))).one()
+        assert (persisted.name, persisted.customer_id, persisted.version) == ("changed", 1, 2)
+        clear_token = writer.issue_update_token(persisted)
+    clear_change = RelationshipChangePlan(
+        operation_id="graph:parents:customer:clear",
+        relationship_id="customer",
+        steps=(ClearRelated(),),
+        authorization_requirement=PermissionRequirement.all_of("admin.resources.parents.update"),
+        concurrency_token=await relationships.issue_concurrency_token(parent_identity, "customer"),
+    )
+    await _graph_call(
+        writer,
+        parent=parent_identity,
+        scalar_token=clear_token,
+        change=clear_change,
+        capabilities=_relationship_capabilities(parent_identity, clear_change),
+        submission="to-one-clear",
+        name="cleared",
+    )
+    async with session_factory() as session:
+        persisted = (await session.scalars(select(Parent))).one()
+    assert (persisted.name, persisted.customer_id, persisted.version) == ("cleared", None, 3)
+
+    set_then_fail = RelationshipChangePlan(
+        operation_id="graph:parents:customer:set-rollback",
+        relationship_id="customer",
+        steps=(SetRelated(identity=_identity(1)), ReorderRelated(identities=(_identity(1),))),
+        authorization_requirement=PermissionRequirement.all_of("admin.resources.parents.update"),
+        concurrency_token=await relationships.issue_concurrency_token(parent_identity, "customer"),
+    )
+    with pytest.raises(RakitError) as caught:
+        await _graph_call(
+            writer,
+            parent=parent_identity,
+            scalar_token=writer.issue_update_token(persisted),
+            change=set_then_fail,
+            capabilities=_relationship_capabilities(parent_identity, set_then_fail),
+            submission="to-one-set-rollback",
+            name="would-set",
+        )
+    assert caught.value.code == ErrorCode.VALIDATION_FAILED
+    async with session_factory() as session:
+        persisted = (await session.scalars(select(Parent))).one()
+    assert (persisted.name, persisted.customer_id, persisted.version) == ("cleared", None, 3)
+
+    async with session_factory() as session:
+        persisted = (await session.scalars(select(Parent))).one()
+        persisted.customer = (await session.scalars(select(Customer))).one()
+        await session.commit()
+        await session.refresh(persisted)
+    clear_then_fail = RelationshipChangePlan(
+        operation_id="graph:parents:customer:clear-rollback",
+        relationship_id="customer",
+        steps=(ClearRelated(), ReorderRelated(identities=(_identity(1),))),
+        authorization_requirement=PermissionRequirement.all_of("admin.resources.parents.update"),
+        concurrency_token=await relationships.issue_concurrency_token(parent_identity, "customer"),
+    )
+    with pytest.raises(RakitError) as caught:
+        await _graph_call(
+            writer,
+            parent=parent_identity,
+            scalar_token=writer.issue_update_token(persisted),
+            change=clear_then_fail,
+            capabilities=_relationship_capabilities(parent_identity, clear_then_fail),
+            submission="to-one-clear-rollback",
+            name="would-clear",
+        )
+    assert caught.value.code == ErrorCode.VALIDATION_FAILED
+    async with session_factory() as session:
+        persisted = (await session.scalars(select(Parent))).one()
+    assert (persisted.name, persisted.customer_id, persisted.version) == ("cleared", 1, 3)
+
+
+@pytest.mark.anyio
+async def test_graph_create_can_set_a_to_one_target_after_parent_flush(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        session.add(Customer(name="Ada"))
+        await session.commit()
+    writer, _relationships = _to_one_services(session_factory)
+    change = RelationshipChangePlan(
+        operation_id="graph:parents:customer:create-set",
+        relationship_id="customer",
+        steps=(SetRelated(identity=_identity(1)),),
+        authorization_requirement=PermissionRequirement.all_of("admin.resources.parents.update"),
+    )
+    result = await _create_graph_call(
+        writer,
+        change=change,
+        capabilities=_create_capabilities(change),
+        submission="create-graph-set",
+    )
+    async with session_factory() as session:
+        persisted = (await session.scalars(select(Parent))).one()
+    assert result.identity == _identity(persisted.id)
+    assert persisted.customer_id == 1
+
+
+@pytest.mark.anyio
+async def test_graph_association_scalar_update_uses_the_phase_two_edge_allowlist(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        course = AssociationCourse(name="Math")
+        parent = AssociationParent(name="before")
+        parent.enrollments.append(AssociationEnrollment(course=course, grade="B"))
+        session.add(parent)
+        await session.commit()
+        enrollment = parent.enrollments[0]
+
+    writer, relationships = _association_services(session_factory)
+    parent_identity = _identity(parent.id)
+    requirement = PermissionRequirement.all_of("admin.resources.association_parents.update")
+    change = RelationshipChangePlan(
+        operation_id="graph:association-parents:enrollments:update",
+        relationship_id="enrollments",
+        steps=(
+            UpdateAssociationRelated(
+                target_identity=_identity(enrollment.course_id),
+                association_identity=_identity(enrollment.id),
+                values={"grade": "A"},
+            ),
+        ),
+        authorization_requirement=requirement,
+        concurrency_token=await relationships.issue_concurrency_token(
+            parent_identity, "enrollments"
+        ),
+    )
+    root = OperationAuthorization.for_requirement(
+        admin_id="admin",
+        resource_id="association_parents",
+        operation="update",
+        principal_id="operator",
+        requirement=requirement,
+    )
+    capabilities = OperationAuthorizationSet(
+        root=root,
+        capabilities=(
+            OperationAuthorization.for_requirement(
+                admin_id="admin",
+                resource_id="association_parents",
+                operation=change.operation_id,
+                principal_id="operator",
+                requirement=requirement,
+                target_identity=parent_identity,
+            ),
+        ),
+    )
+    context = OperationContext(
+        deadline=None,
+        cancellation=CancellationContext(),
+        principal=Principal(subject_id="operator", authenticated=True),
+        admin_id="admin",
+        resource_id="association_parents",
+        operation="update",
+        permissions=root.permissions,
+        permission_requirement=root.requirement,
+    )
+    with activate_operation_context(context):
+        await writer.update_graph(
+            parent_identity,
+            {"name": "after"},
+            relationship_changes=(change,),
+            concurrency_token=writer.issue_update_token(parent),
+            authorizations=capabilities,
+            idempotency_token="association-update",
+        )
+    async with session_factory() as session:
+        persisted_parent = (await session.scalars(select(AssociationParent))).one()
+        persisted_edge = (await session.scalars(select(AssociationEnrollment))).one()
+    assert (persisted_parent.name, persisted_parent.version, persisted_edge.grade) == (
+        "after",
+        2,
+        "A",
+    )
+
+    async with session_factory() as session:
+        parent = (await session.scalars(select(AssociationParent))).one()
+    failing = RelationshipChangePlan(
+        operation_id="graph:association-parents:enrollments:rollback",
+        relationship_id="enrollments",
+        steps=(
+            UpdateAssociationRelated(
+                target_identity=_identity(enrollment.course_id), values={"grade": "C"}
+            ),
+            ReorderRelated(identities=(_identity(enrollment.course_id),)),
+        ),
+        authorization_requirement=requirement,
+        concurrency_token=await relationships.issue_concurrency_token(
+            parent_identity, "enrollments"
+        ),
+    )
+    failing_capabilities = OperationAuthorizationSet(
+        root=root,
+        capabilities=(
+            OperationAuthorization.for_requirement(
+                admin_id="admin",
+                resource_id="association_parents",
+                operation=failing.operation_id,
+                principal_id="operator",
+                requirement=requirement,
+                target_identity=parent_identity,
+            ),
+        ),
+    )
+    with activate_operation_context(context), pytest.raises(RakitError) as caught:
+        await writer.update_graph(
+            parent_identity,
+            {"name": "would-rollback"},
+            relationship_changes=(failing,),
+            concurrency_token=writer.issue_update_token(parent),
+            authorizations=failing_capabilities,
+            idempotency_token="association-rollback",
+        )
+    assert caught.value.code == ErrorCode.VALIDATION_FAILED
+    async with session_factory() as session:
+        persisted_parent = (await session.scalars(select(AssociationParent))).one()
+        persisted_edge = (await session.scalars(select(AssociationEnrollment))).one()
+    assert (persisted_parent.name, persisted_parent.version, persisted_edge.grade) == (
+        "after",
+        2,
+        "A",
+    )
 
 
 @pytest.mark.anyio
@@ -587,7 +1197,6 @@ async def test_explicit_child_delete_requires_its_own_capability_and_confirmatio
         steps=(
             DeleteRelated(
                 identity=_identity(child.id),
-                concurrency_token=child_writer.issue_update_token(child),
                 confirmation_token=delete_token,
             ),
         ),
@@ -605,14 +1214,45 @@ async def test_explicit_child_delete_requires_its_own_capability_and_confirmatio
         )
     assert caught.value.code == ErrorCode.AUTH_FORBIDDEN
 
+    async with session_factory() as session:
+        current_child = (await session.scalars(select(Child))).one()
+        current_child.version = 2
+        await session.commit()
+        current_parent = (await session.scalars(select(Parent))).one()
+    with pytest.raises(RakitError) as caught:
+        await _graph_call(
+            writer,
+            parent=parent_identity,
+            scalar_token=writer.issue_update_token(current_parent),
+            change=change,
+            capabilities=_capabilities(
+                parent_identity,
+                change,
+                child_operation="target-delete",
+                child_identity=_identity(child.id),
+            ),
+            submission="graph-delete-stale",
+        )
+    assert caught.value.code == ErrorCode.RESOURCE_CONFLICT
+
+    fresh_token = await child_writer.issue_delete_token(_identity(child.id))
+    fresh_change = change.model_copy(
+        update={
+            "steps": (DeleteRelated(identity=_identity(child.id), confirmation_token=fresh_token),),
+            "concurrency_token": await relationships.issue_concurrency_token(
+                parent_identity, "children"
+            ),
+        }
+    )
+
     await _graph_call(
         writer,
         parent=parent_identity,
-        scalar_token=writer.issue_update_token(parent),
-        change=change,
+        scalar_token=writer.issue_update_token(current_parent),
+        change=fresh_change,
         capabilities=_capabilities(
             parent_identity,
-            change,
+            fresh_change,
             child_operation="target-delete",
             child_identity=_identity(child.id),
         ),

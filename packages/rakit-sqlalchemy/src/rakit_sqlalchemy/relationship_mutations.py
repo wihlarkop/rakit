@@ -24,6 +24,8 @@ from rakit_core.identity import (
 from rakit_core.mutations import OperationAuthorization, OperationAuthorizationSet
 from rakit_core.operations import OperationContext, current_operation_context
 from rakit_core.relationship_mutations import (
+    AssociationScalarChange,
+    ClearRelated,
     CreateRelated,
     DeleteRelated,
     LinkRelated,
@@ -34,7 +36,9 @@ from rakit_core.relationship_mutations import (
     RelationshipMutationPlan,
     RelationshipMutationResult,
     ReorderRelated,
+    SetRelated,
     UnlinkRelated,
+    UpdateAssociationRelated,
     UpdateRelated,
 )
 from rakit_core.relationships import CompiledRelationship, RelationshipCardinality, RelationshipKind
@@ -338,13 +342,14 @@ class SQLAlchemyRelationshipMutationService:
         parent_identity: RecordIdentity,
         change: RelationshipChangePlan,
         authorizations: OperationAuthorizationSet,
-        expected_parent_version: object,
+        expected_parent_version: object | None,
+        new_parent: bool = False,
     ) -> RelationshipMutationResult:
         """Apply graph-owned relationship work without a nested root lifecycle."""
 
         entry = self._entry(change.relationship_id)
         context = self._require_composed_relationship_authorization(
-            entry, change, parent_identity, authorizations
+            entry, change, parent_identity, authorizations, new_parent=new_parent
         )
         if change.authorization_requirement != entry.mutation_permission:
             raise RakitError(
@@ -354,9 +359,14 @@ class SQLAlchemyRelationshipMutationService:
                 ),
                 status_code=403,
             )
-        await self._verify_change_concurrency(
-            uow.session, parent, entry, change, parent_identity, expected_parent_version
-        )
+        if not new_parent:
+            if expected_parent_version is None:
+                raise self._configuration_error(
+                    "Existing relationship mutation requires a parent concurrency version."
+                )
+            await self._verify_change_concurrency(
+                uow.session, parent, entry, change, parent_identity, expected_parent_version
+            )
         before = await self._current_target_identities(uow.session, parent, entry)
         deleted_targets: list[RecordIdentity] = []
         for step in change.steps:
@@ -396,6 +406,34 @@ class SQLAlchemyRelationshipMutationService:
                     ),
                     targets,
                 )
+            elif isinstance(step, SetRelated):
+                targets = await self._resolve_targets(uow.session, entry, (step.identity,))
+                await self._apply(
+                    uow.session,
+                    parent,
+                    entry,
+                    self._single_plan(
+                        change, parent_identity, RelationshipMutationKind.SET, step.identity
+                    ),
+                    targets,
+                )
+            elif isinstance(step, ClearRelated):
+                plan = self._single_plan(change, parent_identity, RelationshipMutationKind.CLEAR)
+                current = await self._current_target_identities(uow.session, parent, entry)
+                destructive = self._destructive_targets(entry, current, plan)
+                self._reject_unapproved_destructive_impact(entry, destructive)
+                if destructive:
+                    await self._verify_destructive_execution(
+                        uow,
+                        plan,
+                        entry,
+                        context,
+                        destructive,
+                        (authorizations.root, *authorizations.capabilities),
+                        await self._state_digest(uow.session, parent, entry),
+                    )
+                    deleted_targets.extend(destructive)
+                await self._apply(uow.session, parent, entry, plan, {})
             elif isinstance(step, UnlinkRelated):
                 plan = self._single_plan(
                     change, parent_identity, RelationshipMutationKind.REMOVE, step.identity
@@ -456,6 +494,15 @@ class SQLAlchemyRelationshipMutationService:
                     requirement=entry.target_delete_permission,
                 )
                 deleted_targets.append(step.identity)
+            elif isinstance(step, UpdateAssociationRelated):
+                targets = await self._resolve_targets(uow.session, entry, (step.target_identity,))
+                await self._apply(
+                    uow.session,
+                    parent,
+                    entry,
+                    self._association_plan(change, parent_identity, step),
+                    targets,
+                )
             elif isinstance(step, ReorderRelated):
                 await self._apply_reorder(uow.session, parent, entry, step)
             else:  # pragma: no cover - discriminated core plan guards this branch.
@@ -500,6 +547,8 @@ class SQLAlchemyRelationshipMutationService:
         change: RelationshipChangePlan,
         parent_identity: RecordIdentity,
         authorizations: OperationAuthorizationSet,
+        *,
+        new_parent: bool = False,
     ) -> OperationContext:
         context = current_operation_context()
         root = authorizations.root
@@ -522,7 +571,12 @@ class SQLAlchemyRelationshipMutationService:
                 resource_id=entry.source_resource_id,
                 operation=change.operation_id,
                 requirement=entry.mutation_permission,
-                target_identity=parent_identity,
+                # A create graph cannot bind a capability to a database
+                # identity that does not exist until after flush.  Its route
+                # boundary therefore authorizes the relationship operation
+                # against the new-parent sentinel; existing-parent graph work
+                # remains identity-bound exactly as before.
+                target_identity=None if new_parent else parent_identity,
             )
         except ValueError as exc:
             raise RakitError(
@@ -562,7 +616,7 @@ class SQLAlchemyRelationshipMutationService:
         change: RelationshipChangePlan,
         parent_identity: RecordIdentity,
         kind: RelationshipMutationKind,
-        identity: RecordIdentity,
+        identity: RecordIdentity | None = None,
     ) -> RelationshipMutationPlan:
         return RelationshipMutationPlan(
             operation_id=change.operation_id,
@@ -570,7 +624,34 @@ class SQLAlchemyRelationshipMutationService:
             parent_identity=parent_identity,
             relationship_id=change.relationship_id,
             kind=kind,
-            target_identities=(identity,),
+            target_identities=(identity,) if identity is not None else (),
+            authorization_requirement=change.authorization_requirement,
+            concurrency_token=change.concurrency_token,
+            destructive_confirmation=change.destructive_confirmation,
+        )
+
+    def _association_plan(
+        self,
+        change: RelationshipChangePlan,
+        parent_identity: RecordIdentity,
+        step: UpdateAssociationRelated,
+    ) -> RelationshipMutationPlan:
+        """Translate the typed graph edge update into the approved Phase-2 plan."""
+
+        return RelationshipMutationPlan(
+            operation_id=change.operation_id,
+            parent_resource_id=self._resource_id,
+            parent_identity=parent_identity,
+            relationship_id=change.relationship_id,
+            kind=RelationshipMutationKind.UPDATE,
+            target_identities=(step.target_identity,),
+            association_changes=(
+                AssociationScalarChange(
+                    target_identity=step.target_identity,
+                    association_identity=step.association_identity,
+                    values=step.values,
+                ),
+            ),
             authorization_requirement=change.authorization_requirement,
             concurrency_token=change.concurrency_token,
             destructive_confirmation=change.destructive_confirmation,
