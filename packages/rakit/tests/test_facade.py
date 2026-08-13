@@ -392,9 +392,19 @@ def test_sqlalchemy_plan05_facade_reexports_relationship_inspection() -> None:
     assert inspect_relationships is RealInspectRelationships
 
 
+def test_sqlalchemy_relationship_resolver_preserves_facade_identity() -> None:
+    from rakit.sqlalchemy import SQLAlchemyRelationshipResolver
+    from rakit_sqlalchemy.relationship_mutations import (
+        SQLAlchemyRelationshipResolver as RealSQLAlchemyRelationshipResolver,
+    )
+
+    assert SQLAlchemyRelationshipResolver is RealSQLAlchemyRelationshipResolver
+
+
 def test_relationship_mutation_contracts_preserve_facade_identity() -> None:
     from rakit.core import (
         AssociationScalarChange,
+        RelationshipCandidate,
         RelationshipChanged,
         RelationshipMutationKind,
         RelationshipMutationPlan,
@@ -403,6 +413,7 @@ def test_relationship_mutation_contracts_preserve_facade_identity() -> None:
     from rakit_core.relationship_mutations import (
         AssociationScalarChange as RealAssociationScalarChange,
     )
+    from rakit_core.relationship_mutations import RelationshipCandidate as RealRelationshipCandidate
     from rakit_core.relationship_mutations import RelationshipChanged as RealRelationshipChanged
     from rakit_core.relationship_mutations import (
         RelationshipMutationKind as RealRelationshipMutationKind,
@@ -415,6 +426,7 @@ def test_relationship_mutation_contracts_preserve_facade_identity() -> None:
     )
 
     assert AssociationScalarChange is RealAssociationScalarChange
+    assert RelationshipCandidate is RealRelationshipCandidate
     assert RelationshipChanged is RealRelationshipChanged
     assert RelationshipMutationKind is RealRelationshipMutationKind
     assert RelationshipMutationPlan is RealRelationshipMutationPlan

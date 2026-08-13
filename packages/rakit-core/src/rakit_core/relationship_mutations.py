@@ -64,6 +64,22 @@ class AssociationScalarChange(BaseModel):
         return freeze_mapping(ConcurrencyTokenService.canonical_snapshot(value))
 
 
+class RelationshipCandidate(BaseModel):
+    """A target option safe for a later transport/UI adapter to display."""
+
+    model_config = ConfigDict(frozen=True)
+
+    identity: RecordIdentity
+    label: str
+
+    @field_validator("label")
+    @classmethod
+    def _require_plain_text_label(cls, value: str) -> str:
+        if not value:
+            raise ValueError("relationship candidate label must not be empty")
+        return value
+
+
 class RelationshipMutationPlan(BaseModel):
     """Canonical request-independent relationship mutation intent."""
 
@@ -191,6 +207,7 @@ class RelationshipChanged(DomainEvent):
 
 __all__ = [
     "AssociationScalarChange",
+    "RelationshipCandidate",
     "RelationshipChanged",
     "RelationshipMutationKind",
     "RelationshipMutationPlan",

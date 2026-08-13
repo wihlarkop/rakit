@@ -610,3 +610,35 @@ class SQLAlchemyDataSource:
         async with self._session_factory() as session:
             result = await session.execute(statement)
             return result.scalar_one_or_none()
+
+    def identity_for(self, record: object) -> RecordIdentity:
+        """Return this data source's canonical identity for an already-loaded record."""
+
+        return RecordIdentity(
+            values={field: getattr(record, field) for field in self.identity_fields}
+        )
+
+    def identity_conditions(self, identity: RecordIdentity) -> tuple[ColumnElement[bool], ...]:
+        """Build validated mapped identity predicates for an adapter-owned statement."""
+
+        if set(identity.values) != set(self.identity_fields):
+            raise _invalid_identity(self._metadata.identity_field)
+        return tuple(
+            getattr(self._model, field) == value for field, value in identity.values.items()
+        )
+
+    async def resolve_scoped(
+        self, session: AsyncSession, identity: RecordIdentity
+    ) -> object | None:
+        """Resolve an identity from the resource's canonical visibility scope.
+
+        This is intentionally adapter-owned so relationship writes cannot
+        substitute ``Session.get`` and accidentally bypass a host's scoped
+        base query.
+        """
+
+        return (
+            await session.scalars(
+                self.scoped_statement().where(*self.identity_conditions(identity))
+            )
+        ).one_or_none()

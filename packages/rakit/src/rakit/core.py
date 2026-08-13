@@ -134,6 +134,7 @@ from rakit_core.query import (
 )
 from rakit_core.relationship_mutations import (
     AssociationScalarChange,
+    RelationshipCandidate,
     RelationshipChanged,
     RelationshipMutationKind,
     RelationshipMutationPlan,
@@ -244,6 +245,7 @@ __all__ = [
     "RakitWarning",
     "RecordIdentity",
     "RecordLabelResolver",
+    "RelationshipCandidate",
     "RelationshipCardinality",
     "RelationshipChanged",
     "RelationshipDefinition",

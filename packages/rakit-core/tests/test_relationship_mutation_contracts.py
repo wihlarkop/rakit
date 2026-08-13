@@ -3,6 +3,7 @@ from rakit_core.identity import RecordIdentity
 from rakit_core.permissions import PermissionRequirement
 from rakit_core.relationship_mutations import (
     AssociationScalarChange,
+    RelationshipCandidate,
     RelationshipMutationKind,
     RelationshipMutationPlan,
 )
@@ -65,3 +66,10 @@ def test_relationship_mutation_plan_rejects_duplicate_or_unbound_association_tar
             ),
             **base,
         )
+
+
+def test_relationship_candidate_exposes_only_canonical_identity_and_plain_text_label() -> None:
+    candidate = RelationshipCandidate(identity=_identity(2), label="Ada Lovelace")
+
+    assert candidate.identity == _identity(2)
+    assert candidate.label == "Ada Lovelace"
