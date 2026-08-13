@@ -487,6 +487,29 @@ async def relationship_panel_view(
                 "concurrency_token": row.concurrency_token,
             }
         )
+    if editor.relationship.ordering is not None:
+        row_by_identity = {
+            IdentityCodec().encode(cast(RelationshipCandidate, row["candidate"]).identity): row
+            for row in row_views
+        }
+        ordered_identities = list(row_by_identity)
+        for name in values:
+            if not name.startswith("move__"):
+                continue
+            parts = name.split("__", 2)
+            if len(parts) != 3 or parts[2] not in {"up", "down"}:
+                raise _invalid_relationship_field()
+            try:
+                index = ordered_identities.index(parts[1])
+            except ValueError as exc:
+                raise _invalid_relationship_field() from exc
+            destination = index + (-1 if parts[2] == "up" else 1)
+            if 0 <= destination < len(ordered_identities):
+                ordered_identities[index], ordered_identities[destination] = (
+                    ordered_identities[destination],
+                    ordered_identities[index],
+                )
+        row_views = [row_by_identity[encoded] for encoded in ordered_identities]
     draft_rows: dict[str, dict[str, object]] = {}
     for name, value in values.items():
         if not name.startswith("create__"):

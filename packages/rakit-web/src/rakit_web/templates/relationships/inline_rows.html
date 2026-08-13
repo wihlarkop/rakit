@@ -17,8 +17,10 @@
         {% endfor %}
         {% if panel.reorderable %}
           <input type="hidden" name="{{ panel.prefix }}order__{{ '%04d'|format(loop.index0) }}" value="{{ encoded }}" />
-          <button type="submit" name="{{ panel.prefix }}move__{{ encoded }}__up" value="up" aria-label="Move {{ row.candidate.label }} up">Move up</button>
-          <button type="submit" name="{{ panel.prefix }}move__{{ encoded }}__down" value="down" aria-label="Move {{ row.candidate.label }} down">Move down</button>
+          <button type="button" name="{{ panel.prefix }}move__{{ encoded }}__up" value="up" aria-label="Move {{ row.candidate.label }} up"
+            {% if panel.page_path %}hx-post="{{ panel.page_path }}/page/{{ panel.page }}" hx-include="closest form" hx-target="#rakit-relationship-{{ panel.relationship_id }}" hx-swap="outerHTML"{% endif %}>Move up</button>
+          <button type="button" name="{{ panel.prefix }}move__{{ encoded }}__down" value="down" aria-label="Move {{ row.candidate.label }} down"
+            {% if panel.page_path %}hx-post="{{ panel.page_path }}/page/{{ panel.page }}" hx-include="closest form" hx-target="#rakit-relationship-{{ panel.relationship_id }}" hx-swap="outerHTML"{% endif %}>Move down</button>
         {% endif %}
         <label><input type="checkbox" name="{{ panel.prefix }}target__{{ encoded }}" value="{{ encoded }}" checked /> Keep {{ row.candidate.label }}</label>
       </li>
