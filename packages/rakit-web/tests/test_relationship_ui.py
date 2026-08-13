@@ -757,4 +757,5 @@ async def test_child_delete_preview_is_explicit_non_persisting_and_uses_signed_t
         )
     assert response.status_code == 200
     assert "signed-child-delete" in response.text
+    assert "Delete preview:" in response.text
     assert service.graph_updates == []

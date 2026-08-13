@@ -27,6 +27,7 @@
         {% if panel.delete_available %}
           <label><input type="checkbox" name="{{ panel.prefix }}delete_intent__{{ encoded }}" value="true"{% if row.delete_intent %} checked{% endif %} /> Delete {{ row.candidate.label }}</label>
           {% if row.delete_confirmation %}<input type="hidden" name="{{ panel.prefix }}delete__{{ encoded }}" value="{{ row.delete_confirmation }}" />{% endif %}
+          {% if row.delete_impact %}<input type="hidden" name="{{ panel.prefix }}delete_impact__{{ encoded }}" value="{{ row.delete_impact }}" /><p role="status">Delete preview: {{ row.delete_impact }}</p>{% endif %}
         {% endif %}
       </li>
     {% endfor %}

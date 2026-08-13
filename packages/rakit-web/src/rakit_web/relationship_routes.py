@@ -357,6 +357,8 @@ def _validate_relationship_field_names(
             continue
         if name.startswith("delete_intent__") and name.removeprefix("delete_intent__"):
             continue
+        if name.startswith("delete_impact__") and name.removeprefix("delete_impact__"):
+            continue
         if (
             editor.relationship.ordering is not None
             and name.startswith("order__")
@@ -758,11 +760,13 @@ async def relationship_panel_view(
                 "concurrency_token": row.concurrency_token,
                 "delete_confirmation": values.get(f"delete__{encoded}"),
                 "delete_intent": bool(values.get(f"delete_intent__{encoded}")),
+                "delete_impact": values.get(f"delete_impact__{encoded}"),
             }
         )
         rendered_names.add(f"unlink__{encoded}")
         rendered_names.add(f"delete_intent__{encoded}")
         rendered_names.add(f"delete__{encoded}")
+        rendered_names.add(f"delete_impact__{encoded}")
         rendered_names.add(f"update_token__{encoded}")
         for field_id in row.values:
             rendered_names.add(f"{value_prefix}{field_id}")
@@ -1070,10 +1074,14 @@ def build_relationship_routes(
                             status_code=403,
                         ) from exc
                     # Membership is resolved by the adapter before it previews the child.
-                    await preview_delete(identity, editor.relationship_id, child)
+                    child_preview = await preview_delete(identity, editor.relationship_id, child)
                     submitted[
                         f"{relationship_prefix(editor.relationship_id)}delete__{encoded}"
                     ] = await issue(identity, editor.relationship_id, child)
+                    impact = getattr(child_preview, "relationship_impact", ())
+                    submitted[
+                        f"{relationship_prefix(editor.relationship_id)}delete_impact__{encoded}"
+                    ] = ", ".join(str(item) for item in impact) or "No additional cascade impact."
                 else:
                     if change is None:
                         raise RakitError(
