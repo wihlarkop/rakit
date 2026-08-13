@@ -1,4 +1,9 @@
 <section id="rakit-relationship-{{ panel.relationship_id }}" data-rakit-relationship-panel="{{ panel.relationship_id }}">
+  {% if panel.panel_issues %}
+    <div id="rakit-relationship-{{ panel.relationship_id }}-errors" aria-live="polite">
+      {% for issue in panel.panel_issues %}<p>{{ issue }}</p>{% endfor %}
+    </div>
+  {% endif %}
   {% if panel.relationship.cardinality.value == "to_one" %}
     {% include "relationships/to_one.html" %}
   {% elif panel.relationship.edit_mode.value == "inline" or panel.relationship.edit_mode.value == "nested" %}
@@ -9,6 +14,25 @@
   {% for pending in panel.pending_inputs %}
     <input type="hidden" name="{{ panel.prefix }}{{ pending.name }}" value="{{ pending.value }}" />
   {% endfor %}
+  {% for issue in panel.error_inputs %}
+    <input type="hidden" name="{{ panel.prefix }}{{ issue.name }}" value="{{ issue.value }}" />
+  {% endfor %}
+  {% if panel.confirmation %}
+    <input type="hidden" name="{{ panel.prefix }}destructive_confirmation" value="{{ panel.confirmation }}" />
+    <input type="hidden" name="{{ panel.prefix }}confirmation_intent" value="{{ panel.confirmation_intent }}" />
+    {% if panel.confirmation_impact %}<input type="hidden" name="{{ panel.prefix }}confirmation_impact" value="{{ panel.confirmation_impact }}" />{% endif %}
+    <p role="status">Destructive change confirmed{% if panel.confirmation_impact %}; backend preview identified {{ panel.confirmation_impact }} affected record(s){% endif %}. Save this form to apply it.</p>
+  {% endif %}
+  {% if panel.preview_path and panel.relationship.effective_writable %}
+    <button type="button" hx-post="{{ panel.preview_path }}" hx-include="closest form" hx-target="#rakit-relationship-{{ panel.relationship_id }}" hx-swap="outerHTML">Preview destructive change</button>
+  {% endif %}
+  {% if panel.reorderable %}
+    {% for identity in panel.order_values %}
+      <input type="hidden" name="{{ panel.prefix }}order__{{ '%04d'|format(loop.index0) }}" value="{{ identity }}" />
+    {% endfor %}
+  {% elif panel.reorder_unavailable %}
+    <p>Reordering is unavailable for this relationship because it exceeds the safe editor limit.</p>
+  {% endif %}
   {% if panel.page_path and (panel.has_previous_page or panel.has_next_page) %}
     <nav aria-label="{{ panel.relationship.label }} pages">
       {% if panel.has_previous_page %}

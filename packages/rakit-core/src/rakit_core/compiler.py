@@ -700,6 +700,14 @@ def _resource_definition_routes(builder: ApplicationBuilder) -> tuple[RouteDefin
                         path=f"{relationship_path}/page/{{page}}",
                         owner_id=resource.resource_id,
                     ),
+                    RouteDefinition(
+                        route_name=(
+                            f"resource:{resource.resource_id}:relationship:{relationship.relationship_id}:preview"
+                        ),
+                        methods=("POST",),
+                        path=f"{relationship_path}/preview",
+                        owner_id=resource.resource_id,
+                    ),
                 )
             )
     for action in builder.actions:

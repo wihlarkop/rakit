@@ -258,6 +258,7 @@ def _compiled(relationship_id: str, kind: RelationshipKind) -> CompiledRelations
         nullable=True,
         edit_mode=RelationshipEditMode.LINK,
         writable=True,
+        record_label_field="name",
     )
     requirement = PermissionRequirement.all_of("admin.resources.orders.update")
     return CompiledRelationship(
@@ -341,6 +342,39 @@ async def test_to_one_mutation_uses_scoped_records_authorization_one_uow_and_ide
     async with session_factory() as session:
         order = (await session.scalars(select(Order))).one()
         assert order.customer_id == 1
+
+
+@pytest.mark.anyio
+async def test_editor_page_is_bounded_and_uses_relationship_membership_scope(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        parent = Order()
+        parent.items.extend(Item(name=f"item-{index}") for index in range(5))
+        session.add(parent)
+        await session.commit()
+
+    service = SQLAlchemyRelationshipMutationService(
+        session_factory=session_factory,
+        parent_data_source=_source(Order, session_factory),
+        relationships=(_compiled("items", RelationshipKind.ONE_TO_MANY),),
+        target_data_sources={"items": _source(Item, session_factory)},
+        token_service=TokenService.single_key(
+            key_id="test", value=SecretValue("x" * 32), admin_id="admin"
+        ),
+        concurrency_provider=AttributeVersionProvider("version"),
+        idempotency_store=MemoryIdempotencyStore(),
+    )
+    first = await service.editor_page(
+        _identity(1), "items", child_fields=("name",), page=1, per_page=2
+    )
+    second = await service.editor_page(
+        _identity(1), "items", child_fields=("name",), page=2, per_page=2
+    )
+    assert [row.candidate.identity.values["id"] for row in first.items] == [1, 2]
+    assert [row.candidate.identity.values["id"] for row in second.items] == [3, 4]
+    assert first.has_next is True
+    assert second.has_next is True
 
 
 @pytest.mark.anyio

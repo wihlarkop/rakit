@@ -266,10 +266,14 @@ class SQLAlchemyRelationshipMutationService:
                 )
             relationship_attribute = getattr(self._parent_data_source._model, property_name)
             identity_column = getattr(target_source._model, target_source.identity_fields[0])
+            order_columns = (identity_column.asc(),)
+            if entry.ordering is not None:
+                position_column = getattr(target_source._model, str(entry.ordering.position_field))
+                order_columns = (position_column.asc(), identity_column.asc())
             statement = (
                 target_source.scoped_statement()
                 .where(with_parent(parent, relationship_attribute))
-                .order_by(identity_column.asc())
+                .order_by(*order_columns)
                 .offset((page - 1) * per_page)
                 .limit(per_page + 1)
             )
@@ -304,6 +308,127 @@ class SQLAlchemyRelationshipMutationService:
                 has_next=has_next,
                 total_count=None,
             )
+
+    async def reorder_identities(
+        self,
+        parent_identity: RecordIdentity,
+        relationship_id: str,
+        *,
+        maximum: int,
+    ) -> tuple[RecordIdentity, ...] | None:
+        """Return a complete, bounded identity-only order for a reorderable editor.
+
+        ``None`` is an intentional fail-closed result: a relationship that is
+        too large for the configured UI bound stays editable, but cannot be
+        reordered through a partial page.
+        """
+
+        entry = self._entry(relationship_id)
+        if maximum < 1 or entry.ordering is None:
+            return None
+        target_source = self._target_data_sources[self._target_resource_id(entry)]
+        async with self._session_factory() as session:
+            parent = await SQLAlchemyRelationshipResolver(self._parent_data_source).resolve(
+                session, parent_identity
+            )
+            if parent is None:
+                raise self._not_found()
+            relationship_attribute = getattr(
+                self._parent_data_source._model, str(entry.definition.relationship_id)
+            )
+            identity_field = target_source.identity_fields[0]
+            identity_column = getattr(target_source._model, identity_field)
+            position_column = getattr(target_source._model, str(entry.ordering.position_field))
+            statement = (
+                target_source.scoped_statement()
+                .with_only_columns(identity_column)
+                .where(with_parent(parent, relationship_attribute))
+                .order_by(position_column.asc(), identity_column.asc())
+                .limit(maximum + 1)
+            )
+            values = list((await session.execute(statement)).scalars())
+            if len(values) > maximum:
+                return None
+            return tuple(RecordIdentity(values={identity_field: value}) for value in values)
+
+    async def preview_destructive_impact(
+        self,
+        plan: RelationshipMutationPlan,
+        *,
+        authorization: OperationAuthorization | None,
+    ) -> tuple[RecordIdentity, ...]:
+        """Resolve the authoritative delete-orphan impact without writing."""
+
+        entry = self._entry(plan.relationship_id)
+        self._validate_plan_owner(plan, entry)
+        self._require_authorization(plan, entry, authorization)
+        async with self._session_factory() as session:
+            parent = await SQLAlchemyRelationshipResolver(self._parent_data_source).resolve(
+                session, plan.parent_identity
+            )
+            if parent is None:
+                raise self._not_found()
+            await self._verify_concurrency(session, parent, entry, plan)
+            before = await self._current_target_identities(session, parent, entry)
+            targets = self._destructive_targets(entry, before, plan)
+            self._reject_unapproved_destructive_impact(entry, targets)
+            return targets
+
+    async def preview_child_delete(
+        self,
+        parent_identity: RecordIdentity,
+        relationship_id: str,
+        child_identity: RecordIdentity,
+    ) -> object:
+        """Prepare a registered child's normal delete preview after membership checks."""
+
+        entry = self._entry(relationship_id)
+        if not entry.definition.destructive_policy.allow_child_delete:
+            raise RakitError(
+                code=ErrorCode.AUTH_FORBIDDEN,
+                message="Relationship policy does not allow deleting this child.",
+                status_code=403,
+            )
+        service = self._target_mutation_services.get(self._target_resource_id(entry))
+        preview = getattr(service, "preview_delete", None)
+        if not callable(preview):
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="Relationship target does not support deletion.",
+                status_code=500,
+            )
+        async with self._session_factory() as session:
+            parent = await SQLAlchemyRelationshipResolver(self._parent_data_source).resolve(
+                session, parent_identity
+            )
+            if parent is None:
+                raise self._not_found()
+            members = await self._current_target_identities(session, parent, entry)
+            if self._identity_key(child_identity) not in {
+                self._identity_key(member) for member in members
+            }:
+                raise self._not_found()
+        return await preview(child_identity)
+
+    async def issue_child_delete_confirmation(
+        self,
+        parent_identity: RecordIdentity,
+        relationship_id: str,
+        child_identity: RecordIdentity,
+    ) -> str:
+        """Issue the target resource's sealed delete confirmation after membership checks."""
+
+        await self.preview_child_delete(parent_identity, relationship_id, child_identity)
+        target_resource_id = self._target_resource_id(self._entry(relationship_id))
+        service = self._target_mutation_services[target_resource_id]
+        issue = getattr(service, "issue_delete_token", None)
+        if not callable(issue):
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="Relationship target does not support deletion.",
+                status_code=500,
+            )
+        return await issue(child_identity)
 
     async def validate_parent_proof(
         self,

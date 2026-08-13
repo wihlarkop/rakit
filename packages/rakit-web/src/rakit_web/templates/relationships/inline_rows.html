@@ -9,20 +9,25 @@
         <span>{{ row.candidate.label }}</span>
         {% if row.concurrency_token %}<input type="hidden" name="{{ panel.prefix }}update_token__{{ encoded }}" value="{{ row.concurrency_token }}" />{% endif %}
         {% for field, value in row['values'].items() %}
+          {% set field_errors = panel.relationship_issues.get((encoded, field), ()) %}
           {% if panel.relationship.kind.value == "association_object" %}
-            <label>{{ field }}<input name="{{ panel.prefix }}association__{{ encoded }}__{{ field }}" value="{{ value }}" /></label>
+            <label>{{ field }}<input name="{{ panel.prefix }}association__{{ encoded }}__{{ field }}" value="{{ value }}"{% if field_errors %} aria-invalid="true" aria-describedby="rakit-relationship-{{ panel.relationship_id }}-{{ encoded }}-{{ field }}-error"{% endif %} /></label>
           {% else %}
-            <label>{{ field }}<input name="{{ panel.prefix }}update__{{ encoded }}__{{ field }}" value="{{ value }}" /></label>
+            <label>{{ field }}<input name="{{ panel.prefix }}update__{{ encoded }}__{{ field }}" value="{{ value }}"{% if field_errors %} aria-invalid="true" aria-describedby="rakit-relationship-{{ panel.relationship_id }}-{{ encoded }}-{{ field }}-error"{% endif %} /></label>
           {% endif %}
+          {% for error in field_errors %}<p id="rakit-relationship-{{ panel.relationship_id }}-{{ encoded }}-{{ field }}-error">{{ error }}</p>{% endfor %}
         {% endfor %}
         {% if panel.reorderable %}
-          <input type="hidden" name="{{ panel.prefix }}order__{{ '%04d'|format(loop.index0) }}" value="{{ encoded }}" />
-          <button type="button" name="{{ panel.prefix }}move__{{ encoded }}__up" value="up" aria-label="Move {{ row.candidate.label }} up"
+          <button type="submit" name="{{ panel.prefix }}move__{{ encoded }}__up" value="up" aria-label="Move {{ row.candidate.label }} up"
             {% if panel.page_path %}hx-post="{{ panel.page_path }}/page/{{ panel.page }}" hx-include="closest form" hx-target="#rakit-relationship-{{ panel.relationship_id }}" hx-swap="outerHTML"{% endif %}>Move up</button>
-          <button type="button" name="{{ panel.prefix }}move__{{ encoded }}__down" value="down" aria-label="Move {{ row.candidate.label }} down"
+          <button type="submit" name="{{ panel.prefix }}move__{{ encoded }}__down" value="down" aria-label="Move {{ row.candidate.label }} down"
             {% if panel.page_path %}hx-post="{{ panel.page_path }}/page/{{ panel.page }}" hx-include="closest form" hx-target="#rakit-relationship-{{ panel.relationship_id }}" hx-swap="outerHTML"{% endif %}>Move down</button>
         {% endif %}
         <label><input type="checkbox" name="{{ panel.prefix }}unlink__{{ encoded }}" value="{{ encoded }}"{% if encoded in panel.pending_unlinks %} checked{% endif %} /> Unlink {{ row.candidate.label }}</label>
+        {% if panel.delete_available %}
+          <label><input type="checkbox" name="{{ panel.prefix }}delete_intent__{{ encoded }}" value="true"{% if row.delete_intent %} checked{% endif %} /> Delete {{ row.candidate.label }}</label>
+          {% if row.delete_confirmation %}<input type="hidden" name="{{ panel.prefix }}delete__{{ encoded }}" value="{{ row.delete_confirmation }}" />{% endif %}
+        {% endif %}
       </li>
     {% endfor %}
   </ol>
@@ -31,7 +36,9 @@
       <fieldset>
         <legend>New {{ panel.relationship.label }}</legend>
         {% for field in panel.inline_fields %}
-          <label>{{ field }}<input name="{{ panel.prefix }}create__{{ draft['key'] }}__{{ field }}" value="{{ draft['values'].get(field, '') }}" /></label>
+          {% set field_errors = panel.relationship_issues.get((draft['key'], field), ()) %}
+          <label>{{ field }}<input name="{{ panel.prefix }}create__{{ draft['key'] }}__{{ field }}" value="{{ draft['values'].get(field, '') }}"{% if field_errors %} aria-invalid="true" aria-describedby="rakit-relationship-{{ panel.relationship_id }}-{{ draft['key'] }}-{{ field }}-error"{% endif %} /></label>
+          {% for error in field_errors %}<p id="rakit-relationship-{{ panel.relationship_id }}-{{ draft['key'] }}-{{ field }}-error">{{ error }}</p>{% endfor %}
         {% endfor %}
       </fieldset>
     {% endfor %}

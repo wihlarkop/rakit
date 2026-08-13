@@ -5,6 +5,8 @@ controls into the sealed typed graph steps and offers read-only HTMX helpers
 for scoped candidates and relationship panels.
 """
 
+import hashlib
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
@@ -13,6 +15,13 @@ from uuid import uuid4
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.forms import FormSchema, FormValidationError
 from rakit_core.identity import IdentityCodec, RecordIdentity
+from rakit_core.mutations import OperationAuthorization
+from rakit_core.operations import (
+    CancellationContext,
+    OperationContext,
+    activate_operation_context,
+    new_operation_id,
+)
 from rakit_core.query import PageResult, ResourceQuery
 from rakit_core.relationship_mutations import (
     ClearRelated,
@@ -22,6 +31,9 @@ from rakit_core.relationship_mutations import (
     RelationshipCandidate,
     RelationshipChangePlan,
     RelationshipEditorRow,
+    RelationshipMutationKind,
+    RelationshipMutationPlan,
+    ReorderRelated,
     SetRelated,
     UnlinkRelated,
     UpdateAssociationRelated,
@@ -58,6 +70,14 @@ class RelationshipEditorStateProvider(Protocol):
         self, parent_identity: RecordIdentity, relationship_id: str
     ) -> str: ...
 
+    async def reorder_identities(
+        self,
+        parent_identity: RecordIdentity,
+        relationship_id: str,
+        *,
+        maximum: int,
+    ) -> tuple[RecordIdentity, ...] | None: ...
+
 
 @dataclass(frozen=True)
 class RelationshipEditorBinding:
@@ -70,11 +90,14 @@ class RelationshipEditorBinding:
     association_form_schema: FormSchema | None = None
     target_search_fields: tuple[str, ...] = ()
     candidate_page_size: int = 25
+    reorder_safe_maximum: int = 100
 
     def __post_init__(self) -> None:
         definition = self.relationship.definition
         if self.candidate_page_size < 1 or self.candidate_page_size > 200:
             raise ValueError("candidate_page_size must be between 1 and 200")
+        if self.reorder_safe_maximum < 1 or self.reorder_safe_maximum > 1_000:
+            raise ValueError("reorder_safe_maximum must be between 1 and 1000")
         if definition.kind is RelationshipKind.ASSOCIATION_OBJECT:
             if self.association_form_schema is not None:
                 fields = {field.field_id for field in self.association_form_schema.fields}
@@ -146,6 +169,121 @@ def _identity(codec: IdentityCodec, encoded: object) -> RecordIdentity:
     return codec.decode(encoded)
 
 
+def _identity_key(identity: RecordIdentity) -> str:
+    return json.dumps(dict(identity.values), sort_keys=True, separators=(",", ":"))
+
+
+def _relationship_intent_fingerprint(values: Mapping[str, object]) -> str:
+    """A UI-only invalidation marker; signed backend claims remain authoritative."""
+
+    relevant = {
+        name: value
+        for name, value in values.items()
+        if name
+        not in {
+            "destructive_confirmation",
+            "confirmation_intent",
+            "confirmation_impact",
+        }
+        and not name.startswith("delete__")
+    }
+    encoded = json.dumps(relevant, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _preview_plan(
+    editor: RelationshipEditorBinding,
+    parent_identity: RecordIdentity,
+    change: RelationshipChangePlan,
+) -> RelationshipMutationPlan | None:
+    """Adapt only the destructive graph steps to the sealed relationship preview API."""
+
+    sets = [step for step in change.steps if isinstance(step, SetRelated)]
+    clears = [step for step in change.steps if isinstance(step, ClearRelated)]
+    unlinks = [step for step in change.steps if isinstance(step, UnlinkRelated)]
+    if sets:
+        kind, targets = RelationshipMutationKind.SET, (sets[-1].identity,)
+    elif clears:
+        kind, targets = RelationshipMutationKind.CLEAR, ()
+    elif unlinks:
+        kind, targets = RelationshipMutationKind.REMOVE, tuple(step.identity for step in unlinks)
+    else:
+        return None
+    return RelationshipMutationPlan(
+        operation_id=change.operation_id,
+        parent_resource_id=editor.relationship.source_resource_id,
+        parent_identity=parent_identity,
+        relationship_id=editor.relationship_id,
+        kind=kind,
+        target_identities=targets,
+        authorization_requirement=editor.relationship.mutation_permission,
+        concurrency_token=change.concurrency_token,
+    )
+
+
+async def _preview_context(
+    binding: Any,
+    request: Request,
+    editor: RelationshipEditorBinding,
+    parent_identity: RecordIdentity,
+    change: RelationshipChangePlan,
+) -> tuple[OperationAuthorization, Any]:
+    """Reuse the normal graph authorization bundle for a read-only preview."""
+
+    root_authorizer = getattr(binding, "mutation_authorizer", None)
+    graph_authorizer = getattr(binding, "graph_mutation_authorizer", None)
+    if not callable(root_authorizer) or not callable(graph_authorizer):
+        raise RakitError(
+            code=ErrorCode.AUTH_FORBIDDEN,
+            message="Relationship preview is not authorized.",
+            status_code=403,
+        )
+    root = await root_authorizer(request, "update", parent_identity)
+    if root is None:
+        raise RakitError(code=ErrorCode.AUTH_FORBIDDEN, message="Forbidden", status_code=403)
+    authorizations = await graph_authorizer(request, root, parent_identity, (change,))
+    if authorizations is None:
+        raise RakitError(code=ErrorCode.AUTH_FORBIDDEN, message="Forbidden", status_code=403)
+    try:
+        return (
+            authorizations.require(
+                resource_id=editor.relationship.source_resource_id,
+                operation=change.operation_id,
+                requirement=editor.relationship.mutation_permission,
+                target_identity=parent_identity,
+            ),
+            authorizations,
+        )
+    except ValueError as exc:
+        raise RakitError(
+            code=ErrorCode.AUTH_FORBIDDEN, message="Forbidden", status_code=403
+        ) from exc
+
+
+async def _with_preview_context(
+    request: Request,
+    authorization: OperationAuthorization,
+    awaitable: Any,
+) -> Any:
+    """A read-only exact relationship capability, without a persistence UoW."""
+
+    context = OperationContext(
+        deadline=None,
+        cancellation=CancellationContext(),
+        request_id=cast(str, request.scope.get("state", {}).get("request_id", "")),
+        operation_id=new_operation_id(),
+        principal=request.scope.get("state", {}).get("principal"),
+        principal_id=authorization.principal_id,
+        admin_id=authorization.admin_id,
+        resource_id=authorization.resource_id,
+        operation=authorization.operation,
+        permissions=authorization.permissions,
+        permission_requirement=authorization.requirement,
+    )
+    with activate_operation_context(context):
+        return await awaitable
+
+
 def _fields_for_prefix(values: Mapping[str, object], prefix: str) -> dict[str, object]:
     return {
         name.removeprefix(prefix): value
@@ -180,7 +318,13 @@ def _validate_relationship_field_names(
         else set()
     )
     for name in values:
-        if name in {"concurrency", "destructive_confirmation", "search"}:
+        if name in {
+            "concurrency",
+            "destructive_confirmation",
+            "confirmation_intent",
+            "confirmation_impact",
+            "search",
+        }:
             continue
         if (
             definition.cardinality is RelationshipCardinality.TO_MANY
@@ -211,7 +355,13 @@ def _validate_relationship_field_names(
                 continue
         if name.startswith("delete__") and name.removeprefix("delete__"):
             continue
-        if name.startswith("order__") and name.removeprefix("order__"):
+        if name.startswith("delete_intent__") and name.removeprefix("delete_intent__"):
+            continue
+        if (
+            editor.relationship.ordering is not None
+            and name.startswith("order__")
+            and name.removeprefix("order__")
+        ):
             continue
         if name.startswith("move__"):
             parts = name.split("__", 2)
@@ -221,10 +371,29 @@ def _validate_relationship_field_names(
                 and parts[2] in {"up", "down"}
             ):
                 continue
+        if name.startswith("issue__"):
+            parts = name.split("__", 2)
+            if (
+                len(parts) == 3
+                and parts[1]
+                and (
+                    (parts[1] == "panel" and parts[2] == "panel")
+                    or parts[2] in target_fields
+                    or parts[2] in association_fields
+                )
+            ):
+                continue
         raise _invalid_relationship_field()
 
 
-def _schema_values(schema: FormSchema, values: Mapping[str, object]) -> Mapping[str, Any]:
+def _schema_values(
+    schema: FormSchema,
+    values: Mapping[str, object],
+    *,
+    relationship_id: str,
+    row_key: str,
+    association: bool = False,
+) -> Mapping[str, Any]:
     try:
         return schema.parse(values).normalized
     except FormValidationError as exc:
@@ -232,7 +401,17 @@ def _schema_values(schema: FormSchema, values: Mapping[str, object]) -> Mapping[
             code=ErrorCode.VALIDATION_FAILED,
             message="Inline relationship fields are invalid.",
             status_code=422,
-            details={"issues": tuple(issue.message for issue in exc.state.issues)},
+            details={
+                "relationship_issue": {
+                    "relationship_id": relationship_id,
+                    "row_key": row_key,
+                    "kind": "association_field" if association else "field",
+                    "issues": tuple(
+                        {"field_id": issue.field_id, "message": issue.message}
+                        for issue in exc.state.issues
+                    ),
+                }
+            },
         ) from exc
 
 
@@ -241,6 +420,7 @@ async def build_relationship_changes(
     submitted: Mapping[str, object],
     *,
     parent_identity: RecordIdentity | None,
+    allow_unconfirmed_delete: bool = False,
 ) -> tuple[RelationshipChangePlan, ...]:
     """Revalidate submitted relationship form state into sealed graph plans."""
 
@@ -291,7 +471,14 @@ async def build_relationship_changes(
                 row_values = _fields_for_prefix(values, f"create__{row_key}__")
                 if any(value not in {"", None} for value in row_values.values()):
                     steps.append(
-                        CreateRelated(values=_schema_values(editor.target_form_schema, row_values))
+                        CreateRelated(
+                            values=_schema_values(
+                                editor.target_form_schema,
+                                row_values,
+                                relationship_id=editor.relationship_id,
+                                row_key=row_key,
+                            )
+                        )
                     )
             update_ids = {
                 name.split("__", 2)[1]
@@ -305,7 +492,12 @@ async def build_relationship_changes(
                     steps.append(
                         UpdateRelated(
                             identity=_identity(binding.codec, encoded),
-                            values=_schema_values(editor.target_form_schema, row_values),
+                            values=_schema_values(
+                                editor.target_form_schema,
+                                row_values,
+                                relationship_id=editor.relationship_id,
+                                row_key=encoded,
+                            ),
                             concurrency_token=token if isinstance(token, str) else None,
                         )
                     )
@@ -324,16 +516,35 @@ async def build_relationship_changes(
                             target_identity=_identity(binding.codec, encoded),
                             association_identity=None,
                             values=_schema_values(
-                                editor.association_form_schema, association_values
+                                editor.association_form_schema,
+                                association_values,
+                                relationship_id=editor.relationship_id,
+                                row_key=encoded,
+                                association=True,
                             ),
                         )
                     )
 
         for name, confirmation in values.items():
-            if name.startswith("delete__") and confirmation:
-                encoded = name.removeprefix("delete__")
+            if name.startswith("delete_intent__") and confirmation:
+                encoded = name.removeprefix("delete_intent__")
+                confirmation = values.get(f"delete__{encoded}")
                 if not isinstance(confirmation, str):
-                    raise ValueError("Malformed child delete confirmation")
+                    if allow_unconfirmed_delete:
+                        continue
+                    raise RakitError(
+                        code=ErrorCode.VALIDATION_FAILED,
+                        message="Deleting this child requires a current deletion confirmation.",
+                        status_code=422,
+                        details={
+                            "relationship_issue": {
+                                "relationship_id": editor.relationship_id,
+                                "row_key": encoded,
+                                "kind": "row",
+                                "message": "Deletion confirmation is required.",
+                            }
+                        },
+                    )
                 steps.append(
                     DeleteRelated(
                         identity=_identity(binding.codec, encoded), confirmation_token=confirmation
@@ -374,11 +585,28 @@ async def build_relationship_changes(
                     order_values[index],
                 )
         if order_values:
-            raise RakitError(
-                code=ErrorCode.VALIDATION_FAILED,
-                message="Relationship reorder is unavailable without a complete ordering state.",
-                status_code=422,
+            if parent_identity is None:
+                raise _invalid_relationship_field()
+            complete_order = await editor.state_provider.reorder_identities(
+                parent_identity,
+                editor.relationship_id,
+                maximum=editor.reorder_safe_maximum,
             )
+            decoded_order = tuple(_identity(binding.codec, encoded) for encoded in order_values)
+            if (
+                complete_order is None
+                or len(decoded_order) != len(complete_order)
+                or len({_identity_key(identity) for identity in decoded_order})
+                != len(decoded_order)
+                or {_identity_key(identity) for identity in decoded_order}
+                != {_identity_key(identity) for identity in complete_order}
+            ):
+                raise RakitError(
+                    code=ErrorCode.VALIDATION_FAILED,
+                    message="Relationship reorder requires a complete current ordering state.",
+                    status_code=422,
+                )
+            steps.append(ReorderRelated(identities=decoded_order))
 
         if not steps:
             continue
@@ -434,6 +662,7 @@ async def relationship_panel_view(
     parent_identity: RecordIdentity | None,
     submitted: Mapping[str, object] = {},
     page: int = 1,
+    issues: tuple[Mapping[str, object], ...] = (),
 ) -> dict[str, object]:
     definition = editor.relationship.definition
     child_fields = (
@@ -469,8 +698,51 @@ async def relationship_panel_view(
     pending_unlinks = {
         name.removeprefix("unlink__") for name in values if name.startswith("unlink__")
     }
+    complete_order: tuple[RecordIdentity, ...] | None = None
+    if parent_identity is not None and editor.relationship.ordering is not None:
+        complete_order = await editor.state_provider.reorder_identities(
+            parent_identity,
+            editor.relationship_id,
+            maximum=editor.reorder_safe_maximum,
+        )
+    submitted_order = [
+        value
+        for _, value in sorted(
+            (name, value) for name, value in values.items() if name.startswith("order__")
+        )
+        if isinstance(value, str)
+    ]
+    complete_order_values = (
+        tuple(IdentityCodec().encode(identity) for identity in complete_order)
+        if complete_order is not None
+        else ()
+    )
+    reorderable = bool(
+        complete_order_values
+        and len(submitted_order) in {0, len(complete_order_values)}
+        and (
+            not submitted_order
+            or submitted_order == list(complete_order_values)
+            or set(submitted_order) == set(complete_order_values)
+        )
+    )
+    order_values = (
+        tuple(submitted_order) if reorderable and submitted_order else complete_order_values
+    )
+    confirmation_intent = _relationship_intent_fingerprint(values)
+    confirmation = values.get("destructive_confirmation")
+    confirmation_current = (
+        isinstance(confirmation, str) and values.get("confirmation_intent") == confirmation_intent
+    )
     row_views: list[dict[str, object]] = []
-    rendered_names: set[str] = {"concurrency", "selection_present", "search"}
+    rendered_names: set[str] = {
+        "concurrency",
+        "selection_present",
+        "search",
+        "destructive_confirmation",
+        "confirmation_intent",
+        "confirmation_impact",
+    }
     for row in rows:
         encoded = IdentityCodec().encode(row.candidate.identity)
         value_prefix = (
@@ -484,9 +756,13 @@ async def relationship_panel_view(
                 "values": {**dict(row.values), **_fields_for_prefix(values, value_prefix)},
                 "association_identity": row.association_identity,
                 "concurrency_token": row.concurrency_token,
+                "delete_confirmation": values.get(f"delete__{encoded}"),
+                "delete_intent": bool(values.get(f"delete_intent__{encoded}")),
             }
         )
         rendered_names.add(f"unlink__{encoded}")
+        rendered_names.add(f"delete_intent__{encoded}")
+        rendered_names.add(f"delete__{encoded}")
         rendered_names.add(f"update_token__{encoded}")
         for field_id in row.values:
             rendered_names.add(f"{value_prefix}{field_id}")
@@ -517,6 +793,45 @@ async def relationship_panel_view(
     if parent_identity is not None:
         encoded_parent = IdentityCodec().encode(parent_identity)
         page_path = editor.relationship.route_path.replace("{identity}", encoded_parent)
+    issue_map: dict[tuple[str | None, str | None], list[str]] = {}
+    panel_issues: list[str] = []
+    for issue in issues:
+        if issue.get("relationship_id") != editor.relationship_id:
+            continue
+        row_key = issue.get("row_key")
+        field_id = issue.get("field_id")
+        message = issue.get("message")
+        if isinstance(message, str):
+            if row_key is None and field_id is None:
+                panel_issues.append(message)
+            else:
+                issue_map.setdefault(
+                    (
+                        str(row_key) if row_key is not None else None,
+                        str(field_id) if field_id else None,
+                    ),
+                    [],
+                ).append(message)
+    for name, message in values.items():
+        if not name.startswith("issue__") or not isinstance(message, str):
+            continue
+        parts = name.split("__", 2)
+        if len(parts) == 3:
+            if parts[1] == "panel" and parts[2] == "panel":
+                panel_issues.append(message)
+            else:
+                issue_map.setdefault((parts[1], parts[2]), []).append(message)
+    error_inputs = (
+        *({"name": "issue__panel__panel", "value": message} for message in panel_issues),
+        *(
+            {
+                "name": f"issue__{row_key or 'panel'}__{field_id or 'panel'}",
+                "value": message,
+            }
+            for (row_key, field_id), messages in issue_map.items()
+            for message in messages
+        ),
+    )
     return {
         "relationship": definition,
         "relationship_id": editor.relationship_id,
@@ -529,11 +844,28 @@ async def relationship_panel_view(
         "pending_unlinks": pending_unlinks,
         "options": tuple(options_by_identity.values()),
         "concurrency_token": token,
-        "reorderable": False,
+        "reorderable": reorderable,
+        "order_values": order_values,
+        "reorder_unavailable": (
+            editor.relationship.ordering is not None and complete_order is None
+        ),
+        "confirmation": confirmation if confirmation_current else None,
+        "confirmation_intent": confirmation_intent if confirmation_current else None,
+        "confirmation_impact": values.get("confirmation_impact") if confirmation_current else None,
+        "delete_available": bool(
+            definition.destructive_policy.allow_child_delete
+            and editor.relationship.target_delete_permission is not None
+            and callable(getattr(editor.state_provider, "issue_child_delete_confirmation", None))
+            and callable(getattr(editor.state_provider, "preview_child_delete", None))
+        ),
+        "panel_issues": tuple(panel_issues),
+        "relationship_issues": issue_map,
+        "error_inputs": error_inputs,
         "page": page,
         "has_previous_page": editor_page.has_previous,
         "has_next_page": editor_page.has_next,
         "page_path": page_path,
+        "preview_path": f"{page_path}/preview" if page_path is not None else None,
         "options_path": f"{page_path}/options" if page_path is not None else None,
         "new_row_key": f"new-{uuid4()}",
         "inline_fields": tuple(
@@ -553,7 +885,7 @@ async def relationship_panel_view(
         "pending_inputs": tuple(
             {"name": name, "value": value}
             for name, value in values.items()
-            if name not in rendered_names and name != "destructive_confirmation"
+            if name not in rendered_names
         ),
     }
 
@@ -563,12 +895,13 @@ async def render_relationship_panels(
     *,
     parent_identity: RecordIdentity | None,
     submitted: Mapping[str, object] = {},
+    issues: tuple[Mapping[str, object], ...] = (),
 ) -> dict[str, dict[str, object]]:
     if binding is None:
         return {}
     return {
         editor.relationship_id: await relationship_panel_view(
-            editor, parent_identity=parent_identity, submitted=submitted
+            editor, parent_identity=parent_identity, submitted=submitted, issues=issues
         )
         for editor in binding.editors
         if editor.relationship.definition.edit_mode is not RelationshipEditMode.HIDDEN
@@ -660,6 +993,161 @@ def build_relationship_routes(
                 headers={"Cache-Control": "no-store"},
             )
 
+        async def preview(request: Request, editor: RelationshipEditorBinding = editor) -> Response:
+            identity = binding.codec.decode(request.path_params["identity"])
+            if not await _authorize_editor(
+                binding, request, editor, identity
+            ) or not await binding.verify_csrf(request):
+                return PlainTextResponse("Forbidden", status_code=403)
+            form = await request.form(max_files=0, max_fields=_MAX_FRAGMENT_FIELDS)
+            submitted = {
+                name: value
+                for name, value in form.multi_items()
+                if isinstance(name, str) and isinstance(value, str)
+            }
+            try:
+                split_relationship_submission(relationship_binding, submitted)
+                changes = await build_relationship_changes(
+                    relationship_binding,
+                    submitted,
+                    parent_identity=identity,
+                    allow_unconfirmed_delete=True,
+                )
+                change = next(
+                    (item for item in changes if item.relationship_id == editor.relationship_id),
+                    None,
+                )
+                delete_intents = [
+                    name.removeprefix(
+                        f"{relationship_prefix(editor.relationship_id)}delete_intent__"
+                    )
+                    for name, value in submitted.items()
+                    if name.startswith(
+                        f"{relationship_prefix(editor.relationship_id)}delete_intent__"
+                    )
+                    and value
+                ]
+                if delete_intents:
+                    if len(delete_intents) != 1:
+                        raise _invalid_relationship_field()
+                    issue = getattr(editor.state_provider, "issue_child_delete_confirmation", None)
+                    preview_delete = getattr(editor.state_provider, "preview_child_delete", None)
+                    if not callable(issue) or not callable(preview_delete):
+                        raise RakitError(
+                            code=ErrorCode.CONFIG_INVALID,
+                            message="Inline child deletion is not supported by this relationship.",
+                            status_code=500,
+                        )
+                    encoded = delete_intents[0]
+                    child = _identity(relationship_binding.codec, encoded)
+                    delete_change = RelationshipChangePlan(
+                        operation_id=f"relationship:{editor.relationship_id}",
+                        relationship_id=editor.relationship_id,
+                        steps=(DeleteRelated(identity=child, confirmation_token="preview"),),
+                        authorization_requirement=editor.relationship.mutation_permission,
+                    )
+                    _, authorizations = await _preview_context(
+                        binding, request, editor, identity, delete_change
+                    )
+                    target_requirement = editor.relationship.target_delete_permission
+                    if target_requirement is None:
+                        raise RakitError(
+                            code=ErrorCode.AUTH_FORBIDDEN,
+                            message="Relationship child deletion is not authorized.",
+                            status_code=403,
+                        )
+                    try:
+                        authorizations.require(
+                            resource_id=str(editor.relationship.definition.target_resource_id),
+                            operation=f"{delete_change.operation_id}:target-delete",
+                            requirement=target_requirement,
+                            target_identity=child,
+                        )
+                    except ValueError as exc:
+                        raise RakitError(
+                            code=ErrorCode.AUTH_FORBIDDEN,
+                            message="Relationship child deletion is not authorized.",
+                            status_code=403,
+                        ) from exc
+                    # Membership is resolved by the adapter before it previews the child.
+                    await preview_delete(identity, editor.relationship_id, child)
+                    submitted[
+                        f"{relationship_prefix(editor.relationship_id)}delete__{encoded}"
+                    ] = await issue(identity, editor.relationship_id, child)
+                else:
+                    if change is None:
+                        raise RakitError(
+                            code=ErrorCode.VALIDATION_FAILED,
+                            message="Choose a relationship change before requesting confirmation.",
+                            status_code=422,
+                        )
+                    plan = _preview_plan(editor, identity, change)
+                    if plan is None:
+                        raise RakitError(
+                            code=ErrorCode.VALIDATION_FAILED,
+                            message=(
+                                "This relationship change has no destructive impact to confirm."
+                            ),
+                            status_code=422,
+                        )
+                    capability, _ = await _preview_context(
+                        binding, request, editor, identity, change
+                    )
+                    preview_impact = getattr(
+                        editor.state_provider, "preview_destructive_impact", None
+                    )
+                    issue = getattr(editor.state_provider, "issue_destructive_confirmation", None)
+                    if not callable(preview_impact) or not callable(issue):
+                        raise RakitError(
+                            code=ErrorCode.CONFIG_INVALID,
+                            message="Relationship destructive preview is not available.",
+                            status_code=500,
+                        )
+                    impact = await _with_preview_context(
+                        request, capability, preview_impact(plan, authorization=capability)
+                    )
+                    if not impact:
+                        raise RakitError(
+                            code=ErrorCode.VALIDATION_FAILED,
+                            message=(
+                                "This relationship change is not destructive and does not need "
+                                "confirmation."
+                            ),
+                            status_code=422,
+                        )
+                    submitted[
+                        f"{relationship_prefix(editor.relationship_id)}destructive_confirmation"
+                    ] = await _with_preview_context(
+                        request, capability, issue(plan, authorization=capability)
+                    )
+                    submitted[
+                        f"{relationship_prefix(editor.relationship_id)}confirmation_intent"
+                    ] = _relationship_intent_fingerprint(
+                        _fields_for_prefix(submitted, relationship_prefix(editor.relationship_id))
+                    )
+                    submitted[
+                        f"{relationship_prefix(editor.relationship_id)}confirmation_impact"
+                    ] = str(len(impact))
+                panel = await relationship_panel_view(
+                    editor,
+                    parent_identity=identity,
+                    submitted=submitted,
+                    page=int(request.query_params.get("page", "1")),
+                )
+                return binding.templates.TemplateResponse(
+                    request,
+                    "relationships/panel.html",
+                    {"panel": panel, "codec": relationship_binding.codec},
+                    headers={"Cache-Control": "no-store"},
+                )
+            except (RakitError, ValueError) as exc:
+                message = (
+                    exc.message
+                    if isinstance(exc, RakitError)
+                    else "Invalid relationship confirmation request"
+                )
+                return PlainTextResponse(message, status_code=getattr(exc, "status_code", 422))
+
         routes.extend(
             (
                 Route(
@@ -673,6 +1161,12 @@ def build_relationship_routes(
                     page,
                     methods=["POST"],
                     name=f"relationship:{editor.relationship.source_resource_id}:{editor.relationship_id}:page",
+                ),
+                Route(
+                    f"{route_path}/preview",
+                    preview,
+                    methods=["POST"],
+                    name=f"relationship:{editor.relationship.source_resource_id}:{editor.relationship_id}:preview",
                 ),
             )
         )

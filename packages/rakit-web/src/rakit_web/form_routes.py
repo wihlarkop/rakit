@@ -342,6 +342,7 @@ async def _form_response(
     operation: str = "create",
     status_code: int = 200,
     parent_identity: RecordIdentity | None = None,
+    relationship_issues: tuple[Mapping[str, object], ...] = (),
 ) -> Response:
     issue_map: dict[str, tuple[object, ...]] = {}
     for issue in issues:
@@ -366,6 +367,7 @@ async def _form_response(
         binding.relationship_form,
         parent_identity=parent_identity,
         submitted=submitted or {},
+        issues=relationship_issues,
     )
     layout, first_invalid = _layout_view(
         binding.form_schema.resolved_layout(operation=operation),
@@ -413,6 +415,45 @@ async def _form_response(
         },
         status_code=status_code,
         headers={"Cache-Control": "no-store"},
+    )
+
+
+def _relationship_error_issues(error: RakitError) -> tuple[Mapping[str, object], ...]:
+    """Keep structured relationship errors out of the scalar/global form path."""
+
+    details = error.details
+    if not isinstance(details, Mapping):
+        return ()
+    issue = details.get("relationship_issue")
+    if not isinstance(issue, Mapping):
+        return ()
+    relationship_id = issue.get("relationship_id")
+    if not isinstance(relationship_id, str):
+        return ()
+    row_key = issue.get("row_key")
+    kind = issue.get("kind")
+    raw_issues = issue.get("issues")
+    if isinstance(raw_issues, tuple):
+        return tuple(
+            {
+                "relationship_id": relationship_id,
+                "row_key": row_key,
+                "field_id": raw.get("field_id") if isinstance(raw, Mapping) else None,
+                "message": raw.get("message", error.message)
+                if isinstance(raw, Mapping)
+                else error.message,
+                "kind": kind,
+            }
+            for raw in raw_issues
+        )
+    return (
+        {
+            "relationship_id": relationship_id,
+            "row_key": row_key,
+            "field_id": issue.get("field_id"),
+            "message": issue.get("message", error.message),
+            "kind": kind,
+        },
     )
 
 
@@ -657,7 +698,10 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                     title=f"New {binding.label}",
                     action_path=binding.create_path,
                     submitted=submitted,
-                    issues=(FormIssue(None, exc.message),),
+                    issues=()
+                    if _relationship_error_issues(exc)
+                    else (FormIssue(None, exc.message),),
+                    relationship_issues=_relationship_error_issues(exc),
                     status_code=exc.status_code,
                 )
             return _error(exc.status_code, "Invalid form")
@@ -827,7 +871,10 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                     title=f"Edit {binding.label}",
                     action_path=f"{binding.path}/{request.path_params['identity']}/edit",
                     submitted=submitted,
-                    issues=(FormIssue(None, exc.message),),
+                    issues=()
+                    if _relationship_error_issues(exc)
+                    else (FormIssue(None, exc.message),),
+                    relationship_issues=_relationship_error_issues(exc),
                     concurrency_token=tokens.get("concurrency_token"),
                     operation="update",
                     status_code=exc.status_code,
