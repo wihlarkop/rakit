@@ -132,6 +132,13 @@ from rakit_core.query import (
     Sort,
     SortDirection,
 )
+from rakit_core.relationship_mutations import (
+    AssociationScalarChange,
+    RelationshipChanged,
+    RelationshipMutationKind,
+    RelationshipMutationPlan,
+    RelationshipMutationResult,
+)
 from rakit_core.relationships import (
     RecordLabelResolver,
     RelationshipCardinality,
@@ -161,6 +168,7 @@ __all__ = [
     "ActionScope",
     "ActionSuccess",
     "ApplicationBuilder",
+    "AssociationScalarChange",
     "AttributeVersionProvider",
     "AuthBackend",
     "AuthorizationDecision",
@@ -237,11 +245,15 @@ __all__ = [
     "RecordIdentity",
     "RecordLabelResolver",
     "RelationshipCardinality",
+    "RelationshipChanged",
     "RelationshipDefinition",
     "RelationshipDestructivePolicy",
     "RelationshipEditMode",
     "RelationshipKind",
     "RelationshipMetadata",
+    "RelationshipMutationKind",
+    "RelationshipMutationPlan",
+    "RelationshipMutationResult",
     "RelationshipPanel",
     "ResourceFieldPolicy",
     "ResourceMutationPlan",
