@@ -11,7 +11,7 @@ from rakit_core.fields import FieldDefinition
 from rakit_core.forms import FormSchema
 from rakit_core.idempotency import OperationReceipt
 from rakit_core.identity import RecordIdentity
-from rakit_core.mutations import OperationAuthorization, OperationAuthorizationSet
+from rakit_core.mutations import MutationHooks, OperationAuthorization, OperationAuthorizationSet
 from rakit_core.operations import CancellationContext, OperationContext, activate_operation_context
 from rakit_core.permissions import PermissionRequirement
 from rakit_core.relationship_mutations import (
@@ -20,6 +20,8 @@ from rakit_core.relationship_mutations import (
     DeleteRelated,
     LinkRelated,
     RelationshipChangePlan,
+    RelationshipMutationKind,
+    RelationshipMutationPlan,
     ReorderRelated,
     SetRelated,
     UnlinkRelated,
@@ -108,6 +110,49 @@ class AssociationEnrollment(Base):
     course: Mapped[AssociationCourse] = relationship()
 
 
+class RequiredParent(Base):
+    __tablename__ = "graph_mutation_required_parents"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    version: Mapped[int] = mapped_column(default=1)
+    name: Mapped[str]
+    children: Mapped[list["RequiredChild"]] = relationship(back_populates="parent")
+
+
+class RequiredChild(Base):
+    __tablename__ = "graph_mutation_required_children"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    version: Mapped[int] = mapped_column(default=1)
+    parent_id: Mapped[int] = mapped_column(
+        ForeignKey("graph_mutation_required_parents.id"), nullable=False
+    )
+    name: Mapped[str]
+    parent: Mapped[RequiredParent] = relationship(back_populates="children")
+
+
+class OrphanParent(Base):
+    __tablename__ = "graph_mutation_orphan_parents"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    version: Mapped[int] = mapped_column(default=1)
+    name: Mapped[str]
+    child: Mapped["OrphanChild | None"] = relationship(
+        back_populates="parent", cascade="all, delete-orphan", single_parent=True
+    )
+
+
+class OrphanChild(Base):
+    __tablename__ = "graph_mutation_orphan_children"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("graph_mutation_orphan_parents.id"), nullable=True
+    )
+    name: Mapped[str]
+    parent: Mapped[OrphanParent | None] = relationship(back_populates="child")
+
+
 class MemoryIdempotencyStore:
     def __init__(self) -> None:
         self.claims: dict[str, tuple[str, OperationReceipt | None]] = {}
@@ -178,6 +223,7 @@ def _services(
     *,
     allow_child_delete: bool = False,
     parent_parser: Callable[[object], object] | None = None,
+    child_hooks: MutationHooks | None = None,
 ) -> tuple[
     SQLAlchemyMutationService, SQLAlchemyMutationService, SQLAlchemyRelationshipMutationService
 ]:
@@ -208,6 +254,7 @@ def _services(
         token_service=token_service,
         concurrency_provider=AttributeVersionProvider("version"),
         delete_nonce_store=store,
+        hooks=child_hooks,
     )
     requirement = PermissionRequirement.all_of("admin.resources.parents.update")
     definition = RelationshipDefinition(
@@ -348,6 +395,123 @@ def _association_services(
             "enrollments": _source(AssociationEnrollment, factory),
             "courses": _source(AssociationCourse, factory),
         },
+        token_service=token_service,
+        concurrency_provider=AttributeVersionProvider("version"),
+        idempotency_store=store,
+    )
+    parent_writer.bind_graph_relationship_service(relationship_writer, idempotency_store=store)
+    return parent_writer, relationship_writer
+
+
+def _required_fk_services(
+    factory: async_sessionmaker[AsyncSession], *, child_hooks: MutationHooks | None = None
+) -> tuple[SQLAlchemyMutationService, SQLAlchemyRelationshipMutationService]:
+    token_service = TokenService.single_key(
+        key_id="graph", value=SecretValue("x" * 32), admin_id="admin"
+    )
+    store = MemoryIdempotencyStore()
+    parent_writer = SQLAlchemyMutationService(
+        model=RequiredParent,
+        session_factory=factory,
+        form_schema=FormSchema(fields=(FieldDefinition(field_id="name", python_type=str),)),
+        writable_fields=("name",),
+        identity_fields=("id",),
+        resource_id="required_parents",
+        token_service=token_service,
+        concurrency_provider=AttributeVersionProvider("version"),
+        graph_idempotency_store=store,
+    )
+    child_writer = SQLAlchemyMutationService(
+        model=RequiredChild,
+        session_factory=factory,
+        form_schema=FormSchema(fields=(FieldDefinition(field_id="name", python_type=str),)),
+        writable_fields=("name",),
+        identity_fields=("id",),
+        resource_id="required_children",
+        token_service=token_service,
+        concurrency_provider=AttributeVersionProvider("version"),
+        hooks=child_hooks,
+    )
+    requirement = PermissionRequirement.all_of("admin.resources.required_parents.update")
+    definition = RelationshipDefinition(
+        relationship_id="children",
+        target_resource_id="required_children",
+        label="Children",
+        kind=RelationshipKind.ONE_TO_MANY,
+        cardinality=RelationshipCardinality.TO_MANY,
+        nullable=False,
+        edit_mode=RelationshipEditMode.INLINE,
+        writable=True,
+    )
+    relationship_writer = SQLAlchemyRelationshipMutationService(
+        session_factory=factory,
+        parent_data_source=_source(RequiredParent, factory),
+        relationships=(
+            CompiledRelationship(
+                source_resource_id="required_parents",
+                definition=definition,
+                mutation_permission=requirement,
+                target_delete_permission=None,
+                target_create_permission=PermissionRequirement.all_of(
+                    "admin.resources.required_children.create"
+                ),
+                route_path="/required-parents/{identity}/_relationships/children",
+            ),
+        ),
+        target_data_sources={"required_children": _source(RequiredChild, factory)},
+        target_mutation_services={"required_children": child_writer},
+        token_service=token_service,
+        concurrency_provider=AttributeVersionProvider("version"),
+        idempotency_store=store,
+    )
+    parent_writer.bind_graph_relationship_service(relationship_writer, idempotency_store=store)
+    return parent_writer, relationship_writer
+
+
+def _orphan_set_services(
+    factory: async_sessionmaker[AsyncSession],
+) -> tuple[SQLAlchemyMutationService, SQLAlchemyRelationshipMutationService]:
+    token_service = TokenService.single_key(
+        key_id="graph", value=SecretValue("x" * 32), admin_id="admin"
+    )
+    store = MemoryIdempotencyStore()
+    parent_writer = SQLAlchemyMutationService(
+        model=OrphanParent,
+        session_factory=factory,
+        form_schema=FormSchema(fields=(FieldDefinition(field_id="name", python_type=str),)),
+        writable_fields=("name",),
+        identity_fields=("id",),
+        resource_id="orphan_parents",
+        token_service=token_service,
+        concurrency_provider=AttributeVersionProvider("version"),
+        graph_idempotency_store=store,
+    )
+    relationship_requirement = PermissionRequirement.all_of("admin.resources.orphan_parents.update")
+    delete_requirement = PermissionRequirement.all_of("admin.resources.orphan_children.delete")
+    definition = RelationshipDefinition(
+        relationship_id="child",
+        target_resource_id="orphan_children",
+        label="Child",
+        kind=RelationshipKind.ONE_TO_ONE,
+        cardinality=RelationshipCardinality.TO_ONE,
+        nullable=True,
+        edit_mode=RelationshipEditMode.LINK,
+        writable=True,
+        destructive_policy=RelationshipDestructivePolicy(allow_delete_orphan=True),
+    )
+    relationship_writer = SQLAlchemyRelationshipMutationService(
+        session_factory=factory,
+        parent_data_source=_source(OrphanParent, factory),
+        relationships=(
+            CompiledRelationship(
+                source_resource_id="orphan_parents",
+                definition=definition,
+                mutation_permission=relationship_requirement,
+                target_delete_permission=delete_requirement,
+                route_path="/orphan-parents/{identity}/_relationships/child",
+            ),
+        ),
+        target_data_sources={"orphan_children": _source(OrphanChild, factory)},
         token_service=token_service,
         concurrency_provider=AttributeVersionProvider("version"),
         idempotency_store=store,
@@ -670,6 +834,131 @@ async def test_graph_create_links_existing_child_and_rolls_back_on_child_validat
 
 
 @pytest.mark.anyio
+async def test_inline_create_attaches_required_parent_fk_before_first_flush(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    child_phases: list[str] = []
+
+    def hook(name: str):
+        def record(_value: object) -> None:
+            child_phases.append(name)
+
+        return record
+
+    writer, relationships = _required_fk_services(
+        session_factory,
+        child_hooks=MutationHooks(
+            after_execute=(hook("after_execute"),),
+            after_flush=(hook("after_flush"),),
+            before_commit=(hook("before_commit"),),
+            after_commit=(hook("after_commit"),),
+            after_rollback=(hook("after_rollback"),),
+        ),
+    )
+    requirement = PermissionRequirement.all_of("admin.resources.required_parents.update")
+    root = OperationAuthorization.for_requirement(
+        admin_id="admin",
+        resource_id="required_parents",
+        operation="create",
+        principal_id="operator",
+        requirement=PermissionRequirement.all_of("admin.resources.required_parents.create"),
+    )
+    change = RelationshipChangePlan(
+        operation_id="graph:required-parents:children:create",
+        relationship_id="children",
+        steps=(CreateRelated(values={"name": "required-child"}),),
+        authorization_requirement=requirement,
+    )
+    capabilities = OperationAuthorizationSet(
+        root=root,
+        capabilities=(
+            OperationAuthorization.for_requirement(
+                admin_id="admin",
+                resource_id="required_parents",
+                operation=change.operation_id,
+                principal_id="operator",
+                requirement=requirement,
+            ),
+            OperationAuthorization.for_requirement(
+                admin_id="admin",
+                resource_id="required_children",
+                operation=f"{change.operation_id}:target-create",
+                principal_id="operator",
+                requirement=PermissionRequirement.all_of(
+                    "admin.resources.required_children.create"
+                ),
+            ),
+        ),
+    )
+    context = OperationContext(
+        deadline=None,
+        cancellation=CancellationContext(),
+        principal=Principal(subject_id="operator", authenticated=True),
+        admin_id="admin",
+        resource_id="required_parents",
+        operation="create",
+        permissions=root.permissions,
+        permission_requirement=root.requirement,
+    )
+    with activate_operation_context(context):
+        await writer.create_graph(
+            {"name": "required-parent"},
+            relationship_changes=(change,),
+            authorizations=capabilities,
+            idempotency_token="required-fk-create",
+        )
+    async with session_factory() as session:
+        parent = (await session.scalars(select(RequiredParent))).one()
+        child = (await session.scalars(select(RequiredChild))).one()
+    assert child.parent_id == parent.id
+    assert child_phases == ["after_execute", "after_flush", "before_commit", "after_commit"]
+
+    failing = RelationshipChangePlan(
+        operation_id="graph:required-parents:children:create-rollback",
+        relationship_id="children",
+        steps=(
+            CreateRelated(values={"name": "rolled-back-child"}),
+            ReorderRelated(identities=(_identity(1),)),
+        ),
+        authorization_requirement=requirement,
+    )
+    failing_capabilities = OperationAuthorizationSet(
+        root=root,
+        capabilities=(
+            OperationAuthorization.for_requirement(
+                admin_id="admin",
+                resource_id="required_parents",
+                operation=failing.operation_id,
+                principal_id="operator",
+                requirement=requirement,
+            ),
+            OperationAuthorization.for_requirement(
+                admin_id="admin",
+                resource_id="required_children",
+                operation=f"{failing.operation_id}:target-create",
+                principal_id="operator",
+                requirement=PermissionRequirement.all_of(
+                    "admin.resources.required_children.create"
+                ),
+            ),
+        ),
+    )
+    with activate_operation_context(context), pytest.raises(RakitError):
+        await writer.create_graph(
+            {"name": "rolled-back-parent"},
+            relationship_changes=(failing,),
+            authorizations=failing_capabilities,
+            idempotency_token="required-fk-rollback",
+        )
+    async with session_factory() as session:
+        parents = list((await session.scalars(select(RequiredParent))).all())
+        children = list((await session.scalars(select(RequiredChild))).all())
+    assert [(value.name, value.id) for value in parents] == [("required-parent", parent.id)]
+    assert [(value.name, value.id) for value in children] == [("required-child", child.id)]
+    assert child_phases[-3:] == ["after_execute", "after_flush", "after_rollback"]
+
+
+@pytest.mark.anyio
 async def test_graph_to_one_set_and_clear_share_the_parent_uow(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -793,6 +1082,124 @@ async def test_graph_create_can_set_a_to_one_target_after_parent_flush(
         persisted = (await session.scalars(select(Parent))).one()
     assert result.identity == _identity(persisted.id)
     assert persisted.customer_id == 1
+
+
+@pytest.mark.anyio
+async def test_graph_set_matches_standalone_delete_orphan_confirmation_semantics(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        parent = OrphanParent(name="before", child=OrphanChild(name="old"))
+        replacement = OrphanChild(name="replacement")
+        session.add_all((parent, replacement))
+        await session.commit()
+        old = parent.child
+        assert old is not None
+
+    writer, relationships = _orphan_set_services(session_factory)
+    parent_identity = _identity(parent.id)
+    relationship_requirement = PermissionRequirement.all_of("admin.resources.orphan_parents.update")
+    delete_requirement = PermissionRequirement.all_of("admin.resources.orphan_children.delete")
+    operation = "graph:orphan-parents:child:set"
+    relationship_token = await relationships.issue_concurrency_token(parent_identity, "child")
+    change = RelationshipChangePlan(
+        operation_id=operation,
+        relationship_id="child",
+        steps=(SetRelated(identity=_identity(replacement.id)),),
+        authorization_requirement=relationship_requirement,
+        concurrency_token=relationship_token,
+    )
+    root = OperationAuthorization.for_requirement(
+        admin_id="admin",
+        resource_id="orphan_parents",
+        operation="update",
+        principal_id="operator",
+        requirement=relationship_requirement,
+    )
+    relationship_capability = OperationAuthorization.for_requirement(
+        admin_id="admin",
+        resource_id="orphan_parents",
+        operation=operation,
+        principal_id="operator",
+        requirement=relationship_requirement,
+        target_identity=parent_identity,
+    )
+    delete_capability = OperationAuthorization.for_requirement(
+        admin_id="admin",
+        resource_id="orphan_children",
+        operation=f"{operation}:target-delete",
+        principal_id="operator",
+        requirement=delete_requirement,
+        target_identity=_identity(old.id),
+    )
+    capabilities = OperationAuthorizationSet(
+        root=root, capabilities=(relationship_capability, delete_capability)
+    )
+    graph_context = OperationContext(
+        deadline=None,
+        cancellation=CancellationContext(),
+        principal=Principal(subject_id="operator", authenticated=True),
+        admin_id="admin",
+        resource_id="orphan_parents",
+        operation="update",
+        permissions=root.permissions,
+        permission_requirement=root.requirement,
+        session_id="graph-session",
+    )
+    with activate_operation_context(graph_context), pytest.raises(RakitError) as caught:
+        await writer.update_graph(
+            parent_identity,
+            {"name": "would-set"},
+            relationship_changes=(change,),
+            concurrency_token=writer.issue_update_token(parent),
+            authorizations=capabilities,
+            idempotency_token="orphan-set-missing-confirmation",
+        )
+    assert caught.value.code == ErrorCode.AUTH_FORBIDDEN
+
+    standalone_plan = RelationshipMutationPlan(
+        operation_id=operation,
+        parent_resource_id="orphan_parents",
+        parent_identity=parent_identity,
+        relationship_id="child",
+        kind=RelationshipMutationKind.SET,
+        target_identities=(_identity(replacement.id),),
+        authorization_requirement=relationship_requirement,
+        concurrency_token=relationship_token,
+    )
+    relationship_context = OperationContext(
+        deadline=None,
+        cancellation=CancellationContext(),
+        principal=Principal(subject_id="operator", authenticated=True),
+        admin_id="admin",
+        resource_id="orphan_parents",
+        operation=operation,
+        permissions=relationship_capability.permissions,
+        permission_requirement=relationship_requirement,
+        session_id="graph-session",
+    )
+    with activate_operation_context(relationship_context):
+        confirmation = await relationships.issue_destructive_confirmation(
+            standalone_plan, authorization=relationship_capability
+        )
+    confirmed = change.model_copy(update={"destructive_confirmation": confirmation})
+    with activate_operation_context(graph_context):
+        result = await writer.update_graph(
+            parent_identity,
+            {"name": "after"},
+            relationship_changes=(confirmed,),
+            concurrency_token=writer.issue_update_token(parent),
+            authorizations=capabilities,
+            idempotency_token="orphan-set-confirmed",
+        )
+    relation_result = result.relationship_results[0]
+    assert relation_result.deleted_target_identities == (_identity(old.id),)
+    async with session_factory() as session:
+        persisted = (await session.scalars(select(OrphanParent))).one()
+        await session.refresh(persisted, attribute_names=["child"])
+        children = list((await session.scalars(select(OrphanChild))).all())
+    assert (persisted.name, persisted.child.id) == ("after", replacement.id)
+    assert [child.id for child in children] == [replacement.id]
 
 
 @pytest.mark.anyio
@@ -968,6 +1375,94 @@ async def test_graph_child_update_and_reorder_use_scoped_child_writer(
     async with session_factory() as session:
         children = list((await session.scalars(select(Child).order_by(Child.position))).all())
     assert [(child.name, child.position) for child in children] == [("second", 0), ("renamed", 1)]
+
+
+@pytest.mark.anyio
+async def test_nested_child_update_lifecycle_defers_commit_and_runs_rollback_once(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    phases: list[str] = []
+
+    def phase(name: str):
+        def record(_value: object) -> None:
+            phases.append(name)
+
+        return record
+
+    async with session_factory() as session:
+        parent = Parent(name="before")
+        parent.children.extend((Child(name="first", position=0), Child(name="second", position=1)))
+        session.add(parent)
+        await session.commit()
+        await session.refresh(parent, attribute_names=["children"])
+        first = parent.children[0]
+    hooks = MutationHooks(
+        before_commit=(phase("child_before_commit"),),
+        after_commit=(phase("child_after_commit"),),
+        after_rollback=(phase("child_after_rollback"),),
+    )
+    writer, child_writer, relationships = _services(session_factory, child_hooks=hooks)
+    parent_identity = _identity(parent.id)
+    success = RelationshipChangePlan(
+        operation_id="graph:parents:children:lifecycle-success",
+        relationship_id="children",
+        steps=(
+            UpdateRelated(
+                identity=_identity(first.id),
+                values={"name": "updated"},
+                concurrency_token=child_writer.issue_update_token(first),
+            ),
+        ),
+        authorization_requirement=PermissionRequirement.all_of("admin.resources.parents.update"),
+        concurrency_token=await relationships.issue_concurrency_token(parent_identity, "children"),
+    )
+    await _graph_call(
+        writer,
+        parent=parent_identity,
+        scalar_token=writer.issue_update_token(parent),
+        change=success,
+        capabilities=_capabilities(
+            parent_identity,
+            success,
+            child_operation="target-update",
+            child_identity=_identity(first.id),
+        ),
+        submission="child-lifecycle-success",
+    )
+    assert phases == ["child_before_commit", "child_after_commit"]
+
+    async with session_factory() as session:
+        parent = (await session.scalars(select(Parent))).one()
+        child = (await session.scalars(select(Child).where(Child.id == first.id))).one()
+    failure = RelationshipChangePlan(
+        operation_id="graph:parents:children:lifecycle-rollback",
+        relationship_id="children",
+        steps=(
+            UpdateRelated(
+                identity=_identity(child.id),
+                values={"name": "would-rollback"},
+                concurrency_token=child_writer.issue_update_token(child),
+            ),
+            ReorderRelated(identities=(_identity(child.id), _identity(999))),
+        ),
+        authorization_requirement=PermissionRequirement.all_of("admin.resources.parents.update"),
+        concurrency_token=await relationships.issue_concurrency_token(parent_identity, "children"),
+    )
+    with pytest.raises(RakitError):
+        await _graph_call(
+            writer,
+            parent=parent_identity,
+            scalar_token=writer.issue_update_token(parent),
+            change=failure,
+            capabilities=_capabilities(
+                parent_identity,
+                failure,
+                child_operation="target-update",
+                child_identity=_identity(child.id),
+            ),
+            submission="child-lifecycle-rollback",
+        )
+    assert phases == ["child_before_commit", "child_after_commit", "child_after_rollback"]
 
 
 @pytest.mark.anyio
@@ -1188,7 +1683,23 @@ async def test_explicit_child_delete_requires_its_own_capability_and_confirmatio
         await session.refresh(parent, attribute_names=["children"])
         child = parent.children[0]
 
-    writer, child_writer, relationships = _services(session_factory, allow_child_delete=True)
+    child_phases: list[str] = []
+
+    def phase(name: str):
+        def record(_value: object) -> None:
+            child_phases.append(name)
+
+        return record
+
+    writer, child_writer, relationships = _services(
+        session_factory,
+        allow_child_delete=True,
+        child_hooks=MutationHooks(
+            before_commit=(phase("delete_before_commit"),),
+            after_commit=(phase("delete_after_commit"),),
+            after_rollback=(phase("delete_after_rollback"),),
+        ),
+    )
     parent_identity = _identity(parent.id)
     delete_token = await child_writer.issue_delete_token(_identity(child.id))
     change = RelationshipChangePlan(
@@ -1234,6 +1745,7 @@ async def test_explicit_child_delete_requires_its_own_capability_and_confirmatio
             submission="graph-delete-stale",
         )
     assert caught.value.code == ErrorCode.RESOURCE_CONFLICT
+    assert child_phases == ["delete_after_rollback"]
 
     fresh_token = await child_writer.issue_delete_token(_identity(child.id))
     fresh_change = change.model_copy(
@@ -1260,6 +1772,11 @@ async def test_explicit_child_delete_requires_its_own_capability_and_confirmatio
     )
     async with session_factory() as session:
         assert list((await session.scalars(select(Child))).all()) == []
+    assert child_phases == [
+        "delete_after_rollback",
+        "delete_before_commit",
+        "delete_after_commit",
+    ]
 
 
 @pytest.mark.anyio

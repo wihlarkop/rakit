@@ -41,8 +41,10 @@ class SQLAlchemyUnitOfWork:
         self._parent: SQLAlchemyUnitOfWork | None = None
         self._savepoint: object | None = None
         self._context_token: Token[SQLAlchemyUnitOfWork | None] | None = None
+        self._before_commit_callbacks: list[Callable[[], object | Awaitable[object]]] = []
         self._after_commit_callbacks: list[Callable[[], object | Awaitable[object]]] = []
         self._after_rollback_callbacks: list[Callable[[], object | Awaitable[object]]] = []
+        self._rollback_cause: BaseException | None = None
 
     async def __aenter__(self) -> Self:
         active = _active_uow.get()
@@ -75,6 +77,20 @@ class SQLAlchemyUnitOfWork:
             return
         self._after_commit_callbacks.append(callback)
 
+    def before_commit(self, callback: Callable[[], object | Awaitable[object]]) -> None:
+        """Run a root-owned lifecycle callback before the durable commit."""
+
+        if self._parent is not None:
+            self._parent.before_commit(callback)
+            return
+        self._before_commit_callbacks.append(callback)
+
+    @property
+    def rollback_cause(self) -> BaseException | None:
+        """The root failure available to deferred nested rollback hooks."""
+
+        return self._rollback_cause
+
     def after_rollback(self, callback: Callable[[], object | Awaitable[object]]) -> None:
         if self._parent is not None:
             self._parent.after_rollback(callback)
@@ -94,13 +110,16 @@ class SQLAlchemyUnitOfWork:
             raise RuntimeError("Nested unit of work cannot commit its parent transaction")
         if self.policy is not TransactionPolicy.MANUAL:
             raise RuntimeError("Explicit commit is only available with manual transaction policy")
+        await self._run_callbacks(self._before_commit_callbacks)
         await self._commit_critical()
         self._completed = True
         await self._run_callbacks(self._after_commit_callbacks)
         if self.event_publisher is not None:
             await self.event_publisher.after_commit()
 
-    async def rollback(self) -> None:
+    async def rollback(self, cause: BaseException | None = None) -> None:
+        if cause is not None and self._rollback_cause is None:
+            self._rollback_cause = cause
         if self._parent is not None and self._savepoint is not None:
             rollback = getattr(self._savepoint, "rollback", None)
             if callable(rollback):
@@ -143,7 +162,7 @@ class SQLAlchemyUnitOfWork:
         try:
             if self._parent is not None:
                 if exc_type is not None:
-                    await self.rollback()
+                    await self.rollback(exc)
                 elif self._savepoint is not None:
                     commit = getattr(self._savepoint, "commit", None)
                     if callable(commit):
@@ -151,21 +170,22 @@ class SQLAlchemyUnitOfWork:
                     self._completed = True
                 # An inherited child never owns commit/close of its parent.
             elif exc_type is not None:
-                await self.rollback()
+                await self.rollback(exc)
             elif self.policy is TransactionPolicy.AUTO and self._success and not self._failed:
                 try:
                     if self.operation_context is not None:
                         # A commit already in progress is never force-cancelled;
                         # this is the last cooperative checkpoint before it starts.
                         self.operation_context.checkpoint()
+                    await self._run_callbacks(self._before_commit_callbacks)
                     await self._commit_critical()
-                except BaseException:
+                except BaseException as exc:
                     # A deadline or driver failure before the durable outcome
                     # is known must leave the session in a safe rolled-back
                     # state.  `_commit_critical` only returns after a started
                     # commit has finished, so this cannot roll back a commit
                     # that completed while cancellation was pending.
-                    await self.rollback()
+                    await self.rollback(exc)
                     raise
                 self._completed = True
                 await self._run_callbacks(self._after_commit_callbacks)

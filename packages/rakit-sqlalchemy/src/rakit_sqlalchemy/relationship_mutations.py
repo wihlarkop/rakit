@@ -382,19 +382,25 @@ class SQLAlchemyRelationshipMutationService:
                     authorizations=authorizations,
                     operation=f"{change.operation_id}:target-create",
                     requirement=entry.target_create_permission,
+                    attach_before_flush=(
+                        lambda record: self._attach_created_child(parent, entry, record)
+                        if self._creates_direct_child(entry)
+                        else None
+                    ),
                 )
                 identity = self._target_data_sources[self._target_resource_id(entry)].identity_for(
                     child
                 )
-                await self._apply(
-                    uow.session,
-                    parent,
-                    entry,
-                    self._single_plan(
-                        change, parent_identity, RelationshipMutationKind.ADD, identity
-                    ),
-                    {self._identity_key(identity): child},
-                )
+                if not self._creates_direct_child(entry):
+                    await self._apply(
+                        uow.session,
+                        parent,
+                        entry,
+                        self._single_plan(
+                            change, parent_identity, RelationshipMutationKind.ADD, identity
+                        ),
+                        {self._identity_key(identity): child},
+                    )
             elif isinstance(step, LinkRelated):
                 targets = await self._resolve_targets(uow.session, entry, (step.identity,))
                 await self._apply(
@@ -408,13 +414,28 @@ class SQLAlchemyRelationshipMutationService:
                 )
             elif isinstance(step, SetRelated):
                 targets = await self._resolve_targets(uow.session, entry, (step.identity,))
+                plan = self._single_plan(
+                    change, parent_identity, RelationshipMutationKind.SET, step.identity
+                )
+                current = await self._current_target_identities(uow.session, parent, entry)
+                destructive = self._destructive_targets(entry, current, plan)
+                self._reject_unapproved_destructive_impact(entry, destructive)
+                if destructive:
+                    await self._verify_destructive_execution(
+                        uow,
+                        plan,
+                        entry,
+                        context,
+                        destructive,
+                        (authorizations.root, *authorizations.capabilities),
+                        await self._state_digest(uow.session, parent, entry),
+                    )
+                    deleted_targets.extend(destructive)
                 await self._apply(
                     uow.session,
                     parent,
                     entry,
-                    self._single_plan(
-                        change, parent_identity, RelationshipMutationKind.SET, step.identity
-                    ),
+                    plan,
                     targets,
                 )
             elif isinstance(step, ClearRelated):
@@ -664,6 +685,20 @@ class SQLAlchemyRelationshipMutationService:
                 "Inline relationship mutation requires the target resource write service."
             )
         return service
+
+    @staticmethod
+    def _creates_direct_child(entry: CompiledRelationship) -> bool:
+        return (
+            entry.definition.kind is RelationshipKind.ONE_TO_MANY
+            and entry.definition.cardinality is RelationshipCardinality.TO_MANY
+        )
+
+    @staticmethod
+    def _attach_created_child(parent: object, entry: CompiledRelationship, child: object) -> None:
+        """Link a new direct child before its first flush establishes a required FK."""
+
+        collection = getattr(parent, str(entry.definition.relationship_id))
+        collection.append(child)
 
     async def _require_related_member(
         self,

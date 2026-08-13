@@ -1217,6 +1217,7 @@ class SQLAlchemyMutationService:
         authorizations: OperationAuthorizationSet,
         operation: str,
         requirement: object,
+        attach_before_flush: Callable[[object], None] | None = None,
     ) -> object:
         """Apply an authoritative child create inside an already-owned UoW."""
 
@@ -1230,13 +1231,24 @@ class SQLAlchemyMutationService:
         await run_mutation_hooks(self._hooks.authorize, authorized)
         await run_mutation_hooks(self._hooks.pre_event, plan)
         await run_mutation_hooks(self._hooks.before_execute, plan)
+        self._register_nested_rollback(uow)
         record = self._model(**dict(plan.values))
         uow.session.add(record)
+        # The relationship owns any parent FK linkage.  Attach before the
+        # first flush so normal non-nullable child FKs never require a
+        # caller-supplied/mass-assigned foreign key.
+        if attach_before_flush is not None:
+            attach_before_flush(record)
         await run_mutation_hooks(self._hooks.after_execute, plan)
         await uow.session.flush()
         await run_mutation_hooks(self._hooks.after_flush, plan)
         if uow.event_publisher is not None:
             uow.event_publisher.publish(ResourceCreated(identity=self._identity_for(record)))
+        self._register_nested_completion(
+            uow,
+            before_commit_value=plan,
+            after_commit_value=MutationResult(identity=self._identity_for(record), record=record),
+        )
         return record
 
     async def update_in_uow(
@@ -1273,6 +1285,7 @@ class SQLAlchemyMutationService:
         await run_mutation_hooks(self._hooks.pre_event, plan)
         await run_mutation_hooks(self._hooks.execute_update, plan)
         await run_mutation_hooks(self._hooks.before_execute, plan)
+        self._register_nested_rollback(uow)
         if self._concurrency is not None and self._concurrency_provider is not None:
             if not concurrency_token:
                 raise RakitError(
@@ -1322,6 +1335,11 @@ class SQLAlchemyMutationService:
             uow.event_publisher.publish(
                 ResourceUpdated(identity=identity, changed_fields=tuple(plan.scalar_changes))
             )
+        self._register_nested_completion(
+            uow,
+            before_commit_value=plan,
+            after_commit_value=MutationResult(identity=identity, record=record),
+        )
         return record
 
     async def delete_in_uow(
@@ -1348,7 +1366,7 @@ class SQLAlchemyMutationService:
                 message="Child deletion requires a durable confirmation store.",
                 status_code=500,
             )
-        self._require_composed_capability(
+        authorized = self._require_composed_capability(
             authorizations,
             operation=operation,
             requirement=requirement,
@@ -1374,6 +1392,9 @@ class SQLAlchemyMutationService:
                 status_code=400,
                 cause=exc,
             ) from exc
+        await run_mutation_hooks(self._hooks.normalize, confirmed_identity)
+        await run_mutation_hooks(self._hooks.business_validate, confirmed_identity)
+        await run_mutation_hooks(self._hooks.prepare, confirmed_identity)
         store = self._delete_nonce_store
         reservation = await store.begin(
             hashlib.sha256(confirmation_token.encode()).hexdigest(),
@@ -1396,6 +1417,10 @@ class SQLAlchemyMutationService:
                 ),
             )
         )
+        await run_mutation_hooks(self._hooks.authorize, authorized)
+        await run_mutation_hooks(self._hooks.pre_event, confirmed_identity)
+        await run_mutation_hooks(self._hooks.before_execute, confirmed_identity)
+        self._register_nested_rollback(uow)
         record = await self._load(uow.session, identity)
         if record is None or self._concurrency_provider.version_for(record) != expected_version:
             raise RakitError(
@@ -1428,6 +1453,43 @@ class SQLAlchemyMutationService:
         await uow.session.flush()
         if uow.event_publisher is not None:
             uow.event_publisher.publish(ResourceDeleted(identity=identity))
+        self._register_nested_completion(
+            uow,
+            before_commit_value=confirmed_identity,
+            after_commit_value=confirmed_identity,
+        )
+
+    def _register_nested_completion(
+        self,
+        uow: SQLAlchemyUnitOfWork,
+        *,
+        before_commit_value: object,
+        after_commit_value: object,
+    ) -> None:
+        """Defer nested resource completion to the authoritative root UoW.
+
+        Nested graph writes already executed the ordinary pre-persistence
+        phases.  Their commit/rollback observers must follow the root durable
+        outcome, never a child-owned transaction or receipt.
+        """
+
+        uow.before_commit(
+            lambda: run_mutation_hooks(self._hooks.before_commit, before_commit_value)
+        )
+        uow.after_commit(
+            lambda: run_after_commit_hooks(self._hooks.after_commit, after_commit_value)
+        )
+
+    def _register_nested_rollback(self, uow: SQLAlchemyUnitOfWork) -> None:
+        """Run the ordinary resource rollback observers if the root aborts."""
+
+        uow.after_rollback(
+            lambda: run_mutation_hooks(
+                self._hooks.after_rollback,
+                uow.rollback_cause
+                or RuntimeError("Nested resource mutation rolled back with its root operation."),
+            )
+        )
 
     async def _load(self, session: AsyncSession, identity: RecordIdentity) -> object | None:
         return (
