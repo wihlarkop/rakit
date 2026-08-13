@@ -28,6 +28,7 @@ class RelationshipMutationKind(StrEnum):
     SET = "set"
     CLEAR = "clear"
     ADD = "add"
+    UPDATE = "update"
     REMOVE = "remove"
     REPLACE = "replace"
 

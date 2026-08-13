@@ -164,6 +164,7 @@ class OperationContext:
     operation_id: str = ""
     principal: Principal | None = None
     principal_id: str = ""
+    session_id: str = ""
     admin_id: str = ""
     resource_id: str = ""
     operation: str = ""

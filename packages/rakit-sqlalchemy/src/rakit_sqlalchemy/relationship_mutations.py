@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import secrets
 from collections.abc import Callable, Mapping
 from datetime import timedelta
 
@@ -180,10 +181,15 @@ class SQLAlchemyRelationshipMutationService:
                 status_code=400,
             )
 
-        reservation = await self._idempotency_store.begin(
-            hashlib.sha256(plan.idempotency_token.encode("utf-8")).hexdigest(),
-            fingerprint=plan.fingerprint,
-        )
+        try:
+            reservation = await self._idempotency_store.begin(
+                hashlib.sha256(plan.idempotency_token.encode("utf-8")).hexdigest(),
+                fingerprint=self._idempotency_fingerprint(plan, context),
+            )
+        except ValueError as exc:
+            raise self._conflict(
+                "Relationship submission token is bound to another mutation."
+            ) from exc
         if reservation.status is IdempotencyStatus.COMPLETED:
             return await self._replayed_result(plan, entry)
         if not reservation.claimed:
@@ -196,6 +202,7 @@ class SQLAlchemyRelationshipMutationService:
             result_kind="relationship_mutation",
         )
         callbacks_registered = False
+        deleted_targets: tuple[RecordIdentity, ...] = ()
         try:
             async with SQLAlchemyUnitOfWork(
                 self._session_factory,
@@ -226,6 +233,7 @@ class SQLAlchemyRelationshipMutationService:
                         target_delete_authorizations,
                         await self._state_digest(uow.session, parent, entry),
                     )
+                    deleted_targets = destructive_targets
                 after, added, removed = await self._apply(uow.session, parent, entry, plan, targets)
                 await uow.session.flush()
                 current_token = self._issue_concurrency_token(
@@ -243,6 +251,7 @@ class SQLAlchemyRelationshipMutationService:
                             kind=plan.kind,
                             added_target_identities=added,
                             removed_target_identities=removed,
+                            deleted_target_identities=deleted_targets,
                             operation_id=plan.operation_id,
                         )
                     )
@@ -254,6 +263,7 @@ class SQLAlchemyRelationshipMutationService:
                 target_identities=after,
                 added_target_identities=added,
                 removed_target_identities=removed,
+                deleted_target_identities=deleted_targets,
                 concurrency_token=current_token,
             )
         except BaseException:
@@ -275,6 +285,19 @@ class SQLAlchemyRelationshipMutationService:
                 message="Relationship mutation does not match the compiled relationship policy.",
                 status_code=403,
             )
+
+    @staticmethod
+    def _idempotency_fingerprint(plan: RelationshipMutationPlan, context: OperationContext) -> str:
+        """Bind durable submission ownership to the server-derived operation context."""
+
+        payload = {
+            "plan": plan.fingerprint,
+            "admin_id": context.admin_id,
+            "principal_id": context.principal_id,
+            "session_id": context.session_id,
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     def _require_authorization(
         self,
@@ -612,6 +635,7 @@ class SQLAlchemyRelationshipMutationService:
             {
                 "admin_id": context.admin_id,
                 "principal_id": context.principal_id,
+                "session_id": context.session_id,
                 "parent_resource_id": plan.parent_resource_id,
                 "parent_identity": dict(plan.parent_identity.values),
                 "relationship_id": plan.relationship_id,
@@ -619,7 +643,7 @@ class SQLAlchemyRelationshipMutationService:
                 "targets": targets,
                 "relationship_state_digest": digest,
                 "impact_digest": impact,
-                "nonce": hashlib.sha256(plan.fingerprint.encode("utf-8")).hexdigest(),
+                "nonce": secrets.token_urlsafe(32),
             },
             timedelta(minutes=15),
         )
@@ -646,17 +670,18 @@ class SQLAlchemyRelationshipMutationService:
         # attached to a visible parent.
         await self._resolve_targets(uow.session, entry, destructive_targets)
         by_target = {
-            authorization.target_identity: authorization
+            self._identity_key(authorization.target_identity): authorization
             for authorization in target_delete_authorizations
             if authorization.target_identity is not None
         }
         for identity in destructive_targets:
-            capability = by_target.get(identity)
+            capability = by_target.get(self._identity_key(identity))
             if (
                 capability is None
                 or capability.admin_id != context.admin_id
                 or capability.principal_id != context.principal_id
                 or capability.resource_id != self._target_resource_id(entry)
+                or capability.operation != f"{plan.operation_id}:target-delete"
                 or capability.requirement != entry.target_delete_permission
             ):
                 raise RakitError(
@@ -691,6 +716,7 @@ class SQLAlchemyRelationshipMutationService:
         if (
             claims.get("admin_id") != context.admin_id
             or claims.get("principal_id") != context.principal_id
+            or claims.get("session_id") != context.session_id
             or claims.get("parent_resource_id") != plan.parent_resource_id
             or claims.get("parent_identity") != dict(plan.parent_identity.values)
             or claims.get("relationship_id") != plan.relationship_id
@@ -809,10 +835,20 @@ class SQLAlchemyRelationshipMutationService:
                 else:
                     should_remove = key not in requested_keys
                 if should_remove:
+                    # An association object is the persistence representation
+                    # of the relationship edge.  Removing it is deliberately
+                    # not target deletion, even when its foreign keys are
+                    # non-nullable and the parent relationship lacks
+                    # delete-orphan cascade.
+                    await session.delete(edge)
                     edges.remove(edge)
                     existing.pop(key)
 
-        if plan.kind in {RelationshipMutationKind.ADD, RelationshipMutationKind.REPLACE}:
+        if plan.kind in {
+            RelationshipMutationKind.ADD,
+            RelationshipMutationKind.UPDATE,
+            RelationshipMutationKind.REPLACE,
+        }:
             mapper = sqlalchemy_inspect(type(parent))
             assert mapper is not None
             edge_model = mapper.relationships[relationship_id].mapper.class_
@@ -820,6 +856,12 @@ class SQLAlchemyRelationshipMutationService:
                 key = self._identity_key(identity)
                 edge = existing.get(key)
                 if edge is None:
+                    if plan.kind is RelationshipMutationKind.UPDATE:
+                        raise RakitError(
+                            code=ErrorCode.VALIDATION_FAILED,
+                            message="Association edge does not exist for update.",
+                            status_code=422,
+                        )
                     edge = edge_model()
                     setattr(edge, target_property, targets[key])
                     edges.append(edge)

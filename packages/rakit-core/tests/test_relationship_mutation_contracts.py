@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 import pytest
 from rakit_core.identity import RecordIdentity
 from rakit_core.permissions import PermissionRequirement
@@ -43,11 +45,11 @@ def test_relationship_mutation_plan_is_immutable_canonical_and_fingerprint_stabl
     assert plan.association_changes[0].values == {"quantity": 2}
     assert plan.fingerprint == equivalent.fingerprint
     with pytest.raises(TypeError):
-        plan.association_changes[0].values["quantity"] = 3  # type: ignore[index]
+        cast(dict[str, Any], plan.association_changes[0].values)["quantity"] = 3
 
 
 def test_relationship_mutation_plan_rejects_duplicate_or_unbound_association_targets() -> None:
-    base = {
+    base: dict[str, Any] = {
         "operation_id": "relationship:orders:items:add",
         "parent_resource_id": "orders",
         "parent_identity": _identity(1),

@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from typing import cast
 
 import pytest
 from rakit_core.definitions import ResourceFieldPolicy
@@ -60,7 +61,9 @@ async def test_relationship_resolver_uses_target_scoped_query_and_returns_safe_c
         visible = await resolver.resolve(session, RecordIdentity(values={"id": 1}))
         hidden = await resolver.resolve(session, RecordIdentity(values={"id": 2}))
         candidate = await resolver.candidate(
-            session, RecordIdentity(values={"id": 1}), label=lambda record: record.name
+            session,
+            RecordIdentity(values={"id": 1}),
+            label=lambda record: cast(Customer, record).name,
         )
 
     assert visible is not None
