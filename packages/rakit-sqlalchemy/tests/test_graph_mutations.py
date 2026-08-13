@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator, Callable
+from typing import cast
 
 import pytest
 from rakit_core.auth import Principal
@@ -22,6 +23,7 @@ from rakit_core.relationship_mutations import (
     RelationshipChangePlan,
     RelationshipMutationKind,
     RelationshipMutationPlan,
+    RelationshipMutationResult,
     ReorderRelated,
     SetRelated,
     UnlinkRelated,
@@ -1192,12 +1194,13 @@ async def test_graph_set_matches_standalone_delete_orphan_confirmation_semantics
             authorizations=capabilities,
             idempotency_token="orphan-set-confirmed",
         )
-    relation_result = result.relationship_results[0]
+    relation_result = cast(RelationshipMutationResult, result.relationship_results[0])
     assert relation_result.deleted_target_identities == (_identity(old.id),)
     async with session_factory() as session:
         persisted = (await session.scalars(select(OrphanParent))).one()
         await session.refresh(persisted, attribute_names=["child"])
         children = list((await session.scalars(select(OrphanChild))).all())
+    assert persisted.child is not None
     assert (persisted.name, persisted.child.id) == ("after", replacement.id)
     assert [child.id for child in children] == [replacement.id]
 
