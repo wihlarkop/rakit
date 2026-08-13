@@ -21,6 +21,10 @@ def test_static_url_uses_local_content_hashed_filenames() -> None:
         r"/_system/static/htmx\.min\.[0-9a-f]{8}\.js",
         assets.static_url("htmx.min.js"),
     )
+    assert re.fullmatch(
+        r"/_system/static/rakit-ui\.[0-9a-f]{8}\.js",
+        assets.static_url("rakit-ui.js"),
+    )
 
 
 def test_static_url_rejects_unknown_or_path_names() -> None:
@@ -76,6 +80,7 @@ def test_rakit_web_artifacts_include_runtime_resources(tmp_path: Path) -> None:
     expected_suffixes = {
         "rakit_web/assets.py",
         "rakit_web/static/rakit.css",
+        "rakit_web/static/rakit-ui.js",
         "rakit_web/static/htmx.min.js",
         "rakit_web/static/HTMX_LICENSE.txt",
         "rakit_web/static/HTMX_PROVENANCE.md",

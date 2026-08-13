@@ -1,8 +1,7 @@
-<fieldset class="rakit-relationship" {% if not panel.relationship.effective_writable %}disabled{% endif %}>
-  <legend>{{ panel.relationship.label }}</legend>
+<fieldset class="space-y-3" {% if not panel.relationship.effective_writable %}disabled{% endif %}>
   {% if panel.concurrency_token %}<input type="hidden" name="{{ panel.prefix }}concurrency" value="{{ panel.concurrency_token }}" />{% endif %}
-  <label for="rakit-relationship-{{ panel.relationship_id }}-set">{{ panel.relationship.label }}</label>
-  <select id="rakit-relationship-{{ panel.relationship_id }}-set" name="{{ panel.prefix }}set">
+  <label class="block text-sm font-medium text-slate-800" for="rakit-relationship-{{ panel.relationship_id }}-set">{{ panel.relationship.label }}</label>
+  <select class="rakit-select" id="rakit-relationship-{{ panel.relationship_id }}-set" name="{{ panel.prefix }}set">
     {% if panel.relationship.nullable %}<option value="">No selection</option>{% endif %}
     {% for option in panel.options %}
       {% set encoded = codec.encode(option.identity) %}
@@ -10,6 +9,9 @@
     {% endfor %}
   </select>
   {% if panel.relationship.nullable and panel.relationship.effective_writable %}
-    <label><input type="checkbox" name="{{ panel.prefix }}clear" value="true" /> Clear {{ panel.relationship.label }}</label>
+    <label class="inline-flex items-center gap-2 text-sm text-slate-700"><input class="size-4 rounded border-slate-300 text-blue-700" type="checkbox" name="{{ panel.prefix }}clear" value="true" /> Clear selection</label>
+  {% endif %}
+  {% if panel.preview_path and panel.relationship.effective_writable %}
+    <button class="rakit-button rakit-button-secondary" type="button" hx-post="{{ panel.preview_path }}" hx-include="closest form" hx-target="#rakit-dialog-root" hx-swap="innerHTML">Review {{ panel.relationship.label | lower }} change</button>
   {% endif %}
 </fieldset>

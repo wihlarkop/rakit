@@ -327,6 +327,10 @@ class SQLAlchemyRelationshipMutationService:
         if maximum < 1 or entry.ordering is None:
             return None
         target_source = self._target_data_sources[self._target_resource_id(entry)]
+        # The compact reorder UI intentionally transports complete single-field
+        # identities only. Never manufacture a partial composite identity.
+        if len(target_source.identity_fields) != 1:
+            return None
         async with self._session_factory() as session:
             parent = await SQLAlchemyRelationshipResolver(self._parent_data_source).resolve(
                 session, parent_identity

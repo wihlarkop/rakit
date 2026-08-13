@@ -324,6 +324,7 @@ def _validate_relationship_field_names(
             "confirmation_intent",
             "confirmation_impact",
             "search",
+            "delete_preview",
         }:
             continue
         if (
@@ -866,6 +867,16 @@ async def relationship_panel_view(
         "relationship_issues": issue_map,
         "error_inputs": error_inputs,
         "page": page,
+        "total_label": (
+            f"{editor_page.total_count} items"
+            if editor_page.total_count is not None
+            else (f"Page {page}" if editor_page.has_previous or editor_page.has_next else "")
+        ),
+        "total_pages": (
+            (editor_page.total_count + editor_page.per_page - 1) // editor_page.per_page
+            if editor_page.total_count is not None
+            else None
+        ),
         "has_previous_page": editor_page.has_previous,
         "has_next_page": editor_page.has_next,
         "page_path": page_path,
@@ -1021,18 +1032,12 @@ def build_relationship_routes(
                     (item for item in changes if item.relationship_id == editor.relationship_id),
                     None,
                 )
-                delete_intents = [
-                    name.removeprefix(
-                        f"{relationship_prefix(editor.relationship_id)}delete_intent__"
-                    )
-                    for name, value in submitted.items()
-                    if name.startswith(
-                        f"{relationship_prefix(editor.relationship_id)}delete_intent__"
-                    )
-                    and value
-                ]
-                if delete_intents:
-                    if len(delete_intents) != 1:
+                dialog_context: dict[str, object] | None = None
+                active_delete = submitted.get(
+                    f"{relationship_prefix(editor.relationship_id)}delete_preview"
+                )
+                if active_delete is not None:
+                    if not isinstance(active_delete, str):
                         raise _invalid_relationship_field()
                     issue = getattr(editor.state_provider, "issue_child_delete_confirmation", None)
                     preview_delete = getattr(editor.state_provider, "preview_child_delete", None)
@@ -1042,7 +1047,7 @@ def build_relationship_routes(
                             message="Inline child deletion is not supported by this relationship.",
                             status_code=500,
                         )
-                    encoded = delete_intents[0]
+                    encoded = active_delete
                     child = _identity(relationship_binding.codec, encoded)
                     delete_change = RelationshipChangePlan(
                         operation_id=f"relationship:{editor.relationship_id}",
@@ -1075,13 +1080,20 @@ def build_relationship_routes(
                         ) from exc
                     # Membership is resolved by the adapter before it previews the child.
                     child_preview = await preview_delete(identity, editor.relationship_id, child)
-                    submitted[
-                        f"{relationship_prefix(editor.relationship_id)}delete__{encoded}"
-                    ] = await issue(identity, editor.relationship_id, child)
+                    confirmation = await issue(identity, editor.relationship_id, child)
                     impact = getattr(child_preview, "relationship_impact", ())
-                    submitted[
-                        f"{relationship_prefix(editor.relationship_id)}delete_impact__{encoded}"
-                    ] = ", ".join(str(item) for item in impact) or "No additional cascade impact."
+                    dialog_context = {
+                        "prefix": relationship_prefix(editor.relationship_id),
+                        "delete_identity": encoded,
+                        "confirmation": confirmation,
+                        "confirmation_intent": "",
+                        "impact": ", ".join(str(item) for item in impact)
+                        or "No additional cascade impact.",
+                        "title": f"Delete {editor.relationship.definition.label.rstrip('s')}?",
+                        "description": "This item will be marked for deletion.",
+                        "confirm_label": "Mark for deletion",
+                        "resource_label": binding.label,
+                    }
                 else:
                     if change is None:
                         raise RakitError(
@@ -1123,19 +1135,30 @@ def build_relationship_routes(
                             ),
                             status_code=422,
                         )
-                    submitted[
-                        f"{relationship_prefix(editor.relationship_id)}destructive_confirmation"
-                    ] = await _with_preview_context(
+                    confirmation = await _with_preview_context(
                         request, capability, issue(plan, authorization=capability)
                     )
-                    submitted[
-                        f"{relationship_prefix(editor.relationship_id)}confirmation_intent"
-                    ] = _relationship_intent_fingerprint(
+                    confirmation_intent = _relationship_intent_fingerprint(
                         _fields_for_prefix(submitted, relationship_prefix(editor.relationship_id))
                     )
-                    submitted[
-                        f"{relationship_prefix(editor.relationship_id)}confirmation_impact"
-                    ] = str(len(impact))
+                    dialog_context = {
+                        "prefix": relationship_prefix(editor.relationship_id),
+                        "delete_identity": None,
+                        "confirmation": confirmation,
+                        "confirmation_intent": confirmation_intent,
+                        "impact": str(len(impact)),
+                        "title": f"Review {editor.relationship.definition.label} change",
+                        "description": "The relationship change has a destructive impact.",
+                        "confirm_label": "Confirm change",
+                        "resource_label": binding.label,
+                    }
+                if dialog_context is not None:
+                    return binding.templates.TemplateResponse(
+                        request,
+                        "relationships/preview_dialog.html",
+                        dialog_context,
+                        headers={"Cache-Control": "no-store"},
+                    )
                 panel = await relationship_panel_view(
                     editor,
                     parent_identity=identity,

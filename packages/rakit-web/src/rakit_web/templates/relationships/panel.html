@@ -1,6 +1,10 @@
-<section id="rakit-relationship-{{ panel.relationship_id }}" data-rakit-relationship-panel="{{ panel.relationship_id }}">
+<section id="rakit-relationship-{{ panel.relationship_id }}" class="rakit-panel" data-rakit-relationship-panel="{{ panel.relationship_id }}">
+  <header class="rakit-panel-header">
+    <div><h2 class="text-sm font-semibold text-slate-900">{{ panel.relationship.label }}</h2><p class="mt-0.5 text-sm text-slate-500">{{ panel.total_label }}</p></div>
+  </header>
+  <div class="rakit-panel-body">
   {% if panel.panel_issues %}
-    <div id="rakit-relationship-{{ panel.relationship_id }}-errors" aria-live="polite">
+    <div id="rakit-relationship-{{ panel.relationship_id }}-errors" class="mb-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900" aria-live="polite">
       {% for issue in panel.panel_issues %}<p>{{ issue }}</p>{% endfor %}
     </div>
   {% endif %}
@@ -23,24 +27,22 @@
     {% if panel.confirmation_impact %}<input type="hidden" name="{{ panel.prefix }}confirmation_impact" value="{{ panel.confirmation_impact }}" />{% endif %}
     <p role="status">Destructive change confirmed{% if panel.confirmation_impact %}; backend preview identified {{ panel.confirmation_impact }} affected record(s){% endif %}. Save this form to apply it.</p>
   {% endif %}
-  {% if panel.preview_path and panel.relationship.effective_writable %}
-    <button type="button" hx-post="{{ panel.preview_path }}" hx-include="closest form" hx-target="#rakit-relationship-{{ panel.relationship_id }}" hx-swap="outerHTML">Preview destructive change</button>
-  {% endif %}
   {% if panel.reorderable %}
     {% for identity in panel.order_values %}
       <input type="hidden" name="{{ panel.prefix }}order__{{ '%04d'|format(loop.index0) }}" value="{{ identity }}" />
     {% endfor %}
   {% elif panel.reorder_unavailable %}
-    <p>Reordering is unavailable for this relationship because it exceeds the safe editor limit.</p>
+    <p class="mt-3 text-sm text-slate-500">Reordering is unavailable because this relationship exceeds the safe editor limit.</p>
   {% endif %}
   {% if panel.page_path and (panel.has_previous_page or panel.has_next_page) %}
-    <nav aria-label="{{ panel.relationship.label }} pages">
+    <nav class="mt-4 flex items-center justify-end gap-2 border-t border-slate-100 pt-3" aria-label="{{ panel.relationship.label }} pages">
       {% if panel.has_previous_page %}
-        <button type="button" hx-post="{{ panel.page_path }}/page/{{ panel.page - 1 }}" hx-include="closest form" hx-target="#rakit-relationship-{{ panel.relationship_id }}" hx-swap="outerHTML">Previous {{ panel.relationship.label }} page</button>
-      {% endif %}
+        <button class="rakit-button rakit-button-secondary" type="button" hx-post="{{ panel.page_path }}/page/{{ panel.page - 1 }}" hx-include="closest form" hx-target="#rakit-relationship-{{ panel.relationship_id }}" hx-swap="outerHTML">&lsaquo; Previous</button>
+      {% endif %}<span class="px-2 text-sm text-slate-500">Page {{ panel.page }}{% if panel.total_pages %} of {{ panel.total_pages }}{% endif %}</span>
       {% if panel.has_next_page %}
-        <button type="button" hx-post="{{ panel.page_path }}/page/{{ panel.page + 1 }}" hx-include="closest form" hx-target="#rakit-relationship-{{ panel.relationship_id }}" hx-swap="outerHTML">Next {{ panel.relationship.label }} page</button>
+        <button class="rakit-button rakit-button-secondary" type="button" hx-post="{{ panel.page_path }}/page/{{ panel.page + 1 }}" hx-include="closest form" hx-target="#rakit-relationship-{{ panel.relationship_id }}" hx-swap="outerHTML">Next &rsaquo;</button>
       {% endif %}
     </nav>
   {% endif %}
+  </div>
 </section>

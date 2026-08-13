@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator, Callable
-from typing import cast
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 from rakit_core.auth import Principal
@@ -2350,3 +2351,24 @@ async def test_graph_link_and_unlink_are_explicit_and_idempotent_replay_is_histo
     async with session_factory() as session:
         child = (await session.scalars(select(Child))).one()
     assert child.parent_id is None
+
+
+@pytest.mark.anyio
+async def test_reorder_identity_query_fails_closed_for_composite_target_identity(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The v0.1 editor must never manufacture a partial composite identity."""
+
+    _writer, _child_writer, relationships = _services(session_factory)
+    cast(dict[str, Any], relationships._target_data_sources)["children"] = SimpleNamespace(
+        identity_fields=("tenant_id", "id")
+    )
+
+    assert (
+        await relationships.reorder_identities(
+            _identity(1),
+            "children",
+            maximum=25,
+        )
+        is None
+    )

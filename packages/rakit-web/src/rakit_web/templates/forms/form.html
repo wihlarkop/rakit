@@ -1,26 +1,27 @@
 {% extends "base.html" %}
 {% block title %}{{ title }}{% endblock %}
 {% block content %}
+{% import "components/ui.html" as ui %}
 {% macro render_node(node) %}
   {% if node.kind == "field" %}
     {% if node.field %}
       {% set field = node.field %}
-      <div class="rakit-field">
-        <label for="{{ field.id }}">{{ field.label }}</label>
+      <div class="space-y-1.5">
+        <label class="block text-sm font-medium text-slate-800" for="{{ field.id }}">{{ field.label }}</label>
         {% set descriptions = [] %}
         {% if field.description %}{% set _ = descriptions.append(field.description_id) %}{% endif %}
         {% if field.issues %}{% set _ = descriptions.append(field.error_id) %}{% endif %}
-        <input id="{{ field.id }}" name="{{ field.name }}" value="{{ field.value }}"{% if descriptions %} aria-describedby="{{ descriptions | join(' ') }}"{% endif %}{% if field.issues %} aria-invalid="true"{% endif %} />
-        {% if field.description %}<p id="{{ field.description_id }}">{{ field.description }}</p>{% endif %}
-        {% if field.issues %}<p id="{{ field.error_id }}">{{ field.issues[0].message }}</p>{% endif %}
+        <input class="rakit-input" id="{{ field.id }}" name="{{ field.name }}" value="{{ field.value }}"{% if descriptions %} aria-describedby="{{ descriptions | join(' ') }}"{% endif %}{% if field.issues %} aria-invalid="true"{% endif %} />
+        {% if field.description %}<p id="{{ field.description_id }}" class="text-sm text-slate-500">{{ field.description }}</p>{% endif %}
+        {% if field.issues %}<div id="{{ field.error_id }}" class="rakit-error" role="alert">{% for issue in field.issues %}<p>{{ issue.message }}</p>{% endfor %}</div>{% endif %}
       </div>
     {% endif %}
   {% elif node.kind == "section" %}
-    <section id="{{ node.id }}"><h2>{{ node.title }}</h2>{% for child in node.children %}{{ render_node(child) }}{% endfor %}</section>
+    <section id="{{ node.id }}" class="rakit-panel space-y-4 p-4"><h2 class="text-base font-semibold text-slate-900">{{ node.title }}</h2>{% for child in node.children %}{{ render_node(child) }}{% endfor %}</section>
   {% elif node.kind == "row" %}
-    <div class="rakit-row">{% for child in node.children %}{{ render_node(child) }}{% endfor %}</div>
+    <div class="grid gap-4 md:grid-cols-2">{% for child in node.children %}{{ render_node(child) }}{% endfor %}</div>
   {% elif node.kind == "column" %}
-    <div class="rakit-column">{% for child in node.children %}{{ render_node(child) }}{% endfor %}</div>
+    <div class="space-y-4">{% for child in node.children %}{{ render_node(child) }}{% endfor %}</div>
   {% elif node.kind == "tabs" %}
     <div id="{{ node.id }}" data-rakit-tabs>
       <nav aria-label="Form sections">{% for tab in node.tabs %}<a href="#{{ tab.id }}" role="tab" aria-controls="{{ tab.id }}" aria-selected="{{ 'true' if tab.active else 'false' }}">{{ tab.label }}{% if tab.errors %} <span>({{ tab.errors }})</span>{% endif %}</a>{% endfor %}</nav>
@@ -38,18 +39,23 @@
     <section id="{{ node.id }}" data-rakit-custom-block="{{ node.block }}"></section>
   {% endif %}
 {% endmacro %}
-<h1>{{ title }}</h1>
+<header class="mb-6 flex flex-wrap items-end justify-between gap-3 border-b border-slate-200 pb-4">
+  <div><p class="text-sm font-medium text-slate-500">{{ 'Create' if operation == 'create' else 'Edit' }}</p><h1 class="mt-1 text-2xl font-semibold tracking-tight text-slate-950">{{ title }}</h1></div>
+</header>
 {% if issues %}
-<div id="form-errors" data-rakit-focus-target="form-errors" role="alert" tabindex="-1">
+<div id="form-errors" class="mb-5 rounded-lg border border-red-200 bg-red-50 p-4 text-red-950" data-rakit-focus-target="form-errors" role="alert" tabindex="-1">
   <p>Please correct the highlighted fields.</p>
   <ul>{% for issue in summary_issues %}<li>{% if issue.anchor %}<a href="#{{ issue.anchor }}">{{ issue.label }}: {{ issue.message }}</a>{% else %}{{ issue.message }}{% endif %}</li>{% endfor %}</ul>
 </div>
 {% endif %}
-<form method="post" action="{{ action_url }}" novalidate{% if first_invalid_id %} data-rakit-first-invalid="{{ first_invalid_id }}"{% endif %}>
+<form class="space-y-5" method="post" action="{{ action_url }}" novalidate{% if first_invalid_id %} data-rakit-first-invalid="{{ first_invalid_id }}"{% endif %}>
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
   <input type="hidden" name="submission_token" value="{{ submission_token }}" />
   {% if concurrency_token %}<input type="hidden" name="concurrency_token" value="{{ concurrency_token }}" />{% endif %}
   {% for node in layout %}{{ render_node(node) }}{% endfor %}
-  <button type="submit">Save</button>
+  <footer class="sticky bottom-0 flex justify-end gap-3 border-t border-slate-200 bg-slate-50/95 px-4 py-3 backdrop-blur">
+    <a class="rakit-button rakit-button-secondary" href="{{ action_url.rsplit('/', 1)[0] if operation == 'update' else action_url.rsplit('/', 1)[0] }}">Cancel</a>
+    <button class="rakit-button" type="submit">{{ 'Create' if operation == 'create' else 'Save changes' }}</button>
+  </footer>
 </form>
 {% endblock %}

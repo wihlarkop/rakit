@@ -1,0 +1,13 @@
+{% macro button(label, variant="primary", type="button", attrs="") -%}
+  <button type="{{ type }}" class="rakit-button{% if variant == 'secondary' %} rakit-button-secondary{% elif variant == 'quiet' %} rakit-button-quiet{% elif variant == 'danger' %} rakit-button-danger{% endif %}" {{ attrs|safe }}>{{ label }}</button>
+{%- endmacro %}
+
+{% macro panel_header(title, detail="") -%}
+  <header class="rakit-panel-header">
+    <div class="flex min-w-0 items-baseline gap-2"><h2 class="text-sm font-semibold text-slate-900">{{ title }}</h2>{% if detail %}<span class="text-sm text-slate-500">{{ detail }}</span>{% endif %}</div>
+  </header>
+{%- endmacro %}
+
+{% macro error(error_id, messages) -%}
+  {% if messages %}<div id="{{ error_id }}" class="rakit-error" role="alert">{% for message in messages %}<p>{{ message }}</p>{% endfor %}</div>{% endif %}
+{%- endmacro %}
