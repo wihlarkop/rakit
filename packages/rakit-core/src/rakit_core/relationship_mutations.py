@@ -9,6 +9,7 @@ operation/UoW lifecycle without creating a second mutation system.
 import hashlib
 import json
 from collections.abc import Mapping
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
@@ -192,6 +193,7 @@ class RelationshipMutationResult(BaseModel):
         return _canonical_identities(value, field=info.field_name)
 
 
+@dataclass(frozen=True)
 class RelationshipChanged(DomainEvent):
     """Deferred semantic success event, delivered only after the outer UoW commits."""
 
