@@ -98,6 +98,7 @@ class Enrollment(Base):
     student_id: Mapped[int] = mapped_column(ForeignKey("relationship_students.id"))
     course_id: Mapped[int] = mapped_column(ForeignKey("relationship_courses.id"))
     grade: Mapped[str] = mapped_column(String(2))
+    created_at: Mapped[str] = mapped_column(server_default="CURRENT_TIMESTAMP")
     student: Mapped[Student] = relationship(back_populates="enrollments")
     course: Mapped[Course] = relationship(back_populates="enrollments")
 
@@ -116,6 +117,23 @@ class DynamicChild(Base):
     parent_id: Mapped[int] = mapped_column(ForeignKey("relationship_dynamic_parents.id"))
 
 
+class ProfileParent(Base):
+    __tablename__ = "relationship_profile_parents"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    profile: Mapped["Profile | None"] = relationship(back_populates="parent", uselist=False)
+
+
+class Profile(Base):
+    __tablename__ = "relationship_profiles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("relationship_profile_parents.id"), unique=True
+    )
+    parent: Mapped[ProfileParent | None] = relationship(back_populates="profile")
+
+
 def test_mapper_relationships_are_classified_without_sqlalchemy_leakage() -> None:
     relationships = inspect_relationships(Order)
 
@@ -127,6 +145,16 @@ def test_mapper_relationships_are_classified_without_sqlalchemy_leakage() -> Non
     assert relationships["tags"].kind is RelationshipKind.MANY_TO_MANY
     assert relationships["tags"].has_secondary is True
     assert inspect_relationships(Node)["parent"].self_referential is True
+
+
+def test_unique_scalar_relationships_are_one_to_one_in_both_directions() -> None:
+    parent_profile = inspect_relationships(ProfileParent)["profile"]
+    profile_parent = inspect_relationships(Profile)["parent"]
+
+    assert parent_profile.kind is RelationshipKind.ONE_TO_ONE
+    assert profile_parent.kind is RelationshipKind.ONE_TO_ONE
+    assert parent_profile.nullable is True
+    assert profile_parent.nullable is True
 
 
 def test_simple_association_object_requires_declared_scalar_fields_and_target() -> None:
@@ -148,7 +176,37 @@ def test_simple_association_object_requires_declared_scalar_fields_and_target() 
     )
     metadata = inspect_relationships(Student)["enrollments"]
     assert metadata.association_object_eligible is True
-    assert metadata.association_scalar_fields == ("id", "grade")
+    assert metadata.association_scalar_fields == ("grade",)
+
+
+def test_association_object_identity_and_foreign_keys_are_not_editable_scalars() -> None:
+    definition = RelationshipDefinition(
+        relationship_id="enrollments",
+        target_resource_id="enrollments",
+        association_target_resource_id="courses",
+        label="Courses",
+        kind=RelationshipKind.ASSOCIATION_OBJECT,
+        cardinality=RelationshipCardinality.TO_MANY,
+        association_fields=("id",),
+    )
+    with pytest.raises(RakitError) as caught:
+        validate_relationship_definition(
+            definition,
+            source_model=Student,
+            target_model=Enrollment,
+            association_target_model=Course,
+        )
+    assert caught.value.details["reason"] == "association_fields_not_declared_by_mapper"
+
+    foreign_key = definition.model_copy(update={"association_fields": ("student_id",)})
+    with pytest.raises(RakitError) as caught:
+        validate_relationship_definition(
+            foreign_key,
+            source_model=Student,
+            target_model=Enrollment,
+            association_target_model=Course,
+        )
+    assert caught.value.details["reason"] == "association_fields_not_declared_by_mapper"
 
 
 def test_association_object_rejects_undeclared_mapper_scalar_field() -> None:

@@ -1,5 +1,7 @@
 """SQLAlchemy mapper inspection for Plan 05 relationship metadata."""
 
+from typing import Any
+
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.relationships import (
     RelationshipCardinality,
@@ -7,12 +9,44 @@ from rakit_core.relationships import (
     RelationshipKind,
     RelationshipMetadata,
 )
-from sqlalchemy import inspect
+from sqlalchemy import Column, inspect
 from sqlalchemy.orm import RelationshipProperty
+from sqlalchemy.schema import PrimaryKeyConstraint, UniqueConstraint
+
+
+def _foreign_key_columns(property_: RelationshipProperty[object]) -> tuple[Column[Any], ...]:
+    """Return the actual FK side of this relationship, independent of direction."""
+
+    columns: set[Column[Any]] = {
+        column
+        for local, remote in (property_.local_remote_pairs or ())
+        for column in (local, remote)
+        if isinstance(column, Column) and column.foreign_keys
+    }
+    return tuple(columns)
+
+
+def _foreign_key_is_unique(property_: RelationshipProperty[object]) -> bool:
+    """Prove a scalar relation is one-to-one from its FK uniqueness constraint."""
+
+    columns = _foreign_key_columns(property_)
+    if not columns or len({column.table for column in columns}) != 1:
+        return False
+    table = columns[0].table
+    column_set = set(columns)
+    for constraint in table.constraints:
+        if (
+            isinstance(constraint, PrimaryKeyConstraint | UniqueConstraint)
+            and set(constraint.columns) == column_set
+        ):
+            return True
+    return all(column.unique for column in columns)
 
 
 def _kind(property_: RelationshipProperty[object]) -> RelationshipKind:
     direction = property_.direction.name
+    if direction != "MANYTOMANY" and not property_.uselist and _foreign_key_is_unique(property_):
+        return RelationshipKind.ONE_TO_ONE
     if direction == "MANYTOONE":
         return RelationshipKind.MANY_TO_ONE
     if direction == "ONETOMANY":
@@ -29,7 +63,7 @@ def _cardinality(property_: RelationshipProperty[object]) -> RelationshipCardina
 def _nullable(property_: RelationshipProperty[object]) -> bool:
     if property_.uselist:
         return True
-    columns = tuple(property_.local_columns)
+    columns = _foreign_key_columns(property_) or tuple(property_.local_columns)
     return bool(columns) and all(column.nullable for column in columns)
 
 
@@ -52,13 +86,17 @@ def _association_metadata(
     ]
     if len(backlinks) != 1 or len(targets) != 1:
         return False, (), None
-    relationship_columns = {
-        column for candidate in (backlinks[0], targets[0]) for column in candidate.local_columns
-    }
     scalar_fields = tuple(
         attribute.key
         for attribute in target_mapper.column_attrs
-        if all(column not in relationship_columns for column in attribute.columns)
+        if all(
+            not column.primary_key
+            and not column.foreign_keys
+            and column.server_default is None
+            and column.server_onupdate is None
+            and column.computed is None
+            for column in attribute.columns
+        )
     )
     return True, scalar_fields, targets[0].key
 
