@@ -194,7 +194,7 @@ class Admin:
             debug=debug,
             auth_enabled=auth_backend is not None,
         )
-        self._builder = ApplicationBuilder()
+        self._builder = ApplicationBuilder(admin_id=admin_id)
         self._event_bus = event_bus if event_bus is not None else EventBus()
         self._builder.registry.add_value(EventBus, self._event_bus, scope=ServiceScope.APPLICATION)
         self._builder.registry.add_factory(

@@ -1,3 +1,4 @@
+from rakit_core.actions import ActionAvailability, ActionResult, ActionScope
 from rakit_core.auth import (
     ANONYMOUS_PRINCIPAL,
     AuthBackend,
@@ -5,6 +6,7 @@ from rakit_core.auth import (
     SessionRecord,
     SessionStore,
 )
+from rakit_core.bulk import BulkExecutionPolicy, BulkPolicy
 from rakit_core.compatibility import validate_official_package_versions
 from rakit_core.compiler import ApplicationBuilder, CompiledApplication, Plugin
 from rakit_core.concurrency import (
@@ -23,7 +25,12 @@ from rakit_core.config import (
 )
 from rakit_core.crypto import KeyRing, SigningKey, TokenService
 from rakit_core.datasource import DataSource, DataSourceCapabilities
-from rakit_core.definitions import ResourceFieldPolicy
+from rakit_core.definitions import (
+    ActionDefinition,
+    EndpointDefinition,
+    PageDefinition,
+    ResourceFieldPolicy,
+)
 from rakit_core.deletion import DeletePolicy, DeletionPlan, HardDeletePolicy
 from rakit_core.di import ServiceKey, ServiceRegistry, ServiceResolver, ServiceScope
 from rakit_core.errors import (
@@ -70,10 +77,18 @@ from rakit_core.mutations import (
     MutationAuthorization,
     MutationHooks,
     MutationResult,
+    OperationAuthorization,
     ResourceMutationPlan,
     UpdateMutationPlan,
 )
-from rakit_core.operations import CancellationContext, Deadline, OperationContext
+from rakit_core.operations import (
+    CancellationContext,
+    Deadline,
+    OperationContext,
+    OperationKind,
+    OperationPlan,
+    execute_operation_plan,
+)
 from rakit_core.permission_catalogue import (
     PermissionCatalogue,
     PermissionDefinition,
@@ -95,16 +110,30 @@ from rakit_core.query import (
     Sort,
     SortDirection,
 )
+from rakit_core.relationships import (
+    RelationshipCardinality,
+    RelationshipDefinition,
+    RelationshipDestructivePolicy,
+    RelationshipEditMode,
+    RelationshipKind,
+    RelationshipMetadata,
+)
 from rakit_core.resources import ResourceService
 from rakit_core.transactions import TransactionPolicy
 
 __all__ = [
     "ANONYMOUS_PRINCIPAL",
+    "ActionAvailability",
+    "ActionDefinition",
+    "ActionResult",
+    "ActionScope",
     "ApplicationBuilder",
     "AttributeVersionProvider",
     "AuthBackend",
     "AuthorizationDecision",
     "AuthorizationPolicy",
+    "BulkExecutionPolicy",
+    "BulkPolicy",
     "CancellationContext",
     "CollapsibleGroup",
     "Column",
@@ -121,6 +150,7 @@ __all__ = [
     "DeletePolicy",
     "DeletionPlan",
     "DomainEvent",
+    "EndpointDefinition",
     "ErrorCode",
     "ErrorDetail",
     "EventBus",
@@ -148,8 +178,12 @@ __all__ = [
     "MutationResult",
     "NullPlacement",
     "OffsetPagination",
+    "OperationAuthorization",
     "OperationContext",
+    "OperationKind",
+    "OperationPlan",
     "OperationReceipt",
+    "PageDefinition",
     "PageResult",
     "PermissionCatalogue",
     "PermissionDefinition",
@@ -164,6 +198,12 @@ __all__ = [
     "RakitSecurityWarning",
     "RakitWarning",
     "RecordIdentity",
+    "RelationshipCardinality",
+    "RelationshipDefinition",
+    "RelationshipDestructivePolicy",
+    "RelationshipEditMode",
+    "RelationshipKind",
+    "RelationshipMetadata",
     "RelationshipPanel",
     "ResourceFieldPolicy",
     "ResourceMutationPlan",
@@ -188,6 +228,7 @@ __all__ = [
     "TokenService",
     "TransactionPolicy",
     "UpdateMutationPlan",
+    "execute_operation_plan",
     "generate_permission_catalogue",
     "infer_field_security",
     "validate_official_package_versions",

@@ -1,12 +1,15 @@
 """Operation deadlines and cooperative cancellation checkpoints."""
 
 import asyncio
+import inspect
 import uuid
-from collections.abc import Awaitable, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
+from enum import StrEnum
 from time import monotonic
+from typing import cast
 
 import anyio
 
@@ -14,6 +17,9 @@ from rakit_core.auth import Principal
 from rakit_core.di import ServiceResolver
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.events import EventPublisher
+from rakit_core.identity import RecordIdentity
+from rakit_core.mutations import OperationAuthorization
+from rakit_core.transactions import TransactionPolicy
 
 
 def _timeout_error() -> RakitError:
@@ -49,6 +55,89 @@ class CancellationContext:
     def check(self, deadline: Deadline | None = None) -> None:
         if self._cancelled or (deadline is not None and deadline.expired):
             raise _timeout_error()
+
+
+class OperationKind(StrEnum):
+    ACTION = "action"
+    BULK = "bulk"
+    ENDPOINT = "endpoint"
+    PAGE = "page"
+    RELATIONSHIP = "relationship"
+
+
+type OperationExecutor[TInput, TResult] = Callable[
+    ["OperationContext", TInput], TResult | Awaitable[TResult]
+]
+
+
+@dataclass(frozen=True)
+class OperationPlan[TInput, TResult]:
+    """Immutable, backend-neutral execution seam for Plan 05 operations.
+
+    It deliberately carries policy and a typed executor but does not own a
+    concrete unit of work.  A web or adapter operation runner supplies that
+    lifecycle later, preserving one operation model without pulling SQLAlchemy
+    or HTTP concerns into core.
+    """
+
+    operation_id: str
+    kind: OperationKind
+    input: TInput
+    authorization: OperationAuthorization
+    execute: OperationExecutor[TInput, TResult]
+    target_identity: RecordIdentity | None = None
+    mutating: bool = False
+    transaction_policy: TransactionPolicy = TransactionPolicy.READ_ONLY
+    concurrency_required: bool = False
+    confirmation_required: bool = False
+    idempotency_fingerprint: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.operation_id:
+            raise ValueError("operation_id must not be empty")
+        if self.mutating and self.transaction_policy is TransactionPolicy.READ_ONLY:
+            raise ValueError("Mutating operations cannot use a read-only transaction policy")
+        if not self.mutating and self.transaction_policy is TransactionPolicy.AUTO:
+            raise ValueError("Read-only operations cannot request an automatic write transaction")
+
+
+def validate_operation_authorization[TInput, TResult](
+    plan: OperationPlan[TInput, TResult], context: "OperationContext"
+) -> None:
+    """Fail closed before a generic operation executor calls application code."""
+
+    authorization = plan.authorization
+    if (
+        context.admin_id != authorization.admin_id
+        or context.operation != authorization.operation
+        or context.principal_id != authorization.principal_id
+        or context.resource_id != authorization.resource_id
+        or context.permissions != authorization.permissions
+    ):
+        raise RakitError(
+            code=ErrorCode.AUTH_FORBIDDEN,
+            message="Operation authorization does not match the active context.",
+            status_code=403,
+        )
+    if context.principal is None or not authorization.requirement.matches(context.principal):
+        raise RakitError(
+            code=ErrorCode.AUTH_FORBIDDEN,
+            message="The active principal is not authorized for this operation.",
+            status_code=403,
+        )
+
+
+async def execute_operation_plan[TInput, TResult](
+    plan: OperationPlan[TInput, TResult], context: "OperationContext"
+) -> TResult:
+    """Run a prepared operation at the explicit authorization/checkpoint seam."""
+
+    validate_operation_authorization(plan, context)
+    context.checkpoint()
+    result = plan.execute(context, plan.input)
+    if inspect.isawaitable(result):
+        return cast("TResult", await result)
+    return result
 
 
 @dataclass(frozen=True)

@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from rakit_core.events import DomainEvent
 from rakit_core.identity import RecordIdentity
+from rakit_core.permissions import PermissionRequirement
 
 MutationHook = Callable[[object], object | Awaitable[object]]
 MutationOperation = Literal["create", "update", "delete"]
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class MutationAuthorization:
+class OperationAuthorization:
     """A server-derived authorization decision for one mutation operation.
 
     This is deliberately an explicit call argument rather than ambient state:
@@ -28,9 +29,21 @@ class MutationAuthorization:
 
     admin_id: str
     resource_id: str
-    operation: MutationOperation
+    operation: str
     principal_id: str
     permissions: tuple[str, ...]
+    permission_mode: Literal["all", "any"] = "all"
+
+    @property
+    def requirement(self) -> PermissionRequirement:
+        """The exact compiled requirement represented by this trusted capability."""
+
+        return PermissionRequirement(mode=self.permission_mode, permissions=self.permissions)
+
+
+# Kept as an alias: existing CRUD signatures and public imports retain their
+# identity while Plan 05 can use the capability for a non-CRUD operation.
+MutationAuthorization = OperationAuthorization
 
 
 @dataclass(frozen=True)
