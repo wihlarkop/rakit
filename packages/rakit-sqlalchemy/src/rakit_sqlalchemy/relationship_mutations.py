@@ -226,10 +226,43 @@ class SQLAlchemyRelationshipMutationService:
                 raise self._not_found()
             property_name = str(entry.definition.relationship_id)
             if entry.definition.kind is RelationshipKind.ASSOCIATION_OBJECT:
-                raise RakitError(
-                    code=ErrorCode.CONFIG_INVALID,
-                    message="Association-object relationship pagination is not configured.",
-                    status_code=500,
+                target_property = self._association_target_property(entry)
+                edge_source = self._target_data_sources[str(entry.definition.target_resource_id)]
+                relationship_attribute = getattr(self._parent_data_source._model, property_name)
+                edge_target_attribute = getattr(edge_source._model, target_property)
+                identity_column = getattr(target_source._model, target_source.identity_fields[0])
+                statement = (
+                    target_source.scoped_statement()
+                    .add_columns(edge_source._model)
+                    .join(edge_target_attribute)
+                    .where(with_parent(parent, relationship_attribute))
+                    .order_by(identity_column.asc())
+                    .offset((page - 1) * per_page)
+                    .limit(per_page + 1)
+                )
+                pairs = list((await session.execute(statement)).unique().all())
+                has_next = len(pairs) > per_page
+                rows = [
+                    RelationshipEditorRow(
+                        candidate=RelationshipCandidate(
+                            identity=target_source.identity_for(target),
+                            label=resolve_record_label(entry.definition, target),
+                        ),
+                        values={
+                            field: getattr(edge, field)
+                            for field in entry.definition.association_fields
+                        },
+                        association_identity=edge_source.identity_for(edge),
+                    )
+                    for target, edge in pairs[:per_page]
+                ]
+                return PageResult(
+                    items=tuple(rows),
+                    page=page,
+                    per_page=per_page,
+                    has_previous=page > 1,
+                    has_next=has_next,
+                    total_count=None,
                 )
             relationship_attribute = getattr(self._parent_data_source._model, property_name)
             identity_column = getattr(target_source._model, target_source.identity_fields[0])

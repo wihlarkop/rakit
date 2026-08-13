@@ -6,6 +6,9 @@
   {% else %}
     {% include "relationships/to_many.html" %}
   {% endif %}
+  {% for pending in panel.pending_inputs %}
+    <input type="hidden" name="{{ panel.prefix }}{{ pending.name }}" value="{{ pending.value }}" />
+  {% endfor %}
   {% if panel.page_path and (panel.has_previous_page or panel.has_next_page) %}
     <nav aria-label="{{ panel.relationship.label }} pages">
       {% if panel.has_previous_page %}

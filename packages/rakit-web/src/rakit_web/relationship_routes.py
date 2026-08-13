@@ -22,7 +22,6 @@ from rakit_core.relationship_mutations import (
     RelationshipCandidate,
     RelationshipChangePlan,
     RelationshipEditorRow,
-    ReorderRelated,
     SetRelated,
     UnlinkRelated,
     UpdateAssociationRelated,
@@ -375,16 +374,10 @@ async def build_relationship_changes(
                     order_values[index],
                 )
         if order_values:
-            if editor.relationship.ordering is None:
-                raise RakitError(
-                    code=ErrorCode.VALIDATION_FAILED,
-                    message="Relationship is not safely reorderable.",
-                    status_code=422,
-                )
-            steps.append(
-                ReorderRelated(
-                    identities=tuple(_identity(binding.codec, value) for value in order_values)
-                )
+            raise RakitError(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="Relationship reorder is unavailable without a complete ordering state.",
+                status_code=422,
             )
 
         if not steps:
@@ -477,6 +470,7 @@ async def relationship_panel_view(
         name.removeprefix("unlink__") for name in values if name.startswith("unlink__")
     }
     row_views: list[dict[str, object]] = []
+    rendered_names: set[str] = {"concurrency", "selection_present", "search"}
     for row in rows:
         encoded = IdentityCodec().encode(row.candidate.identity)
         value_prefix = (
@@ -492,29 +486,10 @@ async def relationship_panel_view(
                 "concurrency_token": row.concurrency_token,
             }
         )
-    if editor.relationship.ordering is not None:
-        row_by_identity = {
-            IdentityCodec().encode(cast(RelationshipCandidate, row["candidate"]).identity): row
-            for row in row_views
-        }
-        ordered_identities = list(row_by_identity)
-        for name in values:
-            if not name.startswith("move__"):
-                continue
-            parts = name.split("__", 2)
-            if len(parts) != 3 or parts[2] not in {"up", "down"}:
-                raise _invalid_relationship_field()
-            try:
-                index = ordered_identities.index(parts[1])
-            except ValueError as exc:
-                raise _invalid_relationship_field() from exc
-            destination = index + (-1 if parts[2] == "up" else 1)
-            if 0 <= destination < len(ordered_identities):
-                ordered_identities[index], ordered_identities[destination] = (
-                    ordered_identities[destination],
-                    ordered_identities[index],
-                )
-        row_views = [row_by_identity[encoded] for encoded in ordered_identities]
+        rendered_names.add(f"unlink__{encoded}")
+        rendered_names.add(f"update_token__{encoded}")
+        for field_id in row.values:
+            rendered_names.add(f"{value_prefix}{field_id}")
     draft_rows: dict[str, dict[str, object]] = {}
     for name, value in values.items():
         if not name.startswith("create__"):
@@ -522,6 +497,7 @@ async def relationship_panel_view(
         parts = name.split("__", 2)
         if len(parts) == 3 and parts[1].startswith("new-"):
             draft_rows.setdefault(parts[1], {})[parts[2]] = value
+            rendered_names.add(name)
     token = (
         await editor.state_provider.issue_concurrency_token(parent_identity, editor.relationship_id)
         if parent_identity is not None and editor.editable
@@ -553,7 +529,7 @@ async def relationship_panel_view(
         "pending_unlinks": pending_unlinks,
         "options": tuple(options_by_identity.values()),
         "concurrency_token": token,
-        "reorderable": editor.relationship.ordering is not None,
+        "reorderable": False,
         "page": page,
         "has_previous_page": editor_page.has_previous,
         "has_next_page": editor_page.has_next,
@@ -573,6 +549,11 @@ async def relationship_panel_view(
                 )
             )
             if field.writable and field.readable and not field.sensitive
+        ),
+        "pending_inputs": tuple(
+            {"name": name, "value": value}
+            for name, value in values.items()
+            if name not in rendered_names and name != "destructive_confirmation"
         ),
     }
 
