@@ -90,7 +90,9 @@ def test_fastapi_example_has_mounted_admin_and_compiles() -> None:
 
 def test_example_dependencies_are_declared_as_optional() -> None:
     repository = Path(__file__).resolve().parents[2]
-    configuration = tomllib.loads((repository / "pyproject.toml").read_text(encoding="utf-8"))
+    configuration = tomllib.loads(
+        (repository / "pyproject.toml").read_text(encoding="utf-8")
+    )
     dependencies = configuration["project"]["optional-dependencies"]["examples"]
 
     assert any(dependency.startswith("fastapi") for dependency in dependencies)
@@ -98,11 +100,17 @@ def test_example_dependencies_are_declared_as_optional() -> None:
     assert any(dependency.startswith("uvicorn") for dependency in dependencies)
 
 
-def test_fastapi_example_is_type_checkable_in_the_locked_development_environment() -> None:
-    configuration = tomllib.loads((repository / "pyproject.toml").read_text(encoding="utf-8"))
+def test_fastapi_example_is_type_checkable_in_the_locked_development_environment() -> (
+    None
+):
+    configuration = tomllib.loads(
+        (repository / "pyproject.toml").read_text(encoding="utf-8")
+    )
     development_dependencies = configuration["dependency-groups"]["dev"]
 
-    assert any(dependency.startswith("fastapi") for dependency in development_dependencies)
+    assert any(
+        dependency.startswith("fastapi") for dependency in development_dependencies
+    )
 
 
 def test_fastapi_is_not_an_official_package_runtime_dependency() -> None:
@@ -110,7 +118,9 @@ def test_fastapi_is_not_an_official_package_runtime_dependency() -> None:
         configuration = tomllib.loads(package_configuration.read_text(encoding="utf-8"))
         runtime_dependencies = configuration["project"].get("dependencies", [])
 
-        assert not any(dependency.startswith("fastapi") for dependency in runtime_dependencies)
+        assert not any(
+            dependency.startswith("fastapi") for dependency in runtime_dependencies
+        )
 
 
 @asynccontextmanager
@@ -124,7 +134,9 @@ async def _started_client(app, *, base_url: str = "http://localhost"):
 async def test_minimal_example_serves_read_routes_and_actual_query_contract() -> None:
     module = importlib.import_module("examples.minimal.main")
     transport = httpx.ASGITransport(app=module.app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://localhost"
+    ) as client:
         full = await client.get(
             "/products",
             params={
@@ -196,7 +208,9 @@ async def test_fastapi_sqlalchemy_example_mount_serves_full_and_htmx_reads() -> 
             headers={"HX-Request": "true"},
         )
 
-        asset_paths = re.findall(r'(?:href|src)="(/admin/_system/static/[^"]+)"', full.text)
+        asset_paths = re.findall(
+            r'(?:href|src)="(/admin/_system/static/[^"]+)"', full.text
+        )
         asset_responses = [await client.get(path) for path in asset_paths]
 
         search_action_match = re.search(
@@ -218,7 +232,18 @@ async def test_fastapi_sqlalchemy_example_mount_serves_full_and_htmx_reads() -> 
     assert full.status_code == 200
     assert "<html" in full.text
     assert "Grace" in full.text
-    assert len(asset_paths) == 2
+    asset_names = {path.rsplit("/", 1)[-1] for path in asset_paths}
+
+    assert len(asset_paths) == len(set(asset_paths))
+    assert any(
+        name.startswith("rakit.") and name.endswith(".css") for name in asset_names
+    )
+    assert any(
+        name.startswith("htmx.min.") and name.endswith(".js") for name in asset_names
+    )
+    assert any(
+        name.startswith("rakit-ui.") and name.endswith(".js") for name in asset_names
+    )
     assert all(response.status_code == 200 for response in asset_responses)
     assert search_action == "/admin/users"
     assert search_response.status_code == 200
@@ -262,7 +287,9 @@ def test_cli_check_and_routes_accept_both_examples() -> None:
         assert ":detail" in routes.stdout
 
 
-def test_all_packages_builds_exactly_the_eight_official_distributions(tmp_path: Path) -> None:
+def test_all_packages_builds_exactly_the_eight_official_distributions(
+    tmp_path: Path,
+) -> None:
     output = tmp_path / "all-distributions"
     subprocess.run(
         ["uv", "build", "--all-packages", "--out-dir", str(output)],
@@ -287,7 +314,9 @@ def test_all_packages_builds_exactly_the_eight_official_distributions(tmp_path: 
 
     assert wheels == expected
     assert sdists == expected
-    assert not any(path.name.startswith("rakit_workspace-") for path in output.iterdir())
+    assert not any(
+        path.name.startswith("rakit_workspace-") for path in output.iterdir()
+    )
 
     rakit_wheel = next(output.glob("rakit-*.whl"))
     with zipfile.ZipFile(rakit_wheel) as archive:
@@ -392,7 +421,9 @@ def test_auth_migration_history_coexists_with_a_host_alembic_version_table(
         capture_output=True,
         text=True,
     )
-    ini_path = installed / "Lib" / "site-packages" / "rakit_auth_sqlalchemy" / "alembic.ini"
+    ini_path = (
+        installed / "Lib" / "site-packages" / "rakit_auth_sqlalchemy" / "alembic.ini"
+    )
     assert ini_path.exists()
 
     # 1. Seed a host alembic_version table with an unrelated revision --
@@ -407,11 +438,21 @@ def test_auth_migration_history_coexists_with_a_host_alembic_version_table(
 
     isolated_environment = os.environ.copy()
     isolated_environment.pop("PYTHONPATH", None)
-    isolated_environment["RAKIT_AUTH_SQLALCHEMY_URL"] = f"sqlite:///{db_path.as_posix()}"
+    isolated_environment["RAKIT_AUTH_SQLALCHEMY_URL"] = (
+        f"sqlite:///{db_path.as_posix()}"
+    )
 
     # 2. Run the Rakit auth upgrade from the installed wheel.
     upgrade = subprocess.run(
-        [str(installed_python), "-m", "alembic", "-c", str(ini_path), "upgrade", "head"],
+        [
+            str(installed_python),
+            "-m",
+            "alembic",
+            "-c",
+            str(ini_path),
+            "upgrade",
+            "head",
+        ],
         env=isolated_environment,
         check=True,
         capture_output=True,
@@ -421,18 +462,21 @@ def test_auth_migration_history_coexists_with_a_host_alembic_version_table(
 
     conn = sqlite3.connect(db_path)
     table_names = {
-        row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
 
     # 3. rakit_auth_alembic_version reaches the current Rakit auth head.
     assert "rakit_auth_alembic_version" in table_names
-    assert conn.execute("SELECT version_num FROM rakit_auth_alembic_version").fetchall() == [
-        ("0003",)
-    ]
+    assert conn.execute(
+        "SELECT version_num FROM rakit_auth_alembic_version"
+    ).fetchall() == [("0003",)]
     assert "rakit_auth_idempotency" in table_names
 
     # 4. The host's own version table is unchanged.
-    assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [("host_0001",)]
+    assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
+        ("host_0001",)
+    ]
     conn.execute(
         "INSERT INTO rakit_auth_users "
         "(id, email, password_hash, is_active, is_superuser, created_at, updated_at) "
@@ -444,7 +488,9 @@ def test_auth_migration_history_coexists_with_a_host_alembic_version_table(
         "VALUES (1, 'users.read', 'Read users', 'users', 0)"
     )
     conn.execute("INSERT INTO rakit_auth_user_roles (user_id, role_id) VALUES (1, 1)")
-    conn.execute("INSERT INTO rakit_auth_role_permissions (role_id, permission_id) VALUES (1, 1)")
+    conn.execute(
+        "INSERT INTO rakit_auth_role_permissions (role_id, permission_id) VALUES (1, 1)"
+    )
     conn.execute(
         "INSERT INTO rakit_auth_sessions "
         "(id, token_hash, user_id, created_at, last_seen_at, idle_expires_at, "
@@ -457,7 +503,15 @@ def test_auth_migration_history_coexists_with_a_host_alembic_version_table(
 
     # 5. Rerunning the upgrade succeeds (idempotent no-op at head).
     rerun = subprocess.run(
-        [str(installed_python), "-m", "alembic", "-c", str(ini_path), "upgrade", "head"],
+        [
+            str(installed_python),
+            "-m",
+            "alembic",
+            "-c",
+            str(ini_path),
+            "upgrade",
+            "head",
+        ],
         env=isolated_environment,
         check=True,
         capture_output=True,
@@ -468,7 +522,15 @@ def test_auth_migration_history_coexists_with_a_host_alembic_version_table(
     # 6. Downgrade is explicitly refused by the migration shipped in the
     # wheel, and Alembic leaves the revision, tables, and seeded data intact.
     downgrade = subprocess.run(
-        [str(installed_python), "-m", "alembic", "-c", str(ini_path), "downgrade", "base"],
+        [
+            str(installed_python),
+            "-m",
+            "alembic",
+            "-c",
+            str(ini_path),
+            "downgrade",
+            "base",
+        ],
         env=isolated_environment,
         check=False,
         capture_output=True,
@@ -482,7 +544,8 @@ def test_auth_migration_history_coexists_with_a_host_alembic_version_table(
     # to what was seeded.
     conn = sqlite3.connect(db_path)
     final_tables = {
-        row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
     expected_rakit_tables = {
         "rakit_auth_alembic_version",
@@ -495,14 +558,18 @@ def test_auth_migration_history_coexists_with_a_host_alembic_version_table(
         "rakit_auth_idempotency",
     }
     assert expected_rakit_tables <= final_tables
-    assert conn.execute("SELECT version_num FROM rakit_auth_alembic_version").fetchall() == [
-        ("0003",)
+    assert conn.execute(
+        "SELECT version_num FROM rakit_auth_alembic_version"
+    ).fetchall() == [("0003",)]
+    assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
+        ("host_0001",)
     ]
-    assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [("host_0001",)]
     for table_name in expected_rakit_tables - {
         "rakit_auth_alembic_version",
         "rakit_auth_idempotency",
     }:
         assert conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone() == (1,)
-    assert conn.execute("SELECT COUNT(*) FROM rakit_auth_idempotency").fetchone() == (0,)
+    assert conn.execute("SELECT COUNT(*) FROM rakit_auth_idempotency").fetchone() == (
+        0,
+    )
     conn.close()
