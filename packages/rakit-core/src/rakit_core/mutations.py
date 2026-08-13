@@ -42,10 +42,6 @@ class OperationAuthorization:
         )
         if self.permission_requirement is None:
             object.__setattr__(self, "permission_requirement", derived_requirement)
-        elif self.permission_requirement != derived_requirement:
-            raise ValueError(
-                "permission_requirement must exactly match permissions and permission_mode"
-            )
 
     @property
     def requirement(self) -> PermissionRequirement:

@@ -127,7 +127,15 @@ def validate_operation_authorization[TInput, TResult](
             status_code=403,
         )
     expected_requirement = context.permission_requirement
-    if expected_requirement is None or authorization.requirement != expected_requirement:
+    declared_requirement = PermissionRequirement(
+        mode=authorization.permission_mode,
+        permissions=authorization.permissions,
+    )
+    if (
+        expected_requirement is None
+        or authorization.requirement != declared_requirement
+        or authorization.requirement != expected_requirement
+    ):
         raise RakitError(
             code=ErrorCode.AUTH_FORBIDDEN,
             message="Operation authorization does not bind the expected permission requirement.",
