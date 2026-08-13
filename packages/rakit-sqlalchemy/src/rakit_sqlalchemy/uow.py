@@ -158,12 +158,33 @@ class SQLAlchemyUnitOfWork:
         self._completed = True
         await self._finish_rollback_callbacks()
 
+    async def _dispatch_post_commit_events(self) -> None:
+        """Deliver deferred events without exposing this completed UoW to handlers.
+
+        Transaction bookkeeping deliberately remains in the active root UoW,
+        including for explicit MANUAL commits.  Event handlers are post-commit
+        application work, though, and may start another SQLAlchemy operation.
+        Temporarily clearing only this ContextVar lets that work own a fresh
+        UoW/session while preserving the surrounding root UoW's teardown and
+        public MANUAL timing.
+        """
+
+        if self.event_publisher is None:
+            return
+        if _active_uow.get() is not self:
+            await self.event_publisher.after_commit()
+            return
+        token = _active_uow.set(None)
+        try:
+            await self.event_publisher.after_commit()
+        finally:
+            _active_uow.reset(token)
+
     async def _finish_commit_callbacks(self) -> None:
-        """Finish durable bookkeeping and deferred events inside the root UoW."""
+        """Finish durable bookkeeping, then dispatch post-commit events safely."""
 
         await self._run_callbacks(self._after_commit_callbacks)
-        if self.event_publisher is not None:
-            await self.event_publisher.after_commit()
+        await self._dispatch_post_commit_events()
         self._commit_observers_ready = True
 
     async def _finish_rollback_callbacks(self) -> None:

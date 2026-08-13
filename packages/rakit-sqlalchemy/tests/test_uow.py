@@ -1,10 +1,11 @@
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import cast
 
 import pytest
 from rakit_core.errors import ErrorCode, RakitError
-from rakit_core.events import EventPublisher
+from rakit_core.events import DomainEvent, EventBus, EventPublisher
 from rakit_core.operations import (
     CancellationContext,
     Deadline,
@@ -28,6 +29,11 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str]
+
+
+@dataclass(frozen=True)
+class PostCommitEvent(DomainEvent):
+    pass
 
 
 @pytest.fixture
@@ -255,6 +261,62 @@ async def test_manual_and_disabled_observers_wait_for_uow_teardown() -> None:
         await uow.mark_success()
         assert order == []
     assert order == ["close", "disabled_observer"]
+
+
+@pytest.mark.anyio
+async def test_manual_post_commit_event_handler_starts_a_fresh_uow() -> None:
+    """Explicit MANUAL commit retains its timing without leaking its UoW."""
+
+    order: list[str] = []
+
+    class Session:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def commit(self) -> None:
+            order.append(f"{self.name}:commit")
+
+        async def rollback(self) -> None:
+            order.append(f"{self.name}:rollback")
+
+        async def close(self) -> None:
+            order.append(f"{self.name}:close")
+
+    root_session = Session("root")
+    fresh_session = Session("fresh")
+    sessions = [root_session, fresh_session]
+    factory = cast(async_sessionmaker[AsyncSession], lambda: sessions.pop(0))
+    bus = EventBus()
+    publisher = EventPublisher(bus)
+
+    async def handler(_event: PostCommitEvent) -> None:
+        async with SQLAlchemyUnitOfWork(factory) as fresh_uow:
+            assert fresh_uow.session is fresh_session
+            order.append("handler:fresh-root")
+            await fresh_uow.mark_success()
+
+    bus.subscribe(PostCommitEvent, handler)
+    async with SQLAlchemyUnitOfWork(
+        factory,
+        policy=TransactionPolicy.MANUAL,
+        event_publisher=publisher,
+    ) as uow:
+        publisher.publish(PostCommitEvent())
+        await uow.commit()
+        assert order == [
+            "root:commit",
+            "handler:fresh-root",
+            "fresh:commit",
+            "fresh:close",
+        ]
+
+    assert order == [
+        "root:commit",
+        "handler:fresh-root",
+        "fresh:commit",
+        "fresh:close",
+        "root:close",
+    ]
 
 
 @pytest.mark.anyio
