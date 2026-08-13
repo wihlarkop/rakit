@@ -90,7 +90,7 @@ class DemoRelationshipState:
     def __init__(self) -> None:
         self.rows: dict[str, tuple[RelationshipEditorRow, ...]] = {
             "customer": (self._row(1, "Candidate 01"),),
-            "tags": tuple(self._row(index, f"Candidate {index:02d}") for index in range(11, 18)),
+            "tags": tuple(self._row(index, f"Candidate {index:02d}") for index in range(11, 41)),
             "items": tuple(
                 self._row(
                     index,
