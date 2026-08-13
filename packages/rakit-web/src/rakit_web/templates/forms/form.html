@@ -29,7 +29,11 @@
   {% elif node.kind == "collapsible" %}
     <details id="{{ node.id }}"{% if node.open %} open{% endif %}><summary>{{ node.label }}</summary>{% for child in node.children %}{{ render_node(child) }}{% endfor %}</details>
   {% elif node.kind == "relationship" %}
-    <section id="{{ node.id }}" data-rakit-relationship-panel="{{ node.relationship }}"></section>
+    {% if node.panel %}
+      {% with panel = node.panel %}{% include node.template %}{% endwith %}
+    {% else %}
+      <section id="{{ node.id }}" data-rakit-relationship-panel="{{ node.relationship }}"></section>
+    {% endif %}
   {% elif node.kind == "custom" %}
     <section id="{{ node.id }}" data-rakit-custom-block="{{ node.block }}"></section>
   {% endif %}

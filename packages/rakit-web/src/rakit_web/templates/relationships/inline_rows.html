@@ -1,0 +1,43 @@
+<fieldset class="rakit-relationship" {% if not panel.relationship.effective_writable %}disabled{% endif %}>
+  <legend>{{ panel.relationship.label }}</legend>
+  {% if panel.concurrency_token %}<input type="hidden" name="{{ panel.prefix }}concurrency" value="{{ panel.concurrency_token }}" />{% endif %}
+  <input type="hidden" name="{{ panel.prefix }}selection_present" value="true" />
+  <ol aria-label="{{ panel.relationship.label }} rows">
+    {% for row in panel.rows %}
+      {% set encoded = codec.encode(row.candidate.identity) %}
+      <li>
+        <span>{{ row.candidate.label }}</span>
+        {% if row.concurrency_token %}<input type="hidden" name="{{ panel.prefix }}update_token__{{ encoded }}" value="{{ row.concurrency_token }}" />{% endif %}
+        {% for field, value in row['values'].items() %}
+          {% if panel.relationship.kind.value == "association_object" %}
+            <label>{{ field }}<input name="{{ panel.prefix }}association__{{ encoded }}__{{ field }}" value="{{ value }}" /></label>
+          {% else %}
+            <label>{{ field }}<input name="{{ panel.prefix }}update__{{ encoded }}__{{ field }}" value="{{ value }}" /></label>
+          {% endif %}
+        {% endfor %}
+        {% if panel.reorderable %}
+          <input type="hidden" name="{{ panel.prefix }}order__{{ '%04d'|format(loop.index0) }}" value="{{ encoded }}" />
+          <button type="submit" name="{{ panel.prefix }}move__{{ encoded }}__up" value="up" aria-label="Move {{ row.candidate.label }} up">Move up</button>
+          <button type="submit" name="{{ panel.prefix }}move__{{ encoded }}__down" value="down" aria-label="Move {{ row.candidate.label }} down">Move down</button>
+        {% endif %}
+        <label><input type="checkbox" name="{{ panel.prefix }}target__{{ encoded }}" value="{{ encoded }}" checked /> Keep {{ row.candidate.label }}</label>
+      </li>
+    {% endfor %}
+  </ol>
+  {% if panel.relationship.edit_mode.value == "inline" %}
+    {% for draft in panel.draft_rows %}
+      <fieldset>
+        <legend>New {{ panel.relationship.label }}</legend>
+        {% for field in panel.inline_fields %}
+          <label>{{ field }}<input name="{{ panel.prefix }}create__{{ draft['key'] }}__{{ field }}" value="{{ draft['values'].get(field, '') }}" /></label>
+        {% endfor %}
+      </fieldset>
+    {% endfor %}
+    <fieldset>
+      <legend>Add {{ panel.relationship.label }}</legend>
+      {% for field in panel.inline_fields %}
+        <label>{{ field }}<input name="{{ panel.prefix }}create__{{ panel.new_row_key }}__{{ field }}" /></label>
+      {% endfor %}
+    </fieldset>
+  {% endif %}
+</fieldset>

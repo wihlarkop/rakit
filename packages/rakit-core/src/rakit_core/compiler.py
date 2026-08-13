@@ -670,17 +670,36 @@ def _resource_definition_routes(builder: ApplicationBuilder) -> tuple[RouteDefin
     resources = {resource.resource_id: resource for resource in builder.resources}
     for resource in builder.resources:
         for relationship in resource.relationships:
-            routes.append(
-                RouteDefinition(
-                    route_name=(
-                        f"resource:{resource.resource_id}:relationship:{relationship.relationship_id}"
+            relationship_path = (
+                f"{resource.path}/{{identity}}/{RESOURCE_RELATIONSHIP_SEGMENT}/"
+                f"{relationship.relationship_id}"
+            )
+            routes.extend(
+                (
+                    RouteDefinition(
+                        route_name=(
+                            f"resource:{resource.resource_id}:relationship:{relationship.relationship_id}"
+                        ),
+                        methods=("GET", "POST"),
+                        path=relationship_path,
+                        owner_id=resource.resource_id,
                     ),
-                    methods=("GET", "POST"),
-                    path=(
-                        f"{resource.path}/{{identity}}/{RESOURCE_RELATIONSHIP_SEGMENT}/"
-                        f"{relationship.relationship_id}"
+                    RouteDefinition(
+                        route_name=(
+                            f"resource:{resource.resource_id}:relationship:{relationship.relationship_id}:options"
+                        ),
+                        methods=("GET",),
+                        path=f"{relationship_path}/options",
+                        owner_id=resource.resource_id,
                     ),
-                    owner_id=resource.resource_id,
+                    RouteDefinition(
+                        route_name=(
+                            f"resource:{resource.resource_id}:relationship:{relationship.relationship_id}:page"
+                        ),
+                        methods=("POST",),
+                        path=f"{relationship_path}/page/{{page}}",
+                        owner_id=resource.resource_id,
+                    ),
                 )
             )
     for action in builder.actions:

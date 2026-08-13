@@ -32,6 +32,7 @@ from rakit_core.relationship_mutations import (
     RelationshipCandidate,
     RelationshipChanged,
     RelationshipChangePlan,
+    RelationshipEditorRow,
     RelationshipMutationKind,
     RelationshipMutationPlan,
     RelationshipMutationResult,
@@ -41,7 +42,12 @@ from rakit_core.relationship_mutations import (
     UpdateAssociationRelated,
     UpdateRelated,
 )
-from rakit_core.relationships import CompiledRelationship, RelationshipCardinality, RelationshipKind
+from rakit_core.relationships import (
+    CompiledRelationship,
+    RelationshipCardinality,
+    RelationshipKind,
+    resolve_record_label,
+)
 from rakit_core.transactions import TransactionPolicy
 from sqlalchemy import inspect as sqlalchemy_inspect
 from sqlalchemy import update as sqlalchemy_update
@@ -180,6 +186,95 @@ class SQLAlchemyRelationshipMutationService:
                     "relationship_state_digest": digest,
                 },
             )
+
+    async def editor_rows(
+        self,
+        parent_identity: RecordIdentity,
+        relationship_id: str,
+        *,
+        child_fields: tuple[str, ...] = (),
+    ) -> tuple[RelationshipEditorRow, ...]:
+        """Return scoped, safe editor rows without exposing ORM objects to web.
+
+        The web adapter declares the child fields it is prepared to render from
+        the target's authoritative ``FormSchema``.  Relationship/target scope
+        is still re-applied here, so a visible parent never becomes an oracle
+        for a target hidden by its own resource policy.
+        """
+
+        entry = self._entry(relationship_id)
+        if not entry.definition.readable:
+            return ()
+        target_source = self._target_data_sources[self._target_resource_id(entry)]
+        target_resolver = SQLAlchemyRelationshipResolver(target_source)
+        async with self._session_factory() as session:
+            parent = await SQLAlchemyRelationshipResolver(self._parent_data_source).resolve(
+                session, parent_identity
+            )
+            if parent is None:
+                raise self._not_found()
+            property_name = str(entry.definition.relationship_id)
+            await session.refresh(parent, attribute_names=[property_name])
+            raw_value = getattr(parent, property_name)
+            if entry.definition.kind is RelationshipKind.ASSOCIATION_OBJECT:
+                target_property = self._association_target_property(entry)
+                edge_source = self._target_data_sources[str(entry.definition.target_resource_id)]
+                raw_rows = []
+                for edge in raw_value:
+                    await session.refresh(edge, attribute_names=[target_property])
+                    target = getattr(edge, target_property)
+                    identity = target_source.identity_for(target)
+                    visible = await target_resolver.resolve(session, identity)
+                    if visible is None:
+                        continue
+                    raw_rows.append(
+                        RelationshipEditorRow(
+                            candidate=RelationshipCandidate(
+                                identity=identity,
+                                label=resolve_record_label(entry.definition, visible),
+                            ),
+                            values={
+                                field: getattr(edge, field)
+                                for field in entry.definition.association_fields
+                            },
+                            association_identity=edge_source.identity_for(edge),
+                        )
+                    )
+                return tuple(raw_rows)
+
+            records = (
+                ()
+                if raw_value is None
+                else (
+                    (raw_value,)
+                    if entry.definition.cardinality is RelationshipCardinality.TO_ONE
+                    else tuple(raw_value)
+                )
+            )
+            rows: list[RelationshipEditorRow] = []
+            target_mutation_service = self._target_mutation_services.get(
+                self._target_resource_id(entry)
+            )
+            for record in records:
+                identity = target_source.identity_for(record)
+                visible = await target_resolver.resolve(session, identity)
+                if visible is None:
+                    continue
+                token = None
+                issue_token = getattr(target_mutation_service, "issue_update_token", None)
+                if child_fields and callable(issue_token):
+                    token = issue_token(visible)
+                rows.append(
+                    RelationshipEditorRow(
+                        candidate=RelationshipCandidate(
+                            identity=identity,
+                            label=resolve_record_label(entry.definition, visible),
+                        ),
+                        values={field: getattr(visible, field) for field in child_fields},
+                        concurrency_token=token,
+                    )
+                )
+            return tuple(rows)
 
     async def validate_parent_proof(
         self,

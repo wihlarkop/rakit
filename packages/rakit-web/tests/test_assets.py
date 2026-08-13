@@ -84,6 +84,9 @@ def test_rakit_web_artifacts_include_runtime_resources(tmp_path: Path) -> None:
         "rakit_web/templates/resources/_table.html",
         "rakit_web/templates/resources/detail.html",
         "rakit_web/templates/resources/list.html",
+        "rakit_web/templates/relationships/inline_rows.html",
+        "rakit_web/templates/relationships/to_many.html",
+        "rakit_web/templates/relationships/to_one.html",
     }
 
     with zipfile.ZipFile(wheel) as archive:

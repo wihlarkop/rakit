@@ -1,0 +1,19 @@
+<section id="rakit-relationship-{{ panel.relationship_id }}" data-rakit-relationship-panel="{{ panel.relationship_id }}">
+  {% if panel.relationship.cardinality.value == "to_one" %}
+    {% include "relationships/to_one.html" %}
+  {% elif panel.relationship.edit_mode.value == "inline" or panel.relationship.edit_mode.value == "nested" %}
+    {% include "relationships/inline_rows.html" %}
+  {% else %}
+    {% include "relationships/to_many.html" %}
+  {% endif %}
+  {% if panel.page_path and (panel.has_previous_page or panel.has_next_page) %}
+    <nav aria-label="{{ panel.relationship.label }} pages">
+      {% if panel.has_previous_page %}
+        <button type="button" hx-post="{{ panel.page_path }}/page/{{ panel.page - 1 }}" hx-include="closest form" hx-target="#rakit-relationship-{{ panel.relationship_id }}" hx-swap="outerHTML">Previous {{ panel.relationship.label }} page</button>
+      {% endif %}
+      {% if panel.has_next_page %}
+        <button type="button" hx-post="{{ panel.page_path }}/page/{{ panel.page + 1 }}" hx-include="closest form" hx-target="#rakit-relationship-{{ panel.relationship_id }}" hx-swap="outerHTML">Next {{ panel.relationship.label }} page</button>
+      {% endif %}
+    </nav>
+  {% endif %}
+</section>

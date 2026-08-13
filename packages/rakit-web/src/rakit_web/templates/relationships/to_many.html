@@ -1,0 +1,24 @@
+<fieldset class="rakit-relationship" {% if not panel.relationship.effective_writable %}disabled{% endif %}>
+  <legend>{{ panel.relationship.label }}</legend>
+  {% if panel.concurrency_token %}<input type="hidden" name="{{ panel.prefix }}concurrency" value="{{ panel.concurrency_token }}" />{% endif %}
+  <input type="hidden" name="{{ panel.prefix }}selection_present" value="true" />
+  <label for="rakit-relationship-{{ panel.relationship_id }}-search">Search {{ panel.relationship.label }}</label>
+  <input id="rakit-relationship-{{ panel.relationship_id }}-search" name="{{ panel.prefix }}search" type="search" autocomplete="off"
+    {% if panel.options_path %}hx-get="{{ panel.options_path }}" hx-trigger="input changed delay:250ms" hx-include="closest form" hx-target="#rakit-relationship-{{ panel.relationship_id }}-options" hx-swap="outerHTML"{% endif %} />
+  <ul aria-label="Selected {{ panel.relationship.label }}">
+    {% for row in panel.rows %}
+      {% set encoded = codec.encode(row.candidate.identity) %}
+      <li>
+        <label><input type="checkbox" name="{{ panel.prefix }}target__{{ encoded }}" value="{{ encoded }}" checked /> Keep {{ row.candidate.label }}</label>
+      </li>
+    {% endfor %}
+  </ul>
+  <ul id="rakit-relationship-{{ panel.relationship_id }}-options" aria-label="Available {{ panel.relationship.label }}">
+    {% for option in panel.options %}
+      {% set encoded = codec.encode(option.identity) %}
+      {% if encoded not in panel.selected %}
+        <li><label><input type="checkbox" name="{{ panel.prefix }}target__{{ encoded }}" value="{{ encoded }}" /> Link {{ option.label }}</label></li>
+      {% endif %}
+    {% endfor %}
+  </ul>
+</fieldset>

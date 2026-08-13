@@ -272,6 +272,10 @@ def build_requirement_resolver(
                         operation = "create"
                     elif len(suffix) == 2 and suffix[1] in {"edit", "delete"}:
                         operation = "update" if suffix[1] == "edit" else "delete"
+                    elif len(suffix) >= 2 and suffix[1] == "_relationships":
+                        # Candidate/fragment reads are part of a pending graph
+                        # mutation, so they require parent UPDATE capability.
+                        operation = "update"
                     if operation is not None:
                         return PermissionRequirement.all_of(
                             f"{admin_id}.resources.{resource_id}.{operation}"

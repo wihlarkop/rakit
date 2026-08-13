@@ -1,0 +1,15 @@
+<fieldset class="rakit-relationship" {% if not panel.relationship.effective_writable %}disabled{% endif %}>
+  <legend>{{ panel.relationship.label }}</legend>
+  {% if panel.concurrency_token %}<input type="hidden" name="{{ panel.prefix }}concurrency" value="{{ panel.concurrency_token }}" />{% endif %}
+  <label for="rakit-relationship-{{ panel.relationship_id }}-set">{{ panel.relationship.label }}</label>
+  <select id="rakit-relationship-{{ panel.relationship_id }}-set" name="{{ panel.prefix }}set">
+    {% if panel.relationship.nullable %}<option value="">No selection</option>{% endif %}
+    {% for option in panel.options %}
+      {% set encoded = codec.encode(option.identity) %}
+      <option value="{{ encoded }}"{% if encoded in panel.selected %} selected{% endif %}>{{ option.label }}</option>
+    {% endfor %}
+  </select>
+  {% if panel.relationship.nullable and panel.relationship.effective_writable %}
+    <label><input type="checkbox" name="{{ panel.prefix }}clear" value="true" /> Clear {{ panel.relationship.label }}</label>
+  {% endif %}
+</fieldset>

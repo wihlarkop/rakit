@@ -1,0 +1,8 @@
+<ul id="{{ options_id }}" role="listbox">
+  {% for option in options %}
+    {% set encoded = codec.encode(option.identity) %}
+    {% if encoded not in selected %}
+      <li role="option"><label><input type="checkbox" name="{{ prefix }}target__{{ encoded }}" value="{{ encoded }}" /> Link {{ option.label }}</label></li>
+    {% endif %}
+  {% endfor %}
+</ul>

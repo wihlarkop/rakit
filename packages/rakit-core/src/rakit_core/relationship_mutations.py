@@ -261,6 +261,30 @@ class RelationshipCandidate(BaseModel):
         return value
 
 
+class RelationshipEditorRow(BaseModel):
+    """Safe, adapter-produced state for one relationship editor row.
+
+    This is read-side presentation data, not another mutation model.  The
+    adapter has already applied parent and target visibility before exposing a
+    row; the web layer still submits only canonical identities and the typed
+    graph steps below remain the authoritative write contract.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    candidate: RelationshipCandidate
+    values: Mapping[str, Any] = Field(default_factory=dict)
+    association_identity: RecordIdentity | None = None
+    concurrency_token: str | None = None
+
+    @field_validator("values")
+    @classmethod
+    def _freeze_values(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        if any(not isinstance(key, str) or not key for key in value):
+            raise ValueError("editor values must have non-empty field identifiers")
+        return freeze_mapping(value)
+
+
 class RelationshipMutationPlan(BaseModel):
     """Canonical request-independent relationship mutation intent."""
 
@@ -398,6 +422,7 @@ __all__ = [
     "RelationshipCandidate",
     "RelationshipChangePlan",
     "RelationshipChanged",
+    "RelationshipEditorRow",
     "RelationshipMutationKind",
     "RelationshipMutationPlan",
     "RelationshipMutationResult",

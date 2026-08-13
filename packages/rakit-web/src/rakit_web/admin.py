@@ -18,7 +18,18 @@ from rakit_core.di import ServiceRegistry, ServiceResolver, ServiceScope
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.events import EventBus, EventPublisher
 from rakit_core.identity import RecordIdentity
-from rakit_core.mutations import MutationAuthorization, MutationOperation
+from rakit_core.mutations import (
+    MutationAuthorization,
+    MutationOperation,
+    OperationAuthorization,
+    OperationAuthorizationSet,
+)
+from rakit_core.relationship_mutations import (
+    CreateRelated,
+    DeleteRelated,
+    RelationshipChangePlan,
+    UpdateRelated,
+)
 from rakit_core.resources import ResourceService
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -31,6 +42,7 @@ from .auth_routes import _verify_csrf, build_auth_routes
 from .form_routes import WriteResourceBinding, build_write_routes
 from .lifecycle import LifecycleManager
 from .logging import bind_request_context, configure_logging, reset_request_context
+from .relationship_routes import build_relationship_routes
 from .resource_routes import ResourceBinding, build_resource_routes, build_templates
 from .security.authentication import (
     LOGIN_PATH,
@@ -587,6 +599,120 @@ class Admin:
                     permissions=requirement.permissions,
                 )
 
+            async def authorize_graph_mutation(
+                request: Request,
+                root: MutationAuthorization,
+                parent_identity: RecordIdentity | None,
+                changes: tuple[object, ...],
+            ) -> OperationAuthorizationSet | None:
+                principal = request.scope.get("state", {}).get("principal")
+                if principal is None or not principal.authenticated:
+                    return None
+                assert self.compiled is not None
+                capabilities: list[OperationAuthorization] = []
+                relationship_by_id = {
+                    (entry.source_resource_id, str(entry.definition.relationship_id)): entry
+                    for entry in self.compiled.relationships
+                }
+                for raw_change in changes:
+                    if not isinstance(raw_change, RelationshipChangePlan):
+                        return None
+                    entry = relationship_by_id.get((root.resource_id, raw_change.relationship_id))
+                    if entry is None or not entry.mutation_permission.matches(
+                        principal, superuser_bypass=self._superuser_bypass
+                    ):
+                        return None
+                    capabilities.append(
+                        OperationAuthorization.for_requirement(
+                            admin_id=self.config.admin_id,
+                            resource_id=entry.source_resource_id,
+                            operation=raw_change.operation_id,
+                            principal_id=principal.subject_id,
+                            requirement=entry.mutation_permission,
+                            target_identity=parent_identity,
+                        )
+                    )
+                    target_resource_id = str(
+                        entry.definition.association_target_resource_id
+                        or entry.definition.target_resource_id
+                    )
+                    for step in raw_change.steps:
+                        requirement = None
+                        identity = None
+                        operation = None
+                        if isinstance(step, CreateRelated):
+                            requirement, operation = entry.target_create_permission, "target-create"
+                        elif isinstance(step, UpdateRelated):
+                            requirement, identity, operation = (
+                                entry.target_update_permission,
+                                step.identity,
+                                "target-update",
+                            )
+                        elif isinstance(step, DeleteRelated):
+                            requirement, identity, operation = (
+                                entry.target_delete_permission,
+                                step.identity,
+                                "target-delete",
+                            )
+                        if requirement is not None:
+                            if not requirement.matches(
+                                principal, superuser_bypass=self._superuser_bypass
+                            ):
+                                return None
+                            capabilities.append(
+                                OperationAuthorization.for_requirement(
+                                    admin_id=self.config.admin_id,
+                                    resource_id=target_resource_id,
+                                    operation=f"{raw_change.operation_id}:{operation}",
+                                    principal_id=principal.subject_id,
+                                    requirement=requirement,
+                                    target_identity=identity,
+                                )
+                            )
+                return OperationAuthorizationSet(root=root, capabilities=tuple(capabilities))
+
+            async def authorize_relationship_editor(
+                request: Request,
+                relationship_id: str,
+                parent_identity: RecordIdentity | None,
+            ) -> bool:
+                """Authorize relationship helper reads with the exact compiled requirement."""
+
+                principal = request.scope.get("state", {}).get("principal")
+                if principal is None or not principal.authenticated:
+                    return False
+                assert self.compiled is not None
+                path = request.url.path.removeprefix(request.scope.get("root_path", ""))
+                resource_id = next(
+                    (
+                        candidate_id
+                        for candidate_path, candidate_id in (
+                            (definition.path, candidate_id)
+                            for candidate_id, definition in self._resource_definitions.items()
+                        )
+                        if path == candidate_path or path.startswith(f"{candidate_path}/")
+                    ),
+                    None,
+                )
+                if resource_id is None:
+                    return False
+                entry = next(
+                    (
+                        candidate
+                        for candidate in self.compiled.relationships
+                        if candidate.source_resource_id == resource_id
+                        and str(candidate.definition.relationship_id) == relationship_id
+                    ),
+                    None,
+                )
+                return bool(
+                    entry is not None
+                    and entry.definition.effective_writable
+                    and entry.mutation_permission.matches(
+                        principal, superuser_bypass=self._superuser_bypass
+                    )
+                )
+
             async def verify_write_csrf(request: Request) -> bool:
                 session_id = request.scope.get("state", {}).get("session_id")
                 return isinstance(session_id, str) and await _verify_csrf(
@@ -642,11 +768,18 @@ class Admin:
                     verify_submission_token=verify_submission_token,
                     issue_submission_token=issue_submission_token,
                     mutation_authorizer=authorize_mutation,
+                    graph_mutation_authorizer=authorize_graph_mutation,
+                    relationship_editor_authorizer=authorize_relationship_editor,
                     templates=templates,
                     deadline_seconds=self._mutation_deadline_seconds,
                     operation_scope=operation_scope,
                 )
                 write_routes.extend(build_write_routes(secured_binding))
+                if secured_binding.relationship_form is not None:
+                    relationship_routes = build_relationship_routes(
+                        secured_binding, secured_binding.relationship_form
+                    )
+                    write_routes.extend(relationship_routes)
 
         app = Starlette(
             debug=self.config.debug,
