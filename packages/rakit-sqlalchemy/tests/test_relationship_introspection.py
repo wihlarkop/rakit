@@ -134,6 +134,23 @@ class Profile(Base):
     parent: Mapped[ProfileParent | None] = relationship(back_populates="profile")
 
 
+class RequiredProfileParent(Base):
+    __tablename__ = "relationship_required_profile_parents"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    profile: Mapped["RequiredProfile | None"] = relationship(back_populates="parent", uselist=False)
+
+
+class RequiredProfile(Base):
+    __tablename__ = "relationship_required_profiles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    parent_id: Mapped[int] = mapped_column(
+        ForeignKey("relationship_required_profile_parents.id"), unique=True
+    )
+    parent: Mapped[RequiredProfileParent] = relationship(back_populates="profile")
+
+
 def test_mapper_relationships_are_classified_without_sqlalchemy_leakage() -> None:
     relationships = inspect_relationships(Order)
 
@@ -155,6 +172,16 @@ def test_unique_scalar_relationships_are_one_to_one_in_both_directions() -> None
     assert profile_parent.kind is RelationshipKind.ONE_TO_ONE
     assert parent_profile.nullable is True
     assert profile_parent.nullable is True
+
+
+def test_reverse_one_to_one_does_not_inherit_the_child_fk_requiredness() -> None:
+    parent_profile = inspect_relationships(RequiredProfileParent)["profile"]
+    profile_parent = inspect_relationships(RequiredProfile)["parent"]
+
+    assert profile_parent.kind is RelationshipKind.ONE_TO_ONE
+    assert profile_parent.nullable is False
+    assert parent_profile.kind is RelationshipKind.ONE_TO_ONE
+    assert parent_profile.nullable is True
 
 
 def test_simple_association_object_requires_declared_scalar_fields_and_target() -> None:

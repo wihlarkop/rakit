@@ -61,10 +61,20 @@ def _cardinality(property_: RelationshipProperty[object]) -> RelationshipCardina
 
 
 def _nullable(property_: RelationshipProperty[object]) -> bool:
+    """Return whether this mapper-side relationship may be absent.
+
+    A unique child FK proves scalar cardinality in both directions, but only
+    the MANYTOONE property owns that FK.  Its reverse scalar ONETOMANY view
+    can still be absent because no database constraint requires every parent
+    row to have a child row.
+    """
+
     if property_.uselist:
         return True
-    columns = _foreign_key_columns(property_) or tuple(property_.local_columns)
-    return bool(columns) and all(column.nullable for column in columns)
+    if property_.direction.name != "MANYTOONE":
+        return True
+    columns = tuple(property_.local_columns)
+    return not columns or all(column.nullable for column in columns)
 
 
 def _association_metadata(
