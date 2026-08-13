@@ -129,12 +129,12 @@ def test_graph_relationship_steps_are_typed_immutable_and_fingerprint_safe() -> 
 
 def test_graph_relationship_steps_reject_empty_or_duplicate_reorder_input() -> None:
     requirement = PermissionRequirement.all_of("admin.resources.orders.update")
-    base = {
-        "operation_id": "graph:orders:items",
-        "relationship_id": "items",
-        "authorization_requirement": requirement,
-    }
     with pytest.raises(ValueError, match="at least one"):
-        RelationshipChangePlan(steps=(), **base)
+        RelationshipChangePlan(
+            operation_id="graph:orders:items",
+            relationship_id="items",
+            authorization_requirement=requirement,
+            steps=(),
+        )
     with pytest.raises(ValueError, match="duplicate"):
         ReorderRelated(identities=(_identity(1), _identity(1)))

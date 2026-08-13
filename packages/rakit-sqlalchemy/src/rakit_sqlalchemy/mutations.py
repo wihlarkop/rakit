@@ -653,6 +653,7 @@ class SQLAlchemyMutationService:
                     if self._concurrency_provider is not None
                     else None
                 )
+                base: Mapping[str, Any] = {}
                 if self._concurrency_provider is not None:
                     if plan.scalar_changes:
                         if not concurrency_token:
@@ -684,7 +685,13 @@ class SQLAlchemyMutationService:
                         await relationship_service.validate_parent_proof(
                             change, identity, cast(object, expected_parent_version)
                         )
-                    await self._claim_parent_concurrency_in_uow(uow, record, identity)
+                    await self._claim_parent_concurrency_in_uow(
+                        uow,
+                        record,
+                        identity,
+                        conflict_plan=plan if plan.scalar_changes else None,
+                        base_snapshot=base,
+                    )
 
                 if plan.scalar_changes:
                     scoped_identity = (
@@ -752,7 +759,13 @@ class SQLAlchemyMutationService:
         return result
 
     async def _claim_parent_concurrency_in_uow(
-        self, uow: SQLAlchemyUnitOfWork, record: object, identity: RecordIdentity
+        self,
+        uow: SQLAlchemyUnitOfWork,
+        record: object,
+        identity: RecordIdentity,
+        *,
+        conflict_plan: UpdateMutationPlan | None = None,
+        base_snapshot: Mapping[str, Any] = {},
     ) -> None:
         """Advance this parent exactly once at the graph mutation boundary."""
 
@@ -786,6 +799,8 @@ class SQLAlchemyMutationService:
         )
         if result.rowcount != 1:
             await uow.session.refresh(record)
+            if conflict_plan is not None:
+                raise self._conflict(record, conflict_plan, base_snapshot)
             raise RakitError(
                 code=ErrorCode.RESOURCE_CONFLICT,
                 message="The resource was changed by another request.",

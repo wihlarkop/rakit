@@ -9,6 +9,7 @@ from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.fields import FieldDefinition
 from rakit_core.forms import FormSchema
+from rakit_core.idempotency import OperationReceipt
 from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import OperationAuthorization, OperationAuthorizationSet
 from rakit_core.operations import CancellationContext, OperationContext, activate_operation_context
@@ -67,7 +68,7 @@ class Child(Base):
 
 class MemoryIdempotencyStore:
     def __init__(self) -> None:
-        self.claims: dict[str, tuple[str, object | None]] = {}
+        self.claims: dict[str, tuple[str, OperationReceipt | None]] = {}
         self._tokens: dict[int, str] = {}
         self._next = 1
 
@@ -86,7 +87,7 @@ class MemoryIdempotencyStore:
                     if receipt is not None
                     else IdempotencyStatus.IN_PROGRESS
                 ),
-                completed_receipt=receipt,  # type: ignore[arg-type]
+                completed_receipt=receipt,
                 claimed=False,
             )
         reservation = IdempotencyReservation(self._next, IdempotencyStatus.IN_PROGRESS)
