@@ -345,8 +345,8 @@ def test_sqlalchemy_plan04_facade_reexports_concrete_implementations() -> None:
 def test_plan05_foundation_contracts_preserve_facade_identity() -> None:
     from rakit import ActionResult, ActionSuccess
     from rakit.core import (
-        ActionRedirect,
         ActionDefinition,
+        ActionRedirect,
         BulkPolicy,
         EndpointAccessPolicy,
         EndpointResponseKind,
@@ -356,8 +356,8 @@ def test_plan05_foundation_contracts_preserve_facade_identity() -> None:
         RelationshipKind,
         resolve_record_label,
     )
-    from rakit_core.actions import ActionResult as RealActionResult
     from rakit_core.actions import ActionRedirect as RealActionRedirect
+    from rakit_core.actions import ActionResult as RealActionResult
     from rakit_core.actions import ActionSuccess as RealActionSuccess
     from rakit_core.bulk import BulkPolicy as RealBulkPolicy
     from rakit_core.definitions import ActionDefinition as RealActionDefinition
