@@ -1,6 +1,8 @@
 """Operation-scoped SQLAlchemy transaction handling."""
 
 import asyncio
+import inspect
+from collections.abc import Awaitable, Callable
 from contextvars import ContextVar, Token
 from typing import Self
 
@@ -39,6 +41,8 @@ class SQLAlchemyUnitOfWork:
         self._parent: SQLAlchemyUnitOfWork | None = None
         self._savepoint: object | None = None
         self._context_token: Token[SQLAlchemyUnitOfWork | None] | None = None
+        self._after_commit_callbacks: list[Callable[[], object | Awaitable[object]]] = []
+        self._after_rollback_callbacks: list[Callable[[], object | Awaitable[object]]] = []
 
     async def __aenter__(self) -> Self:
         active = _active_uow.get()
@@ -63,6 +67,28 @@ class SQLAlchemyUnitOfWork:
         if not self._failed:
             self._success = True
 
+    def after_commit(self, callback: Callable[[], object | Awaitable[object]]) -> None:
+        """Run a callback only after the root operation transaction commits."""
+
+        if self._parent is not None:
+            self._parent.after_commit(callback)
+            return
+        self._after_commit_callbacks.append(callback)
+
+    def after_rollback(self, callback: Callable[[], object | Awaitable[object]]) -> None:
+        if self._parent is not None:
+            self._parent.after_rollback(callback)
+            return
+        self._after_rollback_callbacks.append(callback)
+
+    async def _run_callbacks(
+        self, callbacks: list[Callable[[], object | Awaitable[object]]]
+    ) -> None:
+        while callbacks:
+            result = callbacks.pop(0)()
+            if inspect.isawaitable(result):
+                await result
+
     async def commit(self) -> None:
         if self._parent is not None:
             raise RuntimeError("Nested unit of work cannot commit its parent transaction")
@@ -70,6 +96,7 @@ class SQLAlchemyUnitOfWork:
             raise RuntimeError("Explicit commit is only available with manual transaction policy")
         await self._commit_critical()
         self._completed = True
+        await self._run_callbacks(self._after_commit_callbacks)
         if self.event_publisher is not None:
             await self.event_publisher.after_commit()
 
@@ -87,6 +114,7 @@ class SQLAlchemyUnitOfWork:
             return
         await self.session.rollback()
         self._completed = True
+        await self._run_callbacks(self._after_rollback_callbacks)
         if self.event_publisher is not None:
             self.event_publisher.after_rollback()
 
@@ -140,10 +168,12 @@ class SQLAlchemyUnitOfWork:
                     await self.rollback()
                     raise
                 self._completed = True
+                await self._run_callbacks(self._after_commit_callbacks)
                 if self.event_publisher is not None:
                     await self.event_publisher.after_commit()
             elif self.policy is TransactionPolicy.DISABLED and self._success:
                 self._completed = True
+                await self._run_callbacks(self._after_commit_callbacks)
                 if self.event_publisher is not None:
                     await self.event_publisher.after_commit()
             elif not self._completed:

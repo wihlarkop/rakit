@@ -3,6 +3,7 @@
 import hashlib
 import json
 from collections.abc import Callable, Mapping
+from datetime import timedelta
 
 from rakit_core.concurrency import ConcurrencyTokenService, ConcurrencyVersionProvider
 from rakit_core.crypto import TokenService
@@ -10,7 +11,7 @@ from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.idempotency import IdempotencyStatus, IdempotencyStore, OperationReceipt
 from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import OperationAuthorization
-from rakit_core.operations import current_operation_context
+from rakit_core.operations import OperationContext, current_operation_context
 from rakit_core.relationship_mutations import (
     RelationshipCandidate,
     RelationshipChanged,
@@ -20,6 +21,7 @@ from rakit_core.relationship_mutations import (
 )
 from rakit_core.relationships import CompiledRelationship, RelationshipCardinality, RelationshipKind
 from rakit_core.transactions import TransactionPolicy
+from sqlalchemy import inspect as sqlalchemy_inspect
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .datasource import SQLAlchemyDataSource
@@ -80,6 +82,7 @@ class SQLAlchemyRelationshipMutationService:
         self._parent_data_source = parent_data_source
         self._relationships = {entry.definition.relationship_id: entry for entry in relationships}
         self._target_data_sources = dict(target_data_sources)
+        self._token_service = token_service
         self._concurrency = ConcurrencyTokenService(token_service)
         self._concurrency_provider = concurrency_provider
         self._idempotency_store = idempotency_store
@@ -155,6 +158,7 @@ class SQLAlchemyRelationshipMutationService:
         plan: RelationshipMutationPlan,
         *,
         authorization: OperationAuthorization | None,
+        target_delete_authorizations: tuple[OperationAuthorization, ...] = (),
     ) -> RelationshipMutationResult:
         """Run one non-destructive relationship plan atomically.
 
@@ -186,6 +190,12 @@ class SQLAlchemyRelationshipMutationService:
             raise self._conflict("Relationship submission is already in progress or final.")
 
         event_publisher = context.events
+        receipt = OperationReceipt(
+            operation_id=plan.operation_id,
+            status="succeeded",
+            result_kind="relationship_mutation",
+        )
+        callbacks_registered = False
         try:
             async with SQLAlchemyUnitOfWork(
                 self._session_factory,
@@ -193,6 +203,9 @@ class SQLAlchemyRelationshipMutationService:
                 event_publisher=event_publisher,
                 operation_context=context,
             ) as uow:
+                uow.after_commit(lambda: self._idempotency_store.complete(reservation, receipt))
+                uow.after_rollback(lambda: self._idempotency_store.release(reservation))
+                callbacks_registered = True
                 parent = await SQLAlchemyRelationshipResolver(self._parent_data_source).resolve(
                     uow.session, plan.parent_identity
                 )
@@ -200,8 +213,27 @@ class SQLAlchemyRelationshipMutationService:
                     raise self._not_found()
                 await self._verify_concurrency(uow.session, parent, entry, plan)
                 targets = await self._resolve_targets(uow.session, entry, plan.target_identities)
+                before = await self._current_target_identities(uow.session, parent, entry)
+                destructive_targets = self._destructive_targets(entry, before, plan)
+                self._reject_unapproved_destructive_impact(entry, destructive_targets)
+                if destructive_targets:
+                    await self._verify_destructive_execution(
+                        uow,
+                        plan,
+                        entry,
+                        context,
+                        destructive_targets,
+                        target_delete_authorizations,
+                        await self._state_digest(uow.session, parent, entry),
+                    )
                 after, added, removed = await self._apply(uow.session, parent, entry, plan, targets)
                 await uow.session.flush()
+                current_token = self._issue_concurrency_token(
+                    parent,
+                    entry,
+                    plan.parent_identity,
+                    await self._state_digest(uow.session, parent, entry),
+                )
                 if event_publisher is not None:
                     event_publisher.publish(
                         RelationshipChanged(
@@ -215,9 +247,6 @@ class SQLAlchemyRelationshipMutationService:
                         )
                     )
                 await uow.mark_success()
-            current_token = await self.issue_concurrency_token(
-                plan.parent_identity, plan.relationship_id
-            )
             result = RelationshipMutationResult(
                 parent_identity=plan.parent_identity,
                 relationship_id=plan.relationship_id,
@@ -228,16 +257,9 @@ class SQLAlchemyRelationshipMutationService:
                 concurrency_token=current_token,
             )
         except BaseException:
-            await self._idempotency_store.release(reservation)
+            if not callbacks_registered:
+                await self._idempotency_store.release(reservation)
             raise
-        await self._idempotency_store.complete(
-            reservation,
-            OperationReceipt(
-                operation_id=plan.operation_id,
-                status="succeeded",
-                result_kind="relationship_mutation",
-            ),
-        )
         return result
 
     def _validate_plan_owner(
@@ -305,6 +327,16 @@ class SQLAlchemyRelationshipMutationService:
         await session.refresh(parent, attribute_names=[str(entry.definition.relationship_id)])
         value = getattr(parent, entry.definition.relationship_id)
         target_source = self._target_data_sources[self._target_resource_id(entry)]
+        if entry.definition.kind is RelationshipKind.ASSOCIATION_OBJECT:
+            target_property = self._association_target_property(entry)
+            for edge in value:
+                await session.refresh(edge, attribute_names=[target_property])
+            return tuple(
+                sorted(
+                    (target_source.identity_for(getattr(edge, target_property)) for edge in value),
+                    key=self._identity_key,
+                )
+            )
         if entry.definition.cardinality is RelationshipCardinality.TO_ONE:
             return () if value is None else (target_source.identity_for(value),)
         return tuple(
@@ -319,6 +351,35 @@ class SQLAlchemyRelationshipMutationService:
             "relationship_id": entry.definition.relationship_id,
             "target_identities": [dict(identity.values) for identity in identities],
         }
+        if entry.definition.kind is RelationshipKind.ASSOCIATION_OBJECT:
+            relationship_id = str(entry.definition.relationship_id)
+            edge_source = self._target_data_sources[str(entry.definition.target_resource_id)]
+            target_property = self._association_target_property(entry)
+            edges = getattr(parent, relationship_id)
+            for edge in edges:
+                await session.refresh(edge, attribute_names=[target_property])
+            payload["association_entries"] = sorted(
+                (
+                    {
+                        "association_identity": dict(edge_source.identity_for(edge).values),
+                        "target_identity": dict(
+                            self._target_data_sources[self._target_resource_id(entry)]
+                            .identity_for(getattr(edge, target_property))
+                            .values
+                        ),
+                        "values": ConcurrencyTokenService.canonical_snapshot(
+                            {
+                                field: getattr(edge, field)
+                                for field in entry.definition.association_fields
+                            }
+                        ),
+                    }
+                    for edge in edges
+                ),
+                key=lambda value: self._identity_key(
+                    RecordIdentity(values=value["target_identity"])
+                ),
+            )
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
@@ -344,6 +405,23 @@ class SQLAlchemyRelationshipMutationService:
         ) != await self._state_digest(session, parent, entry):
             raise self._conflict("The relationship changed since this mutation was prepared.")
 
+    def _issue_concurrency_token(
+        self,
+        parent: object,
+        entry: CompiledRelationship,
+        parent_identity: RecordIdentity,
+        relationship_state_digest: str,
+    ) -> str:
+        return self._concurrency.issue(
+            self._token_resource_id(entry),
+            parent_identity,
+            self._concurrency_provider.version_for(parent),
+            base_snapshot={
+                "relationship_id": entry.definition.relationship_id,
+                "relationship_state_digest": relationship_state_digest,
+            },
+        )
+
     async def _apply(
         self,
         session: AsyncSession,
@@ -353,11 +431,7 @@ class SQLAlchemyRelationshipMutationService:
         targets: Mapping[str, object],
     ) -> tuple[tuple[RecordIdentity, ...], tuple[RecordIdentity, ...], tuple[RecordIdentity, ...]]:
         if entry.definition.kind is RelationshipKind.ASSOCIATION_OBJECT:
-            raise RakitError(
-                code=ErrorCode.CONFIG_INVALID,
-                message="Association-object mutation is not yet configured for this relationship.",
-                status_code=500,
-            )
+            return await self._apply_association_object(session, parent, entry, plan, targets)
         relationship_id = str(entry.definition.relationship_id)
         before = await self._current_target_identities(session, parent, entry)
         before_keys = {self._identity_key(identity): identity for identity in before}
@@ -428,6 +502,339 @@ class SQLAlchemyRelationshipMutationService:
                     status_code=422,
                 )
 
+        after_keys = {self._identity_key(identity): identity for identity in after}
+        added = tuple(identity for key, identity in after_keys.items() if key not in before_keys)
+        removed = tuple(identity for key, identity in before_keys.items() if key not in after_keys)
+        return after, added, removed
+
+    def _removed_target_identities(
+        self,
+        before: tuple[RecordIdentity, ...],
+        plan: RelationshipMutationPlan,
+    ) -> tuple[RecordIdentity, ...]:
+        before_keys = {self._identity_key(identity): identity for identity in before}
+        requested_keys = {self._identity_key(identity) for identity in plan.target_identities}
+        if plan.kind is RelationshipMutationKind.CLEAR:
+            return before
+        if plan.kind is RelationshipMutationKind.SET:
+            return tuple(
+                identity for key, identity in before_keys.items() if key not in requested_keys
+            )
+        if plan.kind is RelationshipMutationKind.REMOVE:
+            return tuple(identity for key, identity in before_keys.items() if key in requested_keys)
+        if plan.kind is RelationshipMutationKind.REPLACE:
+            return tuple(
+                identity for key, identity in before_keys.items() if key not in requested_keys
+            )
+        return ()
+
+    def _destructive_targets(
+        self,
+        entry: CompiledRelationship,
+        before: tuple[RecordIdentity, ...],
+        plan: RelationshipMutationPlan,
+    ) -> tuple[RecordIdentity, ...]:
+        removed = self._removed_target_identities(before, plan)
+        if not removed:
+            return ()
+        metadata = self._parent_data_source.relationship_metadata.get(
+            entry.definition.relationship_id
+        )
+        if metadata is None:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="Relationship mapper metadata is unavailable.",
+                status_code=500,
+            )
+        if not (metadata.delete_orphan or metadata.cascade_delete):
+            return ()
+        return removed
+
+    def _reject_unapproved_destructive_impact(
+        self, entry: CompiledRelationship, destructive_targets: tuple[RecordIdentity, ...]
+    ) -> None:
+        if not destructive_targets:
+            return
+        metadata = self._parent_data_source.relationship_metadata[entry.definition.relationship_id]
+        policy = entry.definition.destructive_policy
+        if metadata.delete_orphan and not policy.allow_delete_orphan:
+            raise RakitError(
+                code=ErrorCode.VALIDATION_FAILED,
+                message=(
+                    "Relationship change could delete an orphaned record without policy approval."
+                ),
+                status_code=422,
+            )
+        if metadata.cascade_delete and not policy.allow_destructive_cascade:
+            raise RakitError(
+                code=ErrorCode.VALIDATION_FAILED,
+                message=(
+                    "Relationship change could trigger a destructive cascade "
+                    "without policy approval."
+                ),
+                status_code=422,
+            )
+
+    async def issue_destructive_confirmation(
+        self,
+        plan: RelationshipMutationPlan,
+        *,
+        authorization: OperationAuthorization | None,
+    ) -> str:
+        """Issue a purpose-separated confirmation bound to current destructive impact."""
+
+        entry = self._entry(plan.relationship_id)
+        self._validate_plan_owner(plan, entry)
+        context = self._require_authorization(plan, entry, authorization)
+        async with self._session_factory() as session:
+            parent = await SQLAlchemyRelationshipResolver(self._parent_data_source).resolve(
+                session, plan.parent_identity
+            )
+            if parent is None:
+                raise self._not_found()
+            await self._verify_concurrency(session, parent, entry, plan)
+            before = await self._current_target_identities(session, parent, entry)
+            destructive_targets = self._destructive_targets(entry, before, plan)
+            self._reject_unapproved_destructive_impact(entry, destructive_targets)
+            if not destructive_targets:
+                raise RakitError(
+                    code=ErrorCode.VALIDATION_FAILED,
+                    message="Relationship change has no persistent destructive impact to confirm.",
+                    status_code=422,
+                )
+            digest = await self._state_digest(session, parent, entry)
+        targets = [dict(identity.values) for identity in destructive_targets]
+        impact = hashlib.sha256(
+            json.dumps(targets, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        return self._token_service.issue_in(
+            "relationship_destructive_confirmation",
+            {
+                "admin_id": context.admin_id,
+                "principal_id": context.principal_id,
+                "parent_resource_id": plan.parent_resource_id,
+                "parent_identity": dict(plan.parent_identity.values),
+                "relationship_id": plan.relationship_id,
+                "kind": plan.kind.value,
+                "targets": targets,
+                "relationship_state_digest": digest,
+                "impact_digest": impact,
+                "nonce": hashlib.sha256(plan.fingerprint.encode("utf-8")).hexdigest(),
+            },
+            timedelta(minutes=15),
+        )
+
+    async def _verify_destructive_execution(
+        self,
+        uow: SQLAlchemyUnitOfWork,
+        plan: RelationshipMutationPlan,
+        entry: CompiledRelationship,
+        context: OperationContext,
+        destructive_targets: tuple[RecordIdentity, ...],
+        target_delete_authorizations: tuple[OperationAuthorization, ...],
+        current_digest: str,
+    ) -> None:
+        if entry.target_delete_permission is None:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message=(
+                    "Destructive relationship mutation has no compiled target delete permission."
+                ),
+                status_code=500,
+            )
+        # Scope remains an independent boundary even for targets currently
+        # attached to a visible parent.
+        await self._resolve_targets(uow.session, entry, destructive_targets)
+        by_target = {
+            authorization.target_identity: authorization
+            for authorization in target_delete_authorizations
+            if authorization.target_identity is not None
+        }
+        for identity in destructive_targets:
+            capability = by_target.get(identity)
+            if (
+                capability is None
+                or capability.admin_id != context.admin_id
+                or capability.principal_id != context.principal_id
+                or capability.resource_id != self._target_resource_id(entry)
+                or capability.requirement != entry.target_delete_permission
+            ):
+                raise RakitError(
+                    code=ErrorCode.AUTH_FORBIDDEN,
+                    message=(
+                        "Destructive relationship mutation requires exact target "
+                        "delete authorization."
+                    ),
+                    status_code=403,
+                )
+        if not plan.destructive_confirmation:
+            raise RakitError(
+                code=ErrorCode.AUTH_FORBIDDEN,
+                message="Destructive relationship mutation requires confirmation.",
+                status_code=403,
+            )
+        try:
+            claims = self._token_service.verify(
+                plan.destructive_confirmation,
+                expected_purpose="relationship_destructive_confirmation",
+            )
+        except ValueError as exc:
+            raise RakitError(
+                code=ErrorCode.AUTH_FORBIDDEN,
+                message="Invalid destructive relationship confirmation.",
+                status_code=403,
+            ) from exc
+        targets = [dict(identity.values) for identity in destructive_targets]
+        impact = hashlib.sha256(
+            json.dumps(targets, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        if (
+            claims.get("admin_id") != context.admin_id
+            or claims.get("principal_id") != context.principal_id
+            or claims.get("parent_resource_id") != plan.parent_resource_id
+            or claims.get("parent_identity") != dict(plan.parent_identity.values)
+            or claims.get("relationship_id") != plan.relationship_id
+            or claims.get("kind") != plan.kind.value
+            or claims.get("targets") != targets
+            or claims.get("relationship_state_digest") != current_digest
+            or claims.get("impact_digest") != impact
+        ):
+            raise RakitError(
+                code=ErrorCode.AUTH_FORBIDDEN,
+                message="Destructive relationship confirmation does not match this mutation.",
+                status_code=403,
+            )
+        reservation = await self._idempotency_store.begin(
+            hashlib.sha256(plan.destructive_confirmation.encode("utf-8")).hexdigest(),
+            fingerprint=f"destructive:{plan.fingerprint}:{impact}",
+        )
+        if not reservation.claimed:
+            raise self._conflict("Destructive relationship confirmation has already been used.")
+        receipt = OperationReceipt(
+            operation_id=plan.operation_id,
+            status="succeeded",
+            result_kind="relationship_destructive_confirmation",
+        )
+        uow.after_commit(lambda: self._idempotency_store.complete(reservation, receipt))
+        uow.after_rollback(lambda: self._idempotency_store.release(reservation))
+
+    def _association_target_property(self, entry: CompiledRelationship) -> str:
+        metadata = self._parent_data_source.relationship_metadata.get(
+            entry.definition.relationship_id
+        )
+        target_property = getattr(metadata, "association_target_relationship_id", None)
+        if not isinstance(target_property, str) or not target_property:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="Association-object relationship metadata is incomplete.",
+                status_code=500,
+            )
+        return target_property
+
+    async def _apply_association_object(
+        self,
+        session: AsyncSession,
+        parent: object,
+        entry: CompiledRelationship,
+        plan: RelationshipMutationPlan,
+        targets: Mapping[str, object],
+    ) -> tuple[tuple[RecordIdentity, ...], tuple[RecordIdentity, ...], tuple[RecordIdentity, ...]]:
+        """Apply the intentionally small association-object boundary.
+
+        Edge primary keys and parent/target FKs are established solely by ORM
+        relationship assignment.  The only mass-assignment surface is the
+        explicit, Phase-1 validated scalar allow-list.
+        """
+
+        relationship_id = str(entry.definition.relationship_id)
+        await session.refresh(parent, attribute_names=[relationship_id])
+        edges = getattr(parent, relationship_id)
+        edge_source = self._target_data_sources[str(entry.definition.target_resource_id)]
+        target_source = self._target_data_sources[self._target_resource_id(entry)]
+        target_property = self._association_target_property(entry)
+        existing: dict[str, object] = {}
+        for edge in edges:
+            await session.refresh(edge, attribute_names=[target_property])
+            key = self._identity_key(target_source.identity_for(getattr(edge, target_property)))
+            if key in existing:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID,
+                    message="Association-object mapping has ambiguous duplicate target edges.",
+                    status_code=500,
+                )
+            existing[key] = edge
+
+        allowed_fields = set(entry.definition.association_fields)
+        changes = {
+            self._identity_key(change.target_identity): change
+            for change in plan.association_changes
+        }
+        for key, change in changes.items():
+            if not set(change.values) <= allowed_fields:
+                raise RakitError(
+                    code=ErrorCode.VALIDATION_FAILED,
+                    message="Association scalar field is not editable.",
+                    status_code=422,
+                )
+            edge = existing.get(key)
+            if change.association_identity is not None and (
+                edge is None or edge_source.identity_for(edge) != change.association_identity
+            ):
+                raise RakitError(
+                    code=ErrorCode.VALIDATION_FAILED,
+                    message="Association identity does not match the current relationship edge.",
+                    status_code=422,
+                )
+
+        before = tuple(
+            sorted(
+                (target_source.identity_for(getattr(edge, target_property)) for edge in edges),
+                key=self._identity_key,
+            )
+        )
+        before_keys = {self._identity_key(identity): identity for identity in before}
+        requested = tuple(plan.target_identities)
+        requested_keys = {self._identity_key(identity): identity for identity in requested}
+        if plan.kind is RelationshipMutationKind.CLEAR or plan.kind is RelationshipMutationKind.SET:
+            raise RakitError(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="This operation is not valid for an association-object relationship.",
+                status_code=422,
+            )
+
+        if plan.kind in {RelationshipMutationKind.REMOVE, RelationshipMutationKind.REPLACE}:
+            for key, edge in tuple(existing.items()):
+                if plan.kind is RelationshipMutationKind.REMOVE:
+                    should_remove = key in requested_keys
+                else:
+                    should_remove = key not in requested_keys
+                if should_remove:
+                    edges.remove(edge)
+                    existing.pop(key)
+
+        if plan.kind in {RelationshipMutationKind.ADD, RelationshipMutationKind.REPLACE}:
+            mapper = sqlalchemy_inspect(type(parent))
+            assert mapper is not None
+            edge_model = mapper.relationships[relationship_id].mapper.class_
+            for identity in requested:
+                key = self._identity_key(identity)
+                edge = existing.get(key)
+                if edge is None:
+                    edge = edge_model()
+                    setattr(edge, target_property, targets[key])
+                    edges.append(edge)
+                    existing[key] = edge
+                change = changes.get(key)
+                if change is not None:
+                    for field, value in change.values.items():
+                        setattr(edge, field, value)
+
+        after = tuple(
+            sorted(
+                (target_source.identity_for(getattr(edge, target_property)) for edge in edges),
+                key=self._identity_key,
+            )
+        )
         after_keys = {self._identity_key(identity): identity for identity in after}
         added = tuple(identity for key, identity in after_keys.items() if key not in before_keys)
         removed = tuple(identity for key, identity in before_keys.items() if key not in after_keys)
