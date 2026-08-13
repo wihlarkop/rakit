@@ -1,6 +1,8 @@
 from collections.abc import AsyncIterator
 from datetime import timedelta
+from uuid import UUID, uuid4
 
+import anyio
 import pytest
 from rakit_auth_sqlalchemy.idempotency import SQLAlchemyIdempotencyStore
 from rakit_auth_sqlalchemy.models import IdempotencyRecord
@@ -34,7 +36,7 @@ from rakit_core.transactions import TransactionPolicy
 from rakit_sqlalchemy.datasource import SQLAlchemyDataSource
 from rakit_sqlalchemy.relationship_mutations import SQLAlchemyRelationshipMutationService
 from rakit_sqlalchemy.uow import SQLAlchemyUnitOfWork
-from sqlalchemy import Column, ForeignKey, Table, select
+from sqlalchemy import Column, ForeignKey, Table, Uuid, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -135,6 +137,45 @@ class DeleteChild(Base):
     parent: Mapped[DeleteParent] = relationship(back_populates="children")
 
 
+class DeleteCascadeParent(Base):
+    __tablename__ = "relationship_mutation_delete_cascade_parents"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    version: Mapped[int] = mapped_column(default=1)
+    children: Mapped[list["DeleteCascadeChild"]] = relationship(
+        back_populates="parent", cascade="all, delete"
+    )
+
+
+class DeleteCascadeChild(Base):
+    __tablename__ = "relationship_mutation_delete_cascade_children"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("relationship_mutation_delete_cascade_parents.id"), nullable=True
+    )
+    name: Mapped[str]
+    parent: Mapped[DeleteCascadeParent | None] = relationship(back_populates="children")
+
+
+class UUIDCustomer(Base):
+    __tablename__ = "relationship_mutation_uuid_customers"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    name: Mapped[str]
+
+
+class UUIDOrder(Base):
+    __tablename__ = "relationship_mutation_uuid_orders"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    version: Mapped[int] = mapped_column(default=1)
+    customer_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("relationship_mutation_uuid_customers.id")
+    )
+    customer: Mapped[UUIDCustomer | None] = relationship()
+
+
 class VisibleOrderDataSource(SQLAlchemyDataSource):
     def _base_statement(self):
         return select(Order).where(Order.id == 1)
@@ -186,6 +227,10 @@ class MemoryIdempotencyStore:
 
 
 def _identity(value: int) -> RecordIdentity:
+    return RecordIdentity(values={"id": value})
+
+
+def _uuid_identity(value: UUID) -> RecordIdentity:
     return RecordIdentity(values={"id": value})
 
 
@@ -961,7 +1006,7 @@ async def test_relationship_execution_fails_closed_for_missing_or_mismatched_aut
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     async with session_factory() as session:
-        session.add_all((Order(), Customer(name="Ada")))
+        session.add_all((Order(), Customer(name="Ada"), Customer(name="Grace")))
         await session.commit()
 
     service, requirement = await _customer_service(session_factory)
@@ -1371,7 +1416,9 @@ async def test_independent_sessions_detect_stale_relationship_digest_without_par
         order = (await session.scalars(select(Order))).one()
         await session.refresh(order, attribute_names=["tags"])
         assert [tag.name for tag in order.tags] == ["first"]
-        assert order.version == 1
+        # The relationship guard advances the mapped optimistic version even
+        # though no application-owned parent scalar field was edited.
+        assert order.version == 2
 
 
 @pytest.mark.anyio
@@ -1494,6 +1541,14 @@ async def test_completed_idempotency_replays_without_duplicate_mutation_or_event
     )
     with activate_operation_context(context):
         first = await service.execute(plan, authorization=authorization)
+        later = plan.model_copy(
+            update={
+                "target_identities": (_identity(2),),
+                "concurrency_token": first.concurrency_token,
+                "idempotency_token": "later-mutation",
+            }
+        )
+        await service.execute(later, authorization=authorization)
         replay = await service.execute(plan, authorization=authorization)
         changed = plan.model_copy(
             update={
@@ -1508,9 +1563,9 @@ async def test_completed_idempotency_replays_without_duplicate_mutation_or_event
     assert replay.replayed
     assert replay.target_identities == (_identity(1),)
     assert caught.value.code == "resource.conflict"
-    assert len(received) == 1
+    assert len(received) == 2
     async with session_factory() as session:
-        assert (await session.scalars(select(Order.customer_id))).one() == 1
+        assert (await session.scalars(select(Order.customer_id))).one() == 2
 
 
 @pytest.mark.anyio
@@ -1699,7 +1754,7 @@ async def test_relationship_execution_replays_through_the_durable_idempotency_st
     async with engine.begin() as connection:
         await connection.run_sync(IdempotencyRecord.metadata.create_all)
     async with session_factory() as session:
-        session.add_all((Order(), Customer(name="Ada")))
+        session.add_all((Order(), Customer(name="Ada"), Customer(name="Grace")))
         await session.commit()
 
     requirement = PermissionRequirement.all_of("admin.resources.orders.update")
@@ -1748,14 +1803,258 @@ async def test_relationship_execution_replays_through_the_durable_idempotency_st
     )
     with activate_operation_context(context):
         first = await service.execute(plan, authorization=authorization)
+        later = plan.model_copy(
+            update={
+                "target_identities": (_identity(2),),
+                "concurrency_token": first.concurrency_token,
+                "idempotency_token": "durable-later-mutation",
+            }
+        )
+        await service.execute(later, authorization=authorization)
         replay = await service.execute(plan, authorization=authorization)
 
     assert not first.replayed
     assert replay.replayed
-    assert len(received) == 1
+    assert replay.target_identities == (_identity(1),)
+    assert replay.added_target_identities == (_identity(1),)
+    assert len(received) == 2
     async with session_factory() as session:
-        record = (await session.scalars(select(IdempotencyRecord))).one()
-        assert record.status == IdempotencyStatus.COMPLETED
+        records = list((await session.scalars(select(IdempotencyRecord))).all())
+        assert [record.status for record in records] == [
+            IdempotencyStatus.COMPLETED,
+            IdempotencyStatus.COMPLETED,
+        ]
+
+
+@pytest.mark.anyio
+async def test_uuid_relationship_mutation_uses_canonical_identity_in_execution_and_receipt(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    parent_id, target_id = uuid4(), uuid4()
+    async with session_factory() as session:
+        session.add_all((UUIDOrder(id=parent_id), UUIDCustomer(id=target_id, name="Ada")))
+        await session.commit()
+
+    requirement = PermissionRequirement.all_of("admin.resources.uuid-orders.update")
+    definition = RelationshipDefinition(
+        relationship_id="customer",
+        target_resource_id="uuid_customers",
+        label="Customer",
+        kind=RelationshipKind.MANY_TO_ONE,
+        cardinality=RelationshipCardinality.TO_ONE,
+        nullable=True,
+        edit_mode=RelationshipEditMode.LINK,
+        writable=True,
+    )
+    compiled = CompiledRelationship(
+        source_resource_id="uuid_orders",
+        definition=definition,
+        mutation_permission=requirement,
+        target_delete_permission=None,
+        route_path="/uuid-orders/{identity}/_relationships/customer",
+    )
+    store = MemoryIdempotencyStore()
+    service = SQLAlchemyRelationshipMutationService(
+        session_factory=session_factory,
+        parent_data_source=_source(UUIDOrder, session_factory),
+        relationships=(compiled,),
+        target_data_sources={"uuid_customers": _source(UUIDCustomer, session_factory)},
+        token_service=TokenService.single_key(
+            key_id="test", value=SecretValue("x" * 32), admin_id="admin"
+        ),
+        concurrency_provider=AttributeVersionProvider("version"),
+        idempotency_store=store,
+    )
+    parent_identity, target_identity = _uuid_identity(parent_id), _uuid_identity(target_id)
+    operation = "relationship:uuid_orders:customer:set"
+    plan = RelationshipMutationPlan(
+        operation_id=operation,
+        parent_resource_id="uuid_orders",
+        parent_identity=parent_identity,
+        relationship_id="customer",
+        kind=RelationshipMutationKind.SET,
+        target_identities=(target_identity,),
+        authorization_requirement=requirement,
+        concurrency_token=await service.issue_concurrency_token(parent_identity, "customer"),
+        idempotency_token="uuid-replay",
+    )
+    authorization = _relationship_authorization(
+        resource_id="uuid_orders",
+        operation=operation,
+        parent_identity=parent_identity,
+        requirement=requirement,
+    )
+    context = _relationship_context(
+        resource_id="uuid_orders", operation=operation, requirement=requirement
+    )
+    with activate_operation_context(context):
+        result = await service.execute(plan, authorization=authorization)
+        replay = await service.execute(plan, authorization=authorization)
+
+    assert result.target_identities == (target_identity,)
+    assert replay.target_identities == (target_identity,)
+    assert replay.replayed
+    assert plan.fingerprint
+
+
+@pytest.mark.anyio
+async def test_concurrent_secondary_relationship_writes_have_one_atomic_winner(
+    tmp_path,
+) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'relationship-race.db'}")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as session:
+        session.add_all((Order(), Tag(name="first"), Tag(name="second")))
+        await session.commit()
+
+    requirement = PermissionRequirement.all_of("admin.resources.orders.update")
+    service = SQLAlchemyRelationshipMutationService(
+        session_factory=factory,
+        parent_data_source=_source(Order, factory),
+        relationships=(_compiled("tags", RelationshipKind.MANY_TO_MANY),),
+        target_data_sources={"tags": _source(Tag, factory)},
+        token_service=TokenService.single_key(
+            key_id="test", value=SecretValue("x" * 32), admin_id="admin"
+        ),
+        concurrency_provider=AttributeVersionProvider("version"),
+        idempotency_store=MemoryIdempotencyStore(),
+    )
+    base_token = await service.issue_concurrency_token(_identity(1), "tags")
+    operation = "relationship:orders:tags:add"
+    authorization = _relationship_authorization(
+        resource_id="orders",
+        operation=operation,
+        parent_identity=_identity(1),
+        requirement=requirement,
+    )
+    barrier = anyio.Event()
+    ready = 0
+    outcomes: list[str] = []
+    received: list[RelationshipChanged] = []
+    bus = EventBus()
+    bus.subscribe(RelationshipChanged, received.append)
+
+    async def race(target: int) -> None:
+        nonlocal ready
+        ready += 1
+        if ready == 2:
+            barrier.set()
+        await barrier.wait()
+        plan = RelationshipMutationPlan(
+            operation_id=operation,
+            parent_resource_id="orders",
+            parent_identity=_identity(1),
+            relationship_id="tags",
+            kind=RelationshipMutationKind.ADD,
+            target_identities=(_identity(target),),
+            authorization_requirement=requirement,
+            concurrency_token=base_token,
+            idempotency_token=f"race-{target}",
+        )
+        context = OperationContext(
+            deadline=None,
+            cancellation=CancellationContext(),
+            principal=Principal(subject_id="operator", authenticated=True),
+            admin_id="admin",
+            resource_id="orders",
+            operation=operation,
+            permission_requirement=requirement,
+            events=EventPublisher(bus),
+        )
+        with activate_operation_context(context):
+            try:
+                await service.execute(plan, authorization=authorization)
+            except RakitError as exc:
+                assert exc.code == "resource.conflict"
+                outcomes.append("conflict")
+            else:
+                outcomes.append("success")
+
+    async with anyio.create_task_group() as group:
+        group.start_soon(race, 1)
+        group.start_soon(race, 2)
+
+    assert sorted(outcomes) == ["conflict", "success"]
+    assert len(received) == 1
+    async with factory() as session:
+        order = (await session.scalars(select(Order))).one()
+        await session.refresh(order, attribute_names=["tags"])
+        assert len(order.tags) == 1
+        assert order.version == 2
+    await engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_plain_delete_cascade_is_not_target_deletion_on_relationship_unlink(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        parent = DeleteCascadeParent()
+        parent.children.append(DeleteCascadeChild(name="child"))
+        session.add(parent)
+        await session.commit()
+
+    requirement = PermissionRequirement.all_of("admin.resources.cascade_parents.update")
+    definition = RelationshipDefinition(
+        relationship_id="children",
+        target_resource_id="cascade_children",
+        label="Children",
+        kind=RelationshipKind.ONE_TO_MANY,
+        cardinality=RelationshipCardinality.TO_MANY,
+        edit_mode=RelationshipEditMode.LINK,
+        writable=True,
+    )
+    compiled = CompiledRelationship(
+        source_resource_id="cascade_parents",
+        definition=definition,
+        mutation_permission=requirement,
+        target_delete_permission=None,
+        route_path="/cascade-parents/{identity}/_relationships/children",
+    )
+    service = SQLAlchemyRelationshipMutationService(
+        session_factory=session_factory,
+        parent_data_source=_source(DeleteCascadeParent, session_factory),
+        relationships=(compiled,),
+        target_data_sources={"cascade_children": _source(DeleteCascadeChild, session_factory)},
+        token_service=TokenService.single_key(
+            key_id="test", value=SecretValue("x" * 32), admin_id="admin"
+        ),
+        concurrency_provider=AttributeVersionProvider("version"),
+        idempotency_store=MemoryIdempotencyStore(),
+    )
+    operation = "relationship:cascade_parents:children:remove"
+    plan = RelationshipMutationPlan(
+        operation_id=operation,
+        parent_resource_id="cascade_parents",
+        parent_identity=_identity(1),
+        relationship_id="children",
+        kind=RelationshipMutationKind.REMOVE,
+        target_identities=(_identity(1),),
+        authorization_requirement=requirement,
+        concurrency_token=await service.issue_concurrency_token(_identity(1), "children"),
+        idempotency_token="plain-delete-cascade",
+    )
+    with activate_operation_context(
+        _relationship_context(
+            resource_id="cascade_parents", operation=operation, requirement=requirement
+        )
+    ):
+        result = await service.execute(
+            plan,
+            authorization=_relationship_authorization(
+                resource_id="cascade_parents",
+                operation=operation,
+                parent_identity=_identity(1),
+                requirement=requirement,
+            ),
+        )
+
+    assert result.deleted_target_identities == ()
+    async with session_factory() as session:
+        child = (await session.scalars(select(DeleteCascadeChild))).one()
+        assert child.parent_id is None
 
 
 @pytest.mark.anyio

@@ -140,7 +140,7 @@ class IdempotencyRecord(Base):
     token_hash: Mapped[str] = mapped_column(String(64), index=True)
     fingerprint: Mapped[str] = mapped_column(String(128))
     status: Mapped[str] = mapped_column(String(32))
-    receipt: Mapped[dict[str, str | None] | None] = mapped_column(JSON, nullable=True)
+    receipt: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     claim_generation: Mapped[int] = mapped_column(default=1)

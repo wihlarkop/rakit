@@ -1,8 +1,9 @@
 """Backend-neutral duplicate-submission state contracts."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol
+from typing import Any, Protocol
 
 
 class IdempotencyStatus(StrEnum):
@@ -19,6 +20,7 @@ class OperationReceipt:
     status: str
     result_kind: str
     redirect_route: str | None = None
+    payload: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)

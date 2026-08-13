@@ -13,7 +13,7 @@ from uuid import UUID
 
 from rakit_core.crypto import TokenService
 from rakit_core.errors import ErrorCode, RakitError
-from rakit_core.identity import RecordIdentity
+from rakit_core.identity import RecordIdentity, canonical_identity_payload
 
 
 class ConcurrencyMode(StrEnum):
@@ -145,7 +145,7 @@ class ConcurrencyTokenService:
             "concurrency",
             {
                 "resource_id": resource_id,
-                "identity": dict(identity.values),
+                "identity": canonical_identity_payload(identity),
                 "version": _canonical_value(version),
                 "base_snapshot": base,
             },
@@ -164,9 +164,9 @@ class ConcurrencyTokenService:
             claims = self._token_service.verify(token, expected_purpose="concurrency")
         except ValueError as exc:
             raise self._conflict() from exc
-        if claims.get("resource_id") != resource_id or claims.get("identity") != dict(
-            identity.values
-        ):
+        if claims.get("resource_id") != resource_id or claims.get(
+            "identity"
+        ) != canonical_identity_payload(identity):
             raise self._conflict()
         snapshot = claims.get("base_snapshot", {})
         if not isinstance(snapshot, Mapping):

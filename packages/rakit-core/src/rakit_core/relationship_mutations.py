@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from rakit_core._immutability import freeze_mapping
 from rakit_core.concurrency import ConcurrencyTokenService
 from rakit_core.events import DomainEvent
-from rakit_core.identity import RecordIdentity
+from rakit_core.identity import RecordIdentity, canonical_identity_payload
 from rakit_core.permissions import PermissionRequirement
 
 
@@ -34,7 +34,7 @@ class RelationshipMutationKind(StrEnum):
 
 
 def _identity_key(identity: RecordIdentity) -> str:
-    return json.dumps(dict(identity.values), sort_keys=True, separators=(",", ":"))
+    return json.dumps(canonical_identity_payload(identity), sort_keys=True, separators=(",", ":"))
 
 
 def _canonical_identities(
@@ -145,15 +145,17 @@ class RelationshipMutationPlan(BaseModel):
         payload = {
             "operation_id": self.operation_id,
             "parent_resource_id": self.parent_resource_id,
-            "parent_identity": dict(self.parent_identity.values),
+            "parent_identity": canonical_identity_payload(self.parent_identity),
             "relationship_id": self.relationship_id,
             "kind": self.kind.value,
-            "target_identities": [dict(identity.values) for identity in self.target_identities],
+            "target_identities": [
+                canonical_identity_payload(identity) for identity in self.target_identities
+            ],
             "association_changes": [
                 {
-                    "target_identity": dict(change.target_identity.values),
+                    "target_identity": canonical_identity_payload(change.target_identity),
                     "association_identity": (
-                        dict(change.association_identity.values)
+                        canonical_identity_payload(change.association_identity)
                         if change.association_identity is not None
                         else None
                     ),
