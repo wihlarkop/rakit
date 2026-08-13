@@ -62,6 +62,7 @@ class RelationshipDefinition(BaseModel):
     nullable: bool = False
     ordered: bool = False
     self_referential: bool = False
+    readable: bool = True
     edit_mode: RelationshipEditMode = RelationshipEditMode.READ_ONLY
     writable: bool = False
     permission: PermissionRequirement | None = None

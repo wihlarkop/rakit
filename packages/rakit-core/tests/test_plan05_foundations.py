@@ -220,6 +220,33 @@ def test_destructive_relationship_compiles_target_delete_requirement() -> None:
     )
 
 
+def test_relationship_permission_override_and_missing_target_fail_closed() -> None:
+    override = PermissionRequirement.all_of("operations.relationships.customer.manage")
+    relationship = RelationshipDefinition(
+        relationship_id="customer",
+        target_resource_id="customers",
+        label="Customer",
+        kind=RelationshipKind.MANY_TO_ONE,
+        cardinality=RelationshipCardinality.TO_ONE,
+        readable=False,
+        permission=override,
+    )
+    builder = ApplicationBuilder(admin_id="operations")
+    builder.add_resource(
+        _resource("orders", "/orders", relationships=(relationship,)), _DataSource()
+    )
+    builder.add_resource(_resource("customers", "/customers"), _DataSource())
+    assert compile_application(builder).relationships[0].mutation_permission is override
+
+    missing_target = ApplicationBuilder()
+    missing_target.add_resource(
+        _resource("orders", "/orders", relationships=(relationship,)), _DataSource()
+    )
+    with pytest.raises(RakitError) as caught:
+        compile_application(missing_target)
+    assert caught.value.details["reason"] == "target_resource_not_registered"
+
+
 def test_plan05_definition_routes_collide_and_framework_segments_remain_reserved() -> None:
     builder = ApplicationBuilder()
     builder.add_page(PageDefinition(page_id="status", path="/status", label="Status"))

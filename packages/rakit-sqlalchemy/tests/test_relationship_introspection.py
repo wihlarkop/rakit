@@ -6,12 +6,13 @@ from rakit_core.errors import RakitError
 from rakit_core.relationships import (
     RelationshipCardinality,
     RelationshipDefinition,
+    RelationshipEditMode,
     RelationshipKind,
 )
 from rakit_sqlalchemy.datasource import SQLAlchemyDataSource
 from rakit_sqlalchemy.relationships import inspect_relationships, validate_relationship_definition
 from sqlalchemy import Column, ForeignKey, String, Table
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, DynamicMapped, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
@@ -47,6 +48,11 @@ class Order(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     customer_id: Mapped[int | None] = mapped_column(ForeignKey("relationship_customers.id"))
     customer: Mapped[Customer | None] = relationship(back_populates="orders")
+    readonly_customer: Mapped[Customer | None] = relationship(
+        "Customer",
+        primaryjoin="Order.customer_id == Customer.id",
+        viewonly=True,
+    )
     items: Mapped[list["Item"]] = relationship(back_populates="order", cascade="all, delete-orphan")
     tags: Mapped[list[Tag]] = relationship(secondary=order_tag)
 
@@ -94,6 +100,20 @@ class Enrollment(Base):
     grade: Mapped[str] = mapped_column(String(2))
     student: Mapped[Student] = relationship(back_populates="enrollments")
     course: Mapped[Course] = relationship(back_populates="enrollments")
+
+
+class DynamicParent(Base):
+    __tablename__ = "relationship_dynamic_parents"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    children: DynamicMapped["DynamicChild"] = relationship(lazy="dynamic")
+
+
+class DynamicChild(Base):
+    __tablename__ = "relationship_dynamic_children"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    parent_id: Mapped[int] = mapped_column(ForeignKey("relationship_dynamic_parents.id"))
 
 
 def test_mapper_relationships_are_classified_without_sqlalchemy_leakage() -> None:
@@ -170,6 +190,42 @@ def test_association_object_rejects_target_mismatch() -> None:
             association_target_model=Tag,
         )
     assert caught.value.details["reason"] == "association_target_resource_mismatch"
+
+
+def test_writable_viewonly_and_dynamic_relationships_fail_closed() -> None:
+    readonly = RelationshipDefinition(
+        relationship_id="readonly_customer",
+        target_resource_id="customers",
+        label="Customer",
+        kind=RelationshipKind.MANY_TO_ONE,
+        cardinality=RelationshipCardinality.TO_ONE,
+        edit_mode=RelationshipEditMode.LINK,
+        writable=True,
+    )
+    with pytest.raises(RakitError) as readonly_error:
+        validate_relationship_definition(
+            readonly,
+            source_model=Order,
+            target_model=Customer,
+        )
+    assert readonly_error.value.details["reason"] == "viewonly_relationship_not_writable"
+
+    dynamic = RelationshipDefinition(
+        relationship_id="children",
+        target_resource_id="dynamic_children",
+        label="Children",
+        kind=RelationshipKind.ONE_TO_MANY,
+        cardinality=RelationshipCardinality.TO_MANY,
+        edit_mode=RelationshipEditMode.LINK,
+        writable=True,
+    )
+    with pytest.raises(RakitError) as dynamic_error:
+        validate_relationship_definition(
+            dynamic,
+            source_model=DynamicParent,
+            target_model=DynamicChild,
+        )
+    assert dynamic_error.value.details["reason"] == "loader_strategy_not_writable"
 
 
 def test_sqlalchemy_datasource_exposes_only_backend_neutral_relationship_metadata() -> None:

@@ -126,6 +126,8 @@ def validate_relationship_definition(
         raise _invalid_relationship(definition, "cardinality_mismatch")
     if definition.effective_writable and metadata.view_only:
         raise _invalid_relationship(definition, "viewonly_relationship_not_writable")
+    if definition.effective_writable and property_.lazy in {"dynamic", "write_only"}:
+        raise _invalid_relationship(definition, "loader_strategy_not_writable")
     if definition.kind is RelationshipKind.MANY_TO_MANY and not metadata.has_secondary:
         raise _invalid_relationship(definition, "secondary_mapping_required")
     if definition.destructive_policy.allow_delete_orphan and not metadata.delete_orphan:
