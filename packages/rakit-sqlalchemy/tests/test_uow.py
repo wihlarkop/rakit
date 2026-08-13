@@ -65,6 +65,82 @@ async def test_auto_policy_rolls_back_when_the_operation_raises(
 
 
 @pytest.mark.anyio
+async def test_resource_lifecycle_observers_follow_event_delivery_not_bookkeeping() -> None:
+    order: list[str] = []
+
+    class Session:
+        async def commit(self) -> None:
+            order.append("database_commit")
+
+        async def rollback(self) -> None:
+            order.append("database_rollback")
+
+        async def close(self) -> None:
+            return None
+
+    class Publisher:
+        async def after_commit(self) -> None:
+            order.append("event_delivery")
+
+        def after_rollback(self) -> None:
+            order.append("event_rollback")
+
+    session = Session()
+    factory = cast(async_sessionmaker[AsyncSession], lambda: session)
+    async with SQLAlchemyUnitOfWork(
+        factory, event_publisher=cast(EventPublisher, Publisher())
+    ) as uow:
+        uow.before_commit(lambda: order.append("before_commit"))
+        uow.after_commit(lambda: order.append("receipt_completion"))
+        uow.after_commit_observer(lambda: order.append("resource_after_commit"))
+        await uow.mark_success()
+
+    assert order == [
+        "before_commit",
+        "database_commit",
+        "receipt_completion",
+        "event_delivery",
+        "resource_after_commit",
+    ]
+
+
+@pytest.mark.anyio
+async def test_resource_rollback_observers_follow_deferred_event_discard() -> None:
+    order: list[str] = []
+
+    class Session:
+        async def rollback(self) -> None:
+            order.append("database_rollback")
+
+        async def close(self) -> None:
+            return None
+
+    class Publisher:
+        async def after_commit(self) -> None:
+            return None
+
+        def after_rollback(self) -> None:
+            order.append("event_rollback")
+
+    session = Session()
+    factory = cast(async_sessionmaker[AsyncSession], lambda: session)
+    with pytest.raises(RuntimeError, match="stop"):
+        async with SQLAlchemyUnitOfWork(
+            factory, event_publisher=cast(EventPublisher, Publisher())
+        ) as uow:
+            uow.after_rollback(lambda: order.append("nonce_release"))
+            uow.after_rollback_observer(lambda: order.append("resource_after_rollback"))
+            raise RuntimeError("stop")
+
+    assert order == [
+        "database_rollback",
+        "nonce_release",
+        "event_rollback",
+        "resource_after_rollback",
+    ]
+
+
+@pytest.mark.anyio
 async def test_cancellation_during_commit_waits_for_the_durable_outcome() -> None:
     """Once commit starts, cancellation cannot produce false rollback semantics."""
     entered = asyncio.Event()

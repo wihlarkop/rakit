@@ -1222,6 +1222,10 @@ class SQLAlchemyMutationService:
         """Apply an authoritative child create inside an already-owned UoW."""
 
         plan = self.prepare_create(submitted)
+        # Ordinary create begins rollback observation after form preparation:
+        # parsing failures do not enter the mutation lifecycle, while every
+        # later phase (including validation and authorization) does.
+        self._register_nested_rollback(uow)
         await run_mutation_hooks(self._hooks.normalize, plan)
         await run_mutation_hooks(self._hooks.business_validate, plan)
         await run_mutation_hooks(self._hooks.prepare, plan)
@@ -1231,7 +1235,6 @@ class SQLAlchemyMutationService:
         await run_mutation_hooks(self._hooks.authorize, authorized)
         await run_mutation_hooks(self._hooks.pre_event, plan)
         await run_mutation_hooks(self._hooks.before_execute, plan)
-        self._register_nested_rollback(uow)
         record = self._model(**dict(plan.values))
         uow.session.add(record)
         # The relationship owns any parent FK linkage.  Attach before the
@@ -1272,6 +1275,10 @@ class SQLAlchemyMutationService:
                 status_code=404,
             )
         plan = self.prepare_update(identity, record, submitted, concurrency_token=concurrency_token)
+        # Keep the same boundary as normal non-force update: scoped loading
+        # and form preparation are pre-lifecycle work; all following phases
+        # must observe the root rollback outcome.
+        self._register_nested_rollback(uow)
         await run_mutation_hooks(self._hooks.normalize_update, plan)
         await run_mutation_hooks(self._hooks.business_validate_update, plan)
         await run_mutation_hooks(self._hooks.prepare_update, plan)
@@ -1285,7 +1292,6 @@ class SQLAlchemyMutationService:
         await run_mutation_hooks(self._hooks.pre_event, plan)
         await run_mutation_hooks(self._hooks.execute_update, plan)
         await run_mutation_hooks(self._hooks.before_execute, plan)
-        self._register_nested_rollback(uow)
         if self._concurrency is not None and self._concurrency_provider is not None:
             if not concurrency_token:
                 raise RakitError(
@@ -1417,10 +1423,14 @@ class SQLAlchemyMutationService:
                 ),
             )
         )
+        # Ordinary delete begins its rollback lifecycle only after the signed
+        # confirmation is parsed, normalized/prepared, and its nonce has been
+        # reserved.  Authorization and every later mutation phase therefore
+        # share the same root rollback observation.
+        self._register_nested_rollback(uow)
         await run_mutation_hooks(self._hooks.authorize, authorized)
         await run_mutation_hooks(self._hooks.pre_event, confirmed_identity)
         await run_mutation_hooks(self._hooks.before_execute, confirmed_identity)
-        self._register_nested_rollback(uow)
         record = await self._load(uow.session, identity)
         if record is None or self._concurrency_provider.version_for(record) != expected_version:
             raise RakitError(
@@ -1476,14 +1486,14 @@ class SQLAlchemyMutationService:
         uow.before_commit(
             lambda: run_mutation_hooks(self._hooks.before_commit, before_commit_value)
         )
-        uow.after_commit(
+        uow.after_commit_observer(
             lambda: run_after_commit_hooks(self._hooks.after_commit, after_commit_value)
         )
 
     def _register_nested_rollback(self, uow: SQLAlchemyUnitOfWork) -> None:
         """Run the ordinary resource rollback observers if the root aborts."""
 
-        uow.after_rollback(
+        uow.after_rollback_observer(
             lambda: run_mutation_hooks(
                 self._hooks.after_rollback,
                 uow.rollback_cause

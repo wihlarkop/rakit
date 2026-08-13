@@ -8,11 +8,21 @@ from rakit_core.config import SecretValue
 from rakit_core.crypto import TokenService
 from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.errors import ErrorCode, RakitError
+from rakit_core.events import EventBus, EventPublisher
 from rakit_core.fields import FieldDefinition
 from rakit_core.forms import FormSchema
 from rakit_core.idempotency import OperationReceipt
 from rakit_core.identity import RecordIdentity
-from rakit_core.mutations import MutationHooks, OperationAuthorization, OperationAuthorizationSet
+from rakit_core.mutations import (
+    MutationHooks,
+    MutationResult,
+    OperationAuthorization,
+    OperationAuthorizationSet,
+    ResourceCreated,
+    ResourceDeleted,
+    ResourceMutationPlan,
+    ResourceUpdated,
+)
 from rakit_core.operations import CancellationContext, OperationContext, activate_operation_context
 from rakit_core.permissions import PermissionRequirement
 from rakit_core.relationship_mutations import (
@@ -658,6 +668,7 @@ async def _graph_call(
     capabilities: OperationAuthorizationSet,
     submission: str,
     name: str = "changed",
+    events: EventPublisher | None = None,
 ):
     root = capabilities.root
     context = OperationContext(
@@ -669,6 +680,7 @@ async def _graph_call(
         operation="update",
         permissions=root.permissions,
         permission_requirement=root.requirement,
+        events=events,
     )
     with activate_operation_context(context):
         return await writer.update_graph(
@@ -840,12 +852,27 @@ async def test_inline_create_attaches_required_parent_fk_before_first_flush(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     child_phases: list[str] = []
+    created_events = 0
+
+    class RecordingPublisher(EventPublisher):
+        async def after_commit(self) -> None:
+            child_phases.append("event_delivery")
+            await super().after_commit()
+
+        def after_rollback(self) -> None:
+            child_phases.append("event_rollback")
+            super().after_rollback()
 
     def hook(name: str):
         def record(_value: object) -> None:
             child_phases.append(name)
 
         return record
+
+    def observe_created(_event: ResourceCreated) -> None:
+        nonlocal created_events
+        child_phases.append("child_event" if created_events == 0 else "parent_event")
+        created_events += 1
 
     writer, relationships = _required_fk_services(
         session_factory,
@@ -901,7 +928,10 @@ async def test_inline_create_attaches_required_parent_fk_before_first_flush(
         operation="create",
         permissions=root.permissions,
         permission_requirement=root.requirement,
+        events=RecordingPublisher(EventBus()),
     )
+    assert context.events is not None
+    context.events.bus.subscribe(ResourceCreated, observe_created)
     with activate_operation_context(context):
         await writer.create_graph(
             {"name": "required-parent"},
@@ -913,7 +943,15 @@ async def test_inline_create_attaches_required_parent_fk_before_first_flush(
         parent = (await session.scalars(select(RequiredParent))).one()
         child = (await session.scalars(select(RequiredChild))).one()
     assert child.parent_id == parent.id
-    assert child_phases == ["after_execute", "after_flush", "before_commit", "after_commit"]
+    assert child_phases == [
+        "after_execute",
+        "after_flush",
+        "before_commit",
+        "event_delivery",
+        "child_event",
+        "parent_event",
+        "after_commit",
+    ]
 
     failing = RelationshipChangePlan(
         operation_id="graph:required-parents:children:create-rollback",
@@ -957,7 +995,12 @@ async def test_inline_create_attaches_required_parent_fk_before_first_flush(
         children = list((await session.scalars(select(RequiredChild))).all())
     assert [(value.name, value.id) for value in parents] == [("required-parent", parent.id)]
     assert [(value.name, value.id) for value in children] == [("required-child", child.id)]
-    assert child_phases[-3:] == ["after_execute", "after_flush", "after_rollback"]
+    assert child_phases[-4:] == [
+        "after_execute",
+        "after_flush",
+        "event_rollback",
+        "after_rollback",
+    ]
 
 
 @pytest.mark.anyio
@@ -1386,6 +1429,15 @@ async def test_nested_child_update_lifecycle_defers_commit_and_runs_rollback_onc
 ) -> None:
     phases: list[str] = []
 
+    class RecordingPublisher(EventPublisher):
+        async def after_commit(self) -> None:
+            phases.append("event_delivery")
+            await super().after_commit()
+
+        def after_rollback(self) -> None:
+            phases.append("event_rollback")
+            super().after_rollback()
+
     def phase(name: str):
         def record(_value: object) -> None:
             phases.append(name)
@@ -1393,8 +1445,10 @@ async def test_nested_child_update_lifecycle_defers_commit_and_runs_rollback_onc
         return record
 
     async with session_factory() as session:
-        parent = Parent(name="before")
-        parent.children.extend((Child(name="first", position=0), Child(name="second", position=1)))
+        parent = Parent(id=100, name="before")
+        parent.children.extend(
+            (Child(id=200, name="first", position=0), Child(name="second", position=1))
+        )
         session.add(parent)
         await session.commit()
         await session.refresh(parent, attribute_names=["children"])
@@ -1406,12 +1460,19 @@ async def test_nested_child_update_lifecycle_defers_commit_and_runs_rollback_onc
     )
     writer, child_writer, relationships = _services(session_factory, child_hooks=hooks)
     parent_identity = _identity(parent.id)
+    child_identity = _identity(first.id)
+    bus = EventBus()
+    bus.subscribe(
+        ResourceUpdated,
+        lambda event: phases.append("child_event") if event.identity == child_identity else None,
+    )
+    events = RecordingPublisher(bus)
     success = RelationshipChangePlan(
         operation_id="graph:parents:children:lifecycle-success",
         relationship_id="children",
         steps=(
             UpdateRelated(
-                identity=_identity(first.id),
+                identity=child_identity,
                 values={"name": "updated"},
                 concurrency_token=child_writer.issue_update_token(first),
             ),
@@ -1428,11 +1489,17 @@ async def test_nested_child_update_lifecycle_defers_commit_and_runs_rollback_onc
             parent_identity,
             success,
             child_operation="target-update",
-            child_identity=_identity(first.id),
+            child_identity=child_identity,
         ),
         submission="child-lifecycle-success",
+        events=events,
     )
-    assert phases == ["child_before_commit", "child_after_commit"]
+    assert phases == [
+        "child_before_commit",
+        "event_delivery",
+        "child_event",
+        "child_after_commit",
+    ]
 
     async with session_factory() as session:
         parent = (await session.scalars(select(Parent))).one()
@@ -1442,7 +1509,7 @@ async def test_nested_child_update_lifecycle_defers_commit_and_runs_rollback_onc
         relationship_id="children",
         steps=(
             UpdateRelated(
-                identity=_identity(child.id),
+                identity=child_identity,
                 values={"name": "would-rollback"},
                 concurrency_token=child_writer.issue_update_token(child),
             ),
@@ -1461,11 +1528,269 @@ async def test_nested_child_update_lifecycle_defers_commit_and_runs_rollback_onc
                 parent_identity,
                 failure,
                 child_operation="target-update",
-                child_identity=_identity(child.id),
+                child_identity=child_identity,
             ),
             submission="child-lifecycle-rollback",
+            events=events,
         )
-    assert phases == ["child_before_commit", "child_after_commit", "child_after_rollback"]
+    assert phases == [
+        "child_before_commit",
+        "event_delivery",
+        "child_event",
+        "child_after_commit",
+        "event_rollback",
+        "child_after_rollback",
+    ]
+
+
+@pytest.mark.anyio
+async def test_nested_child_create_rollback_begins_after_parse_and_runs_once(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    phases: list[str] = []
+
+    def reject_normalize(_plan: object) -> None:
+        phases.append("normalize")
+        raise RuntimeError("child normalization rejected")
+
+    def rolled_back(_cause: object) -> None:
+        phases.append("after_rollback")
+
+    async with session_factory() as session:
+        session.add(Parent(name="before"))
+        await session.commit()
+        parent = (await session.scalars(select(Parent))).one()
+
+    writer, _child_writer, relationships = _services(
+        session_factory,
+        child_hooks=MutationHooks(normalize=(reject_normalize,), after_rollback=(rolled_back,)),
+    )
+    parent_identity = _identity(parent.id)
+    change = RelationshipChangePlan(
+        operation_id="graph:parents:children:create-normalize-failure",
+        relationship_id="children",
+        steps=(CreateRelated(values={"name": "blocked"}),),
+        authorization_requirement=PermissionRequirement.all_of("admin.resources.parents.update"),
+        concurrency_token=await relationships.issue_concurrency_token(parent_identity, "children"),
+    )
+    with pytest.raises(RuntimeError, match="child normalization rejected"):
+        await _graph_call(
+            writer,
+            parent=parent_identity,
+            scalar_token=writer.issue_update_token(parent),
+            change=change,
+            capabilities=_capabilities(parent_identity, change, child_operation="target-create"),
+            submission="child-create-normalize-failure",
+        )
+    assert phases == ["normalize", "after_rollback"]
+    async with session_factory() as session:
+        persisted_parent = (await session.scalars(select(Parent))).one()
+        assert persisted_parent.name == "before"
+        assert list((await session.scalars(select(Child))).all()) == []
+
+
+@pytest.mark.anyio
+async def test_nested_child_update_hook_failure_runs_rollback_once(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    phases: list[str] = []
+
+    def reject_pre_event(_plan: object) -> None:
+        phases.append("pre_event")
+        raise RuntimeError("child pre-event rejected")
+
+    def rolled_back(_cause: object) -> None:
+        phases.append("after_rollback")
+
+    async with session_factory() as session:
+        parent = Parent(name="before")
+        parent.children.append(Child(name="before-child", position=0))
+        session.add(parent)
+        await session.commit()
+        await session.refresh(parent, attribute_names=["children"])
+        child = parent.children[0]
+
+    writer, child_writer, relationships = _services(
+        session_factory,
+        child_hooks=MutationHooks(pre_event=(reject_pre_event,), after_rollback=(rolled_back,)),
+    )
+    parent_identity = _identity(parent.id)
+    child_identity = _identity(child.id)
+    change = RelationshipChangePlan(
+        operation_id="graph:parents:children:update-pre-event-failure",
+        relationship_id="children",
+        steps=(
+            UpdateRelated(
+                identity=child_identity,
+                values={"name": "blocked"},
+                concurrency_token=child_writer.issue_update_token(child),
+            ),
+        ),
+        authorization_requirement=PermissionRequirement.all_of("admin.resources.parents.update"),
+        concurrency_token=await relationships.issue_concurrency_token(parent_identity, "children"),
+    )
+    with pytest.raises(RuntimeError, match="child pre-event rejected"):
+        await _graph_call(
+            writer,
+            parent=parent_identity,
+            scalar_token=writer.issue_update_token(parent),
+            change=change,
+            capabilities=_capabilities(
+                parent_identity,
+                change,
+                child_operation="target-update",
+                child_identity=child_identity,
+            ),
+            submission="child-update-pre-event-failure",
+        )
+    assert phases == ["pre_event", "after_rollback"]
+    async with session_factory() as session:
+        persisted_parent = (await session.scalars(select(Parent))).one()
+        persisted_child = (await session.scalars(select(Child))).one()
+    assert (persisted_parent.name, persisted_child.name) == ("before", "before-child")
+
+
+@pytest.mark.anyio
+async def test_nested_child_delete_hook_failure_runs_rollback_once(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    phases: list[str] = []
+
+    def reject_pre_event(_identity: object) -> None:
+        phases.append("pre_event")
+        raise RuntimeError("child delete pre-event rejected")
+
+    def rolled_back(_cause: object) -> None:
+        phases.append("after_rollback")
+
+    async with session_factory() as session:
+        parent = Parent(name="before")
+        parent.children.append(Child(name="delete", position=0))
+        session.add(parent)
+        await session.commit()
+        await session.refresh(parent, attribute_names=["children"])
+        child = parent.children[0]
+
+    writer, child_writer, relationships = _services(
+        session_factory,
+        allow_child_delete=True,
+        child_hooks=MutationHooks(pre_event=(reject_pre_event,), after_rollback=(rolled_back,)),
+    )
+    parent_identity = _identity(parent.id)
+    child_identity = _identity(child.id)
+    change = RelationshipChangePlan(
+        operation_id="graph:parents:children:delete-pre-event-failure",
+        relationship_id="children",
+        steps=(
+            DeleteRelated(
+                identity=child_identity,
+                confirmation_token=await child_writer.issue_delete_token(child_identity),
+            ),
+        ),
+        authorization_requirement=PermissionRequirement.all_of("admin.resources.parents.update"),
+        concurrency_token=await relationships.issue_concurrency_token(parent_identity, "children"),
+    )
+    with pytest.raises(RuntimeError, match="child delete pre-event rejected"):
+        await _graph_call(
+            writer,
+            parent=parent_identity,
+            scalar_token=writer.issue_update_token(parent),
+            change=change,
+            capabilities=_capabilities(
+                parent_identity,
+                change,
+                child_operation="target-delete",
+                child_identity=child_identity,
+            ),
+            submission="child-delete-pre-event-failure",
+        )
+    assert phases == ["pre_event", "after_rollback"]
+    async with session_factory() as session:
+        persisted_parent = (await session.scalars(select(Parent))).one()
+        persisted_child = (await session.scalars(select(Child))).one()
+    assert (persisted_parent.name, persisted_child.name) == ("before", "delete")
+
+
+@pytest.mark.anyio
+async def test_multiple_nested_child_observers_follow_graph_step_order(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    phases: list[str] = []
+
+    def before_commit(plan: object) -> None:
+        phases.append(f"before:{cast(ResourceMutationPlan, plan).values['name']}")
+
+    def after_commit(result: object) -> None:
+        record = cast(Child, cast(MutationResult, result).record)
+        phases.append(f"after:{record.name}")
+
+    def after_rollback(_cause: object) -> None:
+        phases.append("rollback")
+
+    async with session_factory() as session:
+        session.add(Parent(name="before"))
+        await session.commit()
+        parent = (await session.scalars(select(Parent))).one()
+
+    writer, _child_writer, relationships = _services(
+        session_factory,
+        child_hooks=MutationHooks(
+            before_commit=(before_commit,),
+            after_commit=(after_commit,),
+            after_rollback=(after_rollback,),
+        ),
+    )
+    parent_identity = _identity(parent.id)
+    success = RelationshipChangePlan(
+        operation_id="graph:parents:children:ordered-observers",
+        relationship_id="children",
+        steps=(
+            CreateRelated(values={"name": "first"}),
+            CreateRelated(values={"name": "second"}),
+        ),
+        authorization_requirement=PermissionRequirement.all_of("admin.resources.parents.update"),
+        concurrency_token=await relationships.issue_concurrency_token(parent_identity, "children"),
+    )
+    await _graph_call(
+        writer,
+        parent=parent_identity,
+        scalar_token=writer.issue_update_token(parent),
+        change=success,
+        capabilities=_capabilities(parent_identity, success, child_operation="target-create"),
+        submission="ordered-child-observers",
+    )
+    assert phases == ["before:first", "before:second", "after:first", "after:second"]
+
+    async with session_factory() as session:
+        current_parent = (await session.scalars(select(Parent))).one()
+    failure = RelationshipChangePlan(
+        operation_id="graph:parents:children:ordered-observers-rollback",
+        relationship_id="children",
+        steps=(
+            CreateRelated(values={"name": "third"}),
+            CreateRelated(values={"name": "fourth"}),
+            ReorderRelated(identities=(_identity(999),)),
+        ),
+        authorization_requirement=PermissionRequirement.all_of("admin.resources.parents.update"),
+        concurrency_token=await relationships.issue_concurrency_token(parent_identity, "children"),
+    )
+    with pytest.raises(RakitError):
+        await _graph_call(
+            writer,
+            parent=parent_identity,
+            scalar_token=writer.issue_update_token(current_parent),
+            change=failure,
+            capabilities=_capabilities(parent_identity, failure, child_operation="target-create"),
+            submission="ordered-child-observers-rollback",
+        )
+    assert phases == [
+        "before:first",
+        "before:second",
+        "after:first",
+        "after:second",
+        "rollback",
+        "rollback",
+    ]
 
 
 @pytest.mark.anyio
@@ -1688,6 +2013,15 @@ async def test_explicit_child_delete_requires_its_own_capability_and_confirmatio
 
     child_phases: list[str] = []
 
+    class RecordingPublisher(EventPublisher):
+        async def after_commit(self) -> None:
+            child_phases.append("event_delivery")
+            await super().after_commit()
+
+        def after_rollback(self) -> None:
+            child_phases.append("event_rollback")
+            super().after_rollback()
+
     def phase(name: str):
         def record(_value: object) -> None:
             child_phases.append(name)
@@ -1704,13 +2038,22 @@ async def test_explicit_child_delete_requires_its_own_capability_and_confirmatio
         ),
     )
     parent_identity = _identity(parent.id)
-    delete_token = await child_writer.issue_delete_token(_identity(child.id))
+    child_identity = _identity(child.id)
+    bus = EventBus()
+    bus.subscribe(
+        ResourceDeleted,
+        lambda event: child_phases.append("child_event")
+        if event.identity == child_identity
+        else None,
+    )
+    events = RecordingPublisher(bus)
+    delete_token = await child_writer.issue_delete_token(child_identity)
     change = RelationshipChangePlan(
         operation_id="graph:parents:children:delete",
         relationship_id="children",
         steps=(
             DeleteRelated(
-                identity=_identity(child.id),
+                identity=child_identity,
                 confirmation_token=delete_token,
             ),
         ),
@@ -1743,17 +2086,18 @@ async def test_explicit_child_delete_requires_its_own_capability_and_confirmatio
                 parent_identity,
                 change,
                 child_operation="target-delete",
-                child_identity=_identity(child.id),
+                child_identity=child_identity,
             ),
             submission="graph-delete-stale",
+            events=events,
         )
     assert caught.value.code == ErrorCode.RESOURCE_CONFLICT
-    assert child_phases == ["delete_after_rollback"]
+    assert child_phases == ["event_rollback", "delete_after_rollback"]
 
-    fresh_token = await child_writer.issue_delete_token(_identity(child.id))
+    fresh_token = await child_writer.issue_delete_token(child_identity)
     fresh_change = change.model_copy(
         update={
-            "steps": (DeleteRelated(identity=_identity(child.id), confirmation_token=fresh_token),),
+            "steps": (DeleteRelated(identity=child_identity, confirmation_token=fresh_token),),
             "concurrency_token": await relationships.issue_concurrency_token(
                 parent_identity, "children"
             ),
@@ -1769,15 +2113,19 @@ async def test_explicit_child_delete_requires_its_own_capability_and_confirmatio
             parent_identity,
             fresh_change,
             child_operation="target-delete",
-            child_identity=_identity(child.id),
+            child_identity=child_identity,
         ),
         submission="graph-delete",
+        events=events,
     )
     async with session_factory() as session:
         assert list((await session.scalars(select(Child))).all()) == []
     assert child_phases == [
+        "event_rollback",
         "delete_after_rollback",
         "delete_before_commit",
+        "event_delivery",
+        "child_event",
         "delete_after_commit",
     ]
 

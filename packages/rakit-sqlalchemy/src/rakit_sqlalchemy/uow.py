@@ -43,7 +43,9 @@ class SQLAlchemyUnitOfWork:
         self._context_token: Token[SQLAlchemyUnitOfWork | None] | None = None
         self._before_commit_callbacks: list[Callable[[], object | Awaitable[object]]] = []
         self._after_commit_callbacks: list[Callable[[], object | Awaitable[object]]] = []
+        self._after_commit_observer_callbacks: list[Callable[[], object | Awaitable[object]]] = []
         self._after_rollback_callbacks: list[Callable[[], object | Awaitable[object]]] = []
+        self._after_rollback_observer_callbacks: list[Callable[[], object | Awaitable[object]]] = []
         self._rollback_cause: BaseException | None = None
 
     async def __aenter__(self) -> Self:
@@ -85,6 +87,19 @@ class SQLAlchemyUnitOfWork:
             return
         self._before_commit_callbacks.append(callback)
 
+    def after_commit_observer(self, callback: Callable[[], object | Awaitable[object]]) -> None:
+        """Run a resource observer after deferred post-commit events.
+
+        Transaction bookkeeping belongs in :meth:`after_commit`; resource
+        lifecycle observers need the same externally-visible order as an
+        ordinary mutation: durable commit, deferred event delivery, observer.
+        """
+
+        if self._parent is not None:
+            self._parent.after_commit_observer(callback)
+            return
+        self._after_commit_observer_callbacks.append(callback)
+
     @property
     def rollback_cause(self) -> BaseException | None:
         """The root failure available to deferred nested rollback hooks."""
@@ -96,6 +111,14 @@ class SQLAlchemyUnitOfWork:
             self._parent.after_rollback(callback)
             return
         self._after_rollback_callbacks.append(callback)
+
+    def after_rollback_observer(self, callback: Callable[[], object | Awaitable[object]]) -> None:
+        """Run a resource rollback observer after deferred events are discarded."""
+
+        if self._parent is not None:
+            self._parent.after_rollback_observer(callback)
+            return
+        self._after_rollback_observer_callbacks.append(callback)
 
     async def _run_callbacks(
         self, callbacks: list[Callable[[], object | Awaitable[object]]]
@@ -116,6 +139,7 @@ class SQLAlchemyUnitOfWork:
         await self._run_callbacks(self._after_commit_callbacks)
         if self.event_publisher is not None:
             await self.event_publisher.after_commit()
+        await self._run_callbacks(self._after_commit_observer_callbacks)
 
     async def rollback(self, cause: BaseException | None = None) -> None:
         if cause is not None and self._rollback_cause is None:
@@ -136,6 +160,7 @@ class SQLAlchemyUnitOfWork:
         await self._run_callbacks(self._after_rollback_callbacks)
         if self.event_publisher is not None:
             self.event_publisher.after_rollback()
+        await self._run_callbacks(self._after_rollback_observer_callbacks)
 
     async def _commit_critical(self) -> None:
         """Finish the durable commit once it has started, despite cancellation.
@@ -191,11 +216,13 @@ class SQLAlchemyUnitOfWork:
                 await self._run_callbacks(self._after_commit_callbacks)
                 if self.event_publisher is not None:
                     await self.event_publisher.after_commit()
+                await self._run_callbacks(self._after_commit_observer_callbacks)
             elif self.policy is TransactionPolicy.DISABLED and self._success:
                 self._completed = True
                 await self._run_callbacks(self._after_commit_callbacks)
                 if self.event_publisher is not None:
                     await self.event_publisher.after_commit()
+                await self._run_callbacks(self._after_commit_observer_callbacks)
             elif not self._completed:
                 await self.rollback()
         finally:
