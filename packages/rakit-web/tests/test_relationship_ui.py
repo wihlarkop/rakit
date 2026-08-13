@@ -13,6 +13,7 @@ from rakit_core.relationship_mutations import (
     ClearRelated,
     CreateRelated,
     SetRelated,
+    UnlinkRelated,
     UpdateAssociationRelated,
 )
 from rakit_core.relationships import (
@@ -74,10 +75,12 @@ class EditorProvider:
             "items": (Record(1, "Ada"), Record(2, "Grace")),
         }
 
-    async def editor_rows(self, parent_identity, relationship_id, *, child_fields=()):
+    async def editor_page(
+        self, parent_identity, relationship_id, *, child_fields=(), page=1, per_page=25
+    ):
         from rakit_core.relationship_mutations import RelationshipCandidate, RelationshipEditorRow
 
-        return tuple(
+        rows = tuple(
             RelationshipEditorRow(
                 candidate=RelationshipCandidate(
                     identity=RecordIdentity(values={"id": record.id}), label=record.label
@@ -86,6 +89,16 @@ class EditorProvider:
                 concurrency_token=f"child-{record.id}",
             )
             for record in self.rows[relationship_id]
+        )
+        start = (page - 1) * per_page
+        items = rows[start : start + per_page]
+        return PageResult(
+            items=items,
+            page=page,
+            per_page=per_page,
+            has_previous=page > 1,
+            has_next=start + per_page < len(rows),
+            total_count=len(rows),
         )
 
     async def issue_concurrency_token(self, parent_identity, relationship_id):
@@ -381,21 +394,29 @@ async def test_association_fields_use_declared_schema_and_typed_step() -> None:
     source = CandidateSource()
 
     class AssociationProvider(EditorProvider):
-        async def editor_rows(self, parent_identity, relationship_id, *, child_fields=()):
+        async def editor_page(
+            self, parent_identity, relationship_id, *, child_fields=(), page=1, per_page=25
+        ):
             from rakit_core.relationship_mutations import (
                 RelationshipCandidate,
                 RelationshipEditorRow,
             )
 
             assert relationship_id == "enrollments"
-            return (
-                RelationshipEditorRow(
-                    candidate=RelationshipCandidate(
-                        identity=RecordIdentity(values={"id": 2}), label="Grace"
+            return PageResult(
+                items=(
+                    RelationshipEditorRow(
+                        candidate=RelationshipCandidate(
+                            identity=RecordIdentity(values={"id": 2}), label="Grace"
+                        ),
+                        association_identity=RecordIdentity(values={"id": 99}),
+                        values={"grade": "B"},
                     ),
-                    association_identity=RecordIdentity(values={"id": 99}),
-                    values={"grade": "B"},
                 ),
+                page=page,
+                per_page=per_page,
+                has_previous=False,
+                has_next=False,
             )
 
     requirement = _compiled("customer").mutation_permission
@@ -430,7 +451,6 @@ async def test_association_fields_use_declared_schema_and_typed_step() -> None:
     changes = await build_relationship_changes(
         RelationshipFormBinding(editors=(association,)),
         {
-            f"{relationship_prefix('enrollments')}target__{target}": target,
             f"{relationship_prefix('enrollments')}association__{target}__grade": "A",
         },
         parent_identity=RecordIdentity(values={"id": 10}),
@@ -457,6 +477,26 @@ async def test_unknown_relationship_control_is_rejected_without_a_scalar_excepti
             {f"{relationship_prefix('customer')}unexpected": "value"},
             parent_identity=RecordIdentity(values={"id": 10}),
         )
+
+
+@pytest.mark.anyio
+async def test_to_many_omission_is_noop_and_unlink_is_explicit() -> None:
+    form = _relationship_form()
+    no_intent = await build_relationship_changes(
+        form,
+        {f"{relationship_prefix('items')}selection_present": "true"},
+        parent_identity=RecordIdentity(values={"id": 10}),
+    )
+    assert no_intent == ()
+
+    encoded = IdentityCodec().encode(RecordIdentity(values={"id": 2}))
+    changes = await build_relationship_changes(
+        form,
+        {f"{relationship_prefix('items')}unlink__{encoded}": encoded},
+        parent_identity=RecordIdentity(values={"id": 10}),
+    )
+    assert isinstance(changes[0].steps[0], UnlinkRelated)
+    assert changes[0].steps[0].identity.values == {"id": 2}
 
 
 @pytest.mark.anyio

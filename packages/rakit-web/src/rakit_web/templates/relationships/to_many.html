@@ -9,7 +9,7 @@
     {% for row in panel.rows %}
       {% set encoded = codec.encode(row.candidate.identity) %}
       <li>
-        <label><input type="checkbox" name="{{ panel.prefix }}target__{{ encoded }}" value="{{ encoded }}" checked /> Keep {{ row.candidate.label }}</label>
+        <label><input type="checkbox" name="{{ panel.prefix }}unlink__{{ encoded }}" value="{{ encoded }}"{% if encoded in panel.pending_unlinks %} checked{% endif %} /> Unlink {{ row.candidate.label }}</label>
       </li>
     {% endfor %}
   </ul>
@@ -17,7 +17,7 @@
     {% for option in panel.options %}
       {% set encoded = codec.encode(option.identity) %}
       {% if encoded not in panel.selected %}
-        <li><label><input type="checkbox" name="{{ panel.prefix }}target__{{ encoded }}" value="{{ encoded }}" /> Link {{ option.label }}</label></li>
+        <li><label><input type="checkbox" name="{{ panel.prefix }}link__{{ encoded }}" value="{{ encoded }}" /> Link {{ option.label }}</label></li>
       {% endif %}
     {% endfor %}
   </ul>

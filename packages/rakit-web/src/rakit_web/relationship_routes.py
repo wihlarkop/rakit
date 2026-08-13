@@ -13,7 +13,7 @@ from uuid import uuid4
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.forms import FormSchema, FormValidationError
 from rakit_core.identity import IdentityCodec, RecordIdentity
-from rakit_core.query import ResourceQuery
+from rakit_core.query import PageResult, ResourceQuery
 from rakit_core.relationship_mutations import (
     ClearRelated,
     CreateRelated,
@@ -45,13 +45,15 @@ _MAX_FRAGMENT_FIELDS = 1_000
 
 
 class RelationshipEditorStateProvider(Protocol):
-    async def editor_rows(
+    async def editor_page(
         self,
         parent_identity: RecordIdentity,
         relationship_id: str,
         *,
         child_fields: tuple[str, ...] = (),
-    ) -> tuple[RelationshipEditorRow, ...]: ...
+        page: int = 1,
+        per_page: int = 25,
+    ) -> PageResult[RelationshipEditorRow]: ...
 
     async def issue_concurrency_token(
         self, parent_identity: RecordIdentity, relationship_id: str
@@ -190,8 +192,8 @@ def _validate_relationship_field_names(
             continue
         if (
             definition.cardinality is RelationshipCardinality.TO_MANY
-            and name.startswith("target__")
-            and name.removeprefix("target__")
+            and name.startswith(("link__", "unlink__"))
+            and name.partition("__")[2]
         ):
             continue
         if name.startswith("create__"):
@@ -258,29 +260,12 @@ async def build_relationship_changes(
                 status_code=403,
             )
         _validate_relationship_field_names(editor, values)
-        current_rows = (
-            await editor.state_provider.editor_rows(
-                parent_identity,
-                editor.relationship_id,
-                child_fields=(
-                    tuple(
-                        field.field_id
-                        for field in editor.target_form_schema.fields
-                        if field.writable and field.readable and not field.sensitive
-                    )
-                    if editor.target_form_schema is not None
-                    else ()
-                ),
-            )
-            if parent_identity is not None
-            else ()
-        )
-        current = {binding.codec.encode(row.candidate.identity): row for row in current_rows}
         steps: list[object] = []
-        selected: dict[str, RecordIdentity] = {}
         for name, value in values.items():
-            if name.startswith("target__"):
-                selected[name.removeprefix("target__")] = _identity(binding.codec, value)
+            if name.startswith("link__"):
+                steps.append(LinkRelated(identity=_identity(binding.codec, value)))
+            elif name.startswith("unlink__"):
+                steps.append(UnlinkRelated(identity=_identity(binding.codec, value)))
 
         if definition.cardinality is RelationshipCardinality.TO_ONE:
             if "clear" in values:
@@ -293,14 +278,6 @@ async def build_relationship_changes(
                 steps.append(ClearRelated())
             elif "set" in values and values["set"] not in {"", None}:
                 steps.append(SetRelated(identity=_identity(binding.codec, values["set"])))
-        else:
-            for encoded, identity in selected.items():
-                if encoded not in current:
-                    steps.append(LinkRelated(identity=identity))
-            for encoded, row in current.items():
-                if encoded not in selected:
-                    steps.append(UnlinkRelated(identity=row.candidate.identity))
-
         if editor.target_form_schema is not None:
             row_keys = {
                 parts[1]
@@ -317,39 +294,51 @@ async def build_relationship_changes(
                     steps.append(
                         CreateRelated(values=_schema_values(editor.target_form_schema, row_values))
                     )
-            for encoded, row in current.items():
+            update_ids = {
+                name.split("__", 2)[1]
+                for name in values
+                if name.startswith("update__") and len(name.split("__", 2)) == 3
+            }
+            for encoded in update_ids:
                 row_values = _fields_for_prefix(values, f"update__{encoded}__")
-                if row_values and encoded in selected:
+                if row_values:
                     token = values.get(f"update_token__{encoded}")
                     steps.append(
                         UpdateRelated(
-                            identity=row.candidate.identity,
+                            identity=_identity(binding.codec, encoded),
                             values=_schema_values(editor.target_form_schema, row_values),
                             concurrency_token=token if isinstance(token, str) else None,
                         )
                     )
 
         if editor.association_form_schema is not None:
-            for encoded, row in current.items():
+            association_ids = {
+                name.split("__", 2)[1]
+                for name in values
+                if name.startswith("association__") and len(name.split("__", 2)) == 3
+            }
+            for encoded in association_ids:
                 association_values = _fields_for_prefix(values, f"association__{encoded}__")
                 if association_values:
                     steps.append(
                         UpdateAssociationRelated(
-                            target_identity=row.candidate.identity,
-                            association_identity=row.association_identity,
+                            target_identity=_identity(binding.codec, encoded),
+                            association_identity=None,
                             values=_schema_values(
                                 editor.association_form_schema, association_values
                             ),
                         )
                     )
 
-        for encoded, row in current.items():
-            confirmation = values.get(f"delete__{encoded}")
-            if confirmation:
+        for name, confirmation in values.items():
+            if name.startswith("delete__") and confirmation:
+                encoded = name.removeprefix("delete__")
                 if not isinstance(confirmation, str):
                     raise ValueError("Malformed child delete confirmation")
                 steps.append(
-                    DeleteRelated(identity=row.candidate.identity, confirmation_token=confirmation)
+                    DeleteRelated(
+                        identity=_identity(binding.codec, encoded), confirmation_token=confirmation
+                    )
                 )
 
         order_values: list[str] = []
@@ -365,7 +354,11 @@ async def build_relationship_changes(
             if name.startswith("move__")
         ]
         if moves and not order_values:
-            order_values = [binding.codec.encode(row.candidate.identity) for row in current_rows]
+            raise RakitError(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="Reorder requires a complete relationship ordering state.",
+                status_code=422,
+            )
         for parts, value in moves:
             if len(parts) != 3 or not isinstance(value, str):
                 raise _invalid_relationship_field()
@@ -459,18 +452,30 @@ async def relationship_panel_view(
         if editor.target_form_schema is not None
         else ()
     )
-    rows = (
-        await editor.state_provider.editor_rows(
-            parent_identity, editor.relationship_id, child_fields=child_fields
+    editor_page = (
+        await editor.state_provider.editor_page(
+            parent_identity,
+            editor.relationship_id,
+            child_fields=child_fields,
+            page=page,
+            per_page=editor.candidate_page_size,
         )
         if parent_identity is not None and definition.readable
-        else ()
+        else PageResult(
+            items=(),
+            page=page,
+            per_page=editor.candidate_page_size,
+            has_previous=False,
+            has_next=False,
+        )
     )
+    rows = editor_page.items
     prefix = relationship_prefix(editor.relationship_id)
     values = _fields_for_prefix(submitted, prefix)
-    selected = {name.removeprefix("target__") for name in values if name.startswith("target__")}
-    if not selected and "selection_present" not in values:
-        selected = {IdentityCodec().encode(row.candidate.identity) for row in rows}
+    pending_links = {name.removeprefix("link__") for name in values if name.startswith("link__")}
+    pending_unlinks = {
+        name.removeprefix("unlink__") for name in values if name.startswith("unlink__")
+    }
     row_views: list[dict[str, object]] = []
     for row in rows:
         encoded = IdentityCodec().encode(row.candidate.identity)
@@ -517,8 +522,6 @@ async def relationship_panel_view(
         parts = name.split("__", 2)
         if len(parts) == 3 and parts[1].startswith("new-"):
             draft_rows.setdefault(parts[1], {})[parts[2]] = value
-    start = max(page - 1, 0) * editor.candidate_page_size
-    paginated_rows = tuple(row_views[start : start + editor.candidate_page_size])
     token = (
         await editor.state_provider.issue_concurrency_token(parent_identity, editor.relationship_id)
         if parent_identity is not None and editor.editable
@@ -542,17 +545,18 @@ async def relationship_panel_view(
         "relationship": definition,
         "relationship_id": editor.relationship_id,
         "prefix": prefix,
-        "rows": paginated_rows,
+        "rows": tuple(row_views),
         "draft_rows": tuple(
             {"key": key, "values": row_values} for key, row_values in draft_rows.items()
         ),
-        "selected": selected,
+        "selected": pending_links,
+        "pending_unlinks": pending_unlinks,
         "options": tuple(options_by_identity.values()),
         "concurrency_token": token,
         "reorderable": editor.relationship.ordering is not None,
         "page": page,
-        "has_previous_page": page > 1,
-        "has_next_page": start + editor.candidate_page_size < len(row_views),
+        "has_previous_page": editor_page.has_previous,
+        "has_next_page": editor_page.has_next,
         "page_path": page_path,
         "options_path": f"{page_path}/options" if page_path is not None else None,
         "new_row_key": f"new-{uuid4()}",
@@ -627,9 +631,9 @@ def build_relationship_routes(
                 return PlainTextResponse("Resource was not found", status_code=404)
             options = await _candidate_options(editor, query=request.query_params.get("q"))
             selected = {
-                name.removeprefix(f"{relationship_prefix(editor.relationship_id)}target__")
+                name.removeprefix(f"{relationship_prefix(editor.relationship_id)}link__")
                 for name in request.query_params
-                if name.startswith(f"{relationship_prefix(editor.relationship_id)}target__")
+                if name.startswith(f"{relationship_prefix(editor.relationship_id)}link__")
             }
             return binding.templates.TemplateResponse(
                 request,

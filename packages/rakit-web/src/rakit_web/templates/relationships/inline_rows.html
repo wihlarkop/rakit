@@ -22,7 +22,7 @@
           <button type="button" name="{{ panel.prefix }}move__{{ encoded }}__down" value="down" aria-label="Move {{ row.candidate.label }} down"
             {% if panel.page_path %}hx-post="{{ panel.page_path }}/page/{{ panel.page }}" hx-include="closest form" hx-target="#rakit-relationship-{{ panel.relationship_id }}" hx-swap="outerHTML"{% endif %}>Move down</button>
         {% endif %}
-        <label><input type="checkbox" name="{{ panel.prefix }}target__{{ encoded }}" value="{{ encoded }}" checked /> Keep {{ row.candidate.label }}</label>
+        <label><input type="checkbox" name="{{ panel.prefix }}unlink__{{ encoded }}" value="{{ encoded }}"{% if encoded in panel.pending_unlinks %} checked{% endif %} /> Unlink {{ row.candidate.label }}</label>
       </li>
     {% endfor %}
   </ol>
