@@ -46,6 +46,8 @@ class SQLAlchemyUnitOfWork:
         self._after_commit_observer_callbacks: list[Callable[[], object | Awaitable[object]]] = []
         self._after_rollback_callbacks: list[Callable[[], object | Awaitable[object]]] = []
         self._after_rollback_observer_callbacks: list[Callable[[], object | Awaitable[object]]] = []
+        self._commit_observers_ready = False
+        self._rollback_observers_ready = False
         self._rollback_cause: BaseException | None = None
 
     async def __aenter__(self) -> Self:
@@ -136,10 +138,7 @@ class SQLAlchemyUnitOfWork:
         await self._run_callbacks(self._before_commit_callbacks)
         await self._commit_critical()
         self._completed = True
-        await self._run_callbacks(self._after_commit_callbacks)
-        if self.event_publisher is not None:
-            await self.event_publisher.after_commit()
-        await self._run_callbacks(self._after_commit_observer_callbacks)
+        await self._finish_commit_callbacks()
 
     async def rollback(self, cause: BaseException | None = None) -> None:
         if cause is not None and self._rollback_cause is None:
@@ -157,10 +156,33 @@ class SQLAlchemyUnitOfWork:
             return
         await self.session.rollback()
         self._completed = True
+        await self._finish_rollback_callbacks()
+
+    async def _finish_commit_callbacks(self) -> None:
+        """Finish durable bookkeeping and deferred events inside the root UoW."""
+
+        await self._run_callbacks(self._after_commit_callbacks)
+        if self.event_publisher is not None:
+            await self.event_publisher.after_commit()
+        self._commit_observers_ready = True
+
+    async def _finish_rollback_callbacks(self) -> None:
+        """Finish rollback bookkeeping and discard deferred events inside the root UoW."""
+
         await self._run_callbacks(self._after_rollback_callbacks)
         if self.event_publisher is not None:
             self.event_publisher.after_rollback()
-        await self._run_callbacks(self._after_rollback_observer_callbacks)
+        self._rollback_observers_ready = True
+
+    async def _run_resource_observers_after_teardown(self) -> None:
+        """Run resource lifecycle observers with no completed UoW in context."""
+
+        if self._commit_observers_ready:
+            self._commit_observers_ready = False
+            await self._run_callbacks(self._after_commit_observer_callbacks)
+        if self._rollback_observers_ready:
+            self._rollback_observers_ready = False
+            await self._run_callbacks(self._after_rollback_observer_callbacks)
 
     async def _commit_critical(self) -> None:
         """Finish the durable commit once it has started, despite cancellation.
@@ -185,49 +207,49 @@ class SQLAlchemyUnitOfWork:
         traceback: object,
     ) -> bool:
         try:
-            if self._parent is not None:
-                if exc_type is not None:
+            try:
+                if self._parent is not None:
+                    if exc_type is not None:
+                        await self.rollback(exc)
+                    elif self._savepoint is not None:
+                        commit = getattr(self._savepoint, "commit", None)
+                        if callable(commit):
+                            await commit()
+                        self._completed = True
+                    # An inherited child never owns commit/close of its parent.
+                elif exc_type is not None:
                     await self.rollback(exc)
-                elif self._savepoint is not None:
-                    commit = getattr(self._savepoint, "commit", None)
-                    if callable(commit):
-                        await commit()
+                elif self.policy is TransactionPolicy.AUTO and self._success and not self._failed:
+                    try:
+                        if self.operation_context is not None:
+                            # A commit already in progress is never force-cancelled;
+                            # this is the last cooperative checkpoint before it starts.
+                            self.operation_context.checkpoint()
+                        await self._run_callbacks(self._before_commit_callbacks)
+                        await self._commit_critical()
+                    except BaseException as exc:
+                        # A deadline or driver failure before the durable outcome
+                        # is known must leave the session in a safe rolled-back
+                        # state.  `_commit_critical` only returns after a started
+                        # commit has finished, so this cannot roll back a commit
+                        # that completed while cancellation was pending.
+                        await self.rollback(exc)
+                        raise
                     self._completed = True
-                # An inherited child never owns commit/close of its parent.
-            elif exc_type is not None:
-                await self.rollback(exc)
-            elif self.policy is TransactionPolicy.AUTO and self._success and not self._failed:
-                try:
-                    if self.operation_context is not None:
-                        # A commit already in progress is never force-cancelled;
-                        # this is the last cooperative checkpoint before it starts.
-                        self.operation_context.checkpoint()
-                    await self._run_callbacks(self._before_commit_callbacks)
-                    await self._commit_critical()
-                except BaseException as exc:
-                    # A deadline or driver failure before the durable outcome
-                    # is known must leave the session in a safe rolled-back
-                    # state.  `_commit_critical` only returns after a started
-                    # commit has finished, so this cannot roll back a commit
-                    # that completed while cancellation was pending.
-                    await self.rollback(exc)
-                    raise
-                self._completed = True
-                await self._run_callbacks(self._after_commit_callbacks)
-                if self.event_publisher is not None:
-                    await self.event_publisher.after_commit()
-                await self._run_callbacks(self._after_commit_observer_callbacks)
-            elif self.policy is TransactionPolicy.DISABLED and self._success:
-                self._completed = True
-                await self._run_callbacks(self._after_commit_callbacks)
-                if self.event_publisher is not None:
-                    await self.event_publisher.after_commit()
-                await self._run_callbacks(self._after_commit_observer_callbacks)
-            elif not self._completed:
-                await self.rollback()
+                    await self._finish_commit_callbacks()
+                elif self.policy is TransactionPolicy.DISABLED and self._success:
+                    self._completed = True
+                    await self._finish_commit_callbacks()
+                elif not self._completed:
+                    await self.rollback()
+            finally:
+                if self._context_token is not None:
+                    _active_uow.reset(self._context_token)
+                if self._parent is None:
+                    await self.session.close()
         finally:
-            if self._context_token is not None:
-                _active_uow.reset(self._context_token)
-            if self._parent is None:
-                await self.session.close()
+            # Resource observers intentionally run outside the finished root
+            # UoW.  Their post-transaction work must start a fresh operation,
+            # never inherit a completed session through `_active_uow`.
+            await self._run_resource_observers_after_teardown()
         return False

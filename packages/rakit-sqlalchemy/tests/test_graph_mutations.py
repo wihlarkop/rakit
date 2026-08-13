@@ -310,6 +310,29 @@ def _services(
     return parent_writer, child_writer, relationship_writer
 
 
+def _post_transaction_customer_writer(
+    factory: async_sessionmaker[AsyncSession],
+) -> tuple[SQLAlchemyMutationService, OperationAuthorization]:
+    """Build an independent ordinary resource mutation for observer tests."""
+
+    writer = SQLAlchemyMutationService(
+        model=Customer,
+        session_factory=factory,
+        form_schema=FormSchema(fields=(FieldDefinition(field_id="name", python_type=str),)),
+        writable_fields=("name",),
+        identity_fields=("id",),
+        resource_id="customers",
+    )
+    authorization = OperationAuthorization.for_requirement(
+        admin_id="admin",
+        resource_id="customers",
+        operation="create",
+        principal_id="observer",
+        requirement=PermissionRequirement.all_of("admin.resources.customers.create"),
+    )
+    return writer, authorization
+
+
 def _to_one_services(
     factory: async_sessionmaker[AsyncSession],
 ) -> tuple[SQLAlchemyMutationService, SQLAlchemyRelationshipMutationService]:
@@ -1541,6 +1564,142 @@ async def test_nested_child_update_lifecycle_defers_commit_and_runs_rollback_onc
         "event_rollback",
         "child_after_rollback",
     ]
+
+
+@pytest.mark.anyio
+async def test_child_after_commit_starts_an_independent_durable_operation(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    calls = 0
+    observer_writer, observer_authorization = _post_transaction_customer_writer(session_factory)
+
+    async def after_commit(_result: object) -> None:
+        nonlocal calls
+        calls += 1
+        context = OperationContext(
+            deadline=None,
+            cancellation=CancellationContext(),
+            principal=Principal(subject_id="observer", authenticated=True),
+            admin_id="admin",
+            resource_id="customers",
+            operation="create",
+            permissions=observer_authorization.permissions,
+            permission_requirement=observer_authorization.requirement,
+        )
+        with activate_operation_context(context):
+            await observer_writer.create(
+                {"name": "created-after-graph-commit"},
+                authorization=observer_authorization,
+            )
+
+    async with session_factory() as session:
+        session.add(Parent(name="before"))
+        await session.commit()
+        parent = (await session.scalars(select(Parent))).one()
+
+    writer, _child_writer, relationships = _services(
+        session_factory,
+        child_hooks=MutationHooks(after_commit=(after_commit,)),
+    )
+    parent_identity = _identity(parent.id)
+    change = RelationshipChangePlan(
+        operation_id="graph:parents:children:post-commit-fresh-uow",
+        relationship_id="children",
+        steps=(CreateRelated(values={"name": "graph-child"}),),
+        authorization_requirement=PermissionRequirement.all_of("admin.resources.parents.update"),
+        concurrency_token=await relationships.issue_concurrency_token(parent_identity, "children"),
+    )
+    await _graph_call(
+        writer,
+        parent=parent_identity,
+        scalar_token=writer.issue_update_token(parent),
+        change=change,
+        capabilities=_capabilities(parent_identity, change, child_operation="target-create"),
+        submission="post-commit-fresh-uow",
+        name="graph-committed",
+    )
+
+    assert calls == 1
+    async with session_factory() as session:
+        persisted_parent = (await session.scalars(select(Parent))).one()
+        children = list((await session.scalars(select(Child))).all())
+        customers = list((await session.scalars(select(Customer))).all())
+    assert (persisted_parent.name, [(child.name, child.parent_id) for child in children]) == (
+        "graph-committed",
+        [("graph-child", parent.id)],
+    )
+    assert [customer.name for customer in customers] == ["created-after-graph-commit"]
+
+
+@pytest.mark.anyio
+async def test_child_after_rollback_starts_fresh_uow_after_graph_teardown(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    calls = 0
+    received: list[ResourceCreated] = []
+    observer_writer, observer_authorization = _post_transaction_customer_writer(session_factory)
+
+    async def after_rollback(_cause: object) -> None:
+        nonlocal calls
+        calls += 1
+        context = OperationContext(
+            deadline=None,
+            cancellation=CancellationContext(),
+            principal=Principal(subject_id="observer", authenticated=True),
+            admin_id="admin",
+            resource_id="customers",
+            operation="create",
+            permissions=observer_authorization.permissions,
+            permission_requirement=observer_authorization.requirement,
+        )
+        with activate_operation_context(context):
+            await observer_writer.create(
+                {"name": "created-after-graph-rollback"},
+                authorization=observer_authorization,
+            )
+
+    async with session_factory() as session:
+        session.add(Parent(name="before"))
+        await session.commit()
+        parent = (await session.scalars(select(Parent))).one()
+
+    writer, _child_writer, relationships = _services(
+        session_factory,
+        child_hooks=MutationHooks(after_rollback=(after_rollback,)),
+    )
+    parent_identity = _identity(parent.id)
+    change = RelationshipChangePlan(
+        operation_id="graph:parents:children:post-rollback-fresh-uow",
+        relationship_id="children",
+        steps=(
+            CreateRelated(values={"name": "rolled-back-child"}),
+            ReorderRelated(identities=(_identity(999),)),
+        ),
+        authorization_requirement=PermissionRequirement.all_of("admin.resources.parents.update"),
+        concurrency_token=await relationships.issue_concurrency_token(parent_identity, "children"),
+    )
+    bus = EventBus()
+    bus.subscribe(ResourceCreated, received.append)
+    with pytest.raises(RakitError):
+        await _graph_call(
+            writer,
+            parent=parent_identity,
+            scalar_token=writer.issue_update_token(parent),
+            change=change,
+            capabilities=_capabilities(parent_identity, change, child_operation="target-create"),
+            submission="post-rollback-fresh-uow",
+            name="would-rollback",
+            events=EventPublisher(bus),
+        )
+
+    assert calls == 1
+    assert received == []
+    async with session_factory() as session:
+        persisted_parent = (await session.scalars(select(Parent))).one()
+        children = list((await session.scalars(select(Child))).all())
+        customers = list((await session.scalars(select(Customer))).all())
+    assert (persisted_parent.name, children) == ("before", [])
+    assert [customer.name for customer in customers] == ["created-after-graph-rollback"]
 
 
 @pytest.mark.anyio
