@@ -5,9 +5,16 @@ from rakit_core.identity import RecordIdentity
 from rakit_core.permissions import PermissionRequirement
 from rakit_core.relationship_mutations import (
     AssociationScalarChange,
+    CreateRelated,
+    DeleteRelated,
+    LinkRelated,
     RelationshipCandidate,
+    RelationshipChangePlan,
     RelationshipMutationKind,
     RelationshipMutationPlan,
+    ReorderRelated,
+    UnlinkRelated,
+    UpdateRelated,
 )
 
 
@@ -75,3 +82,59 @@ def test_relationship_candidate_exposes_only_canonical_identity_and_plain_text_l
 
     assert candidate.identity == _identity(2)
     assert candidate.label == "Ada Lovelace"
+
+
+def test_graph_relationship_steps_are_typed_immutable_and_fingerprint_safe() -> None:
+    requirement = PermissionRequirement.all_of("admin.resources.orders.update")
+    change = RelationshipChangePlan(
+        operation_id="graph:orders:items",
+        relationship_id="items",
+        authorization_requirement=requirement,
+        concurrency_token="relationship-token",
+        steps=(
+            CreateRelated(values={"name": "new"}),
+            UpdateRelated(
+                identity=_identity(2), values={"name": "changed"}, concurrency_token="v2"
+            ),
+            LinkRelated(identity=_identity(3)),
+            UnlinkRelated(identity=_identity(4)),
+            DeleteRelated(
+                identity=_identity(5), concurrency_token="v5", confirmation_token="confirm"
+            ),
+            ReorderRelated(identities=(_identity(3), _identity(2))),
+        ),
+    )
+
+    assert change.fingerprint_payload["steps"] == [
+        {"kind": "create", "values": {"name": "new"}},
+        {
+            "kind": "update",
+            "identity": {"id": {"type": "int", "value": 2}},
+            "values": {"name": "changed"},
+        },
+        {"kind": "link", "identity": {"id": {"type": "int", "value": 3}}},
+        {"kind": "unlink", "identity": {"id": {"type": "int", "value": 4}}},
+        {"kind": "delete", "identity": {"id": {"type": "int", "value": 5}}},
+        {
+            "kind": "reorder",
+            "identities": [
+                {"id": {"type": "int", "value": 3}},
+                {"id": {"type": "int", "value": 2}},
+            ],
+        },
+    ]
+    with pytest.raises(TypeError):
+        cast(dict[str, Any], cast(CreateRelated, change.steps[0]).values)["name"] = "forged"
+
+
+def test_graph_relationship_steps_reject_empty_or_duplicate_reorder_input() -> None:
+    requirement = PermissionRequirement.all_of("admin.resources.orders.update")
+    base = {
+        "operation_id": "graph:orders:items",
+        "relationship_id": "items",
+        "authorization_requirement": requirement,
+    }
+    with pytest.raises(ValueError, match="at least one"):
+        RelationshipChangePlan(steps=(), **base)
+    with pytest.raises(ValueError, match="duplicate"):
+        ReorderRelated(identities=(_identity(1), _identity(1)))

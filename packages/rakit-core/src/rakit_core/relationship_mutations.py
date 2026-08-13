@@ -11,9 +11,9 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from rakit_core._immutability import freeze_mapping
 from rakit_core.concurrency import ConcurrencyTokenService
@@ -31,6 +31,132 @@ class RelationshipMutationKind(StrEnum):
     UPDATE = "update"
     REMOVE = "remove"
     REPLACE = "replace"
+
+
+class RelationshipGraphStep(BaseModel):
+    """Base for the explicit child/edge intents of a composed resource write."""
+
+    model_config = ConfigDict(frozen=True)
+
+
+class CreateRelated(RelationshipGraphStep):
+    kind: Literal["create"] = "create"
+    values: Mapping[str, Any]
+
+    @field_validator("values")
+    @classmethod
+    def _freeze_values(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        if not value or any(not isinstance(key, str) or not key for key in value):
+            raise ValueError("child values must have non-empty field identifiers")
+        return freeze_mapping(ConcurrencyTokenService.canonical_snapshot(value))
+
+
+class UpdateRelated(RelationshipGraphStep):
+    kind: Literal["update"] = "update"
+    identity: RecordIdentity
+    values: Mapping[str, Any]
+    concurrency_token: str | None = None
+
+    @field_validator("values")
+    @classmethod
+    def _freeze_values(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        if not value or any(not isinstance(key, str) or not key for key in value):
+            raise ValueError("child values must have non-empty field identifiers")
+        return freeze_mapping(ConcurrencyTokenService.canonical_snapshot(value))
+
+
+class LinkRelated(RelationshipGraphStep):
+    kind: Literal["link"] = "link"
+    identity: RecordIdentity
+
+
+class UnlinkRelated(RelationshipGraphStep):
+    kind: Literal["unlink"] = "unlink"
+    identity: RecordIdentity
+
+
+class DeleteRelated(RelationshipGraphStep):
+    kind: Literal["delete"] = "delete"
+    identity: RecordIdentity
+    concurrency_token: str | None = None
+    confirmation_token: str | None = None
+
+
+class ReorderRelated(RelationshipGraphStep):
+    kind: Literal["reorder"] = "reorder"
+    identities: tuple[RecordIdentity, ...]
+
+    @field_validator("identities")
+    @classmethod
+    def _require_unique_order(cls, value: tuple[RecordIdentity, ...]) -> tuple[RecordIdentity, ...]:
+        if not value:
+            raise ValueError("reorder requires identities")
+        if len({_identity_key(identity) for identity in value}) != len(value):
+            raise ValueError("reorder contains duplicate identities")
+        return value
+
+
+type RelationshipMutationStep = Annotated[
+    CreateRelated | UpdateRelated | LinkRelated | UnlinkRelated | DeleteRelated | ReorderRelated,
+    Field(discriminator="kind"),
+]
+
+
+class RelationshipChangePlan(BaseModel):
+    """Immutable child/edge work attached to one parent graph mutation.
+
+    It intentionally carries normalized scalar values and identities only.  A
+    backend adapter resolves target write services and relationship metadata
+    before applying it in the root operation's UoW.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    operation_id: str
+    relationship_id: str
+    steps: tuple[RelationshipMutationStep, ...]
+    authorization_requirement: PermissionRequirement
+    concurrency_token: str | None = None
+    destructive_confirmation: str | None = None
+
+    @field_validator("operation_id", "relationship_id")
+    @classmethod
+    def _require_relationship_id(cls, value: str) -> str:
+        if not value:
+            raise ValueError("relationship_id must not be empty")
+        return value
+
+    @field_validator("steps")
+    @classmethod
+    def _require_steps(
+        cls, value: tuple[RelationshipMutationStep, ...]
+    ) -> tuple[RelationshipMutationStep, ...]:
+        if not value:
+            raise ValueError("relationship change requires at least one step")
+        return value
+
+    @property
+    def fingerprint_payload(self) -> dict[str, Any]:
+        def identity(identity: RecordIdentity) -> Mapping[str, Any]:
+            return canonical_identity_payload(identity)
+
+        values: list[dict[str, Any]] = []
+        for step in self.steps:
+            payload: dict[str, Any] = {"kind": step.kind}
+            if isinstance(step, CreateRelated):
+                payload["values"] = dict(step.values)
+            elif isinstance(step, UpdateRelated):
+                payload.update(identity=identity(step.identity), values=dict(step.values))
+            elif isinstance(step, LinkRelated | UnlinkRelated | DeleteRelated):
+                payload["identity"] = identity(step.identity)
+            elif isinstance(step, ReorderRelated):
+                payload["identities"] = [identity(value) for value in step.identities]
+            values.append(payload)
+        return {
+            "operation_id": self.operation_id,
+            "relationship_id": self.relationship_id,
+            "steps": values,
+        }
 
 
 def _identity_key(identity: RecordIdentity) -> str:
@@ -212,9 +338,17 @@ class RelationshipChanged(DomainEvent):
 
 __all__ = [
     "AssociationScalarChange",
+    "CreateRelated",
+    "DeleteRelated",
+    "LinkRelated",
     "RelationshipCandidate",
+    "RelationshipChangePlan",
     "RelationshipChanged",
     "RelationshipMutationKind",
     "RelationshipMutationPlan",
     "RelationshipMutationResult",
+    "RelationshipMutationStep",
+    "ReorderRelated",
+    "UnlinkRelated",
+    "UpdateRelated",
 ]

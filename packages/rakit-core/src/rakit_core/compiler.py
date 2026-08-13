@@ -559,9 +559,12 @@ def _validate_plan05_definitions(
             mutation_permission = relationship.permission or PermissionRequirement.all_of(
                 f"{builder.admin_id}.resources.{resource.resource_id}.update"
             )
+            target_resource_id = (
+                relationship.association_target_resource_id or relationship.target_resource_id
+            )
             target_delete_permission = (
                 PermissionRequirement.all_of(
-                    f"{builder.admin_id}.resources.{relationship.target_resource_id}.delete"
+                    f"{builder.admin_id}.resources.{target_resource_id}.delete"
                 )
                 if relationship.destructive_policy.permits_persistent_delete
                 else None
@@ -572,6 +575,13 @@ def _validate_plan05_definitions(
                     definition=relationship,
                     mutation_permission=mutation_permission,
                     target_delete_permission=target_delete_permission,
+                    target_create_permission=PermissionRequirement.all_of(
+                        f"{builder.admin_id}.resources.{target_resource_id}.create"
+                    ),
+                    target_update_permission=PermissionRequirement.all_of(
+                        f"{builder.admin_id}.resources.{target_resource_id}.update"
+                    ),
+                    ordering=relationship.ordering,
                     route_path=(
                         f"{resource.path}/{{identity}}/{RESOURCE_RELATIONSHIP_SEGMENT}/"
                         f"{relationship.relationship_id}"

@@ -47,6 +47,14 @@ class RelationshipDestructivePolicy(BaseModel):
         return self.allow_child_delete or self.allow_delete_orphan or self.allow_destructive_cascade
 
 
+class RelationshipOrderingDefinition(BaseModel):
+    """Explicit portable declaration of a writable relationship position field."""
+
+    model_config = ConfigDict(frozen=True)
+
+    position_field: MachineId
+
+
 class RelationshipDefinition(BaseModel):
     """One explicit admin relationship surface.
 
@@ -64,6 +72,7 @@ class RelationshipDefinition(BaseModel):
     cardinality: RelationshipCardinality
     nullable: bool = False
     ordered: bool = False
+    ordering: RelationshipOrderingDefinition | None = None
     self_referential: bool = False
     readable: bool = True
     edit_mode: RelationshipEditMode = RelationshipEditMode.READ_ONLY
@@ -102,6 +111,8 @@ class RelationshipDefinition(BaseModel):
             raise ValueError("association_target_resource_id requires an association object")
         if self.record_label_field is not None and self.record_label_resolver is not None:
             raise ValueError("Specify either record_label_field or record_label_resolver, not both")
+        if self.ordering is not None and not self.ordered:
+            raise ValueError("ordering requires ordered=True")
         return self
 
     @property
@@ -143,6 +154,8 @@ class RelationshipMetadata(BaseModel):
     cardinality: RelationshipCardinality
     nullable: bool
     ordered: bool
+    reorderable: bool = False
+    ordering_position_field: str | None = None
     self_referential: bool
     view_only: bool
     has_secondary: bool
@@ -162,3 +175,6 @@ class CompiledRelationship:
     mutation_permission: PermissionRequirement
     target_delete_permission: PermissionRequirement | None
     route_path: str
+    target_create_permission: PermissionRequirement | None = None
+    target_update_permission: PermissionRequirement | None = None
+    ordering: RelationshipOrderingDefinition | None = None

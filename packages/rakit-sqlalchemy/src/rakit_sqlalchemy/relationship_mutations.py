@@ -5,6 +5,7 @@ import json
 import secrets
 from collections.abc import Callable, Mapping
 from datetime import timedelta
+from typing import Any
 
 from rakit_core.concurrency import ConcurrencyTokenService, ConcurrencyVersionProvider
 from rakit_core.crypto import TokenService
@@ -20,14 +21,21 @@ from rakit_core.identity import (
     canonical_identity_payload,
     identity_from_canonical_payload,
 )
-from rakit_core.mutations import OperationAuthorization
+from rakit_core.mutations import OperationAuthorization, OperationAuthorizationSet
 from rakit_core.operations import OperationContext, current_operation_context
 from rakit_core.relationship_mutations import (
+    CreateRelated,
+    DeleteRelated,
+    LinkRelated,
     RelationshipCandidate,
     RelationshipChanged,
+    RelationshipChangePlan,
     RelationshipMutationKind,
     RelationshipMutationPlan,
     RelationshipMutationResult,
+    ReorderRelated,
+    UnlinkRelated,
+    UpdateRelated,
 )
 from rakit_core.relationships import CompiledRelationship, RelationshipCardinality, RelationshipKind
 from rakit_core.transactions import TransactionPolicy
@@ -89,6 +97,7 @@ class SQLAlchemyRelationshipMutationService:
         token_service: TokenService,
         concurrency_provider: ConcurrencyVersionProvider,
         idempotency_store: IdempotencyStore,
+        target_mutation_services: Mapping[str, Any] | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._parent_data_source = parent_data_source
@@ -98,6 +107,7 @@ class SQLAlchemyRelationshipMutationService:
         self._concurrency = ConcurrencyTokenService(token_service)
         self._concurrency_provider = concurrency_provider
         self._idempotency_store = idempotency_store
+        self._target_mutation_services = dict(target_mutation_services or {})
 
         if any(entry.source_resource_id != self._resource_id for entry in relationships):
             raise ValueError("Relationship mutation entries must share the parent resource")
@@ -166,6 +176,33 @@ class SQLAlchemyRelationshipMutationService:
                     "relationship_state_digest": digest,
                 },
             )
+
+    async def validate_parent_proof(
+        self,
+        change: RelationshipChangePlan,
+        parent_identity: RecordIdentity,
+        expected_parent_version: object,
+    ) -> None:
+        """Validate token identity/version before the root parent guard.
+
+        The relationship-state digest is deliberately rechecked only after the
+        database-backed guard is claimed by ``execute_in_uow``.
+        """
+
+        entry = self._entry(change.relationship_id)
+        if not change.concurrency_token:
+            raise self._conflict("A relationship concurrency token is required.")
+        self._concurrency.verify(
+            change.concurrency_token,
+            self._token_resource_id(entry),
+            parent_identity,
+            expected_parent_version,
+        )
+        base = self._concurrency.base_snapshot(
+            change.concurrency_token, self._token_resource_id(entry), parent_identity
+        )
+        if base.get("relationship_id") != change.relationship_id:
+            raise self._conflict("Relationship concurrency proof does not match the relationship.")
 
     async def execute(
         self,
@@ -292,6 +329,326 @@ class SQLAlchemyRelationshipMutationService:
         if receipt is None:
             raise RuntimeError("Relationship mutation did not prepare an idempotency receipt")
         await self._idempotency_store.complete(reservation, receipt)
+
+    async def execute_in_uow(
+        self,
+        uow: SQLAlchemyUnitOfWork,
+        *,
+        parent: object,
+        parent_identity: RecordIdentity,
+        change: RelationshipChangePlan,
+        authorizations: OperationAuthorizationSet,
+        expected_parent_version: object,
+    ) -> RelationshipMutationResult:
+        """Apply graph-owned relationship work without a nested root lifecycle."""
+
+        entry = self._entry(change.relationship_id)
+        context = self._require_composed_relationship_authorization(
+            entry, change, parent_identity, authorizations
+        )
+        if change.authorization_requirement != entry.mutation_permission:
+            raise RakitError(
+                code=ErrorCode.AUTH_FORBIDDEN,
+                message=(
+                    "Relationship mutation requirement does not match the compiled relationship."
+                ),
+                status_code=403,
+            )
+        await self._verify_change_concurrency(
+            uow.session, parent, entry, change, parent_identity, expected_parent_version
+        )
+        before = await self._current_target_identities(uow.session, parent, entry)
+        deleted_targets: list[RecordIdentity] = []
+        for step in change.steps:
+            if isinstance(step, CreateRelated):
+                target_service = self._target_mutation_service(entry)
+                if entry.target_create_permission is None:
+                    raise self._configuration_error(
+                        "Child create is not compiled for this relationship."
+                    )
+                child = await target_service.create_in_uow(
+                    uow,
+                    step.values,
+                    authorizations=authorizations,
+                    operation=f"{change.operation_id}:target-create",
+                    requirement=entry.target_create_permission,
+                )
+                identity = self._target_data_sources[self._target_resource_id(entry)].identity_for(
+                    child
+                )
+                await self._apply(
+                    uow.session,
+                    parent,
+                    entry,
+                    self._single_plan(
+                        change, parent_identity, RelationshipMutationKind.ADD, identity
+                    ),
+                    {self._identity_key(identity): child},
+                )
+            elif isinstance(step, LinkRelated):
+                targets = await self._resolve_targets(uow.session, entry, (step.identity,))
+                await self._apply(
+                    uow.session,
+                    parent,
+                    entry,
+                    self._single_plan(
+                        change, parent_identity, RelationshipMutationKind.ADD, step.identity
+                    ),
+                    targets,
+                )
+            elif isinstance(step, UnlinkRelated):
+                plan = self._single_plan(
+                    change, parent_identity, RelationshipMutationKind.REMOVE, step.identity
+                )
+                current = await self._current_target_identities(uow.session, parent, entry)
+                destructive = self._destructive_targets(entry, current, plan)
+                self._reject_unapproved_destructive_impact(entry, destructive)
+                if destructive:
+                    await self._verify_destructive_execution(
+                        uow,
+                        plan,
+                        entry,
+                        context,
+                        destructive,
+                        (authorizations.root, *authorizations.capabilities),
+                        await self._state_digest(uow.session, parent, entry),
+                    )
+                    deleted_targets.extend(destructive)
+                targets = await self._resolve_targets(uow.session, entry, (step.identity,))
+                await self._apply(uow.session, parent, entry, plan, targets)
+            elif isinstance(step, UpdateRelated):
+                await self._require_related_member(uow.session, parent, entry, step.identity)
+                target_service = self._target_mutation_service(entry)
+                if entry.target_update_permission is None:
+                    raise self._configuration_error(
+                        "Child update is not compiled for this relationship."
+                    )
+                await target_service.update_in_uow(
+                    uow,
+                    step.identity,
+                    step.values,
+                    concurrency_token=step.concurrency_token,
+                    authorizations=authorizations,
+                    operation=f"{change.operation_id}:target-update",
+                    requirement=entry.target_update_permission,
+                )
+            elif isinstance(step, DeleteRelated):
+                await self._require_related_member(uow.session, parent, entry, step.identity)
+                if not entry.definition.destructive_policy.allow_child_delete:
+                    raise RakitError(
+                        code=ErrorCode.VALIDATION_FAILED,
+                        message="Relationship policy does not permit child deletion.",
+                        status_code=422,
+                    )
+                if entry.target_delete_permission is None or not step.confirmation_token:
+                    raise RakitError(
+                        code=ErrorCode.AUTH_FORBIDDEN,
+                        message="Child deletion requires exact authorization and confirmation.",
+                        status_code=403,
+                    )
+                target_service = self._target_mutation_service(entry)
+                await target_service.delete_in_uow(
+                    uow,
+                    step.confirmation_token,
+                    identity=step.identity,
+                    authorizations=authorizations,
+                    operation=f"{change.operation_id}:target-delete",
+                    requirement=entry.target_delete_permission,
+                )
+                deleted_targets.append(step.identity)
+            elif isinstance(step, ReorderRelated):
+                await self._apply_reorder(uow.session, parent, entry, step)
+            else:  # pragma: no cover - discriminated core plan guards this branch.
+                raise self._configuration_error("Unsupported relationship graph step.")
+        await uow.session.flush()
+        after = await self._current_target_identities(uow.session, parent, entry)
+        before_keys = {self._identity_key(identity): identity for identity in before}
+        after_keys = {self._identity_key(identity): identity for identity in after}
+        added = tuple(identity for key, identity in after_keys.items() if key not in before_keys)
+        removed = tuple(identity for key, identity in before_keys.items() if key not in after_keys)
+        token = self._issue_concurrency_token(
+            parent, entry, parent_identity, await self._state_digest(uow.session, parent, entry)
+        )
+        result = RelationshipMutationResult(
+            parent_identity=parent_identity,
+            relationship_id=change.relationship_id,
+            kind=RelationshipMutationKind.UPDATE,
+            target_identities=after,
+            added_target_identities=added,
+            removed_target_identities=removed,
+            deleted_target_identities=tuple(deleted_targets),
+            concurrency_token=token,
+        )
+        if uow.event_publisher is not None:
+            uow.event_publisher.publish(
+                RelationshipChanged(
+                    parent_resource_id=entry.source_resource_id,
+                    parent_identity=parent_identity,
+                    relationship_id=change.relationship_id,
+                    kind=RelationshipMutationKind.UPDATE,
+                    added_target_identities=added,
+                    removed_target_identities=removed,
+                    deleted_target_identities=tuple(deleted_targets),
+                    operation_id=change.operation_id,
+                )
+            )
+        return result
+
+    def _require_composed_relationship_authorization(
+        self,
+        entry: CompiledRelationship,
+        change: RelationshipChangePlan,
+        parent_identity: RecordIdentity,
+        authorizations: OperationAuthorizationSet,
+    ) -> OperationContext:
+        context = current_operation_context()
+        root = authorizations.root
+        if (
+            context is None
+            or context.principal is None
+            or context.admin_id != root.admin_id
+            or context.principal.subject_id != root.principal_id
+            or context.resource_id != root.resource_id
+            or context.operation != root.operation
+            or context.permission_requirement != root.requirement
+        ):
+            raise RakitError(
+                code=ErrorCode.AUTH_FORBIDDEN,
+                message="Graph authorization does not match the active operation.",
+                status_code=403,
+            )
+        try:
+            authorizations.require(
+                resource_id=entry.source_resource_id,
+                operation=change.operation_id,
+                requirement=entry.mutation_permission,
+                target_identity=parent_identity,
+            )
+        except ValueError as exc:
+            raise RakitError(
+                code=ErrorCode.AUTH_FORBIDDEN,
+                message="Relationship mutation requires an exact authorization capability.",
+                status_code=403,
+            ) from exc
+        return context
+
+    async def _verify_change_concurrency(
+        self,
+        session: AsyncSession,
+        parent: object,
+        entry: CompiledRelationship,
+        change: RelationshipChangePlan,
+        parent_identity: RecordIdentity,
+        expected_parent_version: object,
+    ) -> None:
+        if not change.concurrency_token:
+            raise self._conflict("A relationship concurrency token is required.")
+        self._concurrency.verify(
+            change.concurrency_token,
+            self._token_resource_id(entry),
+            parent_identity,
+            expected_parent_version,
+        )
+        base = self._concurrency.base_snapshot(
+            change.concurrency_token, self._token_resource_id(entry), parent_identity
+        )
+        if base.get("relationship_id") != change.relationship_id or base.get(
+            "relationship_state_digest"
+        ) != await self._state_digest(session, parent, entry):
+            raise self._conflict("The relationship changed since this mutation was prepared.")
+
+    def _single_plan(
+        self,
+        change: RelationshipChangePlan,
+        parent_identity: RecordIdentity,
+        kind: RelationshipMutationKind,
+        identity: RecordIdentity,
+    ) -> RelationshipMutationPlan:
+        return RelationshipMutationPlan(
+            operation_id=change.operation_id,
+            parent_resource_id=self._resource_id,
+            parent_identity=parent_identity,
+            relationship_id=change.relationship_id,
+            kind=kind,
+            target_identities=(identity,),
+            authorization_requirement=change.authorization_requirement,
+            concurrency_token=change.concurrency_token,
+            destructive_confirmation=change.destructive_confirmation,
+        )
+
+    def _target_mutation_service(self, entry: CompiledRelationship) -> Any:
+        service = self._target_mutation_services.get(self._target_resource_id(entry))
+        if service is None:
+            raise self._configuration_error(
+                "Inline relationship mutation requires the target resource write service."
+            )
+        return service
+
+    async def _require_related_member(
+        self,
+        session: AsyncSession,
+        parent: object,
+        entry: CompiledRelationship,
+        identity: RecordIdentity,
+    ) -> None:
+        if self._identity_key(identity) not in {
+            self._identity_key(value)
+            for value in await self._current_target_identities(session, parent, entry)
+        }:
+            raise RakitError(
+                code=ErrorCode.RESOURCE_NOT_FOUND,
+                message="Resource was not found.",
+                status_code=404,
+            )
+
+    async def _apply_reorder(
+        self,
+        session: AsyncSession,
+        parent: object,
+        entry: CompiledRelationship,
+        step: ReorderRelated,
+    ) -> None:
+        ordering = entry.ordering
+        if ordering is None:
+            raise RakitError(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="Relationship is ordered but not safely reorderable.",
+                status_code=422,
+            )
+        if entry.definition.kind is not RelationshipKind.ONE_TO_MANY:
+            raise self._configuration_error(
+                "Only direct one-to-many relationships support reorder."
+            )
+        relationship_id = str(entry.definition.relationship_id)
+        await session.refresh(parent, attribute_names=[relationship_id])
+        current = getattr(parent, relationship_id)
+        target_source = self._target_data_sources[self._target_resource_id(entry)]
+        members = {
+            self._identity_key(target_source.identity_for(record)): record for record in current
+        }
+        desired = tuple(step.identities)
+        desired_keys = tuple(self._identity_key(identity) for identity in desired)
+        if len(desired_keys) != len(members) or set(desired_keys) != set(members):
+            raise RakitError(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="Reorder must contain every current relationship member exactly once.",
+                status_code=422,
+            )
+        offset = (
+            len(members)
+            + max((int(getattr(record, ordering.position_field)) for record in current), default=0)
+            + 1
+        )
+        for index, key in enumerate(desired_keys):
+            setattr(members[key], ordering.position_field, offset + index)
+        await session.flush()
+        for index, key in enumerate(desired_keys):
+            setattr(members[key], ordering.position_field, index)
+        await session.flush()
+
+    @staticmethod
+    def _configuration_error(message: str) -> RakitError:
+        return RakitError(code=ErrorCode.CONFIG_INVALID, message=message, status_code=500)
 
     @staticmethod
     def _receipt_for_result(

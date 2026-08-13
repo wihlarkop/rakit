@@ -9,7 +9,7 @@ from rakit_core.relationships import (
     RelationshipKind,
     RelationshipMetadata,
 )
-from sqlalchemy import Column, inspect
+from sqlalchemy import Column, Integer, inspect
 from sqlalchemy.orm import RelationshipProperty
 from sqlalchemy.schema import PrimaryKeyConstraint, UniqueConstraint
 
@@ -111,6 +111,25 @@ def _association_metadata(
     return True, scalar_fields, targets[0].key
 
 
+def _ordering_position_field(property_: RelationshipProperty[object]) -> str | None:
+    """Return only the narrow v1 writable ordering shape.
+
+    SQLAlchemy accepts arbitrary expressions here.  Reordering may only write
+    a single direct, ascending mapped target column; anything else stays
+    display-ordered but is deliberately not a persistence contract.
+    """
+
+    if property_.direction.name != "ONETOMANY" or property_.secondary is not None:
+        return None
+    order_by = property_.order_by
+    if not isinstance(order_by, tuple | list) or len(order_by) != 1:
+        return None
+    expression = order_by[0]
+    if not isinstance(expression, Column) or expression.table is not property_.mapper.local_table:
+        return None
+    return expression.key
+
+
 def inspect_relationships(model: type[object]) -> dict[str, RelationshipMetadata]:
     """Translate mapper relationships into backend-neutral structural facts."""
 
@@ -119,12 +138,15 @@ def inspect_relationships(model: type[object]) -> dict[str, RelationshipMetadata
     metadata: dict[str, RelationshipMetadata] = {}
     for property_ in mapper.relationships:
         eligible, association_fields, association_target = _association_metadata(property_)
+        position_field = _ordering_position_field(property_)
         metadata[property_.key] = RelationshipMetadata(
             relationship_id=property_.key,
             kind=_kind(property_),
             cardinality=_cardinality(property_),
             nullable=_nullable(property_),
             ordered=property_.order_by not in (False, None),
+            reorderable=position_field is not None,
+            ordering_position_field=position_field,
             self_referential=property_.mapper is mapper,
             view_only=property_.viewonly,
             has_secondary=property_.secondary is not None,
@@ -176,6 +198,28 @@ def validate_relationship_definition(
         raise _invalid_relationship(definition, "viewonly_relationship_not_writable")
     if definition.effective_writable and property_.lazy in {"dynamic", "write_only"}:
         raise _invalid_relationship(definition, "loader_strategy_not_writable")
+    if definition.ordering is not None:
+        field = definition.ordering.position_field
+        if (
+            definition.kind is not RelationshipKind.ONE_TO_MANY
+            or metadata.ordering_position_field != field
+            or property_.secondary is not None
+        ):
+            raise _invalid_relationship(definition, "ordering_persistence_unsupported")
+        attribute = property_.mapper.column_attrs.get(field)
+        if attribute is None or len(attribute.columns) != 1:
+            raise _invalid_relationship(definition, "ordering_position_field_invalid")
+        column = attribute.columns[0]
+        if (
+            not isinstance(column.type, Integer)
+            or column.nullable
+            or column.primary_key
+            or bool(column.foreign_keys)
+            or column.server_default is not None
+            or column.server_onupdate is not None
+            or column.computed is not None
+        ):
+            raise _invalid_relationship(definition, "ordering_position_field_unsafe")
     if definition.kind is RelationshipKind.MANY_TO_MANY and not metadata.has_secondary:
         raise _invalid_relationship(definition, "secondary_mapping_required")
     if definition.destructive_policy.allow_delete_orphan and not metadata.delete_orphan:

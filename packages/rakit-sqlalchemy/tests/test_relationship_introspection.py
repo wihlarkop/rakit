@@ -8,6 +8,7 @@ from rakit_core.relationships import (
     RelationshipDefinition,
     RelationshipEditMode,
     RelationshipKind,
+    RelationshipOrderingDefinition,
 )
 from rakit_sqlalchemy.datasource import SQLAlchemyDataSource
 from rakit_sqlalchemy.relationships import inspect_relationships, validate_relationship_definition
@@ -151,6 +152,24 @@ class RequiredProfile(Base):
     parent: Mapped[RequiredProfileParent] = relationship(back_populates="profile")
 
 
+class OrderedParent(Base):
+    __tablename__ = "relationship_ordered_parents"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    children: Mapped[list["OrderedChild"]] = relationship(
+        back_populates="parent", order_by="OrderedChild.position"
+    )
+
+
+class OrderedChild(Base):
+    __tablename__ = "relationship_ordered_children"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    parent_id: Mapped[int] = mapped_column(ForeignKey("relationship_ordered_parents.id"))
+    position: Mapped[int] = mapped_column()
+    parent: Mapped[OrderedParent] = relationship(back_populates="children")
+
+
 def test_mapper_relationships_are_classified_without_sqlalchemy_leakage() -> None:
     relationships = inspect_relationships(Order)
 
@@ -182,6 +201,41 @@ def test_reverse_one_to_one_does_not_inherit_the_child_fk_requiredness() -> None
     assert profile_parent.nullable is False
     assert parent_profile.kind is RelationshipKind.ONE_TO_ONE
     assert parent_profile.nullable is True
+
+
+def test_reorder_requires_an_explicit_safe_position_persistence_contract() -> None:
+    metadata = inspect_relationships(OrderedParent)["children"]
+    assert metadata.ordered is True
+    assert metadata.reorderable is True
+    assert metadata.ordering_position_field == "position"
+
+    definition = RelationshipDefinition(
+        relationship_id="children",
+        target_resource_id="children",
+        label="Children",
+        kind=RelationshipKind.ONE_TO_MANY,
+        cardinality=RelationshipCardinality.TO_MANY,
+        ordered=True,
+        ordering=RelationshipOrderingDefinition(position_field="position"),
+        edit_mode=RelationshipEditMode.INLINE,
+        writable=True,
+    )
+    validate_relationship_definition(
+        definition,
+        source_model=OrderedParent,
+        target_model=OrderedChild,
+    )
+
+    unsafe = definition.model_copy(
+        update={"ordering": RelationshipOrderingDefinition(position_field="parent_id")}
+    )
+    with pytest.raises(RakitError) as caught:
+        validate_relationship_definition(
+            unsafe,
+            source_model=OrderedParent,
+            target_model=OrderedChild,
+        )
+    assert caught.value.details["reason"] == "ordering_persistence_unsupported"
 
 
 def test_simple_association_object_requires_declared_scalar_fields_and_target() -> None:

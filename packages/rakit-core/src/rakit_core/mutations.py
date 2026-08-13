@@ -75,6 +75,49 @@ class OperationAuthorization:
         )
 
 
+@dataclass(frozen=True)
+class OperationAuthorizationSet:
+    """Exact, already-authorized capabilities for one composed mutation.
+
+    This is deliberately a capability *bundle*, not a second policy engine.
+    The request boundary establishes every member through the normal policy
+    path; nested graph work can then require the precise member it needs while
+    continuing to share the root :class:`OperationContext` and UoW.
+    """
+
+    root: OperationAuthorization
+    capabilities: tuple[OperationAuthorization, ...] = ()
+
+    def __post_init__(self) -> None:
+        all_capabilities = (self.root, *self.capabilities)
+        if any(
+            capability.admin_id != self.root.admin_id
+            or capability.principal_id != self.root.principal_id
+            for capability in all_capabilities
+        ):
+            raise ValueError("Operation authorization capabilities must share admin and principal")
+
+    def require(
+        self,
+        *,
+        resource_id: str,
+        operation: str,
+        requirement: PermissionRequirement,
+        target_identity: RecordIdentity | None = None,
+    ) -> OperationAuthorization:
+        """Return only an exactly matching trusted authorization decision."""
+
+        for capability in (self.root, *self.capabilities):
+            if (
+                capability.resource_id == resource_id
+                and capability.operation == operation
+                and capability.target_identity == target_identity
+                and capability.requirement == requirement
+            ):
+                return capability
+        raise ValueError("Exact operation authorization capability is missing")
+
+
 # Kept as an alias: existing CRUD signatures and public imports retain their
 # identity while Plan 05 can use the capability for a non-CRUD operation.
 MutationAuthorization = OperationAuthorization
@@ -157,6 +200,16 @@ class UpdateMutationPlan:
 class MutationResult:
     identity: RecordIdentity
     record: object
+
+
+@dataclass(frozen=True)
+class GraphMutationResult:
+    """Safe result of one parent mutation plus zero or more relationship changes."""
+
+    identity: RecordIdentity
+    record: object | None = None
+    relationship_results: tuple[object, ...] = ()
+    replayed: bool = False
 
 
 @dataclass(frozen=True)
