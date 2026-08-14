@@ -311,7 +311,7 @@ def test_compiles_plan05_definitions_routes_and_permission_metadata() -> None:
         "operations.resources.orders.update"
     )
     assert compiled_relationship.route_path == "/orders/{identity}/_relationships/customer"
-    assert any(route.path == "/orders/_actions/archive" for route in compiled.routes)
+    assert not any(route.path == "/orders/_actions/archive" for route in compiled.routes)
     assert compiled.compiled_actions[0].permission == PermissionRequirement.all_of(
         "operations.actions.archive.execute"
     )
@@ -321,6 +321,7 @@ def test_compiles_plan05_definitions_routes_and_permission_metadata() -> None:
     assert compiled.compiled_endpoints[0].permission == PermissionRequirement.all_of(
         "operations.endpoints.status.invoke"
     )
+    assert compiled.action_routes == ()
 
 
 def test_page_actions_have_explicit_page_ownership_and_compiled_routes() -> None:

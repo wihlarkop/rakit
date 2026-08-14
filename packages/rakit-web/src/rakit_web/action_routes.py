@@ -32,7 +32,6 @@ from rakit_core.actions import (
     ActionRendered,
     ActionResult,
     ActionScope,
-    ActionSet,
     ActionSuccess,
     ActionValidation,
     resolve_availability,
@@ -40,6 +39,7 @@ from rakit_core.actions import (
 )
 from rakit_core.concurrency import ConcurrencyTokenService
 from rakit_core.crypto import TokenService
+from rakit_core.definitions import CompiledActionDefinition, RouteDefinition
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.forms import FormIssue, FormSchema, FormValidationError
 from rakit_core.idempotency import IdempotencyStatus, IdempotencyStore, OperationReceipt
@@ -68,18 +68,23 @@ _MAX_ACTION_FIELDS = 500
 
 @dataclass(frozen=True)
 class ActionBinding:
-    """Web adapters for one owner's action set."""
+    """Web adapters for one owner's compiled action routes.
 
-    actions: ActionSet
-    scope: ActionScope
-    base_path: str
+    ``routes`` carries compiler-owned pairs: the neutral ``RouteDefinition``
+    (path, method contract, stable route name, owner) plus the compiled
+    action with its authoritative resolved permission.  Starlette
+    materialization invents no independent URL, method, permission, or
+    route-name grammar for actions.
+    """
+
+    routes: tuple[tuple[RouteDefinition, CompiledActionDefinition], ...]
     templates: Jinja2Templates
     codec: IdentityCodec
     verify_csrf: Callable[[Request], Awaitable[bool]]
     verify_submission_token: Callable[[Request], Awaitable[bool]]
     issue_submission_token: Callable[[Request], str]
     authorize_action: Callable[
-        [Request, ActionDefinition, RecordIdentity | None],
+        [Request, CompiledActionDefinition, RecordIdentity | None],
         Awaitable[OperationAuthorization | None],
     ]
     load_record: Callable[[RecordIdentity], Awaitable[object | None]] | None = None
@@ -92,19 +97,22 @@ class ActionBinding:
     label: str = "Actions"
 
     def __post_init__(self) -> None:
-        if not isinstance(self.scope, ActionScope):
-            raise ValueError("Action binding scope must be an ActionScope value")
-        for action in self.actions.actions:
-            if action.scope is not self.scope:
-                raise ValueError(f"Action {action.action_id!r} scope does not match its binding")
-            if self.scope is ActionScope.RECORD:
-                if "{identity}" not in self.base_path:
-                    raise ValueError("RECORD action bindings require an {identity} path")
-                if self.load_record is None:
-                    raise ValueError("RECORD action bindings require a scoped record loader")
-            elif "{identity}" in self.base_path:
+        for route, compiled_action in self.routes:
+            action = compiled_action.definition
+            if action.scope is ActionScope.BULK:
                 raise ValueError(
-                    f"{self.scope.value} action bindings must not contain {{identity}}"
+                    "BULK actions cannot be bound to routes until Task 5 selection exists"
+                )
+            if route.methods != ("GET", "POST"):
+                raise ValueError(f"Action route {route.route_name!r} must declare GET and POST")
+            if action.scope is ActionScope.RECORD:
+                if "{identity}" not in route.path:
+                    raise ValueError("RECORD action routes require an {identity} path")
+                if self.load_record is None:
+                    raise ValueError("RECORD action routes require a scoped record loader")
+            elif "{identity}" in route.path:
+                raise ValueError(
+                    f"{action.scope.value} action routes must not contain {{identity}}"
                 )
             if action.needs_confirmation and self.token_service is None:
                 raise ValueError(f"Action {action.action_id!r} requires confirmation token support")
@@ -114,10 +122,6 @@ class ActionBinding:
                 or self.record_version is None
             ):
                 raise ValueError(f"Action {action.action_id!r} requires concurrency support")
-            if action.scope is ActionScope.BULK:
-                raise ValueError(
-                    "BULK actions cannot be bound to routes until Task 5 selection exists"
-                )
 
 
 def _action_fingerprint(
@@ -309,17 +313,27 @@ def _rejected_response(request: Request, message: str, status_code: int) -> Resp
 
 
 def build_action_routes(binding: ActionBinding) -> list[Route]:
-    """Build the compiler-owned action route family for one binding."""
+    """Materialize compiler-owned action routes as Starlette ``Route`` objects.
+
+    One neutral ``RouteDefinition`` declaring GET + POST becomes one Starlette
+    ``Route`` with both methods, the compiler's stable route name, and the
+    compiler's exact path.  The web layer adds no independent URL grammar.
+    """
 
     routes: list[Route] = []
-    for action in binding.actions.actions:
-        if action.scope is ActionScope.BULK:
-            continue
-        path = f"{binding.base_path}/{action.action_id}"
+    for route_definition, compiled_action in binding.routes:
+        action = compiled_action.definition
+        path = route_definition.path
+        directory = path.rsplit("/", 1)[0]
 
-        async def action_get(request: Request, action: ActionDefinition = action) -> Response:
+        async def action_get(
+            request: Request,
+            action: ActionDefinition = action,
+            compiled_action: CompiledActionDefinition = compiled_action,
+            directory: str = directory,
+        ) -> Response:
             identity = _identity(binding, request, action)
-            authorization = await binding.authorize_action(request, action, identity)
+            authorization = await binding.authorize_action(request, compiled_action, identity)
             if authorization is None:
                 return _rejected_response(request, "Forbidden", 403)
             record = None
@@ -366,6 +380,7 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
                 issues=(),
                 concurrency_token=concurrency_token,
                 confirmation_token=confirmation_token,
+                directory=directory,
             )
             template = "actions/form.html" if action.needs_form else "actions/confirm.html"
             return binding.templates.TemplateResponse(
@@ -375,11 +390,16 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
                 headers={"Cache-Control": "no-store"},
             )
 
-        async def action_post(request: Request, action: ActionDefinition = action) -> Response:
+        async def action_post(
+            request: Request,
+            action: ActionDefinition = action,
+            compiled_action: CompiledActionDefinition = compiled_action,
+            directory: str = directory,
+        ) -> Response:
             if not await binding.verify_csrf(request):
                 return _rejected_response(request, "Invalid CSRF token", 403)
             identity = _identity(binding, request, action)
-            authorization = await binding.authorize_action(request, action, identity)
+            authorization = await binding.authorize_action(request, compiled_action, identity)
             if authorization is None:
                 return _rejected_response(request, "Forbidden", 403)
             record = None
@@ -423,6 +443,7 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
                         authorization,
                         submitted,
                         exc.state.issues,
+                        directory,
                     )
                 except ValueError:
                     return _rejected_response(request, "Invalid action input", 400)
@@ -453,7 +474,7 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
                     return _action_result_response(
                         request,
                         ActionSuccess(message="Action already completed"),
-                        fallback_location=_success_location(binding, request, action, identity),
+                        fallback_location=_success_location(binding, request, identity, directory),
                     )
                 if not reservation.claimed:
                     return _rejected_response(request, "Action is already in progress", 409)
@@ -539,6 +560,7 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
                     authorization,
                     submitted,
                     result.issues,
+                    directory,
                 )
             if isinstance(result, ActionRejected):
                 if reservation is not None:
@@ -547,7 +569,7 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
                 return _action_result_response(
                     request,
                     result,
-                    fallback_location=_success_location(binding, request, action, identity),
+                    fallback_location=_success_location(binding, request, identity, directory),
                 )
             if reservation is not None:
                 assert binding.idempotency_store is not None
@@ -557,29 +579,30 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
                         operation_id=str(reservation.reservation_id),
                         status="succeeded",
                         result_kind="action",
-                        redirect_route=_success_location(binding, request, action, identity),
+                        redirect_route=_success_location(binding, request, identity, directory),
                     ),
                 )
             return _action_result_response(
                 request,
                 result,
-                fallback_location=_success_location(binding, request, action, identity),
+                fallback_location=_success_location(binding, request, identity, directory),
             )
+
+        async def action_endpoint(
+            request: Request,
+            action: ActionDefinition = action,
+            compiled_action: CompiledActionDefinition = compiled_action,
+        ) -> Response:
+            if request.method == "POST":
+                return await action_post(request, action=action, compiled_action=compiled_action)
+            return await action_get(request, action=action, compiled_action=compiled_action)
 
         routes.append(
             Route(
                 path,
-                action_get,
-                methods=["GET"],
-                name=f"action:{binding.scope.value}:{action.action_id}:get",
-            )
-        )
-        routes.append(
-            Route(
-                path,
-                action_post,
-                methods=["POST"],
-                name=f"action:{binding.scope.value}:{action.action_id}:post",
+                action_endpoint,
+                methods=["GET", "POST"],
+                name=route_definition.route_name,
             )
         )
     return routes
@@ -628,6 +651,7 @@ def _template_args(
     issues: tuple[FormIssue, ...],
     concurrency_token: str | None,
     confirmation_token: str | None,
+    directory: str,
 ) -> dict[str, object]:
     return {
         "action": action,
@@ -639,7 +663,7 @@ def _template_args(
         "submission_token": binding.issue_submission_token(request),
         "concurrency_token": concurrency_token or "",
         "confirmation_token": confirmation_token or "",
-        "cancel_url": _cancel_url(binding, request, action, identity),
+        "cancel_url": _cancel_url(binding, request, identity, directory),
         "preview": preview,
     }
 
@@ -653,6 +677,7 @@ async def _validation_response(
     authorization: OperationAuthorization,
     submitted: Mapping[str, object],
     issues: tuple[FormIssue, ...],
+    directory: str,
 ) -> Response:
     context = _action_context(
         binding,
@@ -685,6 +710,7 @@ async def _validation_response(
         issues=issues,
         concurrency_token=concurrency_token,
         confirmation_token="",
+        directory=directory,
     )
     if request.headers.get("HX-Request") == "true":
         return binding.templates.TemplateResponse(
@@ -706,27 +732,25 @@ async def _validation_response(
 def _cancel_url(
     binding: ActionBinding,
     request: Request,
-    action: ActionDefinition,
     identity: RecordIdentity | None,
+    directory: str,
 ) -> str:
     if identity is None:
-        return mounted_path(request, binding.base_path)
-    return mounted_path(
-        request, binding.base_path.replace("{identity}", binding.codec.encode(identity))
-    )
+        return mounted_path(request, directory)
+    return mounted_path(request, directory.replace("{identity}", binding.codec.encode(identity)))
 
 
 def _success_location(
     binding: ActionBinding,
     request: Request,
-    action: ActionDefinition,
     identity: RecordIdentity | None,
+    directory: str,
 ) -> str:
     if identity is not None:
         return mounted_path(
-            request, binding.base_path.replace("{identity}", binding.codec.encode(identity))
+            request, directory.replace("{identity}", binding.codec.encode(identity))
         )
-    return mounted_path(request, binding.base_path)
+    return mounted_path(request, directory)
 
 
 __all__ = [

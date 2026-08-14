@@ -25,7 +25,7 @@ async def test_record_action_persists_through_real_mutation_service(
 ) -> None:
     app, _ = integration
     async with client_for(app) as client:
-        page = await client.get(f"/orders/{parent}/actions/approve")
+        page = await client.get(f"/orders/{parent}/_actions/approve")
         assert page.status_code == 200
         assert "Approve order" in page.text
         tokens = _tokens(page.text)
@@ -34,7 +34,7 @@ async def test_record_action_persists_through_real_mutation_service(
 
         recorder = CommitRecorder(app.engine)
         approved = await client.post(
-            f"/orders/{parent}/actions/approve",
+            f"/orders/{parent}/_actions/approve",
             content=urlencode(
                 [
                     ("csrf_token", "csrf"),
@@ -63,7 +63,7 @@ async def test_record_action_availability_rechecked_against_fresh_state(
 ) -> None:
     app, _ = integration
     async with client_for(app) as client:
-        page = await client.get(f"/orders/{parent}/actions/approve")
+        page = await client.get(f"/orders/{parent}/_actions/approve")
         tokens = _tokens(page.text)
         async with app.session_factory() as session:
             await session.execute(
@@ -74,7 +74,7 @@ async def test_record_action_availability_rechecked_against_fresh_state(
             await session.commit()
         recorder = CommitRecorder(app.engine)
         rejected = await client.post(
-            f"/orders/{parent}/actions/approve",
+            f"/orders/{parent}/_actions/approve",
             content=urlencode(
                 [
                     ("csrf_token", "csrf"),
@@ -104,7 +104,7 @@ async def test_record_action_stale_concurrency_never_persists(
 ) -> None:
     app, _ = integration
     async with client_for(app) as client:
-        page = await client.get(f"/orders/{parent}/actions/approve")
+        page = await client.get(f"/orders/{parent}/_actions/approve")
         tokens = _tokens(page.text)
         async with app.session_factory() as session:
             await session.execute(
@@ -113,7 +113,7 @@ async def test_record_action_stale_concurrency_never_persists(
             await session.commit()
         recorder = CommitRecorder(app.engine)
         rejected = await client.post(
-            f"/orders/{parent}/actions/approve",
+            f"/orders/{parent}/_actions/approve",
             content=urlencode(
                 [
                     ("csrf_token", "csrf"),

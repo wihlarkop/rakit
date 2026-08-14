@@ -2,7 +2,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from .actions import ActionDefinition
+from .actions import ActionDefinition, ActionScope
 from .compatibility import validate_official_package_versions
 from .datasource import DataSource
 from .definitions import (
@@ -382,6 +382,7 @@ class CompiledApplication:
     compiled_pages: tuple[CompiledPageDefinition, ...] = ()
     compiled_actions: tuple[CompiledActionDefinition, ...] = ()
     compiled_endpoints: tuple[CompiledEndpointDefinition, ...] = ()
+    action_routes: tuple[tuple[RouteDefinition, CompiledActionDefinition], ...] = ()
 
 
 def _invalid_datasource(resource_id: str, reason: str) -> RakitError:
@@ -657,7 +658,7 @@ def _application_definition_routes(builder: ApplicationBuilder) -> tuple[RouteDe
         routes.append(
             RouteDefinition(
                 route_name=f"page:{page.page_id}:action:{action.action_id}",
-                methods=("GET", "POST") if action.mutating else ("GET",),
+                methods=("GET", "POST"),
                 path=f"{page.path.rstrip('/')}/{RESOURCE_ACTION_SEGMENT}/{action.action_id}",
                 owner_id=page.page_id,
             )
@@ -711,7 +712,7 @@ def _resource_definition_routes(builder: ApplicationBuilder) -> tuple[RouteDefin
                 )
             )
     for action in builder.actions:
-        if action.scope.value == "page":
+        if action.scope.value in ("page", "bulk"):
             continue
         assert action.resource_id is not None
         resource = resources[action.resource_id]
@@ -726,12 +727,38 @@ def _resource_definition_routes(builder: ApplicationBuilder) -> tuple[RouteDefin
         routes.append(
             RouteDefinition(
                 route_name=route_name,
-                methods=("GET", "POST") if action.mutating else ("GET",),
+                methods=("GET", "POST"),
                 path=path,
                 owner_id=owner_id,
             )
         )
     return tuple(routes)
+
+
+def _action_route_pairs(
+    routes: tuple[RouteDefinition, ...],
+    compiled_actions: tuple[CompiledActionDefinition, ...],
+) -> tuple[tuple[RouteDefinition, CompiledActionDefinition], ...]:
+    """Pair each compiled action with its compiler-owned neutral route.
+
+    The route-name grammar ``{kind}:{owner}:action:{action_id}`` is
+    compiler-owned, and the owner is known from the action's scope, so the
+    pairing is exact: user routes can never be mistaken for action routes.
+    BULK actions are compiled as definitions but own no route until Task 5,
+    so they intentionally appear in no pair.
+    """
+    route_by_name = {route.route_name: route for route in routes}
+    pairs: list[tuple[RouteDefinition, CompiledActionDefinition]] = []
+    for compiled in compiled_actions:
+        action = compiled.definition
+        if action.scope is ActionScope.BULK:
+            continue
+        kind = "page" if action.scope is ActionScope.PAGE else "resource"
+        owner = action.page_id if action.scope is ActionScope.PAGE else action.resource_id
+        route = route_by_name.get(f"{kind}:{owner}:action:{action.action_id}")
+        if route is not None:
+            pairs.append((route, compiled))
+    return tuple(pairs)
 
 
 def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
@@ -825,4 +852,5 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
         compiled_pages,
         compiled_actions,
         compiled_endpoints,
+        _action_route_pairs(all_routes, compiled_actions),
     )

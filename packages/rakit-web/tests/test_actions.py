@@ -23,9 +23,18 @@ from rakit_core.actions import (
     action_permission_requirement,
 )
 from rakit_core.auth import Principal
+from rakit_core.compiler import ApplicationBuilder, compile_application
 from rakit_core.concurrency import ConcurrencyTokenService
 from rakit_core.config import SecretValue
 from rakit_core.crypto import TokenService
+from rakit_core.datasource import DataSourceCapabilities
+from rakit_core.definitions import (
+    CompiledActionDefinition,
+    PageDefinition,
+    ResourceDefinition,
+    ResourceFieldPolicy,
+    RouteDefinition,
+)
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.fields import FieldDefinition
 from rakit_core.forms import FormSchema
@@ -36,10 +45,73 @@ from rakit_core.idempotency import (
 )
 from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_core.mutations import OperationAuthorization
+from rakit_core.permissions import PermissionRequirement
+from rakit_core.query import PageResult, ResourceQuery
 from rakit_web.action_routes import ActionBinding, build_action_routes
 from rakit_web.resource_routes import build_templates
 from starlette.applications import Starlette
 from starlette.requests import Request
+
+
+class _CompileDataSource:
+    capabilities = DataSourceCapabilities(read=True)
+    fields = ("id", "name")
+    identity_fields = ("id",)
+
+    async def list(self, query: ResourceQuery) -> PageResult:  # pragma: no cover
+        raise AssertionError
+
+    async def count(self, query: ResourceQuery) -> int:  # pragma: no cover
+        raise AssertionError
+
+    async def detail(self, identity: RecordIdentity) -> object:  # pragma: no cover
+        raise AssertionError
+
+
+def _compiled_action_routes() -> tuple[tuple[RouteDefinition, CompiledActionDefinition], ...]:
+    """Compile a small app and return the compiler-owned action route pairs."""
+    builder = ApplicationBuilder(admin_id="ops")
+    builder.add_resource(
+        ResourceDefinition(
+            resource_id="orders",
+            path="/orders",
+            label="Orders",
+            singular_label="Order",
+            field_policy=ResourceFieldPolicy(list_fields=("id",), detail_fields=("id",)),
+        ),
+        _CompileDataSource(),
+    )
+    builder.add_page(PageDefinition(page_id="report", path="/reports", label="Report"))
+    builder.add_action(
+        ActionDefinition(
+            action_id="export",
+            label="Export orders",
+            scope=ActionScope.RESOURCE,
+            resource_id="orders",
+            permission=action_permission_requirement("export", admin_id="ops"),
+            executor=DomainActionExecutor(lambda _context: ActionSuccess()),
+        )
+    )
+    builder.add_action(
+        ActionDefinition(
+            action_id="approve",
+            label="Approve order",
+            scope=ActionScope.RECORD,
+            resource_id="orders",
+            executor=DomainActionExecutor(lambda _context: ActionSuccess()),
+        )
+    )
+    builder.add_action(
+        ActionDefinition(
+            action_id="refresh",
+            label="Refresh indexes",
+            scope=ActionScope.PAGE,
+            page_id="report",
+            permission=action_permission_requirement("refresh", admin_id="ops"),
+            executor=DomainActionExecutor(lambda _context: ActionSuccess()),
+        )
+    )
+    return compile_application(builder).action_routes
 
 
 class MemoryIdempotencyStore:
@@ -300,10 +372,14 @@ class ActionHarness:
         return ActionAvailabilityDecision.available()
 
     async def authorize(
-        self, request: Request, action: ActionDefinition, identity: RecordIdentity | None
+        self,
+        request: Request,
+        compiled_action: CompiledActionDefinition,
+        identity: RecordIdentity | None,
     ) -> OperationAuthorization | None:
+        action = compiled_action.definition
         active = cast(Principal, request.scope.get("state", {}).get("principal"))
-        if active is None or action.permission is None or not action.permission.matches(active):
+        if active is None or not compiled_action.permission.matches(active):
             return None
         assert active.subject_id is not None
         return OperationAuthorization.for_requirement(
@@ -313,7 +389,7 @@ class ActionHarness:
             else "admin",
             operation=("update" if action.action_id == "approve" else f"action:{action.action_id}"),
             principal_id=active.subject_id,
-            requirement=action.permission,
+            requirement=compiled_action.permission,
             target_identity=identity,
         )
 
@@ -327,20 +403,37 @@ class ActionHarness:
             return True
 
         bindings = []
-        for scope, base_path in (
-            (ActionScope.RECORD, "/orders/{identity}/actions"),
-            (ActionScope.RESOURCE, "/orders/actions"),
-            (ActionScope.PAGE, "/admin/actions"),
+        for scope, directory, owner in (
+            (ActionScope.RECORD, "/orders/{identity}/_actions", "orders"),
+            (ActionScope.RESOURCE, "/orders/_actions", "orders"),
+            (ActionScope.PAGE, "/admin/_actions", "admin"),
         ):
+            actions = tuple(
+                action for action in self.definitions().actions if action.scope is scope
+            )
+            kind = "resource" if scope in (ActionScope.RECORD, ActionScope.RESOURCE) else "page"
+            routes = tuple(
+                (
+                    RouteDefinition(
+                        route_name=f"{kind}:{owner}:action:{action.action_id}",
+                        methods=("GET", "POST"),
+                        path=f"{directory}/{action.action_id}",
+                        owner_id=owner,
+                    ),
+                    CompiledActionDefinition(
+                        definition=action,
+                        permission=(
+                            action.permission
+                            if action.permission is not None
+                            else action_permission_requirement(action.action_id, admin_id="ops")
+                        ),
+                    ),
+                )
+                for action in actions
+            )
             bindings.append(
                 ActionBinding(
-                    actions=ActionSet(
-                        actions=tuple(
-                            action for action in self.definitions().actions if action.scope is scope
-                        )
-                    ),
-                    scope=scope,
-                    base_path=base_path,
+                    routes=routes,
                     templates=build_templates(()),
                     codec=codec,
                     verify_csrf=allow,
@@ -426,11 +519,11 @@ async def test_available_action_renders_and_executes(
     app = harness.build()
     parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
     async with _client(app) as client:
-        tokens = await _open_action(client, f"/orders/{parent}/actions/approve")
+        tokens = await _open_action(client, f"/orders/{parent}/_actions/approve")
         assert 'name="submission_token"' in str(tokens.keys()) or "submission_token" in tokens
         assert "concurrency_token" in tokens
         approved = await client.post(
-            f"/orders/{parent}/actions/approve",
+            f"/orders/{parent}/_actions/approve",
             content=urlencode(
                 [
                     ("csrf_token", "csrf"),
@@ -454,11 +547,11 @@ async def test_availability_rechecked_on_post_after_external_change(
     app = harness.build()
     parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
     async with _client(app) as client:
-        tokens = await _open_action(client, f"/orders/{parent}/actions/approve")
+        tokens = await _open_action(client, f"/orders/{parent}/_actions/approve")
         harness.store.record(1).status = "cancelled"
         harness.store.record(1).version += 1
         rejected = await client.post(
-            f"/orders/{parent}/actions/approve",
+            f"/orders/{parent}/_actions/approve",
             content=urlencode(
                 [
                     ("csrf_token", "csrf"),
@@ -484,14 +577,14 @@ async def test_disabled_action_renders_non_executable_and_rejects_post(
     parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
     harness.store.record(1).status = "cancelled"
     async with _client(app) as client:
-        page = await client.get(f"/orders/{parent}/actions/approve")
+        page = await client.get(f"/orders/{parent}/_actions/approve")
         assert page.status_code == 200
         assert "currently unavailable" in page.text
         assert "Order is not pending" in page.text
         assert 'type="submit"' not in page.text
 
         rejected = await client.post(
-            f"/orders/{parent}/actions/approve",
+            f"/orders/{parent}/_actions/approve",
             content=urlencode([("csrf_token", "csrf"), ("submission_token", "x")]),
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             follow_redirects=False,
@@ -507,10 +600,10 @@ async def test_hidden_action_is_omitted_and_direct_access_fails_closed(
 ) -> None:
     app = harness.build()
     async with _client(app) as client:
-        page = await client.get("/orders/actions/audit")
+        page = await client.get("/orders/_actions/audit")
         assert page.status_code == 404
         rejected = await client.post(
-            "/orders/actions/audit",
+            "/orders/_actions/audit",
             content=urlencode([("csrf_token", "csrf"), ("submission_token", "x")]),
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             follow_redirects=False,
@@ -525,10 +618,10 @@ async def test_authorization_is_independent_from_availability(
     app = harness.build(subject="reader")
     parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
     async with _client(app) as client:
-        page = await client.get(f"/orders/{parent}/actions/approve")
+        page = await client.get(f"/orders/{parent}/_actions/approve")
         assert page.status_code == 403
         rejected = await client.post(
-            f"/orders/{parent}/actions/approve",
+            f"/orders/{parent}/_actions/approve",
             content=urlencode([("csrf_token", "csrf"), ("submission_token", "x")]),
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             follow_redirects=False,
@@ -544,10 +637,10 @@ async def test_off_scope_record_is_rejected_without_handler(
     app = harness.build()
     hidden_parent = IdentityCodec().encode(RecordIdentity(values={"id": 3}))
     async with _client(app) as client:
-        page = await client.get(f"/orders/{hidden_parent}/actions/approve")
+        page = await client.get(f"/orders/{hidden_parent}/_actions/approve")
         assert page.status_code == 404
         rejected = await client.post(
-            f"/orders/{hidden_parent}/actions/approve",
+            f"/orders/{hidden_parent}/_actions/approve",
             content=urlencode([("csrf_token", "csrf"), ("submission_token", "x")]),
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             follow_redirects=False,
@@ -563,10 +656,10 @@ async def test_typed_input_valid_invalid_unknown_and_preserved(
     app = harness.build()
     parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
     async with _client(app) as client:
-        tokens = await _open_action(client, f"/orders/{parent}/actions/archive")
+        tokens = await _open_action(client, f"/orders/{parent}/_actions/archive")
 
         invalid = await client.post(
-            f"/orders/{parent}/actions/archive",
+            f"/orders/{parent}/_actions/archive",
             content=urlencode(
                 [
                     ("csrf_token", "csrf"),
@@ -583,7 +676,7 @@ async def test_typed_input_valid_invalid_unknown_and_preserved(
         assert harness.archive_calls == 0
 
         unknown = await client.post(
-            f"/orders/{parent}/actions/archive",
+            f"/orders/{parent}/_actions/archive",
             content=urlencode(
                 [
                     ("csrf_token", "csrf"),
@@ -599,7 +692,7 @@ async def test_typed_input_valid_invalid_unknown_and_preserved(
         assert harness.archive_calls == 0
 
         saved = await client.post(
-            f"/orders/{parent}/actions/archive",
+            f"/orders/{parent}/_actions/archive",
             content=urlencode(
                 [
                     ("csrf_token", "csrf"),
@@ -622,9 +715,9 @@ async def test_preview_and_confirmation_are_non_persisting_and_required(
     app = harness.build()
     parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
     async with _client(app) as client:
-        tokens = await _open_action(client, f"/orders/{parent}/actions/purge")
-        assert "Purge order?" in (await client.get(f"/orders/{parent}/actions/purge")).text
-        page = await client.get(f"/orders/{parent}/actions/purge")
+        tokens = await _open_action(client, f"/orders/{parent}/_actions/purge")
+        assert "Purge order?" in (await client.get(f"/orders/{parent}/_actions/purge")).text
+        page = await client.get(f"/orders/{parent}/_actions/purge")
         assert "1 order record removed." in page.text
         assert "confirmation_token" in tokens
         assert "concurrency_token" in tokens
@@ -632,7 +725,7 @@ async def test_preview_and_confirmation_are_non_persisting_and_required(
         assert harness.store.record(1).purged is False
 
         missing = await client.post(
-            f"/orders/{parent}/actions/purge",
+            f"/orders/{parent}/_actions/purge",
             content=urlencode(
                 [
                     ("csrf_token", "csrf"),
@@ -645,7 +738,7 @@ async def test_preview_and_confirmation_are_non_persisting_and_required(
         )
         assert missing.status_code == 409
         forged = await client.post(
-            f"/orders/{parent}/actions/purge",
+            f"/orders/{parent}/_actions/purge",
             content=urlencode(
                 [
                     ("csrf_token", "csrf"),
@@ -661,7 +754,7 @@ async def test_preview_and_confirmation_are_non_persisting_and_required(
         assert harness.purge_calls == 0
 
         confirmed = await client.post(
-            f"/orders/{parent}/actions/purge",
+            f"/orders/{parent}/_actions/purge",
             content=urlencode(
                 [
                     ("csrf_token", "csrf"),
@@ -685,11 +778,11 @@ async def test_confirmation_does_not_bypass_post_rechecks(
     app = harness.build()
     parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
     async with _client(app) as client:
-        tokens = await _open_action(client, f"/orders/{parent}/actions/purge")
+        tokens = await _open_action(client, f"/orders/{parent}/_actions/purge")
         harness.store.record(1).purged = True
         harness.store.record(1).version += 1
         rejected = await client.post(
-            f"/orders/{parent}/actions/purge",
+            f"/orders/{parent}/_actions/purge",
             content=urlencode(
                 [
                     ("csrf_token", "csrf"),
@@ -712,10 +805,10 @@ async def test_stale_concurrency_is_rejected_before_execution(
     app = harness.build()
     parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
     async with _client(app) as client:
-        tokens = await _open_action(client, f"/orders/{parent}/actions/approve")
+        tokens = await _open_action(client, f"/orders/{parent}/_actions/approve")
         harness.store.record(1).version += 1
         rejected = await client.post(
-            f"/orders/{parent}/actions/approve",
+            f"/orders/{parent}/_actions/approve",
             content=urlencode(
                 [
                     ("csrf_token", "csrf"),
@@ -738,7 +831,7 @@ async def test_idempotent_replay_and_payload_mismatch(
     app = harness.build()
     parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
     async with _client(app) as client:
-        tokens = await _open_action(client, f"/orders/{parent}/actions/approve")
+        tokens = await _open_action(client, f"/orders/{parent}/_actions/approve")
         shared = "same-submission-token"
         payload = [
             ("csrf_token", "csrf"),
@@ -746,13 +839,13 @@ async def test_idempotent_replay_and_payload_mismatch(
             ("concurrency_token", tokens["concurrency_token"]),
         ]
         first = await client.post(
-            f"/orders/{parent}/actions/approve",
+            f"/orders/{parent}/_actions/approve",
             content=urlencode(payload),
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             follow_redirects=False,
         )
         second = await client.post(
-            f"/orders/{parent}/actions/approve",
+            f"/orders/{parent}/_actions/approve",
             content=urlencode(payload),
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             follow_redirects=False,
@@ -773,7 +866,7 @@ async def test_same_submission_token_with_different_payload_is_rejected(
     async with _client(app) as client:
         shared = "shared-token"
         first = await client.post(
-            f"/orders/{parent}/actions/archive",
+            f"/orders/{parent}/_actions/archive",
             content=urlencode(
                 [
                     ("csrf_token", "csrf"),
@@ -785,7 +878,7 @@ async def test_same_submission_token_with_different_payload_is_rejected(
             follow_redirects=False,
         )
         mismatch = await client.post(
-            f"/orders/{parent}/actions/archive",
+            f"/orders/{parent}/_actions/archive",
             content=urlencode(
                 [
                     ("csrf_token", "csrf"),
@@ -808,11 +901,11 @@ async def test_page_and_resource_scope_actions_execute(
 ) -> None:
     app = harness.build()
     async with _client(app) as client:
-        rebuild_tokens = await _open_action(client, "/admin/actions/rebuild")
-        page = await client.get("/admin/actions/rebuild")
+        rebuild_tokens = await _open_action(client, "/admin/_actions/rebuild")
+        page = await client.get("/admin/_actions/rebuild")
         assert page.status_code == 200
         rebuilt = await client.post(
-            "/admin/actions/rebuild",
+            "/admin/_actions/rebuild",
             content=urlencode(
                 [
                     ("csrf_token", "csrf"),
@@ -822,9 +915,9 @@ async def test_page_and_resource_scope_actions_execute(
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             follow_redirects=False,
         )
-        export_tokens = await _open_action(client, "/orders/actions/export")
+        export_tokens = await _open_action(client, "/orders/_actions/export")
         exported = await client.post(
-            "/orders/actions/export",
+            "/orders/_actions/export",
             content=urlencode(
                 [
                     ("csrf_token", "csrf"),
@@ -848,9 +941,9 @@ async def test_htmx_flow_uses_same_pipeline_with_fragment_results(
     app = harness.build()
     parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
     async with _client(app) as client:
-        tokens = await _open_action(client, f"/orders/{parent}/actions/approve")
+        tokens = await _open_action(client, f"/orders/{parent}/_actions/approve")
         approved = await client.post(
-            f"/orders/{parent}/actions/approve",
+            f"/orders/{parent}/_actions/approve",
             content=urlencode(
                 [
                     ("csrf_token", "csrf"),
@@ -889,9 +982,20 @@ async def test_execution_rejection_does_not_mutate_state(
         ),
     )
     binding = ActionBinding(
-        actions=ActionSet(actions=(rejecting,)),
-        scope=ActionScope.RECORD,
-        base_path="/orders/{identity}/actions",
+        routes=(
+            (
+                RouteDefinition(
+                    route_name="resource:orders:action:fail",
+                    methods=("GET", "POST"),
+                    path="/orders/{identity}/_actions/fail",
+                    owner_id="orders",
+                ),
+                CompiledActionDefinition(
+                    definition=rejecting,
+                    permission=cast(PermissionRequirement, rejecting.permission),
+                ),
+            ),
+        ),
         templates=build_templates(()),
         codec=IdentityCodec(),
         verify_csrf=async_true,
@@ -908,10 +1012,10 @@ async def test_execution_rejection_does_not_mutate_state(
     app = _PrincipalMiddleware(Starlette(routes=build_action_routes(binding)))
     parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
     async with _client(app) as client:
-        page = await client.get(f"/orders/{parent}/actions/fail")
+        page = await client.get(f"/orders/{parent}/_actions/fail")
         tokens = _form_values(page.text)
         rejected = await client.post(
-            f"/orders/{parent}/actions/fail",
+            f"/orders/{parent}/_actions/fail",
             content=urlencode(
                 [
                     ("csrf_token", "csrf"),
@@ -948,9 +1052,20 @@ async def test_bulk_scope_is_definition_only_and_binding_fails_closed(
 
     with pytest.raises(ValueError, match="Task 5"):
         ActionBinding(
-            actions=ActionSet(actions=(action,)),
-            scope=ActionScope.BULK,
-            base_path="/orders/actions",
+            routes=(
+                (
+                    RouteDefinition(
+                        route_name="resource:orders:action:bulk_archive",
+                        methods=("GET", "POST"),
+                        path="/orders/_actions/bulk_archive",
+                        owner_id="orders",
+                    ),
+                    CompiledActionDefinition(
+                        definition=action,
+                        permission=cast(PermissionRequirement, action.permission),
+                    ),
+                ),
+            ),
             templates=build_templates(()),
             codec=IdentityCodec(),
             verify_csrf=async_true,
@@ -988,3 +1103,119 @@ async def test_duplicate_action_ids_are_rejected() -> None:
                 ),
             )
         )
+
+
+@pytest.mark.anyio
+async def test_action_routes_materialize_exactly_the_compiler_contract(
+    harness: ActionHarness,
+) -> None:
+    async def async_true(_request: object) -> bool:
+        return True
+
+    pairs = _compiled_action_routes()
+    binding = ActionBinding(
+        routes=pairs,
+        templates=build_templates(()),
+        codec=IdentityCodec(),
+        verify_csrf=async_true,
+        verify_submission_token=async_true,
+        issue_submission_token=lambda _request: uuid4().hex,
+        authorize_action=harness.authorize,
+        load_record=harness.load_record,
+        record_version=lambda record: cast(OrderRecord, record).version,
+        concurrency=harness.concurrency,
+        concurrency_resource_id="orders",
+        token_service=harness.token_service,
+        idempotency_store=harness.idempotency,
+    )
+
+    materialized = build_action_routes(binding)
+
+    assert len(materialized) == len(pairs)
+    assert {route.path for route in materialized} == {
+        "/orders/_actions/export",
+        "/orders/{identity}/_actions/approve",
+        "/reports/_actions/refresh",
+    }
+    assert {(route.path, route.name) for route in materialized} == {
+        (route.path, route.route_name) for route, _ in pairs
+    }
+    assert all({"GET", "POST"} <= set(route.methods or ()) for route in materialized)
+
+
+@pytest.mark.anyio
+async def test_web_boundary_uses_the_exact_compiled_permission(
+    harness: ActionHarness,
+) -> None:
+    recorded: list[CompiledActionDefinition] = []
+
+    async def recording_authorize(
+        request: Request,
+        compiled_action: CompiledActionDefinition,
+        identity: RecordIdentity | None,
+    ) -> OperationAuthorization | None:
+        recorded.append(compiled_action)
+        return await harness.authorize(request, compiled_action, identity)
+
+    async def async_true(_request: object) -> bool:
+        return True
+
+    binding = ActionBinding(
+        routes=_compiled_action_routes(),
+        templates=build_templates(()),
+        codec=IdentityCodec(),
+        verify_csrf=async_true,
+        verify_submission_token=async_true,
+        issue_submission_token=lambda _request: uuid4().hex,
+        authorize_action=recording_authorize,
+        load_record=harness.load_record,
+        record_version=lambda record: cast(OrderRecord, record).version,
+        concurrency=harness.concurrency,
+        concurrency_resource_id="orders",
+        token_service=harness.token_service,
+        idempotency_store=harness.idempotency,
+    )
+    app = _PrincipalMiddleware(Starlette(routes=build_action_routes(binding)))
+    parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    async with _client(app) as client:
+        export = await client.get("/orders/_actions/export")
+        assert export.status_code == 200
+        approve = await client.get(f"/orders/{parent}/_actions/approve")
+        assert approve.status_code == 200
+
+    assert {compiled.definition.action_id for compiled in recorded} == {"export", "approve"}
+    by_id = {compiled.definition.action_id: compiled for compiled in recorded}
+    assert by_id["export"].permission == PermissionRequirement.all_of("ops.actions.export.execute")
+    assert by_id["approve"].permission == PermissionRequirement.all_of(
+        "ops.actions.approve.execute"
+    )
+
+
+@pytest.mark.anyio
+async def test_get_never_executes_a_non_mutating_action(
+    harness: ActionHarness,
+) -> None:
+    app = harness.build()
+    parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    async with _client(app) as client:
+        first = await client.get(f"/orders/{parent}/_actions/archive")
+        assert first.status_code == 200
+        second = await client.get(f"/orders/{parent}/_actions/archive")
+        assert second.status_code == 200
+        assert harness.archive_calls == 0
+
+        tokens = await _open_action(client, f"/orders/{parent}/_actions/archive")
+        executed = await client.post(
+            f"/orders/{parent}/_actions/archive",
+            content=urlencode(
+                [
+                    ("csrf_token", "csrf"),
+                    ("submission_token", tokens["submission_token"]),
+                    ("reason", "Duplicate"),
+                ]
+            ),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+    assert executed.status_code == 303
+    assert harness.archive_calls == 1

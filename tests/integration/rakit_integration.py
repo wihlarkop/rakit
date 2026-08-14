@@ -20,7 +20,6 @@ from rakit_core.actions import (
     ActionContext,
     ActionDefinition,
     ActionScope,
-    ActionSet,
     ActionSuccess,
     PreparedMutationExecutor,
 )
@@ -28,7 +27,11 @@ from rakit_core.auth import Principal
 from rakit_core.concurrency import AttributeVersionProvider, ConcurrencyTokenService
 from rakit_core.config import SecretValue
 from rakit_core.crypto import TokenService
-from rakit_core.definitions import ResourceFieldPolicy
+from rakit_core.definitions import (
+    CompiledActionDefinition,
+    ResourceFieldPolicy,
+    RouteDefinition,
+)
 from rakit_core.fields import FieldDefinition
 from rakit_core.forms import FieldLayout, FormLayout, FormSchema, RelationshipPanel
 from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, OperationReceipt
@@ -744,7 +747,7 @@ def build_app(factory: async_sessionmaker[AsyncSession]) -> IntegrationApp:
 
     async def authorize_action(
         request: Request,
-        action: ActionDefinition,
+        compiled_action: CompiledActionDefinition,
         identity: RecordIdentity | None,
     ) -> OperationAuthorization | None:
         principal = request.scope.get("state", {}).get("principal")
@@ -755,28 +758,35 @@ def build_app(factory: async_sessionmaker[AsyncSession]) -> IntegrationApp:
             resource_id="orders",
             operation="update",
             principal_id=_PRINCIPAL_ID,
-            requirement=_REQ_ORDERS_UPDATE,
+            requirement=compiled_action.permission,
             target_identity=identity,
         )
 
     action_binding = ActionBinding(
-        actions=ActionSet(
-            actions=(
-                ActionDefinition(
-                    action_id="approve",
-                    label="Approve order",
-                    scope=ActionScope.RECORD,
-                    resource_id="orders",
-                    permission=_REQ_ORDERS_UPDATE,
-                    description="Approve this order for fulfilment.",
-                    availability=approve_availability,
-                    executor=PreparedMutationExecutor(approve_prepare, approve_commit),
-                    requires_concurrency=True,
+        routes=(
+            (
+                RouteDefinition(
+                    route_name="resource:orders:action:approve",
+                    methods=("GET", "POST"),
+                    path="/orders/{identity}/_actions/approve",
+                    owner_id="orders",
                 ),
-            )
+                CompiledActionDefinition(
+                    definition=ActionDefinition(
+                        action_id="approve",
+                        label="Approve order",
+                        scope=ActionScope.RECORD,
+                        resource_id="orders",
+                        permission=_REQ_ORDERS_UPDATE,
+                        description="Approve this order for fulfilment.",
+                        availability=approve_availability,
+                        executor=PreparedMutationExecutor(approve_prepare, approve_commit),
+                        requires_concurrency=True,
+                    ),
+                    permission=_REQ_ORDERS_UPDATE,
+                ),
+            ),
         ),
-        scope=ActionScope.RECORD,
-        base_path="/orders/{identity}/actions",
         templates=build_templates(()),
         codec=codec,
         verify_csrf=_allow,
