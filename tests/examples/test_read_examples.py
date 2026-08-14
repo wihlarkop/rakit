@@ -16,6 +16,7 @@ import httpx
 import pytest
 from rakit import Admin
 from rakit_core.identity import IdentityCodec, RecordIdentity
+from rakit_core.relationship_mutations import DeleteRelated
 from rakit_web.relationship_routes import relationship_prefix
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -685,6 +686,182 @@ async def test_non_htmx_destructive_clear_confirm_creates_pending_clear() -> Non
         saved = await client.post(
             f"/orders/{parent}/edit",
             content=urlencode(parsed_form(confirmed.text)),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+
+    assert saved.status_code == 303
+
+
+@pytest.mark.anyio
+async def test_delete_cancel_restores_state_and_preserves_unrelated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = importlib.import_module("examples.fastapi_sqlalchemy.relationship_review")
+    parent = "eyJpZCI6MTB9"
+    codec = IdentityCodec()
+    child_a = codec.encode(RecordIdentity(values={"id": 21}))
+    child_b = codec.encode(RecordIdentity(values={"id": 22}))
+    prefix = relationship_prefix("items")
+    service = cast(Any, module.binding.mutation_service)
+    calls: list[dict[str, object]] = []
+    original_update_graph = service.update_graph
+
+    async def tracked_update_graph(*args: object, **kwargs: object) -> object:
+        calls.append(kwargs)
+        return await original_update_graph(*args, **kwargs)
+
+    monkeypatch.setattr(service, "update_graph", tracked_update_graph)
+
+    def parsed_form(text: str) -> list[tuple[str, str]]:
+        form_parser = _RenderedFormParser()
+        form_parser.feed(text)
+        return form_parser.controls
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=module.app), base_url="http://test"
+    ) as client:
+        edit = await client.get(f"/orders/{parent}/edit")
+        parser = _RenderedFormParser()
+        parser.feed(edit.text)
+        # Unrelated pre-preview FormState: delete B is already pending.
+        state = [
+            *parser.controls,
+            (f"{prefix}delete_intent__{child_b}", "true"),
+            (f"{prefix}delete__{child_b}", "signed-b"),
+        ]
+        preview = await client.post(
+            f"/orders/{parent}/_relationships/items/preview",
+            content=urlencode([*state, (f"{prefix}delete_preview", child_a)]),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        assert preview.status_code == 200
+        cancel_payload = [*parsed_form(preview.text), ("cancel", "cancel")]
+        cancelled = await client.post(
+            f"/orders/{parent}/_relationships/items/preview/confirm",
+            content=urlencode(cancel_payload),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        assert cancelled.status_code == 200
+        after = dict(parsed_form(cancelled.text))
+        assert f"{prefix}delete_intent__{child_a}" not in after
+        assert f"{prefix}delete__{child_a}" not in after
+        assert f"{prefix}delete_intent__{child_b}" in after
+        assert f"{prefix}delete__{child_b}" in after
+
+        saved = await client.post(
+            f"/orders/{parent}/edit",
+            content=urlencode(parsed_form(cancelled.text)),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+
+    assert saved.status_code == 303
+    assert calls
+    assert not any(
+        isinstance(step, DeleteRelated) and step.identity.values == {"id": 21}
+        for change in cast(Any, calls[0]["relationship_changes"])
+        for step in change.steps
+    )
+
+
+@pytest.mark.anyio
+async def test_unlink_cancel_restores_state_and_preserves_unrelated() -> None:
+    module = importlib.import_module("examples.fastapi_sqlalchemy.relationship_review")
+    parent = "eyJpZCI6MTB9"
+    codec = IdentityCodec()
+    tag = codec.encode(RecordIdentity(values={"id": 11}))
+    child_b = codec.encode(RecordIdentity(values={"id": 22}))
+    tags_prefix = relationship_prefix("tags")
+    items_prefix = relationship_prefix("items")
+
+    def parsed_form(text: str) -> list[tuple[str, str]]:
+        form_parser = _RenderedFormParser()
+        form_parser.feed(text)
+        return form_parser.controls
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=module.app), base_url="http://test"
+    ) as client:
+        edit = await client.get(f"/orders/{parent}/edit")
+        parser = _RenderedFormParser()
+        parser.feed(edit.text)
+        # Unrelated pre-preview FormState: delete B is already pending.
+        state = [
+            *parser.controls,
+            (f"{items_prefix}delete_intent__{child_b}", "true"),
+            (f"{items_prefix}delete__{child_b}", "signed-b"),
+        ]
+        preview = await client.post(
+            f"/orders/{parent}/_relationships/tags/preview",
+            content=urlencode([*state, (f"{tags_prefix}unlink_preview", tag)]),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        assert preview.status_code == 200
+        cancel_payload = [*parsed_form(preview.text), ("cancel", "cancel")]
+        cancelled = await client.post(
+            f"/orders/{parent}/_relationships/tags/preview/confirm",
+            content=urlencode(cancel_payload),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        assert cancelled.status_code == 200
+        after = dict(parsed_form(cancelled.text))
+        assert f"{tags_prefix}unlink__{tag}" not in after
+        assert f"{tags_prefix}destructive_confirmation" not in after
+        assert f"{items_prefix}delete_intent__{child_b}" in after
+        assert f"{items_prefix}delete__{child_b}" in after
+
+        saved = await client.post(
+            f"/orders/{parent}/edit",
+            content=urlencode(parsed_form(cancelled.text)),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+
+    assert saved.status_code == 303
+
+
+@pytest.mark.anyio
+async def test_clear_cancel_keeps_customer_selected() -> None:
+    module = importlib.import_module("examples.fastapi_sqlalchemy.relationship_review")
+    parent = "eyJpZCI6MTB9"
+    prefix = relationship_prefix("customer")
+
+    def parsed_form(text: str) -> list[tuple[str, str]]:
+        form_parser = _RenderedFormParser()
+        form_parser.feed(text)
+        return form_parser.controls
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=module.app), base_url="http://test"
+    ) as client:
+        edit = await client.get(f"/orders/{parent}/edit")
+        parser = _RenderedFormParser()
+        parser.feed(edit.text)
+        base = parser.controls
+        assert any(name == f"{prefix}set" and value for name, value in base)
+
+        preview = await client.post(
+            f"/orders/{parent}/_relationships/customer/preview",
+            content=urlencode([*base, (f"{prefix}clear", "true")]),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        assert preview.status_code == 200
+        cancel_payload = [*parsed_form(preview.text), ("cancel", "cancel")]
+        cancelled = await client.post(
+            f"/orders/{parent}/_relationships/customer/preview/confirm",
+            content=urlencode(cancel_payload),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        assert cancelled.status_code == 200
+        after = dict(parsed_form(cancelled.text))
+        assert after.get(f"{prefix}set") != ""
+        assert f"{prefix}clear" not in after
+        assert f"{prefix}destructive_confirmation" not in after
+
+        saved = await client.post(
+            f"/orders/{parent}/edit",
+            content=urlencode(parsed_form(cancelled.text)),
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             follow_redirects=False,
         )

@@ -23,6 +23,7 @@
   {% endif %}
   {% if clear_prefix %}
     <input type="hidden" name="{{ clear_prefix }}clear" value="true" />
+    <input type="hidden" name="{{ clear_prefix }}clear_preview" value="true" />
     <input type="hidden" name="{{ clear_prefix }}destructive_confirmation" value="{{ confirmation }}" />
     <input type="hidden" name="{{ clear_prefix }}confirmation_intent" value="{{ confirmation_intent }}" />
     <input type="hidden" name="{{ clear_prefix }}confirmation_impact" value="{{ impact }}" />

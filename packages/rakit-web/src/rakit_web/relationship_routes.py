@@ -189,6 +189,7 @@ def _relationship_intent_fingerprint(values: Mapping[str, object]) -> str:
             "confirmation_impact",
             "delete_preview",
             "unlink_preview",
+            "clear_preview",
         }
         and not name.startswith("delete__")
     }
@@ -360,6 +361,7 @@ def _validate_relationship_field_names(
             "search",
             "delete_preview",
             "unlink_preview",
+            "clear_preview",
         }:
             continue
         if (
@@ -843,6 +845,7 @@ async def relationship_panel_view(
         "confirmation_impact",
         "delete_preview",
         "unlink_preview",
+        "clear_preview",
     }
     if definition.cardinality is RelationshipCardinality.TO_ONE:
         rendered_names.add("set")
@@ -1449,7 +1452,30 @@ def build_relationship_routes(
             submitted.pop("submission_token", None)
             cancelled = submitted.pop("cancel", None)
             prefix = relationship_prefix(editor.relationship_id)
-            if cancelled is None and submitted.get(f"{prefix}clear") is not None:
+            delete_preview = submitted.get(f"{prefix}delete_preview")
+            unlink_preview = submitted.get(f"{prefix}unlink_preview")
+            clear_preview = submitted.get(f"{prefix}clear_preview")
+            if cancelled is not None:
+                if isinstance(delete_preview, str):
+                    for suffix in ("delete_intent__", "delete__", "delete_impact__"):
+                        submitted.pop(f"{prefix}{suffix}{delete_preview}", None)
+                elif isinstance(unlink_preview, str):
+                    submitted.pop(f"{prefix}unlink__{unlink_preview}", None)
+                    for name in (
+                        "destructive_confirmation",
+                        "confirmation_intent",
+                        "confirmation_impact",
+                    ):
+                        submitted.pop(f"{prefix}{name}", None)
+                elif clear_preview is not None:
+                    submitted.pop(f"{prefix}clear", None)
+                    for name in (
+                        "destructive_confirmation",
+                        "confirmation_intent",
+                        "confirmation_impact",
+                    ):
+                        submitted.pop(f"{prefix}{name}", None)
+            elif submitted.get(f"{prefix}clear") is not None:
                 submitted.pop(f"{prefix}set", None)
             from .form_routes import _form_response
 
