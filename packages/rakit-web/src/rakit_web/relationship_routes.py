@@ -551,7 +551,14 @@ async def build_relationship_changes(
                 for name in values
                 if name.startswith("update__") and len(name.split("__", 2)) == 3
             }
+            pending_delete_ids = {
+                name.removeprefix("delete_intent__")
+                for name, confirmed in values.items()
+                if name.startswith("delete_intent__") and confirmed
+            }
             for encoded in update_ids:
+                if encoded in pending_delete_ids:
+                    continue
                 row_values = _fields_for_prefix(values, f"update__{encoded}__")
                 if row_values:
                     token = values.get(f"update_token__{encoded}")
@@ -653,26 +660,36 @@ async def build_relationship_changes(
         if order_values:
             if parent_identity is None:
                 raise _invalid_relationship_field()
-            complete_order = await editor.state_provider.reorder_identities(
-                parent_identity,
-                editor.relationship_id,
-                maximum=editor.reorder_safe_maximum,
-            )
-            decoded_order = tuple(_identity(binding.codec, encoded) for encoded in order_values)
-            if (
-                complete_order is None
-                or len(decoded_order) != len(complete_order)
-                or len({_identity_key(identity) for identity in decoded_order})
-                != len(decoded_order)
-                or {_identity_key(identity) for identity in decoded_order}
-                != {_identity_key(identity) for identity in complete_order}
+            # A child delete changes the member set in the same operation, so
+            # the transported complete-order sequence cannot describe the
+            # post-delete relationship.  Deletion and reorder are not combined;
+            # this mirrors the editor disabling moves on pending-delete rows.
+            if any(
+                name.startswith("delete_intent__") and confirmed
+                for name, confirmed in values.items()
             ):
-                raise RakitError(
-                    code=ErrorCode.VALIDATION_FAILED,
-                    message="Relationship reorder requires a complete current ordering state.",
-                    status_code=422,
+                steps = [step for step in steps if not isinstance(step, ReorderRelated)]
+            else:
+                complete_order = await editor.state_provider.reorder_identities(
+                    parent_identity,
+                    editor.relationship_id,
+                    maximum=editor.reorder_safe_maximum,
                 )
-            steps.append(ReorderRelated(identities=decoded_order))
+                decoded_order = tuple(_identity(binding.codec, encoded) for encoded in order_values)
+                if (
+                    complete_order is None
+                    or len(decoded_order) != len(complete_order)
+                    or len({_identity_key(identity) for identity in decoded_order})
+                    != len(decoded_order)
+                    or {_identity_key(identity) for identity in decoded_order}
+                    != {_identity_key(identity) for identity in complete_order}
+                ):
+                    raise RakitError(
+                        code=ErrorCode.VALIDATION_FAILED,
+                        message="Relationship reorder requires a complete current ordering state.",
+                        status_code=422,
+                    )
+                steps.append(ReorderRelated(identities=decoded_order))
 
         if not steps:
             continue
