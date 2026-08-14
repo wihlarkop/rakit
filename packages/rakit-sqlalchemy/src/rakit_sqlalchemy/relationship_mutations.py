@@ -1166,8 +1166,14 @@ class SQLAlchemyRelationshipMutationService:
     async def _current_target_identities(
         self, session: AsyncSession, parent: object, entry: CompiledRelationship
     ) -> tuple[RecordIdentity, ...]:
-        await session.refresh(parent, attribute_names=[str(entry.definition.relationship_id)])
-        value = getattr(parent, entry.definition.relationship_id)
+        relationship_id = str(entry.definition.relationship_id)
+        # Re-reading an already-loaded collection would discard pending
+        # in-memory membership changes made by an earlier step of the same
+        # graph change (e.g. LINK then UNLINK).  Only refresh the first time
+        # the collection is touched so multi-step changes stay consistent.
+        if relationship_id not in vars(parent):
+            await session.refresh(parent, attribute_names=[relationship_id])
+        value = getattr(parent, relationship_id)
         target_source = self._target_data_sources[self._target_resource_id(entry)]
         if entry.definition.kind is RelationshipKind.ASSOCIATION_OBJECT:
             target_property = self._association_target_property(entry)
