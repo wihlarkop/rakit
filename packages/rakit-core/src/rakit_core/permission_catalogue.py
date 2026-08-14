@@ -1,7 +1,7 @@
 from pydantic import BaseModel, ConfigDict
 
+from rakit_core.actions import ActionDefinition
 from rakit_core.definitions import (
-    ActionDefinition,
     EndpointDefinition,
     PageDefinition,
     ResourceDefinition,

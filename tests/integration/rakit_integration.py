@@ -766,6 +766,7 @@ def build_app(factory: async_sessionmaker[AsyncSession]) -> IntegrationApp:
                     action_id="approve",
                     label="Approve order",
                     scope=ActionScope.RECORD,
+                    resource_id="orders",
                     permission=_REQ_ORDERS_UPDATE,
                     description="Approve this order for fulfilment.",
                     availability=approve_availability,

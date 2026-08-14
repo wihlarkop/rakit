@@ -214,6 +214,7 @@ class ActionHarness:
                     action_id="approve",
                     label="Approve order",
                     scope=ActionScope.RECORD,
+                    resource_id="orders",
                     permission=action_permission_requirement("approve", admin_id="ops"),
                     description="Approve this order for fulfilment.",
                     availability=self.approve_availability,
@@ -224,6 +225,7 @@ class ActionHarness:
                     action_id="archive",
                     label="Archive order",
                     scope=ActionScope.RECORD,
+                    resource_id="orders",
                     permission=action_permission_requirement("archive", admin_id="ops"),
                     description="Archive this order with a reason.",
                     input_schema=FormSchema(
@@ -240,6 +242,7 @@ class ActionHarness:
                     action_id="purge",
                     label="Purge order",
                     scope=ActionScope.RECORD,
+                    resource_id="orders",
                     permission=action_permission_requirement("purge", admin_id="ops"),
                     description="Permanently purge this order.",
                     availability=self.purge_availability,
@@ -253,6 +256,7 @@ class ActionHarness:
                     action_id="rebuild",
                     label="Rebuild indexes",
                     scope=ActionScope.PAGE,
+                    page_id="admin",
                     permission=action_permission_requirement("rebuild", admin_id="ops"),
                     description="Rebuild the admin index cache.",
                     executor=DomainActionExecutor(self._rebuild_handler),
@@ -261,6 +265,7 @@ class ActionHarness:
                     action_id="export",
                     label="Export orders",
                     scope=ActionScope.RESOURCE,
+                    resource_id="orders",
                     permission=action_permission_requirement("export", admin_id="ops"),
                     description="Export all visible orders.",
                     availability=self.export_availability,
@@ -270,6 +275,7 @@ class ActionHarness:
                     action_id="audit",
                     label="Audit log",
                     scope=ActionScope.RESOURCE,
+                    resource_id="orders",
                     permission=action_permission_requirement("audit", admin_id="ops"),
                     description="Inspect the audit trail.",
                     availability=lambda context: ActionAvailabilityDecision.hidden(),
@@ -297,7 +303,7 @@ class ActionHarness:
         self, request: Request, action: ActionDefinition, identity: RecordIdentity | None
     ) -> OperationAuthorization | None:
         active = cast(Principal, request.scope.get("state", {}).get("principal"))
-        if active is None or not action.permission.matches(active):
+        if active is None or action.permission is None or not action.permission.matches(active):
             return None
         assert active.subject_id is not None
         return OperationAuthorization.for_requirement(
@@ -873,6 +879,7 @@ async def test_execution_rejection_does_not_mutate_state(
         action_id="fail",
         label="Fail action",
         scope=ActionScope.RECORD,
+        resource_id="orders",
         permission=action_permission_requirement("approve", admin_id="ops"),
         executor=DomainActionExecutor(
             lambda _context: ActionRejected(
@@ -926,6 +933,7 @@ async def test_bulk_scope_is_definition_only_and_binding_fails_closed(
         action_id="bulk_archive",
         label="Bulk archive",
         scope=ActionScope.BULK,
+        resource_id="orders",
         permission=action_permission_requirement("bulk_archive", admin_id="ops"),
         executor=DomainActionExecutor(
             lambda _context: ActionRejected(
@@ -966,6 +974,7 @@ async def test_duplicate_action_ids_are_rejected() -> None:
                     action_id="dup",
                     label="One",
                     scope=ActionScope.PAGE,
+                    page_id="admin",
                     permission=permission,
                     executor=executor(),
                 ),
@@ -973,6 +982,7 @@ async def test_duplicate_action_ids_are_rejected() -> None:
                     action_id="dup",
                     label="Two",
                     scope=ActionScope.PAGE,
+                    page_id="admin",
                     permission=permission,
                     executor=executor(),
                 ),

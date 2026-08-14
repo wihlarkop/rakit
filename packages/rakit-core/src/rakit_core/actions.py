@@ -12,19 +12,21 @@ HTTP/HTML/HTMX behavior.
 """
 
 import inspect
-import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, cast, runtime_checkable
+
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from rakit_core.auth import Principal
+from rakit_core.bulk import BulkPolicy
+from rakit_core.config import MachineId
 from rakit_core.forms import FormIssue, FormSchema, FormState
 from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import OperationAuthorization
 from rakit_core.permissions import PermissionRequirement
-
-_ACTION_ID_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
+from rakit_core.transactions import TransactionPolicy
 
 
 class ActionScope(StrEnum):
@@ -178,6 +180,7 @@ class ActionContext:
     confirmation_token: str | None = None
 
 
+@runtime_checkable
 class ActionAvailabilityResolver(Protocol):
     """Resolves availability; may be synchronous or asynchronous."""
 
@@ -186,27 +189,37 @@ class ActionAvailabilityResolver(Protocol):
     ) -> ActionAvailabilityDecision | Awaitable[ActionAvailabilityDecision]: ...
 
 
+@runtime_checkable
 class ActionPreviewResolver(Protocol):
     """Resolves authoritative preview content; sync or async."""
 
     def __call__(self, context: ActionContext) -> ActionPreview | Awaitable[ActionPreview]: ...
 
 
+@runtime_checkable
 class ActionExecutor(Protocol):
     """Executes an action and returns a structured result."""
 
     async def execute(self, context: ActionContext) -> ActionResult[Any]: ...
 
 
-@dataclass(frozen=True)
-class ActionDefinition:
-    """One immutable, typed, permission-bound action declaration."""
+class ActionDefinition(BaseModel):
+    """One immutable, typed, permission-bound action declaration.
 
-    action_id: str
+    This is the single canonical action contract shared by the compiler,
+    the permission catalogue, the public API, and the web runtime.  It is
+    framework-neutral: no Starlette, SQLAlchemy, or web types appear here.
+    """
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    action_id: MachineId
     label: str
     scope: ActionScope
-    permission: PermissionRequirement
+    permission: PermissionRequirement | None = None
     description: str | None = None
+    resource_id: MachineId | None = None
+    page_id: MachineId | None = None
     input_schema: FormSchema | None = None
     availability: ActionAvailabilityResolver | None = None
     preview: ActionPreviewResolver | None = None
@@ -215,14 +228,29 @@ class ActionDefinition:
     needs_preview: bool = False
     needs_confirmation: bool = False
     requires_concurrency: bool = False
+    mutating: bool = False
+    transaction_policy: TransactionPolicy = TransactionPolicy.READ_ONLY
+    bulk_policy: BulkPolicy | None = None
 
-    def __post_init__(self) -> None:
-        if not _ACTION_ID_PATTERN.fullmatch(self.action_id):
-            raise ValueError(f"Invalid action id: {self.action_id!r}")
+    @model_validator(mode="after")
+    def _validate_action_contract(self) -> "ActionDefinition":
         if not self.label.strip():
             raise ValueError("Action label must not be empty")
-        if not isinstance(self.scope, ActionScope):
-            raise ValueError("Action scope must be an ActionScope value")
+        _validate_operation_transaction_policy(self.mutating, self.transaction_policy)
+        if self.scope is ActionScope.PAGE:
+            if self.page_id is None:
+                raise ValueError("PAGE actions require page_id")
+            if self.resource_id is not None:
+                raise ValueError("PAGE actions cannot also declare resource_id")
+        else:
+            if self.resource_id is None:
+                raise ValueError("Resource, record, and bulk actions require resource_id")
+            if self.page_id is not None:
+                raise ValueError("Only PAGE actions may declare page_id")
+        if self.scope is ActionScope.BULK and self.bulk_policy is None:
+            object.__setattr__(self, "bulk_policy", BulkPolicy())
+        if self.scope is not ActionScope.BULK and self.bulk_policy is not None:
+            raise ValueError("Only BULK actions may declare bulk_policy")
         if self.executor is None:
             raise ValueError(f"Action {self.action_id!r} requires an executor")
         if self.needs_form and self.input_schema is None:
@@ -233,6 +261,16 @@ class ActionDefinition:
             raise ValueError(f"Action {self.action_id!r} confirmation requires a preview step")
         if self.needs_confirmation and self.input_schema is not None:
             raise ValueError(f"Action {self.action_id!r} confirmation flows do not take form input")
+        return self
+
+
+def _validate_operation_transaction_policy(
+    mutating: bool, transaction_policy: TransactionPolicy
+) -> None:
+    if mutating and transaction_policy is TransactionPolicy.READ_ONLY:
+        raise ValueError("Mutating operations cannot use a read-only transaction policy")
+    if not mutating and transaction_policy is TransactionPolicy.AUTO:
+        raise ValueError("Read-only operations cannot use an automatic write transaction")
 
 
 @dataclass(frozen=True)

@@ -2,10 +2,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from .actions import ActionDefinition
 from .compatibility import validate_official_package_versions
 from .datasource import DataSource
 from .definitions import (
-    ActionDefinition,
     CompiledActionDefinition,
     CompiledEndpointDefinition,
     CompiledPageDefinition,

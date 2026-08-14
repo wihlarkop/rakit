@@ -356,11 +356,14 @@ def test_plan05_foundation_contracts_preserve_facade_identity() -> None:
         RelationshipKind,
         resolve_record_label,
     )
+    from rakit_core.actions import ActionDefinition as RealActionDefinition
     from rakit_core.actions import ActionRedirect as RealActionRedirect
     from rakit_core.actions import ActionResult as RealActionResult
     from rakit_core.actions import ActionSuccess as RealActionSuccess
     from rakit_core.bulk import BulkPolicy as RealBulkPolicy
-    from rakit_core.definitions import ActionDefinition as RealActionDefinition
+    from rakit_core.definitions import (
+        ActionDefinition as DefinitionsActionDefinition,
+    )
     from rakit_core.endpoints import EndpointAccessPolicy as RealEndpointAccessPolicy
     from rakit_core.endpoints import EndpointResponseKind as RealEndpointResponseKind
     from rakit_core.mutations import OperationAuthorization as RealOperationAuthorization
@@ -375,6 +378,7 @@ def test_plan05_foundation_contracts_preserve_facade_identity() -> None:
     assert ActionSuccess is RealActionSuccess
     assert ActionRedirect is RealActionRedirect
     assert ActionDefinition is RealActionDefinition
+    assert ActionDefinition is DefinitionsActionDefinition
     assert BulkPolicy is RealBulkPolicy
     assert OperationAuthorization is RealOperationAuthorization
     assert OperationPlan is RealOperationPlan

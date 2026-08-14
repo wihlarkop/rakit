@@ -1,18 +1,19 @@
 import pytest
 from pydantic import BaseModel
 from rakit_core.actions import (
+    ActionDefinition,
     ActionRedirect,
     ActionRefresh,
     ActionRejected,
     ActionScope,
     ActionSuccess,
+    DomainActionExecutor,
 )
 from rakit_core.auth import Principal
 from rakit_core.bulk import BulkExecutionPolicy, BulkPolicy
 from rakit_core.compiler import ApplicationBuilder, compile_application
 from rakit_core.datasource import DataSourceCapabilities
 from rakit_core.definitions import (
-    ActionDefinition,
     EndpointDefinition,
     PageDefinition,
     ResourceDefinition,
@@ -81,6 +82,10 @@ def _resource(resource_id: str, path: str, *, relationships=()) -> ResourceDefin
         field_policy=ResourceFieldPolicy(list_fields=("id",), detail_fields=("id",)),
         relationships=relationships,
     )
+
+
+def _noop_executor() -> DomainActionExecutor:
+    return DomainActionExecutor(lambda _context: ActionSuccess())
 
 
 @pytest.mark.anyio
@@ -284,6 +289,7 @@ def test_compiles_plan05_definitions_routes_and_permission_metadata() -> None:
             mutating=True,
             transaction_policy=TransactionPolicy.AUTO,
             bulk_policy=BulkPolicy(),
+            executor=_noop_executor(),
         )
     )
     builder.add_page(PageDefinition(page_id="report", path="/report", label="Report"))
@@ -326,6 +332,7 @@ def test_page_actions_have_explicit_page_ownership_and_compiled_routes() -> None
             label="Refresh",
             scope=ActionScope.PAGE,
             page_id="report",
+            executor=_noop_executor(),
         )
     )
 
@@ -341,7 +348,11 @@ def test_page_actions_have_explicit_page_ownership_and_compiled_routes() -> None
     unknown = ApplicationBuilder()
     unknown.add_action(
         ActionDefinition(
-            action_id="unknown", label="Unknown", scope=ActionScope.PAGE, page_id="missing"
+            action_id="unknown",
+            label="Unknown",
+            scope=ActionScope.PAGE,
+            page_id="missing",
+            executor=_noop_executor(),
         )
     )
     with pytest.raises(RakitError) as caught:
@@ -352,7 +363,11 @@ def test_page_actions_have_explicit_page_ownership_and_compiled_routes() -> None
     colliding.add_page(PageDefinition(page_id="report", path="/reports", label="Report"))
     colliding.add_action(
         ActionDefinition(
-            action_id="refresh", label="Refresh", scope=ActionScope.PAGE, page_id="report"
+            action_id="refresh",
+            label="Refresh",
+            scope=ActionScope.PAGE,
+            page_id="report",
+            executor=_noop_executor(),
         )
     )
     colliding.add_endpoint(
@@ -616,6 +631,7 @@ def test_resource_reservation_is_scoped_and_generated_routes_remain_valid() -> N
             label="Archive",
             scope=ActionScope.RESOURCE,
             resource_id="orders",
+            executor=_noop_executor(),
         )
     )
     builder.add_action(
@@ -624,6 +640,7 @@ def test_resource_reservation_is_scoped_and_generated_routes_remain_valid() -> N
             label="Approve",
             scope=ActionScope.RECORD,
             resource_id="orders",
+            executor=_noop_executor(),
         )
     )
     builder.add_page(

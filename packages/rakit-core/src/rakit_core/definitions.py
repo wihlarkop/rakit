@@ -4,8 +4,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .actions import ActionScope
-from .bulk import BulkPolicy
+from .actions import ActionDefinition, _validate_operation_transaction_policy
 from .config import MachineId
 from .endpoints import (
     EndpointAccessPolicy,
@@ -99,52 +98,6 @@ class EndpointDefinition(BaseModel):
         if self.response_kind is not EndpointResponseKind.JSON and self.output_schema is not None:
             raise ValueError("Non-JSON endpoint responses cannot declare a JSON output schema")
         return self
-
-
-class ActionDefinition(BaseModel):
-    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
-
-    action_id: MachineId
-    label: str
-    scope: ActionScope
-    resource_id: MachineId | None = None
-    page_id: MachineId | None = None
-    permission: PermissionRequirement | None = None
-    input_schema: type[BaseModel] | None = None
-    handler: Callable[..., object] | None = None
-    mutating: bool = False
-    transaction_policy: TransactionPolicy = TransactionPolicy.READ_ONLY
-    confirmation_required: bool = False
-    bulk_policy: BulkPolicy | None = None
-    allow_response_escape_hatch: bool = False
-
-    @model_validator(mode="after")
-    def _validate_action_contract(self) -> "ActionDefinition":
-        _validate_operation_transaction_policy(self.mutating, self.transaction_policy)
-        if self.scope is ActionScope.BULK and self.bulk_policy is None:
-            object.__setattr__(self, "bulk_policy", BulkPolicy())
-        if self.scope is ActionScope.PAGE:
-            if self.page_id is None:
-                raise ValueError("PAGE actions require page_id")
-            if self.resource_id is not None:
-                raise ValueError("PAGE actions cannot also declare resource_id")
-        else:
-            if self.resource_id is None:
-                raise ValueError("Resource, record, and bulk actions require resource_id")
-            if self.page_id is not None:
-                raise ValueError("Only PAGE actions may declare page_id")
-        if self.scope is not ActionScope.BULK and self.bulk_policy is not None:
-            raise ValueError("Only BULK actions may declare bulk_policy")
-        return self
-
-
-def _validate_operation_transaction_policy(
-    mutating: bool, transaction_policy: TransactionPolicy
-) -> None:
-    if mutating and transaction_policy is TransactionPolicy.READ_ONLY:
-        raise ValueError("Mutating operations cannot use a read-only transaction policy")
-    if not mutating and transaction_policy is TransactionPolicy.AUTO:
-        raise ValueError("Read-only operations cannot use an automatic write transaction")
 
 
 @dataclass(frozen=True)

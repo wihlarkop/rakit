@@ -1,6 +1,7 @@
 from rakit_core.actions import (
     ActionAdvancedResponse,
     ActionAvailability,
+    ActionDefinition,
     ActionRedirect,
     ActionRefresh,
     ActionRejected,
@@ -42,7 +43,6 @@ from rakit_core.config import (
 from rakit_core.crypto import KeyRing, SigningKey, TokenService
 from rakit_core.datasource import DataSource, DataSourceCapabilities
 from rakit_core.definitions import (
-    ActionDefinition,
     EndpointDefinition,
     PageDefinition,
     ResourceFieldPolicy,
