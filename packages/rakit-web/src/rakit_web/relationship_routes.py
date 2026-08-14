@@ -51,6 +51,9 @@ from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 from starlette.routing import Route
 
+from ._paths import mounted_path
+from .security.cookies import CSRF_COOKIE_NAME
+
 _PREFIX = "__rakit_rel__"
 _MAX_FRAGMENT_FIELDS = 1_000
 
@@ -299,6 +302,35 @@ def _invalid_relationship_field() -> RakitError:
         code=ErrorCode.VALIDATION_FAILED,
         message="Relationship form input is not valid for this editor.",
         status_code=422,
+    )
+
+
+async def _preview_confirm_response(
+    binding: Any,
+    request: Request,
+    editor: RelationshipEditorBinding,
+    parent_identity: RecordIdentity,
+    submitted: Mapping[str, object],
+    context: Mapping[str, object],
+) -> Response:
+    """Render the same authoritative preview as a full admin confirmation page."""
+    encoded_parent = IdentityCodec().encode(parent_identity)
+    confirm_action = mounted_path(
+        request,
+        f"{editor.relationship.route_path.replace('{identity}', encoded_parent)}/preview/confirm",
+    )
+    return binding.templates.TemplateResponse(
+        request,
+        "relationships/preview_confirm.html",
+        {
+            **context,
+            "submitted": dict(submitted),
+            "csrf_token": request.cookies.get(CSRF_COOKIE_NAME, ""),
+            "submission_token": binding.issue_submission_token(request),
+            "confirm_action": confirm_action,
+        },
+        status_code=200,
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -809,8 +841,14 @@ async def relationship_panel_view(
         "destructive_confirmation",
         "confirmation_intent",
         "confirmation_impact",
+        "delete_preview",
         "unlink_preview",
     }
+    if definition.cardinality is RelationshipCardinality.TO_ONE:
+        rendered_names.add("set")
+        rendered_names.add("clear")
+    for index in range(len(order_values)):
+        rendered_names.add(f"order__{index:04d}")
     for row in rows:
         encoded = IdentityCodec().encode(row.candidate.identity)
         value_prefix = (
@@ -913,6 +951,7 @@ async def relationship_panel_view(
             {"key": key, "values": row_values} for key, row_values in draft_rows.items()
         ),
         "selected": selected,
+        "pending_clear": bool(values.get("clear")),
         "clear_available": bool(
             definition.cardinality is RelationshipCardinality.TO_ONE
             and definition.nullable
@@ -1172,7 +1211,7 @@ def build_relationship_routes(
                     impact = getattr(child_preview, "relationship_impact", ())
                     dialog_context = {
                         "prefix": relationship_prefix(editor.relationship_id),
-                        "delete_identity": encoded,
+                        "delete_identity": relationship_binding.codec.encode(child),
                         "unlink_identity": None,
                         "confirmation": confirmation,
                         "confirmation_intent": "",
@@ -1247,14 +1286,21 @@ def build_relationship_routes(
                     confirmation = await _with_preview_context(
                         request, capability, issue(plan, authorization=capability)
                     )
-                    confirmation_intent = _relationship_intent_fingerprint(
-                        _fields_for_prefix(submitted, relationship_prefix(editor.relationship_id))
-                    )
                     is_clear = any(isinstance(step, ClearRelated) for step in change.steps)
                     unlink_steps = [
                         step for step in change.steps if isinstance(step, UnlinkRelated)
                     ]
                     is_unlink = bool(unlink_steps)
+                    intent_fields = dict(
+                        _fields_for_prefix(submitted, relationship_prefix(editor.relationship_id))
+                    )
+                    if len(unlink_steps) == 1:
+                        intent_fields[
+                            f"unlink__{relationship_binding.codec.encode(unlink_steps[-1].identity)}"
+                        ] = relationship_binding.codec.encode(unlink_steps[-1].identity)
+                    if is_clear:
+                        intent_fields.pop("set", None)
+                    confirmation_intent = _relationship_intent_fingerprint(intent_fields)
                     dialog_context = {
                         "prefix": relationship_prefix(editor.relationship_id),
                         "delete_identity": None,
@@ -1293,11 +1339,20 @@ def build_relationship_routes(
                         "resource_label": binding.label,
                     }
                 if dialog_context is not None:
-                    return binding.templates.TemplateResponse(
+                    if request.headers.get("HX-Request") == "true":
+                        return binding.templates.TemplateResponse(
+                            request,
+                            "relationships/preview_dialog.html",
+                            dialog_context,
+                            headers={"Cache-Control": "no-store"},
+                        )
+                    return await _preview_confirm_response(
+                        binding,
                         request,
-                        "relationships/preview_dialog.html",
+                        editor,
+                        identity,
+                        submitted,
                         dialog_context,
-                        headers={"Cache-Control": "no-store"},
                     )
                 panel = await relationship_panel_view(
                     editor,
@@ -1377,6 +1432,43 @@ def build_relationship_routes(
                     parent_identity=identity,
                 )
 
+        async def confirm(request: Request, editor: RelationshipEditorBinding = editor) -> Response:
+            """Full-page fallback confirmation; applies FormState-only pending intent."""
+            identity = binding.codec.decode(request.path_params["identity"])
+            if not await _authorize_editor(
+                binding, request, editor, identity
+            ) or not await binding.verify_csrf(request):
+                return PlainTextResponse("Forbidden", status_code=403)
+            form = await request.form(max_files=0, max_fields=_MAX_FRAGMENT_FIELDS)
+            submitted = {
+                name: value
+                for name, value in form.multi_items()
+                if isinstance(name, str) and isinstance(value, str)
+            }
+            submitted.pop("csrf_token", None)
+            submitted.pop("submission_token", None)
+            cancelled = submitted.pop("cancel", None)
+            prefix = relationship_prefix(editor.relationship_id)
+            if cancelled is None and submitted.get(f"{prefix}clear") is not None:
+                submitted.pop(f"{prefix}set", None)
+            from .form_routes import _form_response
+
+            return await _form_response(
+                binding,
+                request,
+                title=f"Edit {binding.label}",
+                action_path=f"{binding.path}/{request.path_params['identity']}/edit",
+                submitted=submitted,
+                concurrency_token=(
+                    submitted.get("concurrency_token")
+                    if isinstance(submitted.get("concurrency_token"), str)
+                    else None
+                ),
+                operation="update",
+                status_code=200,
+                parent_identity=identity,
+            )
+
         routes.extend(
             (
                 Route(
@@ -1396,6 +1488,12 @@ def build_relationship_routes(
                     preview,
                     methods=["POST"],
                     name=f"relationship:{editor.relationship.source_resource_id}:{editor.relationship_id}:preview",
+                ),
+                Route(
+                    f"{route_path}/preview/confirm",
+                    confirm,
+                    methods=["POST"],
+                    name=f"relationship:{editor.relationship.source_resource_id}:{editor.relationship_id}:preview-confirm",
                 ),
             )
         )

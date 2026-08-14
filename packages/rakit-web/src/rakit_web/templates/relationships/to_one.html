@@ -8,7 +8,12 @@
       <option value="{{ encoded }}"{% if encoded in panel.selected %} selected{% endif %}>{{ option.label }}</option>
     {% endfor %}
   </select>
+  {% if panel.pending_clear %}<input type="hidden" name="{{ panel.prefix }}clear" value="true" />{% endif %}
   {% if panel.clear_available %}
-    <button class="rakit-button rakit-button-quiet" type="button" data-rakit-clear-selection data-rakit-prefix="{{ panel.prefix }}"{% if panel.preview_path and (panel.relationship.destructive_policy.allow_delete_orphan or panel.relationship.destructive_policy.allow_destructive_cascade) %} data-rakit-preview-path="{{ panel.preview_path }}"{% endif %}>Clear</button>
+    {% if panel.preview_path and (panel.relationship.destructive_policy.allow_delete_orphan or panel.relationship.destructive_policy.allow_destructive_cascade) %}
+      <button class="rakit-button rakit-button-quiet" type="submit" name="{{ panel.prefix }}clear" value="true" formaction="{{ panel.preview_path }}" formmethod="post" data-rakit-clear-selection data-rakit-prefix="{{ panel.prefix }}" data-rakit-preview-path="{{ panel.preview_path }}">Clear</button>
+    {% else %}
+      <button class="rakit-button rakit-button-quiet" type="button" data-rakit-clear-selection data-rakit-prefix="{{ panel.prefix }}">Clear</button>
+    {% endif %}
   {% endif %}
 </fieldset>

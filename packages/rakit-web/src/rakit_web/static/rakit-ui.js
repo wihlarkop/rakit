@@ -34,7 +34,11 @@ function rakitApplyUnlinkState(form, prefix, identity, pending) {
       control.dataset.rakitUnlinkIdentity !== identity
     ) return;
     control.setAttribute("aria-pressed", String(pending));
-    control.removeAttribute("data-rakit-preview-unlink");
+    if (pending) {
+      control.removeAttribute("data-rakit-preview-unlink");
+    } else if (control.hasAttribute("data-rakit-unlink-destructive")) {
+      control.setAttribute("data-rakit-preview-unlink", "");
+    }
     control.querySelector("[data-rakit-unlink-label]")?.replaceChildren(
       document.createTextNode(pending ? "Undo removal" : "Remove from relationship"),
     );
@@ -92,7 +96,6 @@ function rakitShowPreview(root) {
     const clearPrefix = dialog.dataset.rakitClearPrefix;
     if (!prefix) return;
     if (identity) {
-      rakitApplyUnlinkState(form, prefix, identity, false);
       const intent = form.querySelector(`[name="${CSS.escape(`${prefix}delete_intent__${identity}`)}"]`);
       if (intent instanceof HTMLInputElement) intent.checked = true;
       rakitInput(form, `${prefix}delete__${identity}`, dialog.dataset.rakitConfirmation || "");
@@ -121,7 +124,7 @@ function rakitShowPreview(root) {
 
 function rakitRemoveDeleteState(form, identity, prefix) {
   const intent = form.querySelector(`[name="${CSS.escape(`${prefix}delete_intent__${identity}`)}"]`);
-  intent?.remove();
+  if (intent instanceof HTMLInputElement) intent.checked = false;
   form.querySelectorAll(
     `[name="${CSS.escape(`${prefix}delete__${identity}`)}"],` +
       ` [name="${CSS.escape(`${prefix}delete_impact__${identity}`)}"]`,
@@ -183,7 +186,9 @@ document.addEventListener("click", (event) => {
     const prefix = clear.dataset.rakitPrefix;
     if (!(form instanceof HTMLFormElement) || !prefix) return;
     const previewPath = clear.dataset.rakitPreviewPath;
-    if (previewPath && window.htmx) {
+    if (previewPath) {
+      if (!window.htmx) return;
+      event.preventDefault();
       const values = window.htmx.values(form, "post");
       values[`${prefix}clear`] = "true";
       window.htmx.ajax("POST", previewPath, {
@@ -193,6 +198,7 @@ document.addEventListener("click", (event) => {
         swap: "innerHTML",
       });
     } else {
+      event.preventDefault();
       const select = form.querySelector(`[name="${CSS.escape(`${prefix}set`)}"]`);
       if (select instanceof HTMLSelectElement) select.value = "";
       rakitInput(form, `${prefix}clear`, "true");

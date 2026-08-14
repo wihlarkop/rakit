@@ -606,8 +606,46 @@ async def test_rendered_unlink_and_reorder_controls_expose_explicit_transport() 
     assert "data-rakit-unlink" in chip_markup
     assert 'aria-pressed="true"' in pending_chip_markup
     assert "opacity-55 line-through" in pending_chip_markup
-    assert "data-rakit-unlink" in row_markup
     assert "hx-vals=" in row_markup
+
+
+@pytest.mark.anyio
+async def test_destructive_unlink_capability_marker_survives_pending_state() -> None:
+    class DestructiveTagsProvider(PreviewProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.rows["tags"] = (Record(1, "Ada"),)
+
+    source = CandidateSource()
+    tags = RelationshipEditorBinding(
+        relationship=_compiled(
+            "tags",
+            kind=RelationshipKind.MANY_TO_MANY,
+            cardinality=RelationshipCardinality.TO_MANY,
+            destructive_policy=RelationshipDestructivePolicy(allow_delete_orphan=True),
+        ),
+        target_service=ResourceService(cast(Any, source)),
+        state_provider=DestructiveTagsProvider(),
+    )
+    tag_identity = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    active = await relationship_panel_view(tags, parent_identity=RecordIdentity(values={"id": 10}))
+    pending = await relationship_panel_view(
+        tags,
+        parent_identity=RecordIdentity(values={"id": 10}),
+        submitted={f"{relationship_prefix('tags')}unlink__{tag_identity}": tag_identity},
+    )
+    templates = build_templates(())
+    active_markup = templates.env.get_template("relationships/to_many.html").render(
+        panel=active, codec=IdentityCodec()
+    )
+    pending_markup = templates.env.get_template("relationships/to_many.html").render(
+        panel=pending, codec=IdentityCodec()
+    )
+
+    assert "data-rakit-unlink-destructive" in active_markup
+    assert "formaction=" in active_markup
+    assert "data-rakit-unlink-destructive" in pending_markup
+    assert "data-rakit-preview-unlink" not in pending_markup
 
 
 @pytest.mark.anyio
@@ -838,6 +876,7 @@ async def test_destructive_preview_is_form_state_only_and_locally_bound_to_curre
     assert "signed-relationship-confirmation" in response.text
     assert "data-rakit-preview-dialog" in response.text
     assert "Confirm change" in response.text
+    assert "<!doctype html>" not in response.text
     assert service.graph_updates == []
 
 
@@ -1047,7 +1086,11 @@ async def test_rendered_delete_control_uses_preview_transport_and_modal_host() -
             edit.text,
         )
         assert button is not None
-        assert 'type="button"' in button.group(0)
+        assert 'type="submit"' in button.group(0)
+        assert 'name="__rakit_rel__items__delete_preview"' in button.group(0)
+        assert 'formaction="/orders/{parent}/_relationships/items/preview"'.replace(
+            "{parent}", parent
+        ) in button.group(0)
         assert 'id="rakit-dialog-root"' in edit.text
         assert button.group(1) == f"/orders/{parent}/_relationships/items/preview"
 

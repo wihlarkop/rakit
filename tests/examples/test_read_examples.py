@@ -485,6 +485,213 @@ async def test_rendered_mixed_relationship_state_uses_one_graph_update(
     assert len(cast(Any, calls[0]["relationship_changes"])) == 4
 
 
+@pytest.mark.anyio
+async def test_delete_undo_delete_repeat_keeps_valid_intent() -> None:
+    module = importlib.import_module("examples.fastapi_sqlalchemy.relationship_review")
+    parent = "eyJpZCI6MTB9"
+    codec = IdentityCodec()
+    child = codec.encode(RecordIdentity(values={"id": 21}))
+    prefix = relationship_prefix("items")
+
+    def parsed_form(text: str) -> list[tuple[str, str]]:
+        form_parser = _RenderedFormParser()
+        form_parser.feed(text)
+        return form_parser.controls
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=module.app), base_url="http://test"
+    ) as client:
+        edit = await client.get(f"/orders/{parent}/edit")
+        parser = _RenderedFormParser()
+        parser.feed(edit.text)
+        base = parser.controls
+
+        async def preview(payload: list[tuple[str, str]]):
+            return await client.post(
+                f"/orders/{parent}/_relationships/items/preview",
+                content=urlencode(payload),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+
+        async def confirm(payload: list[tuple[str, str]]):
+            return await client.post(
+                f"/orders/{parent}/_relationships/items/preview/confirm",
+                content=urlencode(payload),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+
+        first_preview = await preview([*base, (f"{prefix}delete_preview", child)])
+        assert first_preview.status_code == 200
+        assert "<!doctype html>" in first_preview.text
+        assert "data-rakit-preview-dialog" not in first_preview.text
+
+        first_confirm = await confirm(parsed_form(first_preview.text))
+        assert first_confirm.status_code == 200
+        pending = dict(parsed_form(first_confirm.text))
+        assert f"{prefix}delete_intent__{child}" in pending
+        assert f"{prefix}delete__{child}" in pending
+
+        # Undo: the stable intent control is unchecked and its confirmation dropped.
+        undo_names = {
+            f"{prefix}delete_intent__{child}",
+            f"{prefix}delete__{child}",
+            f"{prefix}delete_impact__{child}",
+        }
+        undone = [
+            (name, value)
+            for name, value in parsed_form(first_confirm.text)
+            if name not in undo_names
+        ]
+
+        # Delete the same row again: a fresh preview is required again.
+        second_preview = await preview([*undone, (f"{prefix}delete_preview", child)])
+        assert second_preview.status_code == 200
+        second_confirm = await confirm(parsed_form(second_preview.text))
+        final = dict(parsed_form(second_confirm.text))
+        assert f"{prefix}delete_intent__{child}" in final
+        assert f"{prefix}delete__{child}" in final
+
+        saved = await client.post(
+            f"/orders/{parent}/edit",
+            content=urlencode(parsed_form(second_confirm.text)),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+
+    assert saved.status_code == 303
+    assert "Invalid form" not in saved.text
+
+
+@pytest.mark.anyio
+async def test_destructive_unlink_preview_survives_undo() -> None:
+    module = importlib.import_module("examples.fastapi_sqlalchemy.relationship_review")
+    parent = "eyJpZCI6MTB9"
+    codec = IdentityCodec()
+    tag = codec.encode(RecordIdentity(values={"id": 11}))
+    prefix = relationship_prefix("tags")
+
+    def parsed_form(text: str) -> list[tuple[str, str]]:
+        form_parser = _RenderedFormParser()
+        form_parser.feed(text)
+        return form_parser.controls
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=module.app), base_url="http://test"
+    ) as client:
+        edit = await client.get(f"/orders/{parent}/edit")
+        parser = _RenderedFormParser()
+        parser.feed(edit.text)
+        base = parser.controls
+
+        first_preview = await client.post(
+            f"/orders/{parent}/_relationships/tags/preview",
+            content=urlencode([*base, (f"{prefix}unlink_preview", tag)]),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        assert first_preview.status_code == 200
+        assert "<!doctype html>" in first_preview.text
+        assert "Confirm removal" in first_preview.text
+
+        first_confirm = await client.post(
+            f"/orders/{parent}/_relationships/tags/preview/confirm",
+            content=urlencode(parsed_form(first_preview.text)),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        assert first_confirm.status_code == 200
+        pending = dict(parsed_form(first_confirm.text))
+        assert f"{prefix}unlink__{tag}" in pending
+        assert f"{prefix}destructive_confirmation" in pending
+
+        undo_names = {
+            f"{prefix}unlink__{tag}",
+            f"{prefix}destructive_confirmation",
+            f"{prefix}confirmation_intent",
+            f"{prefix}confirmation_impact",
+        }
+        undone = [
+            (name, value)
+            for name, value in parsed_form(first_confirm.text)
+            if name not in undo_names
+        ]
+
+        # Removing again requires a fresh preview; no pending unlink can appear
+        # without going through the confirmation page.
+        second_preview = await client.post(
+            f"/orders/{parent}/_relationships/tags/preview",
+            content=urlencode([*undone, (f"{prefix}unlink_preview", tag)]),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        assert second_preview.status_code == 200
+        assert "Confirm removal" in second_preview.text
+        second_confirm = await client.post(
+            f"/orders/{parent}/_relationships/tags/preview/confirm",
+            content=urlencode(parsed_form(second_preview.text)),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        final = dict(parsed_form(second_confirm.text))
+        assert f"{prefix}unlink__{tag}" in final
+        assert f"{prefix}destructive_confirmation" in final
+
+        saved = await client.post(
+            f"/orders/{parent}/edit",
+            content=urlencode(parsed_form(second_confirm.text)),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+
+    assert saved.status_code == 303
+
+
+@pytest.mark.anyio
+async def test_non_htmx_destructive_clear_confirm_creates_pending_clear() -> None:
+    module = importlib.import_module("examples.fastapi_sqlalchemy.relationship_review")
+    parent = "eyJpZCI6MTB9"
+    prefix = relationship_prefix("customer")
+
+    def parsed_form(text: str) -> list[tuple[str, str]]:
+        form_parser = _RenderedFormParser()
+        form_parser.feed(text)
+        return form_parser.controls
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=module.app), base_url="http://test"
+    ) as client:
+        edit = await client.get(f"/orders/{parent}/edit")
+        parser = _RenderedFormParser()
+        parser.feed(edit.text)
+        base = parser.controls
+        assert any(name == f"{prefix}set" for name, _ in base)
+
+        preview = await client.post(
+            f"/orders/{parent}/_relationships/customer/preview",
+            content=urlencode([*base, (f"{prefix}clear", "true")]),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        assert preview.status_code == 200
+        assert "<!doctype html>" in preview.text
+        assert "Clear Customer?" in preview.text
+
+        confirmed = await client.post(
+            f"/orders/{parent}/_relationships/customer/preview/confirm",
+            content=urlencode(parsed_form(preview.text)),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        assert confirmed.status_code == 200
+        final = dict(parsed_form(confirmed.text))
+        assert f"{prefix}clear" in final
+        assert final.get(f"{prefix}set") == ""
+        assert f"{prefix}destructive_confirmation" in final
+
+        saved = await client.post(
+            f"/orders/{parent}/edit",
+            content=urlencode(parsed_form(confirmed.text)),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+
+    assert saved.status_code == 303
+
+
 def test_example_dependencies_are_declared_as_optional() -> None:
     repository = Path(__file__).resolve().parents[2]
     configuration = tomllib.loads((repository / "pyproject.toml").read_text(encoding="utf-8"))
