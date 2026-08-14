@@ -8,16 +8,63 @@ function rakitInput(form, name, value) {
   form.append(input);
 }
 
-function rakitRemoveInputs(form, name) {
-  form.querySelectorAll(`input[name="${CSS.escape(name)}"]`).forEach((node) => node.remove());
+function rakitRemoveRelationshipConfirmation(form, prefix) {
+  form.querySelectorAll("input").forEach((node) => {
+    if (
+      node instanceof HTMLInputElement &&
+      [
+        `${prefix}destructive_confirmation`,
+        `${prefix}confirmation_intent`,
+        `${prefix}confirmation_impact`,
+      ].includes(node.name)
+    ) node.remove();
+  });
 }
 
-function rakitRestoreClear(form, prefix) {
-  rakitRemoveInputs(form, `${prefix}clear`);
-  const select = form.querySelector(`[name="${CSS.escape(`${prefix}set`)}"]`);
-  if (select instanceof HTMLSelectElement) select.value = form.dataset.rakitClearPrevious || "";
-  delete form.dataset.rakitClearPrevious;
-  delete form.dataset.rakitClearPrefix;
+function rakitApplyUnlinkState(form, prefix, identity, pending) {
+  if (pending) rakitRemoveDeleteState(form, identity, prefix);
+  const input = form.querySelector(
+    `[name="${CSS.escape(`${prefix}unlink__${identity}`)}"]`,
+  );
+  if (input instanceof HTMLInputElement) input.checked = pending;
+  form.querySelectorAll("[data-rakit-unlink-action]").forEach((control) => {
+    if (
+      !(control instanceof HTMLElement) ||
+      control.dataset.rakitUnlinkPrefix !== prefix ||
+      control.dataset.rakitUnlinkIdentity !== identity
+    ) return;
+    control.setAttribute("aria-pressed", String(pending));
+    control.removeAttribute("data-rakit-preview-unlink");
+    control.querySelector("[data-rakit-unlink-label]")?.replaceChildren(
+      document.createTextNode(pending ? "Undo removal" : "Remove from relationship"),
+    );
+  });
+  const chip = form.querySelector(
+    `[data-rakit-unlink-identity="${CSS.escape(identity)}"][data-rakit-unlink-prefix="${CSS.escape(prefix)}"]`,
+  )?.closest(".rakit-chip");
+  chip?.classList.toggle("opacity-55", pending);
+  chip?.classList.toggle("line-through", pending);
+  const row = form.querySelector(`[data-rakit-row="${CSS.escape(identity)}"]`);
+  row?.toggleAttribute("data-rakit-pending-unlink", pending);
+  row?.querySelector("[data-rakit-unlink-status]")?.classList.toggle("hidden", !pending);
+  if (!pending) {
+    const hasPendingDelete = [...form.querySelectorAll("input")].some(
+      (node) =>
+        node instanceof HTMLInputElement &&
+        node.name.startsWith(`${prefix}delete_intent__`) &&
+        node.checked,
+    );
+    const hasPendingUnlink = [...form.querySelectorAll("input")].some(
+      (node) =>
+        node instanceof HTMLInputElement &&
+        node.name.startsWith(`${prefix}unlink__`) &&
+        node.checked,
+    );
+    const clear = form.querySelector(`[name="${CSS.escape(`${prefix}clear`)}"]`);
+    if (!hasPendingDelete && !hasPendingUnlink && !clear) {
+      rakitRemoveRelationshipConfirmation(form, prefix);
+    }
+  }
 }
 
 function rakitShowPreview(root) {
@@ -31,14 +78,6 @@ function rakitShowPreview(root) {
   dialog.querySelector("[data-rakit-confirm-preview]")?.focus();
   dialog.addEventListener("close", () => {
     const form = document.querySelector("form[action]");
-    const clearPrefix = dialog.dataset.rakitClearPrefix;
-    if (form instanceof HTMLFormElement && clearPrefix && dialog.returnValue !== "confirm") {
-      rakitRestoreClear(form, clearPrefix);
-    }
-    if (form instanceof HTMLFormElement) {
-      delete form.dataset.rakitClearPrevious;
-      delete form.dataset.rakitClearPrefix;
-    }
     dialog.remove();
   }, { once: true });
   dialog.addEventListener("click", (event) => {
@@ -49,8 +88,11 @@ function rakitShowPreview(root) {
     if (!form) return;
     const prefix = dialog.dataset.rakitPrefix;
     const identity = dialog.dataset.rakitDeleteIdentity;
+    const unlinkIdentity = dialog.dataset.rakitUnlinkIdentity;
+    const clearPrefix = dialog.dataset.rakitClearPrefix;
     if (!prefix) return;
     if (identity) {
+      rakitApplyUnlinkState(form, prefix, identity, false);
       const intent = form.querySelector(`[name="${CSS.escape(`${prefix}delete_intent__${identity}`)}"]`);
       if (intent instanceof HTMLInputElement) intent.checked = true;
       rakitInput(form, `${prefix}delete__${identity}`, dialog.dataset.rakitConfirmation || "");
@@ -61,10 +103,17 @@ function rakitShowPreview(root) {
       row?.querySelector("[data-rakit-preview-delete]")?.classList.add("hidden");
       row?.querySelector("[data-rakit-delete-undo]")?.classList.remove("hidden");
     } else {
+      if (unlinkIdentity) {
+        rakitApplyUnlinkState(form, prefix, unlinkIdentity, true);
+      }
+      if (clearPrefix) {
+        const select = form.querySelector(`[name="${CSS.escape(`${clearPrefix}set`)}"]`);
+        if (select instanceof HTMLSelectElement) select.value = "";
+        rakitInput(form, `${clearPrefix}clear`, "true");
+      }
       rakitInput(form, `${prefix}destructive_confirmation`, dialog.dataset.rakitConfirmation || "");
       rakitInput(form, `${prefix}confirmation_intent`, dialog.dataset.rakitConfirmationIntent || "");
       rakitInput(form, `${prefix}confirmation_impact`, dialog.dataset.rakitImpact || "");
-      delete form.dataset.rakitClearPrevious;
     }
     dialog.close("confirm");
   });
@@ -115,18 +164,26 @@ document.addEventListener("click", (event) => {
     removeDraft.closest("[data-rakit-draft-row]")?.remove();
     return;
   }
+  const unlink = target.closest("[data-rakit-unlink-action]");
+  if (unlink instanceof HTMLElement && !unlink.hasAttribute("data-rakit-preview-unlink")) {
+    const form = unlink.closest("form");
+    const prefix = unlink.dataset.rakitUnlinkPrefix;
+    const identity = unlink.dataset.rakitUnlinkIdentity;
+    if (form instanceof HTMLFormElement && prefix && identity) {
+      const input = form.querySelector(
+        `[name="${CSS.escape(`${prefix}unlink__${identity}`)}"]`,
+      );
+      rakitApplyUnlinkState(form, prefix, identity, !(input instanceof HTMLInputElement && input.checked));
+    }
+    return;
+  }
   const clear = target.closest("[data-rakit-clear-selection]");
   if (clear instanceof HTMLElement) {
     const form = clear.closest("form");
     const prefix = clear.dataset.rakitPrefix;
     if (!(form instanceof HTMLFormElement) || !prefix) return;
-    const select = form.querySelector(`[name="${CSS.escape(`${prefix}set`)}"]`);
-    form.dataset.rakitClearPrevious = select instanceof HTMLSelectElement ? select.value : "";
-    if (select instanceof HTMLSelectElement) select.value = "";
-    rakitInput(form, `${prefix}clear`, "true");
     const previewPath = clear.dataset.rakitPreviewPath;
     if (previewPath && window.htmx) {
-      form.dataset.rakitClearPrefix = prefix;
       const values = window.htmx.values(form, "post");
       values[`${prefix}clear`] = "true";
       window.htmx.ajax("POST", previewPath, {
@@ -135,6 +192,10 @@ document.addEventListener("click", (event) => {
         target: "#rakit-dialog-root",
         swap: "innerHTML",
       });
+    } else {
+      const select = form.querySelector(`[name="${CSS.escape(`${prefix}set`)}"]`);
+      if (select instanceof HTMLSelectElement) select.value = "";
+      rakitInput(form, `${prefix}clear`, "true");
     }
     return;
   }
@@ -149,19 +210,17 @@ document.addEventListener("click", (event) => {
   }
 });
 
-document.addEventListener("htmx:afterSwap", (event) => {
-  rakitShowPreview(event.target);
-  const form = document.querySelector("form[action]");
-  if (form instanceof HTMLFormElement && !document.querySelector("[data-rakit-preview-dialog]")) {
-    const prefix = form.dataset.rakitClearPrefix;
-    if (prefix) rakitRestoreClear(form, prefix);
+document.addEventListener("change", (event) => {
+  const select = event.target;
+  if (!(select instanceof HTMLSelectElement) || !select.matches("[data-rakit-relationship-set]")) {
+    return;
   }
+  if (!select.value) return;
+  const form = select.closest("form");
+  const prefix = select.dataset.rakitPrefix;
+  if (!(form instanceof HTMLFormElement) || !prefix) return;
+  form.querySelector(`[name="${CSS.escape(`${prefix}clear`)}"]`)?.remove();
+  rakitRemoveRelationshipConfirmation(form, prefix);
 });
 
-document.addEventListener("htmx:afterRequest", (event) => {
-  const form = document.querySelector("form[action]");
-  if (form instanceof HTMLFormElement && event.detail?.successful === false) {
-    const prefix = form.dataset.rakitClearPrefix;
-    if (prefix) rakitRestoreClear(form, prefix);
-  }
-});
+document.addEventListener("htmx:afterSwap", (event) => rakitShowPreview(event.target));

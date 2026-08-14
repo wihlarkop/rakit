@@ -184,6 +184,8 @@ def _relationship_intent_fingerprint(values: Mapping[str, object]) -> str:
             "destructive_confirmation",
             "confirmation_intent",
             "confirmation_impact",
+            "delete_preview",
+            "unlink_preview",
         }
         and not name.startswith("delete__")
     }
@@ -325,6 +327,7 @@ def _validate_relationship_field_names(
             "confirmation_impact",
             "search",
             "delete_preview",
+            "unlink_preview",
         }:
             continue
         if (
@@ -442,6 +445,32 @@ async def build_relationship_changes(
                 status_code=403,
             )
         _validate_relationship_field_names(editor, values)
+        unlink_ids = {
+            name.removeprefix("unlink__")
+            for name, value in values.items()
+            if name.startswith("unlink__") and value
+        }
+        delete_ids = {
+            name.removeprefix("delete_intent__")
+            for name, value in values.items()
+            if name.startswith("delete_intent__") and value
+        }
+        conflicting_ids = unlink_ids & delete_ids
+        if conflicting_ids:
+            conflict = sorted(conflicting_ids)[0]
+            raise RakitError(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="A child cannot be removed and deleted at the same time.",
+                status_code=422,
+                details={
+                    "relationship_issue": {
+                        "relationship_id": editor.relationship_id,
+                        "row_key": conflict,
+                        "kind": "row",
+                        "message": "Choose removal or deletion, not both.",
+                    }
+                },
+            )
         steps: list[object] = []
         for name, value in values.items():
             if name.startswith("link__"):
@@ -739,6 +768,34 @@ async def relationship_panel_view(
     order_values = (
         tuple(submitted_order) if reorderable and submitted_order else complete_order_values
     )
+    if reorderable and order_values:
+        reordered = list(order_values)
+        for name, value in values.items():
+            if not name.startswith("move__") or not isinstance(value, str):
+                continue
+            parts = name.split("__", 2)
+            if len(parts) != 3 or parts[2] not in {"up", "down"}:
+                continue
+            try:
+                index = reordered.index(parts[1])
+            except ValueError:
+                continue
+            destination = index + (-1 if parts[2] == "up" else 1)
+            if 0 <= destination < len(reordered):
+                reordered[index], reordered[destination] = (
+                    reordered[destination],
+                    reordered[index],
+                )
+        order_values = tuple(reordered)
+        row_order = {encoded: index for index, encoded in enumerate(order_values)}
+        rows = tuple(
+            sorted(
+                rows,
+                key=lambda row: row_order.get(
+                    IdentityCodec().encode(row.candidate.identity), len(row_order)
+                ),
+            )
+        )
     confirmation_intent = _relationship_intent_fingerprint(values)
     confirmation = values.get("destructive_confirmation")
     confirmation_current = (
@@ -752,6 +809,7 @@ async def relationship_panel_view(
         "destructive_confirmation",
         "confirmation_intent",
         "confirmation_impact",
+        "unlink_preview",
     }
     for row in rows:
         encoded = IdentityCodec().encode(row.candidate.identity)
@@ -776,6 +834,8 @@ async def relationship_panel_view(
         rendered_names.add(f"delete__{encoded}")
         rendered_names.add(f"delete_impact__{encoded}")
         rendered_names.add(f"update_token__{encoded}")
+        rendered_names.add(f"move__{encoded}__up")
+        rendered_names.add(f"move__{encoded}__down")
         for field_id in row.values:
             rendered_names.add(f"{value_prefix}{field_id}")
     draft_rows: dict[str, dict[str, object]] = {}
@@ -860,6 +920,14 @@ async def relationship_panel_view(
             and selected
         ),
         "pending_unlinks": pending_unlinks,
+        "unlink_destructive": bool(
+            (
+                definition.destructive_policy.allow_delete_orphan
+                or definition.destructive_policy.allow_destructive_cascade
+            )
+            and callable(getattr(editor.state_provider, "preview_destructive_impact", None))
+            and callable(getattr(editor.state_provider, "issue_destructive_confirmation", None))
+        ),
         "options": tuple(options_by_identity.values()),
         "concurrency_token": token,
         "reorderable": reorderable,
@@ -1053,6 +1121,9 @@ def build_relationship_routes(
                 active_delete = submitted.get(
                     f"{relationship_prefix(editor.relationship_id)}delete_preview"
                 )
+                active_unlink = submitted.get(
+                    f"{relationship_prefix(editor.relationship_id)}unlink_preview"
+                )
                 if active_delete is not None:
                     if not isinstance(active_delete, str):
                         raise _invalid_relationship_field()
@@ -1102,6 +1173,7 @@ def build_relationship_routes(
                     dialog_context = {
                         "prefix": relationship_prefix(editor.relationship_id),
                         "delete_identity": encoded,
+                        "unlink_identity": None,
                         "confirmation": confirmation,
                         "confirmation_intent": "",
                         "impact": ", ".join(str(item) for item in impact)
@@ -1112,6 +1184,26 @@ def build_relationship_routes(
                         "resource_label": binding.label,
                     }
                 else:
+                    if active_unlink is not None:
+                        if not isinstance(active_unlink, str):
+                            raise _invalid_relationship_field()
+                        unlink_identity = _identity(relationship_binding.codec, active_unlink)
+                        change = RelationshipChangePlan(
+                            operation_id=f"relationship:{editor.relationship_id}",
+                            relationship_id=editor.relationship_id,
+                            steps=(UnlinkRelated(identity=unlink_identity),),
+                            authorization_requirement=editor.relationship.mutation_permission,
+                            concurrency_token=(
+                                concurrency
+                                if isinstance(
+                                    concurrency := _fields_for_prefix(
+                                        submitted, relationship_prefix(editor.relationship_id)
+                                    ).get("concurrency"),
+                                    str,
+                                )
+                                else None
+                            ),
+                        )
                     if change is None:
                         raise RakitError(
                             code=ErrorCode.VALIDATION_FAILED,
@@ -1159,9 +1251,18 @@ def build_relationship_routes(
                         _fields_for_prefix(submitted, relationship_prefix(editor.relationship_id))
                     )
                     is_clear = any(isinstance(step, ClearRelated) for step in change.steps)
+                    unlink_steps = [
+                        step for step in change.steps if isinstance(step, UnlinkRelated)
+                    ]
+                    is_unlink = bool(unlink_steps)
                     dialog_context = {
                         "prefix": relationship_prefix(editor.relationship_id),
                         "delete_identity": None,
+                        "unlink_identity": (
+                            relationship_binding.codec.encode(unlink_steps[-1].identity)
+                            if len(unlink_steps) == 1
+                            else None
+                        ),
                         "clear_prefix": relationship_prefix(editor.relationship_id)
                         if is_clear
                         else None,
@@ -1171,14 +1272,24 @@ def build_relationship_routes(
                         "title": (
                             f"Clear {editor.relationship.definition.label}?"
                             if is_clear
+                            else f"Remove {editor.relationship.definition.label.rstrip('s')}?"
+                            if is_unlink
                             else f"Change {editor.relationship.definition.label}?"
                         ),
                         "description": (
                             "This relationship will be cleared."
                             if is_clear
+                            else "This item will be removed from the relationship."
+                            if is_unlink
                             else "This relationship change has a destructive impact."
                         ),
-                        "confirm_label": "Confirm clear" if is_clear else "Confirm change",
+                        "confirm_label": (
+                            "Confirm clear"
+                            if is_clear
+                            else "Confirm removal"
+                            if is_unlink
+                            else "Confirm change"
+                        ),
                         "resource_label": binding.label,
                     }
                 if dialog_context is not None:
