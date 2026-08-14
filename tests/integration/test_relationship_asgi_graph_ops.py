@@ -8,6 +8,7 @@ import pytest
 from rakit_core.identity import IdentityCodec, RecordIdentity
 
 from .rakit_integration import (
+    CommitRecorder,
     IntegrationApp,
     LineItem,
     Order,
@@ -41,6 +42,28 @@ async def _save(
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         follow_redirects=False,
     )
+
+
+async def _delete_token(
+    app: IntegrationApp,
+    client: httpx.AsyncClient,
+    parent: str,
+    base: list[tuple[str, str]],
+    identity: str,
+) -> str:
+    prefix = relationship_prefix("line_items")
+    preview = await client.post(
+        f"/orders/{parent}/_relationships/line_items/preview",
+        content=encode_form(append_controls(base, (f"{prefix}delete_preview", identity))),
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "HX-Request": "true",
+        },
+    )
+    assert preview.status_code == 200
+    confirmation = re.search(r'data-rakit-confirmation="([^"]+)"', preview.text)
+    assert confirmation is not None
+    return confirmation.group(1)
 
 
 @pytest.mark.anyio
@@ -464,7 +487,6 @@ async def test_oversized_reorder_fails_closed(
 ) -> None:
     app, identities = integration
     prefix = relationship_prefix("line_items")
-
     async with app.session_factory() as session:
         order = await session.get(Order, 10)
         assert order is not None
@@ -526,3 +548,110 @@ async def test_association_scalar_update_persists_and_unknown_column_is_rejected
         (1, "A+"),
         (2, "A"),
     )
+
+
+@pytest.mark.anyio
+async def test_delete_and_reorder_survive_in_one_save(
+    integration: tuple[IntegrationApp, dict[str, object]],
+    parent: str,
+    codec: IdentityCodec,
+) -> None:
+    app, identities = integration
+    line_21 = codec.encode(cast(RecordIdentity, identities["line_21"]))
+    line_22 = codec.encode(cast(RecordIdentity, identities["line_22"]))
+    line_23 = codec.encode(cast(RecordIdentity, identities["line_23"]))
+    prefix = relationship_prefix("line_items")
+
+    async with client_for(app) as client:
+        base = await _edit_payload(app, client, parent)
+        order_names = sorted(name for name, _ in base if name.startswith(f"{prefix}order__"))
+        assert [value for name, value in base if name == order_names[0]] == [line_21]
+        token = await _delete_token(app, client, parent, base, line_23)
+        payload = dict(base)
+        payload[order_names[0]] = line_22
+        payload[order_names[1]] = line_21
+        payload = [(name, value) for name, value in payload.items()]
+        payload = append_controls(
+            payload,
+            (f"{prefix}delete_intent__{line_23}", "true"),
+            (f"{prefix}delete__{line_23}", token),
+        )
+        recorder = CommitRecorder(app.engine)
+        saved = await _save(app, client, parent, payload)
+        recorder.close(app.engine)
+
+    assert saved.status_code == 303
+    assert recorder.commits == 1
+    items = await fetch_line_items(app.session_factory)
+    assert [item[0] for item in items] == [22, 21]
+    assert items[0][3] < items[1][3]
+    assert all(item[0] != 23 for item in items)
+
+
+@pytest.mark.anyio
+async def test_invalid_reorder_with_pending_delete_fails_closed(
+    integration: tuple[IntegrationApp, dict[str, object]],
+    parent: str,
+    codec: IdentityCodec,
+) -> None:
+    app, identities = integration
+    line_21 = codec.encode(cast(RecordIdentity, identities["line_21"]))
+    line_22 = codec.encode(cast(RecordIdentity, identities["line_22"]))
+    line_23 = codec.encode(cast(RecordIdentity, identities["line_23"]))
+    prefix = relationship_prefix("line_items")
+
+    async with client_for(app) as client:
+        base = await _edit_payload(app, client, parent)
+        order_names = sorted(name for name, _ in base if name.startswith(f"{prefix}order__"))
+        token = await _delete_token(app, client, parent, base, line_23)
+
+        def with_delete(values: dict[str, str]) -> list[tuple[str, str]]:
+            return append_controls(
+                [(name, value) for name, value in values.items()],
+                (f"{prefix}delete_intent__{line_23}", "true"),
+                (f"{prefix}delete__{line_23}", token),
+            )
+
+        duplicate = dict(base)
+        duplicate[order_names[0]] = line_21
+        duplicate[order_names[1]] = line_21
+        duplicate[order_names[2]] = line_22
+        rejected_duplicate = await _save(app, client, parent, with_delete(duplicate))
+        assert rejected_duplicate.status_code == 422
+
+        incomplete = [
+            (name, value) for name, value in base if not name.startswith(f"{prefix}order__")
+        ]
+        incomplete.append((order_names[0], line_21))
+        incomplete.append((order_names[1], line_22))
+        rejected_incomplete = await _save(
+            app,
+            client,
+            parent,
+            append_controls(
+                incomplete,
+                (f"{prefix}delete_intent__{line_23}", "true"),
+                (f"{prefix}delete__{line_23}", token),
+            ),
+        )
+        assert rejected_incomplete.status_code == 422
+
+        forged = [(name, value) for name, value in base if not name.startswith(f"{prefix}order__")]
+        forged.append((order_names[0], line_21))
+        forged.append((order_names[1], line_22))
+        forged.append((order_names[2], "not-a-valid-identity"))
+        rejected_forged = await _save(
+            app,
+            client,
+            parent,
+            append_controls(
+                forged,
+                (f"{prefix}delete_intent__{line_23}", "true"),
+                (f"{prefix}delete__{line_23}", token),
+            ),
+        )
+        assert rejected_forged.status_code == 400
+
+    items = await fetch_line_items(app.session_factory)
+    assert [item[0] for item in items] == [21, 22, 23]
+    assert items[2][4] == 1
