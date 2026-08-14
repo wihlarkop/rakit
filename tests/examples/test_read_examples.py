@@ -7,17 +7,80 @@ import sys
 import tomllib
 import zipfile
 from contextlib import asynccontextmanager
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlencode
 
 import httpx
 import pytest
 from rakit import Admin
+from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_web.relationship_routes import relationship_prefix
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 repository = Path(__file__).resolve().parents[2]
+
+
+class _RenderedFormParser(HTMLParser):
+    """Collect successful controls from the rendered parent form like a browser."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.controls: list[tuple[str, str]] = []
+        self._form_depth = 0
+        self._select: dict[str, object] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        if tag == "form":
+            self._form_depth += 1
+        if self._form_depth != 1:
+            return
+        if tag == "input":
+            name = attributes.get("name")
+            if not isinstance(name, str):
+                return
+            input_type = attributes.get("type", "text")
+            if input_type in {"checkbox", "radio"} and "checked" not in attributes:
+                return
+            self.controls.append((name, attributes.get("value") or ""))
+        elif tag == "select" and isinstance(attributes.get("name"), str):
+            self._select = {
+                "name": attributes["name"],
+                "first": None,
+                "selected": None,
+            }
+        elif tag == "option" and self._select is not None:
+            value = attributes.get("value") or ""
+            if self._select["first"] is None:
+                self._select["first"] = value
+            if "selected" in attributes:
+                self._select["selected"] = value
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "select" and self._select is not None:
+            value = self._select["selected"] or self._select["first"] or ""
+            self.controls.append((str(self._select["name"]), str(value)))
+            self._select = None
+        elif tag == "form":
+            self._form_depth -= 1
+
+
+def _replace_control(
+    controls: list[tuple[str, str]], name: str, value: str
+) -> list[tuple[str, str]]:
+    return [
+        (control_name, value if control_name == name else control_value)
+        for control_name, control_value in controls
+    ]
+
+
+def _append_control(
+    controls: list[tuple[str, str]], *additional: tuple[str, str]
+) -> list[tuple[str, str]]:
+    return [*controls, *additional]
 
 
 def _example_environment() -> dict[str, str]:
@@ -121,6 +184,305 @@ async def test_relationship_review_create_renders_required_parent_scalar_and_sub
     assert invalid.status_code == 422
     assert 'for="rakit--orders-status"' in invalid.text
     assert 'aria-invalid="true"' in invalid.text
+
+
+@pytest.mark.anyio
+async def test_rendered_delete_preview_form_can_be_saved_without_invalid_form() -> None:
+    module = importlib.import_module("examples.fastapi_sqlalchemy.relationship_review")
+    parent = "eyJpZCI6MTB9"
+    child = "eyJpZCI6MjF9"
+    prefix = relationship_prefix("items")
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=module.app), base_url="http://test"
+    ) as client:
+        edit = await client.get(f"/orders/{parent}/edit")
+        parser = _RenderedFormParser()
+        parser.feed(edit.text)
+        preview_payload = [
+            *parser.controls,
+            (f"{prefix}delete_preview", child),
+        ]
+        preview = await client.post(
+            f"/orders/{parent}/_relationships/items/preview",
+            content=urlencode(preview_payload),
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "HX-Request": "true",
+            },
+        )
+        confirmation = re.search(r'data-rakit-confirmation="([^"]+)"', preview.text)
+        impact = re.search(r'data-rakit-impact="([^"]*)"', preview.text)
+        assert preview.status_code == 200
+        assert confirmation is not None
+        final_payload = [
+            *parser.controls,
+            (f"{prefix}delete_intent__{child}", "true"),
+            (f"{prefix}delete__{child}", html.unescape(confirmation.group(1))),
+            (f"{prefix}delete_impact__{child}", html.unescape(impact.group(1)) if impact else ""),
+        ]
+        saved = await client.post(
+            f"/orders/{parent}/edit",
+            content=urlencode(final_payload),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+
+    assert saved.status_code == 303
+    assert "Invalid form" not in saved.text
+
+
+@pytest.mark.anyio
+async def test_each_rendered_relationship_operation_reaches_final_parent_save() -> None:
+    module = importlib.import_module("examples.fastapi_sqlalchemy.relationship_review")
+    parent = "eyJpZCI6MTB9"
+    codec = IdentityCodec()
+    customer_prefix = relationship_prefix("customer")
+    tags_prefix = relationship_prefix("tags")
+    items_prefix = relationship_prefix("items")
+    courses_prefix = relationship_prefix("courses")
+    customer_two = codec.encode(RecordIdentity(values={"id": 2}))
+    tag_one = codec.encode(RecordIdentity(values={"id": 1}))
+    tag_eleven = codec.encode(RecordIdentity(values={"id": 11}))
+    item_twenty_one = codec.encode(RecordIdentity(values={"id": 21}))
+    item_twenty_two = codec.encode(RecordIdentity(values={"id": 22}))
+    item_twenty_three = codec.encode(RecordIdentity(values={"id": 23}))
+    course_fifty_one = codec.encode(RecordIdentity(values={"id": 51}))
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=module.app), base_url="http://test"
+    ) as client:
+        edit = await client.get(f"/orders/{parent}/edit")
+        parser = _RenderedFormParser()
+        parser.feed(edit.text)
+        base = parser.controls
+
+        async def save(payload: list[tuple[str, str]]) -> None:
+            response = await client.post(
+                f"/orders/{parent}/edit",
+                content=urlencode(payload),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                follow_redirects=False,
+            )
+            assert response.status_code == 303, response.text
+
+        async def preview(
+            payload: list[tuple[str, str]], relationship_id: str, name: str, value: str
+        ) -> tuple[str, str, str]:
+            response = await client.post(
+                f"/orders/{parent}/_relationships/{relationship_id}/preview",
+                content=urlencode(
+                    payload
+                    if any(control_name == name for control_name, _ in payload)
+                    else [*payload, (name, value)]
+                ),
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "HX-Request": "true",
+                },
+            )
+            assert response.status_code == 200
+            confirmation = re.search(r'data-rakit-confirmation="([^"]+)"', response.text)
+            intent = re.search(r'data-rakit-confirmation-intent="([^"]*)"', response.text)
+            impact = re.search(r'data-rakit-impact="([^"]*)"', response.text)
+            assert confirmation is not None
+            return (
+                html.unescape(confirmation.group(1)),
+                html.unescape(intent.group(1)) if intent else "",
+                html.unescape(impact.group(1)) if impact else "",
+            )
+
+        async def save_confirmed(
+            payload: list[tuple[str, str]], prefix: str, confirmation: tuple[str, str, str]
+        ) -> None:
+            token, intent, impact = confirmation
+            await save(
+                _append_control(
+                    payload,
+                    (f"{prefix}destructive_confirmation", token),
+                    (f"{prefix}confirmation_intent", intent),
+                    (f"{prefix}confirmation_impact", impact),
+                )
+            )
+
+        await save(base)  # scalar-only
+
+        customer_set = _replace_control(base, f"{customer_prefix}set", customer_two)
+        await save_confirmed(
+            customer_set,
+            customer_prefix,
+            await preview(customer_set, "customer", f"{customer_prefix}set", customer_two),
+        )
+
+        customer_clear = _append_control(
+            _replace_control(base, f"{customer_prefix}set", ""),
+            (f"{customer_prefix}clear", "true"),
+        )
+        await save_confirmed(
+            customer_clear,
+            customer_prefix,
+            await preview(customer_clear, "customer", f"{customer_prefix}clear", "true"),
+        )
+
+        await save(_append_control(base, (f"{tags_prefix}link__{tag_one}", tag_one)))
+
+        tag_unlink = _append_control(base, (f"{tags_prefix}unlink__{tag_eleven}", tag_eleven))
+        await save_confirmed(
+            tag_unlink,
+            tags_prefix,
+            await preview(tag_unlink, "tags", f"{tags_prefix}unlink_preview", tag_eleven),
+        )
+
+        await save(
+            _replace_control(
+                base,
+                f"{items_prefix}update__{item_twenty_one}__sku",
+                "SKU-UPDATED",
+            )
+        )
+
+        order_controls = [
+            (name, value) for name, value in base if name.startswith(f"{items_prefix}order__")
+        ]
+        first_order = order_controls[0][1]
+        second_order = order_controls[1][1]
+        order_index = 0
+        reorder = []
+        for name, value in base:
+            if name.startswith(f"{items_prefix}order__"):
+                value = (
+                    second_order if order_index == 0 else first_order if order_index == 1 else value
+                )
+                order_index += 1
+            reorder.append((name, value))
+        await save(reorder)
+
+        item_unlink = _append_control(
+            base, (f"{items_prefix}unlink__{item_twenty_two}", item_twenty_two)
+        )
+        await save_confirmed(
+            item_unlink,
+            items_prefix,
+            await preview(item_unlink, "items", f"{items_prefix}unlink_preview", item_twenty_two),
+        )
+
+        item_delete = _append_control(
+            base,
+            (f"{items_prefix}delete_intent__{item_twenty_three}", "true"),
+        )
+        delete_confirmation = await preview(
+            base, "items", f"{items_prefix}delete_preview", item_twenty_three
+        )
+        await save(
+            _append_control(
+                item_delete,
+                (f"{items_prefix}delete__{item_twenty_three}", delete_confirmation[0]),
+                (f"{items_prefix}delete_impact__{item_twenty_three}", delete_confirmation[2]),
+            )
+        )
+
+        await save(
+            _append_control(
+                base,
+                (f"{items_prefix}create__new-browser__sku", "SKU-CREATED"),
+                (f"{items_prefix}create__new-browser__quantity", "2"),
+            )
+        )
+        await save(
+            _replace_control(
+                base,
+                f"{courses_prefix}association__{course_fifty_one}__grade",
+                "A",
+            )
+        )
+
+
+@pytest.mark.anyio
+async def test_rendered_mixed_relationship_state_uses_one_graph_update(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = importlib.import_module("examples.fastapi_sqlalchemy.relationship_review")
+    parent = "eyJpZCI6MTB9"
+    codec = IdentityCodec()
+    customer_prefix = relationship_prefix("customer")
+    tags_prefix = relationship_prefix("tags")
+    items_prefix = relationship_prefix("items")
+    courses_prefix = relationship_prefix("courses")
+    tag_one = codec.encode(RecordIdentity(values={"id": 1}))
+    tag_eleven = codec.encode(RecordIdentity(values={"id": 11}))
+    item_twenty_one = codec.encode(RecordIdentity(values={"id": 21}))
+    item_twenty_two = codec.encode(RecordIdentity(values={"id": 22}))
+    item_twenty_three = codec.encode(RecordIdentity(values={"id": 23}))
+    course_fifty_one = codec.encode(RecordIdentity(values={"id": 51}))
+    service = cast(Any, module.binding.mutation_service)
+    calls: list[dict[str, object]] = []
+    original_update_graph = service.update_graph
+
+    async def tracked_update_graph(*args: object, **kwargs: object) -> object:
+        calls.append(kwargs)
+        return await original_update_graph(*args, **kwargs)
+
+    monkeypatch.setattr(service, "update_graph", tracked_update_graph)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=module.app), base_url="http://test"
+    ) as client:
+        edit = await client.get(f"/orders/{parent}/edit")
+        parser = _RenderedFormParser()
+        parser.feed(edit.text)
+        base = parser.controls
+        order_controls = [
+            (name, value) for name, value in base if name.startswith(f"{items_prefix}order__")
+        ]
+        order_index = 0
+        mixed: list[tuple[str, str]] = []
+        for name, value in base:
+            if name.startswith(f"{items_prefix}order__"):
+                value = (
+                    order_controls[1][1]
+                    if order_index == 0
+                    else order_controls[0][1]
+                    if order_index == 1
+                    else value
+                )
+                order_index += 1
+            mixed.append((name, value))
+        mixed = _replace_control(mixed, f"{customer_prefix}set", "")
+        mixed = _replace_control(
+            mixed,
+            f"{items_prefix}update__{item_twenty_one}__sku",
+            "SKU-MIXED",
+        )
+        mixed = _replace_control(
+            mixed,
+            f"{courses_prefix}association__{course_fifty_one}__grade",
+            "A",
+        )
+        mixed = _append_control(
+            mixed,
+            (f"{customer_prefix}clear", "true"),
+            (f"{customer_prefix}destructive_confirmation", "clear-confirm"),
+            (f"{tags_prefix}link__{tag_one}", tag_one),
+            (f"{tags_prefix}unlink__{tag_eleven}", tag_eleven),
+            (f"{tags_prefix}destructive_confirmation", "tags-confirm"),
+            (f"{items_prefix}create__new-mixed__sku", "SKU-CREATED"),
+            (f"{items_prefix}create__new-mixed__quantity", "2"),
+            (f"{items_prefix}unlink__{item_twenty_two}", item_twenty_two),
+            (f"{items_prefix}delete_intent__{item_twenty_three}", "true"),
+            (f"{items_prefix}delete__{item_twenty_three}", "delete-confirm"),
+            (f"{items_prefix}delete_impact__{item_twenty_three}", "1"),
+            (f"{items_prefix}destructive_confirmation", "items-confirm"),
+        )
+        saved = await client.post(
+            f"/orders/{parent}/edit",
+            content=urlencode(mixed),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+
+    assert saved.status_code == 303
+    assert len(calls) == 1
+    assert len(cast(Any, calls[0]["relationship_changes"])) == 4
 
 
 def test_example_dependencies_are_declared_as_optional() -> None:
