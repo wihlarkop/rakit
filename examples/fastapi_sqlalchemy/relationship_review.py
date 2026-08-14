@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from rakit_core.fields import FieldDefinition
-from rakit_core.forms import FormLayout, FormSchema, RelationshipPanel
+from rakit_core.forms import FieldLayout, FormLayout, FormSchema, RelationshipPanel
 from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import MutationAuthorization, OperationAuthorizationSet
 from rakit_core.permissions import PermissionRequirement
@@ -32,7 +32,7 @@ from rakit_core.relationships import (
     RelationshipOrderingDefinition,
 )
 from rakit_core.resources import ResourceService
-from rakit_web.assets import static_files
+from rakit_web.assets import static_files, static_url
 from rakit_web.form_routes import WriteResourceBinding, build_write_routes
 from rakit_web.relationship_routes import (
     RelationshipEditorBinding,
@@ -322,10 +322,22 @@ async def _authorize_graph(
 
 async def _orders(_: Request) -> HTMLResponse:
     return HTMLResponse(
-        "<h1>Relationship UI review</h1>"
-        "<p>This deterministic local fixture is for visual and form-state inspection.</p>"
-        '<p><a href="/orders/new">Create sample order</a></p>'
-        '<p><a href="/orders/eyJpZCI6MTB9/edit">Edit populated order</a></p>'
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        f"<link rel='stylesheet' href='{static_url('rakit.css')}'>"
+        "<title>Relationship UI Review</title>"
+        "</head><body class='min-h-screen bg-slate-50 text-slate-900'>"
+        "<main class='mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8'>"
+        "<section class='rakit-panel p-4'>"
+        "<p class='text-sm font-medium text-slate-500'>Rakit review fixture</p>"
+        "<h1 class='mt-2 text-2xl font-semibold tracking-tight'>Relationship UI Review</h1>"
+        "<p class='mt-3 text-sm leading-6 text-slate-600'>"
+        "Inspect the compact relationship editor and its form-state interactions.</p>"
+        "<div class='mt-6 flex flex-wrap gap-3'>"
+        "<a class='rakit-button' href='/orders/new'>Create sample order</a>"
+        "<a class='rakit-button rakit-button-secondary' "
+        "href='/orders/eyJpZCI6MTB9/edit'>Edit populated order</a>"
+        "</div></section></main></body></html>"
     )
 
 
@@ -338,7 +350,7 @@ def _binding() -> WriteResourceBinding:
         RelationshipEditorBinding(
             relationship=_relationship(
                 "customer",
-                label="Customer (nullable)",
+                label="Customer",
                 kind=RelationshipKind.MANY_TO_ONE,
                 cardinality=RelationshipCardinality.TO_ONE,
                 mode=RelationshipEditMode.LINK,
@@ -346,6 +358,7 @@ def _binding() -> WriteResourceBinding:
             target_service=source,
             state_provider=state,
             target_search_fields=("label",),
+            candidate_page_size=12,
         ),
         RelationshipEditorBinding(
             relationship=_relationship(
@@ -382,6 +395,7 @@ def _binding() -> WriteResourceBinding:
                     ),
                 )
             ),
+            candidate_page_size=12,
             reorder_safe_maximum=40,
         ),
         RelationshipEditorBinding(
@@ -398,6 +412,7 @@ def _binding() -> WriteResourceBinding:
             association_form_schema=FormSchema(
                 fields=(FieldDefinition(field_id="grade", python_type=str, required=True),)
             ),
+            candidate_page_size=12,
         ),
     )
     relationship_form = RelationshipFormBinding(editors=editors)
@@ -405,6 +420,7 @@ def _binding() -> WriteResourceBinding:
         fields=(FieldDefinition(field_id="status", python_type=str, required=True),),
         layout=FormLayout(
             children=(
+                FieldLayout("status"),
                 RelationshipPanel(layout_id="customer", relationship_id="customer"),
                 RelationshipPanel(layout_id="tags", relationship_id="tags"),
                 RelationshipPanel(layout_id="items", relationship_id="items"),

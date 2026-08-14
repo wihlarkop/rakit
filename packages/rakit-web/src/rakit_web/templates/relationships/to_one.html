@@ -8,10 +8,7 @@
       <option value="{{ encoded }}"{% if encoded in panel.selected %} selected{% endif %}>{{ option.label }}</option>
     {% endfor %}
   </select>
-  {% if panel.relationship.nullable and panel.relationship.effective_writable %}
-    <label class="inline-flex items-center gap-2 text-sm text-slate-700"><input class="size-4 rounded border-slate-300 text-blue-700" type="checkbox" name="{{ panel.prefix }}clear" value="true" /> Clear selection</label>
-  {% endif %}
-  {% if panel.preview_path and panel.relationship.effective_writable %}
-    <button class="rakit-button rakit-button-secondary" type="button" hx-post="{{ panel.preview_path }}" hx-include="closest form" hx-target="#rakit-dialog-root" hx-swap="innerHTML">Review {{ panel.relationship.label | lower }} change</button>
+  {% if panel.clear_available %}
+    <button class="rakit-button rakit-button-quiet" type="button" data-rakit-clear-selection data-rakit-prefix="{{ panel.prefix }}"{% if panel.preview_path and panel.relationship.destructive_policy.permits_persistent_delete %} data-rakit-preview-path="{{ panel.preview_path }}"{% endif %}>Clear</button>
   {% endif %}
 </fieldset>

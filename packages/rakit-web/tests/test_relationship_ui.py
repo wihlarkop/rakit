@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -761,6 +762,130 @@ async def test_child_delete_preview_is_explicit_non_persisting_and_uses_signed_t
     assert "data-rakit-preview-dialog" in response.text
     assert "Mark for deletion" in response.text
     assert service.graph_updates == []
+
+
+@pytest.mark.anyio
+async def test_rendered_delete_control_uses_preview_transport_and_modal_host() -> None:
+    """Exercise the request a browser builds from the rendered delete control."""
+    source = CandidateSource()
+    requirement = _compiled("customer").mutation_permission
+    items = RelationshipEditorBinding(
+        relationship=_compiled(
+            "items",
+            kind=RelationshipKind.ONE_TO_MANY,
+            cardinality=RelationshipCardinality.TO_MANY,
+            edit_mode=RelationshipEditMode.INLINE,
+            destructive_policy=RelationshipDestructivePolicy(allow_child_delete=True),
+            target_delete_permission=requirement,
+        ),
+        target_service=ResourceService(cast(Any, source)),
+        state_provider=PreviewProvider(),
+    )
+    form = RelationshipFormBinding(editors=(_relationship_form().editor("customer"), items))
+    binding, service = _binding(relationship_form=form)
+    app = Starlette(
+        routes=[*build_write_routes(binding), *build_relationship_routes(binding, form)]
+    )
+    codec = IdentityCodec()
+    parent = codec.encode(RecordIdentity(values={"id": 10}))
+    child = codec.encode(RecordIdentity(values={"id": 1}))
+    prefix = relationship_prefix("items")
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        edit = await client.get(f"/orders/{parent}/edit")
+        button = re.search(
+            r'<button[^>]*data-rakit-preview-delete[^>]*hx-post="([^"]+)"'
+            r'[^>]*hx-include="closest form"[^>]*hx-vals=\'([^\']+)\'',
+            edit.text,
+        )
+        assert button is not None
+        assert 'type="button"' in button.group(0)
+        assert 'id="rakit-dialog-root"' in edit.text
+        assert button.group(1) == f"/orders/{parent}/_relationships/items/preview"
+
+        # This is the form payload plus hx-vals that HTMX sends for the click.
+        response = await client.post(
+            button.group(1),
+            data={
+                "csrf_token": "csrf",
+                "status": "draft",
+                f"{prefix}selection_present": "true",
+                f"{prefix}delete_preview": child,
+            },
+            headers={"HX-Request": "true"},
+        )
+
+    assert response.status_code == 200
+    assert "data-rakit-preview-dialog" in response.text
+    assert "Invalid form" not in response.text
+    assert "signed-child-delete" in response.text
+    assert service.graph_updates == []
+
+
+@pytest.mark.anyio
+async def test_relationship_polish_uses_human_labels_counts_and_local_row_errors() -> None:
+    form = _relationship_form()
+    customer = await relationship_panel_view(
+        form.editor("customer"), parent_identity=RecordIdentity(values={"id": 10})
+    )
+    empty_customer = await relationship_panel_view(form.editor("customer"), parent_identity=None)
+    items = await relationship_panel_view(
+        form.editor("items"),
+        parent_identity=RecordIdentity(values={"id": 10}),
+        issues=(
+            {
+                "relationship_id": "items",
+                "row_key": IdentityCodec().encode(RecordIdentity(values={"id": 1})),
+                "kind": "row",
+                "message": "This row is no longer available.",
+            },
+        ),
+    )
+    templates = build_templates(())
+    one_rendered = templates.env.get_template("relationships/to_one.html").render(
+        panel=customer, codec=form.codec
+    )
+    empty_one_rendered = templates.env.get_template("relationships/to_one.html").render(
+        panel=empty_customer, codec=form.codec
+    )
+    many_rendered = templates.env.get_template("relationships/panel.html").render(
+        panel=items, codec=form.codec
+    )
+
+    assert customer["total_label"] == "1 item"
+    assert items["total_label"] == "2 items"
+    assert "Clear" in one_rendered
+    assert "Clear" not in empty_one_rendered
+    assert 'type="checkbox"' not in one_rendered
+    assert "Review customer" not in one_rendered
+    assert "This row is no longer available." in many_rendered
+    assert "+ Add item" in many_rendered
+
+
+@pytest.mark.anyio
+async def test_preview_validation_stays_inside_admin_ui_for_hx_and_full_requests() -> None:
+    form = _relationship_form()
+    binding, _ = _binding(relationship_form=form)
+    app = Starlette(
+        routes=[*build_write_routes(binding), *build_relationship_routes(binding, form)]
+    )
+    parent = IdentityCodec().encode(RecordIdentity(values={"id": 10}))
+    path = f"/orders/{parent}/_relationships/customer/preview"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        htmx = await client.post(path, data={"csrf_token": "csrf"}, headers={"HX-Request": "true"})
+        full = await client.post(path, data={"csrf_token": "csrf"})
+
+    assert htmx.status_code == 200
+    assert "There are problems with this form" in htmx.text
+    assert "PlainText" not in htmx.text
+    assert full.status_code == 422
+    assert "<!doctype html>" in full.text
+    assert 'role="alert"' in full.text
+    assert "There are problems with this form" in full.text
 
 
 @pytest.mark.anyio

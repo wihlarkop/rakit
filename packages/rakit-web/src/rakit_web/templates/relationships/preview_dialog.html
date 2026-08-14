@@ -1,4 +1,4 @@
-<dialog class="rakit-dialog" aria-labelledby="rakit-preview-title" data-rakit-preview-dialog data-rakit-prefix="{{ prefix }}"{% if delete_identity %} data-rakit-delete-identity="{{ delete_identity }}"{% endif %} data-rakit-confirmation="{{ confirmation }}" data-rakit-confirmation-intent="{{ confirmation_intent }}" data-rakit-impact="{{ impact }}">
+<dialog class="rakit-dialog" aria-labelledby="rakit-preview-title" data-rakit-preview-dialog data-rakit-prefix="{{ prefix }}"{% if delete_identity %} data-rakit-delete-identity="{{ delete_identity }}"{% endif %}{% if clear_prefix %} data-rakit-clear-prefix="{{ clear_prefix }}"{% endif %} data-rakit-confirmation="{{ confirmation }}" data-rakit-confirmation-intent="{{ confirmation_intent }}" data-rakit-impact="{{ impact }}">
   <form method="dialog" class="p-5">
     <h2 id="rakit-preview-title" class="text-lg font-semibold text-slate-900">{{ title }}</h2>
     <p class="mt-2 text-sm leading-6 text-slate-600">{{ description }}</p>

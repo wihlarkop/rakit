@@ -701,6 +701,13 @@ async def relationship_panel_view(
     pending_unlinks = {
         name.removeprefix("unlink__") for name in values if name.startswith("unlink__")
     }
+    selected = pending_links
+    if definition.cardinality is RelationshipCardinality.TO_ONE:
+        submitted_set = values.get("set")
+        if isinstance(submitted_set, str) and submitted_set:
+            selected = {submitted_set}
+        elif "clear" not in values:
+            selected = {IdentityCodec().encode(row.candidate.identity) for row in rows}
     complete_order: tuple[RecordIdentity, ...] | None = None
     if parent_identity is not None and editor.relationship.ordering is not None:
         complete_order = await editor.state_provider.reorder_identities(
@@ -845,14 +852,22 @@ async def relationship_panel_view(
         "draft_rows": tuple(
             {"key": key, "values": row_values} for key, row_values in draft_rows.items()
         ),
-        "selected": pending_links,
+        "selected": selected,
+        "clear_available": bool(
+            definition.cardinality is RelationshipCardinality.TO_ONE
+            and definition.nullable
+            and editor.editable
+            and selected
+        ),
         "pending_unlinks": pending_unlinks,
         "options": tuple(options_by_identity.values()),
         "concurrency_token": token,
         "reorderable": reorderable,
         "order_values": order_values,
         "reorder_unavailable": (
-            editor.relationship.ordering is not None and complete_order is None
+            editor.relationship.ordering is not None
+            and complete_order is None
+            and bool(editor_page.total_count)
         ),
         "confirmation": confirmation if confirmation_current else None,
         "confirmation_intent": confirmation_intent if confirmation_current else None,
@@ -868,7 +883,9 @@ async def relationship_panel_view(
         "error_inputs": error_inputs,
         "page": page,
         "total_label": (
-            f"{editor_page.total_count} items"
+            f"{editor_page.total_count} item"
+            if editor_page.total_count == 1
+            else f"{editor_page.total_count} items"
             if editor_page.total_count is not None
             else (f"Page {page}" if editor_page.has_previous or editor_page.has_next else "")
         ),
@@ -1141,15 +1158,27 @@ def build_relationship_routes(
                     confirmation_intent = _relationship_intent_fingerprint(
                         _fields_for_prefix(submitted, relationship_prefix(editor.relationship_id))
                     )
+                    is_clear = any(isinstance(step, ClearRelated) for step in change.steps)
                     dialog_context = {
                         "prefix": relationship_prefix(editor.relationship_id),
                         "delete_identity": None,
+                        "clear_prefix": relationship_prefix(editor.relationship_id)
+                        if is_clear
+                        else None,
                         "confirmation": confirmation,
                         "confirmation_intent": confirmation_intent,
                         "impact": str(len(impact)),
-                        "title": f"Review {editor.relationship.definition.label} change",
-                        "description": "The relationship change has a destructive impact.",
-                        "confirm_label": "Confirm change",
+                        "title": (
+                            f"Clear {editor.relationship.definition.label}?"
+                            if is_clear
+                            else f"Change {editor.relationship.definition.label}?"
+                        ),
+                        "description": (
+                            "This relationship will be cleared."
+                            if is_clear
+                            else "This relationship change has a destructive impact."
+                        ),
+                        "confirm_label": "Confirm clear" if is_clear else "Confirm change",
                         "resource_label": binding.label,
                     }
                 if dialog_context is not None:
@@ -1177,7 +1206,65 @@ def build_relationship_routes(
                     if isinstance(exc, RakitError)
                     else "Invalid relationship confirmation request"
                 )
-                return PlainTextResponse(message, status_code=getattr(exc, "status_code", 422))
+                status_code = getattr(exc, "status_code", 422)
+                from rakit_core.forms import FormIssue
+
+                from .form_routes import _form_response, _relationship_error_issues
+
+                relationship_issues = (
+                    _relationship_error_issues(exc) if isinstance(exc, RakitError) else ()
+                )
+                if request.headers.get("HX-Request") == "true":
+                    issue_relationships = tuple(
+                        relationship_id
+                        for issue in relationship_issues
+                        if isinstance(relationship_id := issue.get("relationship_id"), str)
+                    )
+                    if len(issue_relationships) == 1:
+                        issue_editor = relationship_binding.editor(issue_relationships[0])
+                        panel = await relationship_panel_view(
+                            issue_editor,
+                            parent_identity=identity,
+                            submitted=submitted,
+                            issues=relationship_issues,
+                        )
+                        return binding.templates.TemplateResponse(
+                            request,
+                            "relationships/panel.html",
+                            {"panel": panel, "codec": relationship_binding.codec},
+                            status_code=200,
+                            headers={
+                                "Cache-Control": "no-store",
+                                "HX-Retarget": (
+                                    f"#rakit-relationship-{issue_editor.relationship_id}"
+                                ),
+                                "HX-Reswap": "outerHTML",
+                            },
+                        )
+                    return binding.templates.TemplateResponse(
+                        request,
+                        "relationships/error_summary.html",
+                        {"message": message},
+                        status_code=200,
+                        headers={"Cache-Control": "no-store"},
+                    )
+                return await _form_response(
+                    binding,
+                    request,
+                    title=f"Edit {binding.label}",
+                    action_path=f"{binding.path}/{request.path_params['identity']}/edit",
+                    submitted=submitted,
+                    issues=() if relationship_issues else (FormIssue(None, message),),
+                    relationship_issues=relationship_issues,
+                    concurrency_token=(
+                        submitted.get("concurrency_token")
+                        if isinstance(submitted.get("concurrency_token"), str)
+                        else None
+                    ),
+                    operation="update",
+                    status_code=status_code,
+                    parent_identity=identity,
+                )
 
         routes.extend(
             (
