@@ -37,6 +37,7 @@ from rakit_core.actions import (
     resolve_availability,
     resolve_preview,
 )
+from rakit_core.compiler import RESOURCE_ACTION_SEGMENT
 from rakit_core.concurrency import ConcurrencyTokenService
 from rakit_core.crypto import TokenService
 from rakit_core.definitions import CompiledActionDefinition, RouteDefinition
@@ -122,6 +123,28 @@ class ActionBinding:
                 or self.record_version is None
             ):
                 raise ValueError(f"Action {action.action_id!r} requires concurrency support")
+
+
+def _owner_path(route: RouteDefinition) -> str:
+    """The logical owner destination of a compiler-owned action route.
+
+    The canonical grammar is ``{owner_path}/{_actions}/{action_id}`` for
+    RESOURCE, RECORD, and PAGE action routes; the owner destination is the
+    prefix before the ``/_actions/`` segment (e.g. ``/orders/{identity}``
+    for ``/orders/{identity}/_actions/approve``).
+    """
+    owner_path, separator, _ = route.path.rpartition(f"/{RESOURCE_ACTION_SEGMENT}/")
+    if not separator:
+        raise ValueError(
+            f"Action route {route.route_name!r} must live under /{RESOURCE_ACTION_SEGMENT}/"
+        )
+    return owner_path
+
+
+def _with_identity(binding: ActionBinding, identity: RecordIdentity | None, path: str) -> str:
+    if identity is None:
+        return path
+    return path.replace("{identity}", binding.codec.encode(identity))
 
 
 def _action_fingerprint(
@@ -323,14 +346,15 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
     routes: list[Route] = []
     for route_definition, compiled_action in binding.routes:
         action = compiled_action.definition
-        path = route_definition.path
-        directory = path.rsplit("/", 1)[0]
+        route_path = route_definition.path
+        owner_path = _owner_path(route_definition)
 
         async def action_get(
             request: Request,
             action: ActionDefinition = action,
             compiled_action: CompiledActionDefinition = compiled_action,
-            directory: str = directory,
+            route_path: str = route_path,
+            owner_path: str = owner_path,
         ) -> Response:
             identity = _identity(binding, request, action)
             authorization = await binding.authorize_action(request, compiled_action, identity)
@@ -380,7 +404,8 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
                 issues=(),
                 concurrency_token=concurrency_token,
                 confirmation_token=confirmation_token,
-                directory=directory,
+                route_path=route_path,
+                owner_path=owner_path,
             )
             template = "actions/form.html" if action.needs_form else "actions/confirm.html"
             return binding.templates.TemplateResponse(
@@ -394,7 +419,8 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
             request: Request,
             action: ActionDefinition = action,
             compiled_action: CompiledActionDefinition = compiled_action,
-            directory: str = directory,
+            route_path: str = route_path,
+            owner_path: str = owner_path,
         ) -> Response:
             if not await binding.verify_csrf(request):
                 return _rejected_response(request, "Invalid CSRF token", 403)
@@ -443,7 +469,8 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
                         authorization,
                         submitted,
                         exc.state.issues,
-                        directory,
+                        route_path,
+                        owner_path,
                     )
                 except ValueError:
                     return _rejected_response(request, "Invalid action input", 400)
@@ -474,7 +501,7 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
                     return _action_result_response(
                         request,
                         ActionSuccess(message="Action already completed"),
-                        fallback_location=_success_location(binding, request, identity, directory),
+                        fallback_location=_owner_location(binding, request, identity, owner_path),
                     )
                 if not reservation.claimed:
                     return _rejected_response(request, "Action is already in progress", 409)
@@ -560,7 +587,8 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
                     authorization,
                     submitted,
                     result.issues,
-                    directory,
+                    route_path,
+                    owner_path,
                 )
             if isinstance(result, ActionRejected):
                 if reservation is not None:
@@ -569,7 +597,7 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
                 return _action_result_response(
                     request,
                     result,
-                    fallback_location=_success_location(binding, request, identity, directory),
+                    fallback_location=_owner_location(binding, request, identity, owner_path),
                 )
             if reservation is not None:
                 assert binding.idempotency_store is not None
@@ -579,19 +607,21 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
                         operation_id=str(reservation.reservation_id),
                         status="succeeded",
                         result_kind="action",
-                        redirect_route=_success_location(binding, request, identity, directory),
+                        redirect_route=_owner_location(binding, request, identity, owner_path),
                     ),
                 )
             return _action_result_response(
                 request,
                 result,
-                fallback_location=_success_location(binding, request, identity, directory),
+                fallback_location=_owner_location(binding, request, identity, owner_path),
             )
 
         async def action_endpoint(
             request: Request,
             action: ActionDefinition = action,
             compiled_action: CompiledActionDefinition = compiled_action,
+            action_get: Callable[..., Awaitable[Response]] = action_get,
+            action_post: Callable[..., Awaitable[Response]] = action_post,
         ) -> Response:
             if request.method == "POST":
                 return await action_post(request, action=action, compiled_action=compiled_action)
@@ -599,7 +629,7 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
 
         routes.append(
             Route(
-                path,
+                route_path,
                 action_endpoint,
                 methods=["GET", "POST"],
                 name=route_definition.route_name,
@@ -651,7 +681,8 @@ def _template_args(
     issues: tuple[FormIssue, ...],
     concurrency_token: str | None,
     confirmation_token: str | None,
-    directory: str,
+    route_path: str,
+    owner_path: str,
 ) -> dict[str, object]:
     return {
         "action": action,
@@ -663,7 +694,8 @@ def _template_args(
         "submission_token": binding.issue_submission_token(request),
         "concurrency_token": concurrency_token or "",
         "confirmation_token": confirmation_token or "",
-        "cancel_url": _cancel_url(binding, request, identity, directory),
+        "form_action": mounted_path(request, _with_identity(binding, identity, route_path)),
+        "cancel_url": _owner_location(binding, request, identity, owner_path),
         "preview": preview,
     }
 
@@ -677,7 +709,8 @@ async def _validation_response(
     authorization: OperationAuthorization,
     submitted: Mapping[str, object],
     issues: tuple[FormIssue, ...],
-    directory: str,
+    route_path: str,
+    owner_path: str,
 ) -> Response:
     context = _action_context(
         binding,
@@ -710,7 +743,8 @@ async def _validation_response(
         issues=issues,
         concurrency_token=concurrency_token,
         confirmation_token="",
-        directory=directory,
+        route_path=route_path,
+        owner_path=owner_path,
     )
     if request.headers.get("HX-Request") == "true":
         return binding.templates.TemplateResponse(
@@ -729,28 +763,13 @@ async def _validation_response(
     )
 
 
-def _cancel_url(
+def _owner_location(
     binding: ActionBinding,
     request: Request,
     identity: RecordIdentity | None,
-    directory: str,
+    owner_path: str,
 ) -> str:
-    if identity is None:
-        return mounted_path(request, directory)
-    return mounted_path(request, directory.replace("{identity}", binding.codec.encode(identity)))
-
-
-def _success_location(
-    binding: ActionBinding,
-    request: Request,
-    identity: RecordIdentity | None,
-    directory: str,
-) -> str:
-    if identity is not None:
-        return mounted_path(
-            request, directory.replace("{identity}", binding.codec.encode(identity))
-        )
-    return mounted_path(request, directory)
+    return mounted_path(request, _with_identity(binding, identity, owner_path))
 
 
 __all__ = [

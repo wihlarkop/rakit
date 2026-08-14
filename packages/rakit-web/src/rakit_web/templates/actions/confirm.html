@@ -20,7 +20,7 @@
       {% endif %}
       <p class="mt-4 text-sm text-slate-600">This change is applied only when you confirm and submit.</p>
     </section>
-    <form class="space-y-5" method="post" action="{{ cancel_url }}/{{ action.action_id }}" novalidate>
+    <form class="space-y-5" method="post" action="{{ form_action }}" novalidate>
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <input type="hidden" name="submission_token" value="{{ submission_token }}" />
       {% if concurrency_token %}<input type="hidden" name="concurrency_token" value="{{ concurrency_token }}" />{% endif %}

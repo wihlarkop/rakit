@@ -51,6 +51,7 @@ from rakit_web.action_routes import ActionBinding, build_action_routes
 from rakit_web.resource_routes import build_templates
 from starlette.applications import Starlette
 from starlette.requests import Request
+from starlette.routing import Mount
 
 
 class _CompileDataSource:
@@ -226,6 +227,7 @@ class ActionHarness:
         self.purge_calls = 0
         self.rebuild_calls = 0
         self.export_calls = 0
+        self.resync_calls = 0
 
     def approve_availability(self, context: ActionContext) -> ActionAvailabilityDecision:
         record = cast(OrderRecord, context.record)
@@ -328,9 +330,9 @@ class ActionHarness:
                     action_id="rebuild",
                     label="Rebuild indexes",
                     scope=ActionScope.PAGE,
-                    page_id="admin",
+                    page_id="reports",
                     permission=action_permission_requirement("rebuild", admin_id="ops"),
-                    description="Rebuild the admin index cache.",
+                    description="Rebuild the report index cache.",
                     executor=DomainActionExecutor(self._rebuild_handler),
                 ),
                 ActionDefinition(
@@ -342,6 +344,15 @@ class ActionHarness:
                     description="Export all visible orders.",
                     availability=self.export_availability,
                     executor=DomainActionExecutor(self._export_handler),
+                ),
+                ActionDefinition(
+                    action_id="resync",
+                    label="Resync orders",
+                    scope=ActionScope.RESOURCE,
+                    resource_id="orders",
+                    permission=action_permission_requirement("resync", admin_id="ops"),
+                    description="Resync the order index.",
+                    executor=DomainActionExecutor(self._resync_handler),
                 ),
                 ActionDefinition(
                     action_id="audit",
@@ -361,6 +372,10 @@ class ActionHarness:
     def _rebuild_handler(self, _context: ActionContext) -> ActionSuccess:
         self.rebuild_calls += 1
         return ActionSuccess(message="Indexes rebuilt")
+
+    def _resync_handler(self, _context: ActionContext) -> ActionSuccess:
+        self.resync_calls += 1
+        return ActionSuccess(message="Orders resynced")
 
     def _export_handler(self, _context: ActionContext) -> ActionRedirect:
         self.export_calls += 1
@@ -406,7 +421,7 @@ class ActionHarness:
         for scope, directory, owner in (
             (ActionScope.RECORD, "/orders/{identity}/_actions", "orders"),
             (ActionScope.RESOURCE, "/orders/_actions", "orders"),
-            (ActionScope.PAGE, "/admin/_actions", "admin"),
+            (ActionScope.PAGE, "/reports/_actions", "reports"),
         ):
             actions = tuple(
                 action for action in self.definitions().actions if action.scope is scope
@@ -469,6 +484,7 @@ class _PrincipalMiddleware:
                         "ops.actions.purge.execute",
                         "ops.actions.rebuild.execute",
                         "ops.actions.export.execute",
+                        "ops.actions.resync.execute",
                         "ops.actions.audit.execute",
                     }
                 )
@@ -901,11 +917,11 @@ async def test_page_and_resource_scope_actions_execute(
 ) -> None:
     app = harness.build()
     async with _client(app) as client:
-        rebuild_tokens = await _open_action(client, "/admin/_actions/rebuild")
-        page = await client.get("/admin/_actions/rebuild")
+        rebuild_tokens = await _open_action(client, "/reports/_actions/rebuild")
+        page = await client.get("/reports/_actions/rebuild")
         assert page.status_code == 200
         rebuilt = await client.post(
-            "/admin/_actions/rebuild",
+            "/reports/_actions/rebuild",
             content=urlencode(
                 [
                     ("csrf_token", "csrf"),
@@ -1219,3 +1235,128 @@ async def test_get_never_executes_a_non_mutating_action(
         )
     assert executed.status_code == 303
     assert harness.archive_calls == 1
+
+
+@pytest.mark.anyio
+async def test_record_action_returns_to_record_owner(harness: ActionHarness) -> None:
+    app = harness.build()
+    parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    async with _client(app) as client:
+        page = await client.get(f"/orders/{parent}/_actions/approve")
+        assert page.status_code == 200
+        assert f'href="/orders/{parent}"' in page.text
+        assert f'action="/orders/{parent}/_actions/approve"' in page.text
+        tokens = _form_values(page.text)
+        executed = await client.post(
+            f"/orders/{parent}/_actions/approve",
+            content=urlencode(
+                [
+                    ("csrf_token", "csrf"),
+                    ("submission_token", tokens["submission_token"]),
+                    ("concurrency_token", tokens["concurrency_token"]),
+                ]
+            ),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+
+    assert executed.status_code == 303
+    assert executed.headers["location"] == f"/orders/{parent}"
+
+
+@pytest.mark.anyio
+async def test_resource_action_returns_to_resource_owner(harness: ActionHarness) -> None:
+    app = harness.build()
+    async with _client(app) as client:
+        page = await client.get("/orders/_actions/resync")
+        assert page.status_code == 200
+        assert 'href="/orders"' in page.text
+        assert 'action="/orders/_actions/resync"' in page.text
+        tokens = _form_values(page.text)
+        executed = await client.post(
+            "/orders/_actions/resync",
+            content=urlencode(
+                [
+                    ("csrf_token", "csrf"),
+                    ("submission_token", tokens["submission_token"]),
+                ]
+            ),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+
+    assert executed.status_code == 303
+    assert executed.headers["location"] == "/orders"
+    assert harness.resync_calls == 1
+
+
+@pytest.mark.anyio
+async def test_page_action_returns_to_page_owner(harness: ActionHarness) -> None:
+    app = harness.build()
+    async with _client(app) as client:
+        page = await client.get("/reports/_actions/rebuild")
+        assert page.status_code == 200
+        assert 'href="/reports"' in page.text
+        assert 'action="/reports/_actions/rebuild"' in page.text
+        tokens = _form_values(page.text)
+        executed = await client.post(
+            "/reports/_actions/rebuild",
+            content=urlencode(
+                [
+                    ("csrf_token", "csrf"),
+                    ("submission_token", tokens["submission_token"]),
+                ]
+            ),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+
+    assert executed.status_code == 303
+    assert executed.headers["location"] == "/reports"
+
+
+@pytest.mark.anyio
+async def test_owner_destinations_keep_mount_prefix(harness: ActionHarness) -> None:
+    mounted = Starlette(routes=[Mount("/admin", app=harness.build())])
+    parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    async with _client(mounted) as client:
+        page = await client.get(f"/admin/orders/{parent}/_actions/approve")
+        assert page.status_code == 200
+        assert f'href="/admin/orders/{parent}"' in page.text
+        assert f'action="/admin/orders/{parent}/_actions/approve"' in page.text
+        tokens = _form_values(page.text)
+        executed = await client.post(
+            f"/admin/orders/{parent}/_actions/approve",
+            content=urlencode(
+                [
+                    ("csrf_token", "csrf"),
+                    ("submission_token", tokens["submission_token"]),
+                    ("concurrency_token", tokens["concurrency_token"]),
+                ]
+            ),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+
+    assert executed.status_code == 303
+    assert executed.headers["location"] == f"/admin/orders/{parent}"
+
+
+@pytest.mark.anyio
+async def test_no_action_index_routes_exist(harness: ActionHarness) -> None:
+    app = harness.build()
+    parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    async with _client(app) as client:
+        for url in (
+            "/orders/_actions",
+            f"/orders/{parent}/_actions",
+            "/reports/_actions",
+        ):
+            response = await client.get(url)
+            assert response.status_code == 404
+            response = await client.post(
+                url,
+                content=urlencode([("csrf_token", "csrf")]),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            assert response.status_code == 404
