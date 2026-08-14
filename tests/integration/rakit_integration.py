@@ -15,8 +15,17 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from rakit_core.actions import (
+    ActionAvailabilityDecision,
+    ActionContext,
+    ActionDefinition,
+    ActionScope,
+    ActionSet,
+    ActionSuccess,
+    PreparedMutationExecutor,
+)
 from rakit_core.auth import Principal
-from rakit_core.concurrency import AttributeVersionProvider
+from rakit_core.concurrency import AttributeVersionProvider, ConcurrencyTokenService
 from rakit_core.config import SecretValue
 from rakit_core.crypto import TokenService
 from rakit_core.definitions import ResourceFieldPolicy
@@ -27,6 +36,7 @@ from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_core.mutations import (
     MutationAuthorization,
     MutationHooks,
+    OperationAuthorization,
     OperationAuthorizationSet,
 )
 from rakit_core.permissions import PermissionRequirement
@@ -48,6 +58,7 @@ from rakit_core.resources import ResourceService
 from rakit_sqlalchemy.datasource import SQLAlchemyDataSource
 from rakit_sqlalchemy.mutations import SQLAlchemyMutationService
 from rakit_sqlalchemy.relationship_mutations import SQLAlchemyRelationshipMutationService
+from rakit_web.action_routes import ActionBinding, build_action_routes
 from rakit_web.assets import static_files
 from rakit_web.form_routes import WriteResourceBinding, build_write_routes
 from rakit_web.relationship_routes import (
@@ -66,6 +77,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from starlette.applications import Starlette
+from starlette.requests import Request
 from starlette.routing import Mount
 
 
@@ -495,6 +507,7 @@ class IntegrationApp:
     relationship_service: SQLAlchemyRelationshipMutationService
     store: MemoryIdempotencyStore
     db_path: str
+    action_binding: Any | None = None
 
 
 def build_app(factory: async_sessionmaker[AsyncSession]) -> IntegrationApp:
@@ -711,11 +724,78 @@ def build_app(factory: async_sessionmaker[AsyncSession]) -> IntegrationApp:
         relationship_form=relationship_form,
         deadline_seconds=60,
     )
+
+    def approve_availability(context: Any) -> ActionAvailabilityDecision:
+        if cast(Order, context.record).status == "draft":
+            return ActionAvailabilityDecision.available()
+        return ActionAvailabilityDecision.disabled("Order is not pending approval")
+
+    def approve_prepare(_context: ActionContext) -> dict[str, object]:
+        return {"status": "approved"}
+
+    async def approve_commit(plan: object, context: ActionContext) -> ActionSuccess[object]:
+        await parent_writer.update(
+            cast(RecordIdentity, context.identity),
+            cast(dict[str, object], plan),
+            concurrency_token=context.concurrency_token,
+            authorization=context.authorization,
+        )
+        return ActionSuccess(message="Order approved")
+
+    async def authorize_action(
+        request: Request,
+        action: ActionDefinition,
+        identity: RecordIdentity | None,
+    ) -> OperationAuthorization | None:
+        principal = request.scope.get("state", {}).get("principal")
+        if principal is None or not principal.authenticated:
+            return None
+        return OperationAuthorization.for_requirement(
+            admin_id=_ADMIN_ID,
+            resource_id="orders",
+            operation="update",
+            principal_id=_PRINCIPAL_ID,
+            requirement=_REQ_ORDERS_UPDATE,
+            target_identity=identity,
+        )
+
+    action_binding = ActionBinding(
+        actions=ActionSet(
+            actions=(
+                ActionDefinition(
+                    action_id="approve",
+                    label="Approve order",
+                    scope=ActionScope.RECORD,
+                    permission=_REQ_ORDERS_UPDATE,
+                    description="Approve this order for fulfilment.",
+                    availability=approve_availability,
+                    executor=PreparedMutationExecutor(approve_prepare, approve_commit),
+                    requires_concurrency=True,
+                ),
+            )
+        ),
+        scope=ActionScope.RECORD,
+        base_path="/orders/{identity}/actions",
+        templates=build_templates(()),
+        codec=codec,
+        verify_csrf=_allow,
+        verify_submission_token=_allow,
+        issue_submission_token=lambda _request: uuid4().hex,
+        authorize_action=authorize_action,
+        load_record=parent_writer.get,
+        record_version=lambda record: cast(Order, record).version,
+        concurrency=ConcurrencyTokenService(token_service),
+        concurrency_resource_id="orders",
+        token_service=token_service,
+        idempotency_store=store,
+        deadline_seconds=60,
+    )
     app = _PrincipalMiddleware(
         Starlette(
             routes=[
                 *build_write_routes(binding),
                 *build_relationship_routes(binding, relationship_form),
+                *build_action_routes(action_binding),
                 Mount("/_system/static", app=static_files()),
             ]
         )
@@ -729,6 +809,7 @@ def build_app(factory: async_sessionmaker[AsyncSession]) -> IntegrationApp:
         relationship_service=relationship_writer,
         store=store,
         db_path="",
+        action_binding=action_binding,
     )
 
 

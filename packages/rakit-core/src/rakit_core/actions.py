@@ -1,9 +1,30 @@
-"""Backend-neutral semantic action outcomes for later web translation."""
+"""Unified, backend-neutral action definitions and execution for Plan 05 Task 4.
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+An action is a named, permission-bound, typed operation attached to one
+``ActionScope``.  Availability answers "should this action be presented and
+enabled for the current state"; authorization answers "may this principal
+execute it".  The two are deliberately independent, and POST execution always
+re-evaluates both against freshly loaded state.
+
+This module is framework-neutral: no Starlette, SQLAlchemy, or web types appear
+here.  The web layer translates ``ActionDefinition`` and ``ActionResult`` into
+HTTP/HTML/HTMX behavior.
+"""
+
+import inspect
+import re
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol, cast
+
+from rakit_core.auth import Principal
+from rakit_core.forms import FormIssue, FormSchema, FormState
+from rakit_core.identity import RecordIdentity
+from rakit_core.mutations import OperationAuthorization
+from rakit_core.permissions import PermissionRequirement
+
+_ACTION_ID_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
 
 
 class ActionScope(StrEnum):
@@ -86,6 +107,13 @@ class ActionAdvancedResponse:
     payload: Any
 
 
+@dataclass(frozen=True)
+class ActionValidation:
+    """Normalized field-local validation failure for typed action input."""
+
+    issues: tuple[FormIssue, ...] = ()
+
+
 type ActionResult[TActionPayload] = (
     ActionSuccess[TActionPayload]
     | ActionRejected
@@ -93,4 +121,247 @@ type ActionResult[TActionPayload] = (
     | ActionRefresh
     | ActionRendered[TActionPayload]
     | ActionAdvancedResponse
+    | ActionValidation
 )
+
+
+@dataclass(frozen=True)
+class ActionAvailabilityDecision:
+    """Typed availability answer with an optional safe human-facing reason."""
+
+    availability: ActionAvailability
+    reason: str | None = None
+
+    @classmethod
+    def available(cls) -> "ActionAvailabilityDecision":
+        return cls(ActionAvailability.AVAILABLE)
+
+    @classmethod
+    def disabled(cls, reason: str) -> "ActionAvailabilityDecision":
+        return cls(ActionAvailability.DISABLED, reason)
+
+    @classmethod
+    def hidden(cls) -> "ActionAvailabilityDecision":
+        return cls(ActionAvailability.HIDDEN)
+
+
+@dataclass(frozen=True)
+class ActionPreview:
+    """Authoritative, non-persisting preview content for confirmation flows."""
+
+    title: str
+    description: str
+    impact: str | None = None
+
+
+@dataclass(frozen=True)
+class ActionContext:
+    """Everything an availability resolver, preview, or executor may need.
+
+    ``record`` is an opaque object loaded through the resource's canonical
+    scoped query by the execution layer; actions never load records
+    themselves and never trust GET-time state.
+    """
+
+    definition: "ActionDefinition"
+    scope: ActionScope
+    identity: RecordIdentity | None = None
+    record: object | None = None
+    submitted: Mapping[str, object] = field(default_factory=dict)
+    values: FormState | None = None
+    authorization: OperationAuthorization | None = None
+    availability: ActionAvailabilityDecision = field(
+        default_factory=ActionAvailabilityDecision.available
+    )
+    principal: Principal | None = None
+    concurrency_token: str | None = None
+    confirmation_token: str | None = None
+
+
+class ActionAvailabilityResolver(Protocol):
+    """Resolves availability; may be synchronous or asynchronous."""
+
+    def __call__(
+        self, context: ActionContext
+    ) -> ActionAvailabilityDecision | Awaitable[ActionAvailabilityDecision]: ...
+
+
+class ActionPreviewResolver(Protocol):
+    """Resolves authoritative preview content; sync or async."""
+
+    def __call__(self, context: ActionContext) -> ActionPreview | Awaitable[ActionPreview]: ...
+
+
+class ActionExecutor(Protocol):
+    """Executes an action and returns a structured result."""
+
+    async def execute(self, context: ActionContext) -> ActionResult[Any]: ...
+
+
+@dataclass(frozen=True)
+class ActionDefinition:
+    """One immutable, typed, permission-bound action declaration."""
+
+    action_id: str
+    label: str
+    scope: ActionScope
+    permission: PermissionRequirement
+    description: str | None = None
+    input_schema: FormSchema | None = None
+    availability: ActionAvailabilityResolver | None = None
+    preview: ActionPreviewResolver | None = None
+    executor: ActionExecutor | None = None
+    needs_form: bool = False
+    needs_preview: bool = False
+    needs_confirmation: bool = False
+    requires_concurrency: bool = False
+
+    def __post_init__(self) -> None:
+        if not _ACTION_ID_PATTERN.fullmatch(self.action_id):
+            raise ValueError(f"Invalid action id: {self.action_id!r}")
+        if not self.label.strip():
+            raise ValueError("Action label must not be empty")
+        if not isinstance(self.scope, ActionScope):
+            raise ValueError("Action scope must be an ActionScope value")
+        if self.executor is None:
+            raise ValueError(f"Action {self.action_id!r} requires an executor")
+        if self.needs_form and self.input_schema is None:
+            raise ValueError(f"Action {self.action_id!r} needs a form but has no input schema")
+        if self.needs_preview and self.preview is None:
+            raise ValueError(f"Action {self.action_id!r} needs a preview resolver")
+        if self.needs_confirmation and not self.needs_preview:
+            raise ValueError(f"Action {self.action_id!r} confirmation requires a preview step")
+        if self.needs_confirmation and self.input_schema is not None:
+            raise ValueError(f"Action {self.action_id!r} confirmation flows do not take form input")
+
+
+@dataclass(frozen=True)
+class ActionSet:
+    """Immutable registration of one owner's actions with unique ids."""
+
+    actions: tuple[ActionDefinition, ...]
+
+    def __post_init__(self) -> None:
+        ids = tuple(action.action_id for action in self.actions)
+        if len(ids) != len(set(ids)):
+            duplicates = sorted({action_id for action_id in ids if ids.count(action_id) > 1})
+            raise ValueError("Duplicate action ids in one action set: " + ", ".join(duplicates))
+
+    def get(self, action_id: str) -> ActionDefinition | None:
+        for action in self.actions:
+            if action.action_id == action_id:
+                return action
+        return None
+
+
+class DomainActionExecutor:
+    """Execute a typed domain/application callable within the operation context.
+
+    The callable may be synchronous or asynchronous; it receives the full
+    ``ActionContext`` (scoped record, parsed values, authorization) and must
+    return an ``ActionResult``.  Transaction ownership remains with the
+    execution layer/UoW the callable participates in.
+    """
+
+    def __init__(
+        self,
+        handler: Callable[[ActionContext], ActionResult[Any] | Awaitable[ActionResult[Any]]],
+    ) -> None:
+        if not callable(handler):
+            raise TypeError("Domain action handler must be callable")
+        self._handler = handler
+
+    async def execute(self, context: ActionContext) -> ActionResult[Any]:
+        result = self._handler(context)
+        if inspect.isawaitable(result):
+            result = await result
+        return cast(ActionResult[Any], result)
+
+
+class PreparedMutationExecutor:
+    """Reuse the existing mutation foundation without coupling to adapters.
+
+    ``prepare`` derives an opaque mutation plan from the action context;
+    ``commit`` applies that plan through the adapter's existing mutation
+    service inside its own operation-scoped unit of work.  This lets a record
+    action (e.g. "Approve Order") reuse the normal update pipeline instead of
+    writing ORM objects directly.
+    """
+
+    def __init__(
+        self,
+        prepare: Callable[[ActionContext], object | Awaitable[object]],
+        commit: Callable[[object, ActionContext], ActionResult[Any] | Awaitable[ActionResult[Any]]],
+    ) -> None:
+        if not callable(prepare) or not callable(commit):
+            raise TypeError("Mutation plan prepare and commit must be callable")
+        self._prepare = prepare
+        self._commit = commit
+
+    async def execute(self, context: ActionContext) -> ActionResult[Any]:
+        plan = self._prepare(context)
+        if inspect.isawaitable(plan):
+            plan = await plan
+        result = self._commit(plan, context)
+        if inspect.isawaitable(result):
+            result = await result
+        return cast(ActionResult[Any], result)
+
+
+def action_permission_requirement(
+    action_id: str, *, admin_id: str = "admin"
+) -> PermissionRequirement:
+    """The approved compiled action permission key scheme."""
+    return PermissionRequirement.all_of(f"{admin_id}.actions.{action_id}.execute")
+
+
+async def resolve_availability(
+    definition: ActionDefinition, context: ActionContext
+) -> ActionAvailabilityDecision:
+    """Resolve availability with a safe default of AVAILABLE."""
+    resolver = definition.availability
+    if resolver is None:
+        return ActionAvailabilityDecision.available()
+    decision = resolver(context)
+    if inspect.isawaitable(decision):
+        decision = await decision
+    return cast(ActionAvailabilityDecision, decision)
+
+
+async def resolve_preview(
+    definition: ActionDefinition, context: ActionContext
+) -> ActionPreview | None:
+    if definition.preview is None:
+        return None
+    preview = definition.preview(context)
+    if inspect.isawaitable(preview):
+        preview = await preview
+    return cast(ActionPreview | None, preview)
+
+
+__all__ = [
+    "ActionAdvancedResponse",
+    "ActionAvailability",
+    "ActionAvailabilityDecision",
+    "ActionAvailabilityResolver",
+    "ActionContext",
+    "ActionDefinition",
+    "ActionExecutor",
+    "ActionPreview",
+    "ActionPreviewResolver",
+    "ActionRedirect",
+    "ActionRefresh",
+    "ActionRejected",
+    "ActionRendered",
+    "ActionResponseKind",
+    "ActionResult",
+    "ActionScope",
+    "ActionSet",
+    "ActionSuccess",
+    "ActionValidation",
+    "DomainActionExecutor",
+    "PreparedMutationExecutor",
+    "action_permission_requirement",
+    "resolve_availability",
+    "resolve_preview",
+]
