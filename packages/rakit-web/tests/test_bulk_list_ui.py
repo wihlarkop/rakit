@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import cast
 
 import httpx
 import pytest
@@ -57,7 +58,10 @@ class _DataSource:
 
     def identity_for(self, record: object) -> RecordIdentity:
         assert isinstance(record, dict)
-        return RecordIdentity(values={"id": record["id"]})
+        values = cast(dict[str, object], record)
+        value = values["id"]
+        assert isinstance(value, int | str) and not isinstance(value, bool)
+        return RecordIdentity(values={"id": value})
 
 
 class _MemoryStore:
