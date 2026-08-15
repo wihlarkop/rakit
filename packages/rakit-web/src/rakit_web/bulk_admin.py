@@ -19,6 +19,7 @@ from starlette.requests import Request
 from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 
+from ._paths import mounted_path
 from .bulk_runtime import BulkActionBinding, build_bulk_action_routes
 
 
@@ -40,9 +41,32 @@ def build_admin_bulk_action_routes(
     unit_of_work_factory: Callable[[], OperationUnitOfWorkFactory | None],
     label: str,
 ) -> list[Route]:
-    """Materialize BULK bindings without teaching the Task 4 ActionBinding about selection."""
+    """Materialize BULK bindings and list controls from the same compiled graph."""
 
     routes: list[Route] = []
+
+    def bulk_action_views(request: Request, resource_id: str) -> tuple[dict[str, str], ...]:
+        principal = request.scope.get("state", {}).get("principal")
+        if principal is None or not principal.authenticated:
+            return ()
+        return tuple(
+            {
+                "label": str(compiled_action.definition.label),
+                "url": mounted_path(request, route.path),
+            }
+            for route, compiled_action in compiled.action_routes
+            if compiled_action.definition.scope is ActionScope.BULK
+            and compiled_action.definition.resource_id == resource_id
+            and compiled_action.permission.matches(
+                principal,
+                superuser_bypass=superuser_bypass,
+            )
+        )
+
+    # Resource list templates are shared across bindings. The helper filters
+    # per request, so action labels/URLs are not exposed to principals that do
+    # not satisfy the exact compiler-resolved permission.
+    templates.env.globals["rakit_bulk_actions"] = bulk_action_views
 
     async def authorize_action(
         request: Request,
