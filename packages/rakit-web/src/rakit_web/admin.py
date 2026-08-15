@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import structlog
-from rakit_core.actions import ActionScope
+from rakit_core.actions import ActionDefinition, ActionScope
 from rakit_core.admin_types import ModelAdmin, ResourceAdmin
 from rakit_core.auth import AuthBackend, SessionStore
 from rakit_core.compiler import ApplicationBuilder, CompiledApplication, Plugin, compile_application
@@ -17,6 +17,7 @@ from rakit_core.config import RakitConfig, SecretValue
 from rakit_core.crypto import TokenService
 from rakit_core.definitions import (
     CompiledActionDefinition,
+    PageDefinition,
     ResourceDefinition,
     ResourceFieldPolicy,
     RouteDefinition,
@@ -59,6 +60,12 @@ from .bulk_admin import build_admin_bulk_action_routes
 from .form_routes import WriteResourceBinding, build_write_routes
 from .lifecycle import LifecycleManager
 from .logging import bind_request_context, configure_logging, reset_request_context
+from .page_admin import (
+    build_admin_page_routes,
+    page_requirement_map,
+    register_public_page,
+    validate_page_runtime,
+)
 from .public_composition import resource_actions, resource_relationships
 from .relationship_routes import build_relationship_routes
 from .resource_routes import ResourceBinding, build_resource_routes, build_templates
@@ -290,6 +297,18 @@ class Admin:
             raise RuntimeError("Cannot install plugins after compilation")
         self._builder.install(plugin)
 
+    def register_page(
+        self,
+        definition: PageDefinition,
+        *,
+        actions: tuple[ActionDefinition, ...] = (),
+    ) -> None:
+        """Register one public custom Page declaration and its PAGE actions."""
+
+        if self.compiled is not None:
+            raise RuntimeError("Cannot register pages after compilation")
+        register_public_page(self._builder, definition, actions=actions)
+
     def register(self, admin_cls: type[ResourceAdmin]) -> None:
         if self.compiled is not None:
             raise RuntimeError("Cannot register resources after compilation")
@@ -407,7 +426,7 @@ class Admin:
         RECORD actions declaring ``requires_concurrency`` are served through
         this provider: the provider supplies the record version bound into
         the signed concurrency token (issued at GET, verified against fresh
-        scoped state at POST).  Registration is resource-level, pre-compile,
+        scoped state at POST). Registration is resource-level, pre-compile,
         and never guessed from adapters.
         """
         if self.compiled is not None:
@@ -451,7 +470,7 @@ class Admin:
     def register_write_resource(self, resource_id: str, binding: WriteResourceBinding) -> None:
         """Register the explicit Plan 04 write policy for an existing resource.
 
-        Read registration never implies writability.  A resource becomes
+        Read registration never implies writability. A resource becomes
         mutable only through this separate, immutable form binding and only
         for an auth-enabled admin.
         """
@@ -564,8 +583,8 @@ class Admin:
 
         Pairs are grouped by declared owner: RECORD/RESOURCE actions use the
         owning resource's canonical scoped ``ResourceService`` as the record
-        loader, and PAGE actions share one binding.  Authorization always
-        evaluates the exact compiler-resolved permission.  Requires auth,
+        loader, and PAGE actions share one binding. Authorization always
+        evaluates the exact compiler-resolved permission. Requires auth,
         CSRF/submission plumbing, and the fail-closed capability checks to
         have run before this is called.
         """
@@ -685,6 +704,7 @@ class Admin:
 
     def asgi(self) -> ASGIApp:
         self.compile()
+        assert self.compiled is not None
 
         async def home(_request: Request) -> PlainTextResponse:
             return PlainTextResponse(self.config.title)
@@ -737,7 +757,21 @@ class Admin:
 
         write_routes: list[Route] = []
         action_routes: list[Route] = []
-        if self.compiled is not None and self.compiled.action_routes:
+        page_routes: list[Route] = []
+        uow_factory_registered = (
+            ServiceKey(OperationUnitOfWorkFactory, None) in self._compiled_registry.providers
+            if self._compiled_registry is not None
+            else False
+        )
+        validate_page_runtime(
+            self.compiled,
+            auth_enabled=self._auth_backend is not None and self._session_store is not None,
+            idempotency_store=self._operation_idempotency_store,
+            uow_factory_registered=uow_factory_registered,
+            debug=self.config.debug,
+        )
+
+        if self.compiled.action_routes:
             if self._auth_backend is None or self._session_store is None:
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
@@ -770,11 +804,6 @@ class Admin:
                     ),
                     status_code=500,
                 )
-            uow_factory_registered = (
-                ServiceKey(OperationUnitOfWorkFactory, None) in self._compiled_registry.providers
-                if self._compiled_registry is not None
-                else False
-            )
             for _, compiled in self.compiled.action_routes:
                 action = compiled.definition
                 owner = (
@@ -865,6 +894,11 @@ class Admin:
             validate_idempotency_store_for_production(
                 self._operation_idempotency_store, debug=self.config.debug
             )
+
+        exact_requirements = {
+            route.path: compiled.permission for route, compiled in self.compiled.action_routes
+        }
+        exact_requirements.update(page_requirement_map(self.compiled))
         requirement_resolver = build_requirement_resolver(
             admin_id=self.config.admin_id,
             resource_paths={
@@ -872,11 +906,7 @@ class Admin:
                 for resource_id, definition in self._resource_definitions.items()
             },
             writable_resources=frozenset(self._write_resource_bindings),
-            action_requirements=(
-                {route.path: compiled.permission for route, compiled in self.compiled.action_routes}
-                if self.compiled is not None
-                else {}
-            ),
+            action_requirements=exact_requirements,
         )
         if self._session_store is not None and self.config.security.secret_key is not None:
             write_token_service = TokenService.single_key(
@@ -947,7 +977,6 @@ class Admin:
                 principal = request.scope.get("state", {}).get("principal")
                 if principal is None or not principal.authenticated:
                     return None
-                assert self.compiled is not None
                 capabilities: list[OperationAuthorization] = []
                 relationship_by_id = {
                     (entry.source_resource_id, str(entry.definition.relationship_id)): entry
@@ -1020,7 +1049,6 @@ class Admin:
                 principal = request.scope.get("state", {}).get("principal")
                 if principal is None or not principal.authenticated:
                     return False
-                assert self.compiled is not None
                 path = request.url.path.removeprefix(request.scope.get("root_path", ""))
                 resource_id = next(
                     (
@@ -1124,8 +1152,24 @@ class Admin:
                     )
                     write_routes.extend(relationship_routes)
 
+            if self.compiled.compiled_pages:
+                page_routes = build_admin_page_routes(
+                    compiled=self.compiled,
+                    templates=templates,
+                    admin_id=self.config.admin_id,
+                    superuser_bypass=self._superuser_bypass,
+                    verify_csrf=verify_write_csrf,
+                    verify_submission_token=verify_submission_token,
+                    issue_submission_token=issue_submission_token,
+                    idempotency_store=self._operation_idempotency_store,
+                    deadline_seconds=self._mutation_deadline_seconds,
+                    operation_scope=operation_scope,
+                    unit_of_work_factory=action_uow_factory,
+                    label=self.config.title,
+                )
+
             action_routes = []
-            if self.compiled is not None and self.compiled.action_routes:
+            if self.compiled.action_routes:
                 for action_binding in self._action_bindings(
                     templates=templates,
                     codec=IdentityCodec(),
@@ -1170,6 +1214,8 @@ class Admin:
         for route in write_routes:
             app.routes.append(route)
         for route in resource_routes:
+            app.routes.append(route)
+        for route in page_routes:
             app.routes.append(route)
         if self._auth_backend is not None and self._session_store is not None:
             if self.config.security.secret_key is None:
