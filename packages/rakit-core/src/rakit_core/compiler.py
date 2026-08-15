@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from .actions import ActionDefinition, ActionScope
+from .bulk import BulkExecutionPolicy
 from .compatibility import validate_official_package_versions
 from .datasource import DataSource
 from .definitions import (
@@ -592,11 +593,31 @@ def _validate_plan05_definitions(
 
     pages = {page.page_id: page for page in builder.pages}
     for action in builder.actions:
-        if action.scope.value == "page":
+        if action.scope is ActionScope.PAGE:
             if action.page_id not in pages:
                 raise _invalid_definition("action", action.action_id, "page_owner_not_registered")
         elif action.resource_id not in resources:
             raise _invalid_definition("action", action.action_id, "resource_owner_not_registered")
+        if action.scope is ActionScope.BULK:
+            policy = action.bulk_policy
+            if policy is None:
+                raise _invalid_definition("action", action.action_id, "bulk_policy_missing")
+            if (
+                action.mutating
+                and policy.execution is BulkExecutionPolicy.ATOMIC
+                and action.transaction_policy.value != "auto"
+            ):
+                raise _invalid_definition("action", action.action_id, "atomic_bulk_requires_auto")
+            if (
+                action.mutating
+                and policy.execution is BulkExecutionPolicy.BEST_EFFORT
+                and action.transaction_policy.value == "manual"
+            ):
+                raise _invalid_definition(
+                    "action", action.action_id, "best_effort_manual_not_supported"
+                )
+            if action.needs_preview:
+                raise _invalid_definition("action", action.action_id, "bulk_preview_not_supported")
         compiled_actions.append(
             CompiledActionDefinition(
                 definition=action,
@@ -723,13 +744,13 @@ def _resource_definition_routes(builder: ApplicationBuilder) -> tuple[RouteDefin
                 )
             )
     for action in builder.actions:
-        if action.scope.value in ("page", "bulk"):
+        if action.scope is ActionScope.PAGE:
             continue
         assert action.resource_id is not None
         resource = resources[action.resource_id]
         suffix = (
             f"{{identity}}/{RESOURCE_ACTION_SEGMENT}"
-            if action.scope.value == "record"
+            if action.scope is ActionScope.RECORD
             else RESOURCE_ACTION_SEGMENT
         )
         path = _join_owner_path(resource.path, suffix, action.action_id)
@@ -755,15 +776,11 @@ def _action_route_pairs(
     The route-name grammar ``{kind}:{owner}:action:{action_id}`` is
     compiler-owned, and the owner is known from the action's scope, so the
     pairing is exact: user routes can never be mistaken for action routes.
-    BULK actions are compiled as definitions but own no route until Task 5,
-    so they intentionally appear in no pair.
     """
     route_by_name = {route.route_name: route for route in routes}
     pairs: list[tuple[RouteDefinition, CompiledActionDefinition]] = []
     for compiled in compiled_actions:
         action = compiled.definition
-        if action.scope is ActionScope.BULK:
-            continue
         kind = "page" if action.scope is ActionScope.PAGE else "resource"
         owner = action.page_id if action.scope is ActionScope.PAGE else action.resource_id
         route = route_by_name.get(f"{kind}:{owner}:action:{action.action_id}")
