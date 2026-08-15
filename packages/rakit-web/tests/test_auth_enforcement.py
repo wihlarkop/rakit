@@ -30,7 +30,12 @@ from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.events import EventBus, EventPublisher
 from rakit_core.fields import FieldDefinition
 from rakit_core.forms import FormSchema
-from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, OperationReceipt
+from rakit_core.idempotency import (
+    IdempotencyReservation,
+    IdempotencyStatus,
+    IdempotencyStore,
+    OperationReceipt,
+)
 from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_core.mutations import MutationHooks, ResourceCreated
 from rakit_core.operations import OperationContext, current_operation_context
@@ -213,6 +218,7 @@ def _build_admin(
     backend: _ConfigurableAuthBackend,
     *,
     event_bus: EventBus | None = None,
+    operation_idempotency_store: IdempotencyStore | None = None,
 ) -> Admin:
     from rakit.sqlalchemy import SQLAlchemyPlugin
 
@@ -225,6 +231,7 @@ def _build_admin(
         session_store=_FakeSessionStore(),
         login_rate_limiter=_TestRateLimiter(),
         event_bus=event_bus,
+        operation_idempotency_store=operation_idempotency_store,
     )
     admin.install(SQLAlchemyPlugin(session_factory=session_factory))
     admin.register(WidgetAdmin)
@@ -1047,14 +1054,23 @@ def _action_tokens(page_text: str) -> dict[str, str]:
     return dict(re.findall(r'name="([^"]+)" value="([^"]*)"', page_text))
 
 
+_ACTION_STORE_UNSET = object()
+
+
 def _build_action_admin(
     session_factory,
     backend: _ConfigurableAuthBackend,
     *actions: ActionDefinition,
+    idempotency_store: object = _ACTION_STORE_UNSET,
 ) -> Admin:
-    """The B2A integration proof: only the public Admin surface is used --
-    no ActionBinding, no build_action_routes, no manual Starlette wiring."""
-    admin = _build_admin(session_factory, backend)
+    """The B2A/B2B1 integration proof: only the public Admin surface is used
+    -- no ActionBinding, no build_action_routes, no manual Starlette wiring."""
+    store: IdempotencyStore | None = (
+        cast(IdempotencyStore | None, idempotency_store)
+        if idempotency_store is not _ACTION_STORE_UNSET
+        else _SafeIdempotencyStore()
+    )
+    admin = _build_admin(session_factory, backend, operation_idempotency_store=store)
     for action in actions:
         admin.builder.add_action(action)
     return admin
@@ -1423,6 +1439,7 @@ async def test_page_action_served_through_admin(session_factory) -> None:
     admin = _build_admin(
         session_factory,
         _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.refresh.execute"})),
+        operation_idempotency_store=_SafeIdempotencyStore(),
     )
     admin.builder.add_page(PageDefinition(page_id="report", path="/reports", label="Report"))
     admin.builder.add_action(action)
@@ -1486,3 +1503,434 @@ async def test_actions_requiring_concurrency_fail_closed(session_factory) -> Non
         admin.asgi()
     assert caught.value.code == ErrorCode.CONFIG_INVALID
     assert "concurrency" in caught.value.message
+
+
+class _DedupIdempotencyStore:
+    """Deduplicating in-memory store modeled on the web harness store."""
+
+    production_safe = True
+
+    def __init__(self) -> None:
+        self.claims: dict[str, tuple[str, OperationReceipt | None]] = {}
+        self._tokens: dict[int, str] = {}
+        self._next = 1
+        self.begin_calls = 0
+
+    async def begin(self, token_hash: str, *, fingerprint: str) -> IdempotencyReservation:
+        self.begin_calls += 1
+        existing = self.claims.get(token_hash)
+        if existing is not None:
+            existing_fingerprint, receipt = existing
+            if existing_fingerprint != fingerprint:
+                raise ValueError("fingerprint mismatch")
+            return IdempotencyReservation(
+                reservation_id=1,
+                status=(
+                    IdempotencyStatus.COMPLETED
+                    if receipt is not None
+                    else IdempotencyStatus.IN_PROGRESS
+                ),
+                completed_receipt=receipt,
+                claimed=False,
+            )
+        reservation = IdempotencyReservation(self._next, IdempotencyStatus.IN_PROGRESS)
+        self._next += 1
+        self._tokens[reservation.reservation_id] = token_hash
+        self.claims[token_hash] = (fingerprint, None)
+        return reservation
+
+    async def complete(
+        self, reservation: IdempotencyReservation, receipt: OperationReceipt
+    ) -> None:
+        key = self._tokens[reservation.reservation_id]
+        fingerprint, _ = self.claims[key]
+        self.claims[key] = (fingerprint, receipt)
+
+    async def release(self, reservation: IdempotencyReservation) -> None:
+        key = self._tokens.get(reservation.reservation_id)
+        if key is not None:
+            self.claims.pop(key, None)
+
+    async def fail_final(self, reservation: IdempotencyReservation) -> None:
+        return None
+
+
+# --- B2B1: operation-level idempotency for Admin actions -------------------
+
+
+async def test_actions_require_operation_idempotency_store(session_factory) -> None:
+    action = ActionDefinition(
+        action_id="resync",
+        label="Resync widgets",
+        scope=ActionScope.RESOURCE,
+        resource_id="widgets",
+        executor=DomainActionExecutor(lambda _context: ActionSuccess()),
+    )
+    admin = _build_action_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.resync.execute"})),
+        action,
+        idempotency_store=None,
+    )
+
+    with pytest.raises(RakitError) as caught:
+        admin.asgi()
+    assert caught.value.code == ErrorCode.CONFIG_INVALID
+    assert "idempotency" in caught.value.message
+
+
+async def test_write_binding_idempotency_does_not_substitute_for_action_store(
+    session_factory,
+) -> None:
+    action = ActionDefinition(
+        action_id="resync",
+        label="Resync widgets",
+        scope=ActionScope.RESOURCE,
+        resource_id="widgets",
+        executor=DomainActionExecutor(lambda _context: ActionSuccess()),
+    )
+    admin = _build_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.resync.execute"})),
+    )
+    form_schema = FormSchema(
+        fields=(FieldDefinition(field_id="name", python_type=str, required=True),)
+    )
+    service = SQLAlchemyMutationService(
+        model=Widget,
+        session_factory=session_factory,
+        form_schema=form_schema,
+        writable_fields=("name",),
+        identity_fields=("id",),
+    )
+
+    async def allowed(_request: object) -> bool:
+        return True
+
+    admin.register_write_resource(
+        "widgets",
+        WriteResourceBinding(
+            path="/widgets",
+            label="Widget",
+            form_schema=form_schema,
+            mutation_service=service,
+            templates=build_templates(()),
+            authorize=allowed,
+            verify_csrf=allowed,
+            verify_submission_token=allowed,
+            issue_submission_token=lambda _request: "placeholder",
+            idempotency_store=_SafeIdempotencyStore(),
+        ),
+    )
+    admin.builder.add_action(action)
+
+    with pytest.raises(RakitError) as caught:
+        admin.asgi()
+    assert caught.value.code == ErrorCode.CONFIG_INVALID
+    assert "idempotency" in caught.value.message
+
+
+async def test_resource_action_reserves_once_and_executes_once(session_factory) -> None:
+    calls: list[str] = []
+    store = _DedupIdempotencyStore()
+
+    async def resync_handler(_context: ActionContext) -> ActionSuccess:
+        calls.append("executed")
+        return ActionSuccess()
+
+    action = ActionDefinition(
+        action_id="resync",
+        label="Resync widgets",
+        scope=ActionScope.RESOURCE,
+        resource_id="widgets",
+        executor=DomainActionExecutor(resync_handler),
+    )
+    admin = _build_action_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.resync.execute"})),
+        action,
+        idempotency_store=store,
+    )
+    app, client = await _client_for(admin)
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        page = await client.get("/widgets/_actions/resync")
+        assert page.status_code == 200
+        assert store.begin_calls == 0
+        tokens = _action_tokens(page.text)
+        executed = await client.post(
+            "/widgets/_actions/resync",
+            data={"csrf_token": csrf, "submission_token": tokens["submission_token"]},
+            follow_redirects=False,
+        )
+
+    assert executed.status_code == 303
+    assert executed.headers["location"] == "/widgets"
+    assert store.begin_calls == 1
+    assert calls == ["executed"]
+
+
+async def test_record_action_uses_the_operation_store(session_factory) -> None:
+    calls: list[int] = []
+    store = _DedupIdempotencyStore()
+
+    async def approve_handler(context: ActionContext) -> ActionSuccess:
+        record = cast(Widget, context.record)
+        calls.append(record.id)
+        return ActionSuccess(message="Widget approved")
+
+    action = ActionDefinition(
+        action_id="approve",
+        label="Approve widget",
+        scope=ActionScope.RECORD,
+        resource_id="widgets",
+        executor=DomainActionExecutor(approve_handler),
+    )
+    admin = _build_action_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.approve.execute"})),
+        action,
+        idempotency_store=store,
+    )
+    app, client = await _client_for(admin)
+    identity = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        csrf, submission = await _open_action_form(
+            client, csrf, f"/widgets/{identity}/_actions/approve"
+        )
+        executed = await client.post(
+            f"/widgets/{identity}/_actions/approve",
+            data={"csrf_token": csrf, "submission_token": submission},
+            follow_redirects=False,
+        )
+
+    assert executed.status_code == 303
+    assert executed.headers["location"] == f"/widgets/{identity}"
+    assert store.begin_calls == 1
+    assert calls == [1]
+
+
+async def test_page_action_uses_operation_store_and_enforces_tokens(
+    session_factory,
+) -> None:
+    calls: list[str] = []
+    store = _DedupIdempotencyStore()
+
+    async def refresh_handler(_context: ActionContext) -> ActionSuccess:
+        calls.append("executed")
+        return ActionSuccess()
+
+    action = ActionDefinition(
+        action_id="refresh",
+        label="Refresh indexes",
+        scope=ActionScope.PAGE,
+        page_id="report",
+        executor=DomainActionExecutor(refresh_handler),
+    )
+    admin = _build_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.refresh.execute"})),
+        operation_idempotency_store=store,
+    )
+    admin.builder.add_page(PageDefinition(page_id="report", path="/reports", label="Report"))
+    admin.builder.add_action(action)
+    app, client = await _client_for(admin)
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        csrf, submission = await _open_action_form(client, csrf, "/reports/_actions/refresh")
+        executed = await client.post(
+            "/reports/_actions/refresh",
+            data={"csrf_token": csrf, "submission_token": submission},
+            follow_redirects=False,
+        )
+        missing = await client.post(
+            "/reports/_actions/refresh",
+            data={"csrf_token": csrf},
+            follow_redirects=False,
+        )
+
+    assert executed.status_code == 303
+    assert executed.headers["location"] == "/reports"
+    assert store.begin_calls == 1
+    assert missing.status_code == 409
+    assert calls == ["executed"]
+
+
+async def test_action_submission_token_is_bound_to_path(session_factory) -> None:
+    calls: list[str] = []
+
+    async def resync_handler(_context: ActionContext) -> ActionSuccess:
+        calls.append("resync")
+        return ActionSuccess()
+
+    async def audit_handler(_context: ActionContext) -> ActionSuccess:
+        calls.append("audit")
+        return ActionSuccess()
+
+    resync = ActionDefinition(
+        action_id="resync",
+        label="Resync widgets",
+        scope=ActionScope.RESOURCE,
+        resource_id="widgets",
+        executor=DomainActionExecutor(resync_handler),
+    )
+    audit = ActionDefinition(
+        action_id="audit",
+        label="Audit widgets",
+        scope=ActionScope.RESOURCE,
+        resource_id="widgets",
+        executor=DomainActionExecutor(audit_handler),
+    )
+    admin = _build_action_admin(
+        session_factory,
+        _ConfigurableAuthBackend(
+            permissions=frozenset(
+                {"operations.actions.resync.execute", "operations.actions.audit.execute"}
+            )
+        ),
+        resync,
+        audit,
+    )
+    app, client = await _client_for(admin)
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        csrf, submission = await _open_action_form(client, csrf, "/widgets/_actions/resync")
+        rejected = await client.post(
+            "/widgets/_actions/audit",
+            data={"csrf_token": csrf, "submission_token": submission},
+            follow_redirects=False,
+        )
+
+    assert rejected.status_code == 409
+    assert calls == []
+
+
+async def test_duplicate_submission_executes_once(session_factory) -> None:
+    calls: list[str] = []
+    store = _DedupIdempotencyStore()
+
+    async def resync_handler(_context: ActionContext) -> ActionSuccess:
+        calls.append("executed")
+        return ActionSuccess()
+
+    action = ActionDefinition(
+        action_id="resync",
+        label="Resync widgets",
+        scope=ActionScope.RESOURCE,
+        resource_id="widgets",
+        executor=DomainActionExecutor(resync_handler),
+    )
+    admin = _build_action_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.resync.execute"})),
+        action,
+        idempotency_store=store,
+    )
+    app, client = await _client_for(admin)
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        csrf, submission = await _open_action_form(client, csrf, "/widgets/_actions/resync")
+        first = await client.post(
+            "/widgets/_actions/resync",
+            data={"csrf_token": csrf, "submission_token": submission},
+            follow_redirects=False,
+        )
+        second = await client.post(
+            "/widgets/_actions/resync",
+            data={"csrf_token": csrf, "submission_token": submission},
+            follow_redirects=False,
+        )
+
+    assert first.status_code == 303
+    assert second.status_code == 303
+    assert store.begin_calls == 2
+    assert calls == ["executed"]
+
+
+async def test_same_token_different_payload_is_rejected(session_factory) -> None:
+    calls: list[str] = []
+    store = _DedupIdempotencyStore()
+
+    async def archive_handler(_context: ActionContext) -> ActionSuccess:
+        calls.append("executed")
+        return ActionSuccess()
+
+    action = ActionDefinition(
+        action_id="archive",
+        label="Archive widget",
+        scope=ActionScope.RESOURCE,
+        resource_id="widgets",
+        input_schema=FormSchema(
+            fields=(
+                FieldDefinition(field_id="reason", python_type=str, required=True, label="Reason"),
+            )
+        ),
+        needs_form=True,
+        executor=DomainActionExecutor(archive_handler),
+    )
+    admin = _build_action_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.archive.execute"})),
+        action,
+        idempotency_store=store,
+    )
+    app, client = await _client_for(admin)
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        csrf, submission = await _open_action_form(client, csrf, "/widgets/_actions/archive")
+        first = await client.post(
+            "/widgets/_actions/archive",
+            data={
+                "csrf_token": csrf,
+                "submission_token": submission,
+                "reason": "duplicate",
+            },
+            follow_redirects=False,
+        )
+        rejected = await client.post(
+            "/widgets/_actions/archive",
+            data={
+                "csrf_token": csrf,
+                "submission_token": submission,
+                "reason": "other",
+            },
+            follow_redirects=False,
+        )
+
+    assert first.status_code == 303
+    assert rejected.status_code == 409
+    assert calls == ["executed"]
+
+
+async def test_admin_without_actions_needs_no_operation_store(session_factory) -> None:
+    admin = _build_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.resources.widgets.read"})),
+    )
+    app, client = await _client_for(admin)
+    async with _LifespanDriver(app), client:
+        await _login(client)
+        assert (await client.get("/widgets", follow_redirects=False)).status_code == 200
+
+
+async def test_bulk_only_admin_needs_no_operation_store(session_factory) -> None:
+    action = ActionDefinition(
+        action_id="bulk_archive",
+        label="Bulk archive",
+        scope=ActionScope.BULK,
+        resource_id="widgets",
+        executor=DomainActionExecutor(lambda _context: ActionSuccess()),
+    )
+    admin = _build_action_admin(
+        session_factory,
+        _ConfigurableAuthBackend(
+            permissions=frozenset({"operations.access", "operations.resources.widgets.read"})
+        ),
+        action,
+        idempotency_store=None,
+    )
+    app, client = await _client_for(admin)
+    async with _LifespanDriver(app), client:
+        await _login(client)
+        assert (await client.get("/widgets/_actions/bulk_archive")).status_code == 404

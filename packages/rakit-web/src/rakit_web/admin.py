@@ -23,6 +23,7 @@ from rakit_core.definitions import (
 from rakit_core.di import ServiceRegistry, ServiceResolver, ServiceScope
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.events import EventBus, EventPublisher
+from rakit_core.idempotency import IdempotencyStore
 from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_core.mutations import (
     MutationAuthorization,
@@ -161,6 +162,7 @@ class Admin:
         superuser_bypass: bool = True,
         mutation_deadline_seconds: float = 30.0,
         event_bus: EventBus | None = None,
+        operation_idempotency_store: IdempotencyStore | None = None,
     ) -> None:
         security_config: dict[str, object] = {
             "secret_key": secret_key,
@@ -215,6 +217,7 @@ class Admin:
             auth_enabled=auth_backend is not None,
         )
         self._builder = ApplicationBuilder(admin_id=admin_id)
+        self._operation_idempotency_store = operation_idempotency_store
         self._event_bus = event_bus if event_bus is not None else EventBus()
         self._builder.registry.add_value(EventBus, self._event_bus, scope=ServiceScope.APPLICATION)
         self._builder.registry.add_factory(
@@ -526,11 +529,7 @@ class Admin:
                 target_identity=identity,
             )
 
-        idempotency_by_resource = {
-            resource_id: binding.idempotency_store
-            for resource_id, binding in self._write_resource_bindings.items()
-            if binding.idempotency_store is not None
-        }
+        idempotency_store = self._operation_idempotency_store
         bindings: list[ActionBinding] = []
         for resource_id, service in self._resource_services.items():
             pairs = tuple(
@@ -563,7 +562,7 @@ class Admin:
                     authorize_action=authorize_action,
                     load_record=load_record,
                     token_service=token_service,
-                    idempotency_store=idempotency_by_resource.get(resource_id),
+                    idempotency_store=idempotency_store,
                     deadline_seconds=self._mutation_deadline_seconds,
                     label=self.config.title,
                 )
@@ -584,7 +583,7 @@ class Admin:
                     issue_submission_token=issue_submission_token,
                     authorize_action=authorize_action,
                     token_service=token_service,
-                    idempotency_store=None,
+                    idempotency_store=idempotency_store,
                     deadline_seconds=self._mutation_deadline_seconds,
                     label=self.config.title,
                 )
@@ -686,6 +685,18 @@ class Admin:
                     ),
                     status_code=500,
                 )
+            if self._operation_idempotency_store is None:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID,
+                    message=(
+                        "Compiled actions require an operation idempotency store "
+                        "(Admin(operation_idempotency_store=...))."
+                    ),
+                    status_code=500,
+                )
+            validate_idempotency_store_for_production(
+                self._operation_idempotency_store, debug=self.config.debug
+            )
         requirement_resolver = build_requirement_resolver(
             admin_id=self.config.admin_id,
             resource_paths={
