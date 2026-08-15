@@ -194,18 +194,21 @@ def build_atomic_bulk_operation_plan(
         return BulkActionOutcome(execution=BulkExecutionPolicy.ATOMIC, items=tuple(items))
 
     plan_execute: OperationExecutor[tuple[ActionContext, ...], BulkActionOutcome] = execute
-    plan = OperationPlan(
-        operation_id=action.action_id,
-        kind=OperationKind.ACTION,
-        input=contexts,
-        authorization=authorization,
-        target_identity=None,
-        mutating=action.mutating,
-        transaction_policy=action.transaction_policy,
-        idempotency_fingerprint=idempotency_fingerprint,
-        executor_capabilities=resolve_operation_executor_capabilities(executor),
-        result_is_success=lambda outcome: outcome.all_succeeded,
-        execute=plan_execute,
+    plan = cast(
+        OperationPlan[tuple[ActionContext, ...], BulkActionOutcome],
+        OperationPlan(
+            operation_id=action.action_id,
+            kind=OperationKind.ACTION,
+            input=contexts,
+            authorization=authorization,
+            target_identity=None,
+            mutating=action.mutating,
+            transaction_policy=action.transaction_policy,
+            idempotency_fingerprint=idempotency_fingerprint,
+            executor_capabilities=resolve_operation_executor_capabilities(executor),
+            result_is_success=lambda outcome: outcome.all_succeeded,
+            execute=plan_execute,
+        ),
     )
     validate_operation_transaction_contract(plan)
     return plan
