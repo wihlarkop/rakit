@@ -19,7 +19,7 @@ from starlette.requests import Request
 from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 
-from .bulk_routes import BulkActionBinding, build_bulk_action_routes
+from .bulk_runtime import BulkActionBinding, build_bulk_action_routes
 
 
 def build_admin_bulk_action_routes(
@@ -123,7 +123,9 @@ def build_admin_bulk_action_routes(
             load_record=load_record,
             token_service=token_service,
             idempotency_store=idempotency_store,
-            concurrency=(ConcurrencyTokenService(token_service) if provider is not None else None),
+            concurrency=(
+                ConcurrencyTokenService(token_service) if provider is not None else None
+            ),
             concurrency_resource_id=resource_id if provider is not None else None,
             record_version=provider.version_for if provider is not None else None,
             deadline_seconds=deadline_seconds,
