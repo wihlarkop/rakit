@@ -4,6 +4,7 @@ import hashlib
 import re
 from dataclasses import dataclass
 from typing import cast
+from urllib.parse import urlencode
 
 import httpx
 import pytest
@@ -185,6 +186,13 @@ class _Harness:
         async def allow(_request: Request) -> bool:
             return True
 
+        needs_snapshot = bool(
+            self.action.bulk_policy is not None
+            and self.action.bulk_policy.require_concurrency_snapshot
+        )
+        record_version = (
+            (lambda record: cast(_Record, record).version) if needs_snapshot else None
+        )
         binding = BulkActionBinding(
             routes=((self.route, self.compiled),),
             templates=build_templates(()),
@@ -197,23 +205,10 @@ class _Harness:
             token_service=self.token_service,
             idempotency_store=self.idempotency,
             concurrency=(
-                ConcurrencyTokenService(self.token_service)
-                if self.action.bulk_policy is not None
-                and self.action.bulk_policy.require_concurrency_snapshot
-                else None
+                ConcurrencyTokenService(self.token_service) if needs_snapshot else None
             ),
-            concurrency_resource_id=(
-                "orders"
-                if self.action.bulk_policy is not None
-                and self.action.bulk_policy.require_concurrency_snapshot
-                else None
-            ),
-            record_version=(
-                lambda record: cast(_Record, record).version
-                if self.action.bulk_policy is not None
-                and self.action.bulk_policy.require_concurrency_snapshot
-                else None
-            ),
+            concurrency_resource_id="orders" if needs_snapshot else None,
+            record_version=record_version,
         )
         return Starlette(routes=build_bulk_action_routes(binding))
 
@@ -223,20 +218,21 @@ async def _post(
     selected: list[str],
     *,
     submission_token: str,
-    concurrency_tokens: list[str] = [],
+    concurrency_tokens: list[str] | None = None,
     confirmation_token: str | None = None,
 ) -> httpx.Response:
     data: list[tuple[str, str]] = [
         ("csrf_token", "csrf"),
         ("submission_token", submission_token),
         *(("selected", identity) for identity in selected),
-        *(("concurrency_token", token) for token in concurrency_tokens),
+        *(("concurrency_token", token) for token in (concurrency_tokens or [])),
     ]
     if confirmation_token is not None:
         data.append(("confirmation_token", confirmation_token))
     return await client.post(
         "/orders/_actions/archive",
-        data=data,
+        content=urlencode(data),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
         follow_redirects=False,
     )
 
@@ -333,7 +329,7 @@ async def test_best_effort_partial_success_completes_safe_receipt() -> None:
 async def test_stale_bulk_concurrency_snapshot_rejects_before_executor() -> None:
     harness = _Harness(require_concurrency_snapshot=True)
     selected = harness.encoded(1, 2)
-    query = "&".join(f"selected={identity}" for identity in selected)
+    query = urlencode([("selected", identity) for identity in selected])
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=harness.app()),
         base_url="http://test",
