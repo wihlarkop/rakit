@@ -260,11 +260,17 @@ class ActionDefinition(BaseModel):
             object.__setattr__(self, "bulk_policy", BulkPolicy())
         if self.scope is not ActionScope.BULK and self.bulk_policy is not None:
             raise ValueError("Only BULK actions may declare bulk_policy")
-        if self.requires_concurrency and self.scope is not ActionScope.RECORD:
-            raise ValueError(
-                f"Action {self.action_id!r} concurrency is only valid for RECORD scope "
-                "(Task 5 owns bulk concurrency snapshots)"
-            )
+        if self.requires_concurrency:
+            if self.scope is not ActionScope.RECORD:
+                raise ValueError(
+                    f"Action {self.action_id!r} concurrency is only valid for RECORD scope "
+                    "(Task 5 owns bulk concurrency snapshots)"
+                )
+            if not self.mutating or self.transaction_policy is not TransactionPolicy.AUTO:
+                raise ValueError(
+                    f"Action {self.action_id!r} strong concurrency requires a mutating "
+                    "RECORD action with TransactionPolicy.AUTO"
+                )
         if self.executor is None:
             raise ValueError(f"Action {self.action_id!r} requires an executor")
         if self.needs_form and self.input_schema is None:
