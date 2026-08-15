@@ -4,8 +4,12 @@ import httpx
 import pytest
 from pydantic import BaseModel
 from rakit_core.compiler import ApplicationBuilder, compile_application
-from rakit_core.definitions import PageDefinition
-from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, OperationReceipt
+from rakit_core.definitions import CompiledPageDefinition, PageDefinition
+from rakit_core.idempotency import (
+    IdempotencyReservation,
+    IdempotencyStatus,
+    OperationReceipt,
+)
 from rakit_core.mutations import OperationAuthorization
 from rakit_core.pages import DomainPageHandler, PageContext, PageRedirect, PageResult
 from rakit_core.transactions import TransactionPolicy
@@ -46,10 +50,16 @@ def _app(definition: PageDefinition, store: _Store | None = None) -> Starlette:
     builder = ApplicationBuilder(admin_id="ops")
     builder.add_page(definition)
     compiled = compile_application(builder)
-    route = next(route for route in compiled.routes if route.route_name == f"page:{definition.page_id}")
+    route = next(
+        route
+        for route in compiled.routes
+        if route.route_name == f"page:{definition.page_id}"
+    )
     compiled_page = compiled.compiled_pages[0]
 
-    async def authorize(_request: Request, _compiled_page) -> OperationAuthorization:
+    async def authorize(
+        _request: Request, _compiled_page: CompiledPageDefinition
+    ) -> OperationAuthorization:
         return OperationAuthorization.for_requirement(
             admin_id="ops",
             resource_id=str(definition.page_id),
