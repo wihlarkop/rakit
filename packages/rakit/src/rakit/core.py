@@ -21,8 +21,13 @@ from rakit_core.auth import (
 from rakit_core.bulk import (
     BULK_CONFIRMATION_THRESHOLD_MAXIMUM,
     SYNCHRONOUS_BULK_TARGETS_MAXIMUM,
+    BulkActionOutcome,
     BulkExecutionPolicy,
+    BulkItemOutcome,
+    BulkItemStatus,
     BulkPolicy,
+    BulkSelection,
+    BulkTarget,
 )
 from rakit_core.compatibility import validate_official_package_versions
 from rakit_core.compiler import ApplicationBuilder, CompiledApplication, Plugin
@@ -174,8 +179,13 @@ __all__ = [
     "AuthBackend",
     "AuthorizationDecision",
     "AuthorizationPolicy",
+    "BulkActionOutcome",
     "BulkExecutionPolicy",
+    "BulkItemOutcome",
+    "BulkItemStatus",
     "BulkPolicy",
+    "BulkSelection",
+    "BulkTarget",
     "CancellationContext",
     "CollapsibleGroup",
     "Column",
