@@ -1,5 +1,6 @@
 """Plan 05 Task 4 unified actions: web translation and security contract tests."""
 
+import hashlib
 import re
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
@@ -200,6 +201,7 @@ def _binding(harness: "ActionHarness", pairs: object) -> ActionBinding:
 class MemoryIdempotencyStore:
     def __init__(self) -> None:
         self.claims: dict[str, tuple[str, OperationReceipt | None]] = {}
+        self.statuses: dict[str, IdempotencyStatus] = {}
         self._tokens: dict[int, str] = {}
         self._next = 1
 
@@ -211,10 +213,13 @@ class MemoryIdempotencyStore:
                 raise ValueError("fingerprint mismatch")
             return IdempotencyReservation(
                 reservation_id=1,
-                status=(
-                    IdempotencyStatus.COMPLETED
-                    if receipt is not None
-                    else IdempotencyStatus.IN_PROGRESS
+                status=self.statuses.get(
+                    token_hash,
+                    (
+                        IdempotencyStatus.COMPLETED
+                        if receipt is not None
+                        else IdempotencyStatus.IN_PROGRESS
+                    ),
                 ),
                 completed_receipt=receipt,
                 claimed=False,
@@ -223,6 +228,7 @@ class MemoryIdempotencyStore:
         self._next += 1
         self._tokens[reservation.reservation_id] = token_hash
         self.claims[token_hash] = (fingerprint, None)
+        self.statuses[token_hash] = IdempotencyStatus.IN_PROGRESS
         return reservation
 
     async def complete(
@@ -231,14 +237,18 @@ class MemoryIdempotencyStore:
         key = self._tokens[reservation.reservation_id]
         fingerprint, _ = self.claims[key]
         self.claims[key] = (fingerprint, receipt)
+        self.statuses[key] = IdempotencyStatus.COMPLETED
 
     async def release(self, reservation: IdempotencyReservation) -> None:
         key = self._tokens.get(reservation.reservation_id)
         if key is not None:
             self.claims.pop(key, None)
+            self.statuses.pop(key, None)
 
     async def fail_final(self, reservation: IdempotencyReservation) -> None:
-        return None
+        key = self._tokens.get(reservation.reservation_id)
+        if key is not None and key in self.claims:
+            self.statuses[key] = IdempotencyStatus.FAILED_FINAL
 
 
 @dataclass
@@ -2144,3 +2154,238 @@ async def test_typed_confirmation_issues_fresh_concurrency_at_confirmation_stage
     assert stale.status_code == 409
     assert calls == []
     assert harness.idempotency.claims == {}
+
+
+@pytest.mark.anyio
+async def test_execution_exception_terminalizes_idempotency_reservation(
+    harness: ActionHarness,
+) -> None:
+    async def allow(_request: object) -> bool:
+        return True
+
+    def explode(_context: ActionContext) -> ActionSuccess:
+        raise RuntimeError("boom")
+
+    action = ActionDefinition(
+        action_id="explode",
+        label="Explode",
+        scope=ActionScope.RECORD,
+        resource_id="orders",
+        permission=action_permission_requirement("approve", admin_id="ops"),
+        executor=DomainActionExecutor(explode),
+    )
+    binding = ActionBinding(
+        routes=(
+            (
+                RouteDefinition(
+                    route_name="resource:orders:action:explode",
+                    methods=("GET", "POST"),
+                    path="/orders/{identity}/_actions/explode",
+                    owner_id="orders",
+                ),
+                CompiledActionDefinition(
+                    definition=action,
+                    permission=cast(PermissionRequirement, action.permission),
+                ),
+            ),
+        ),
+        templates=build_templates(()),
+        codec=IdentityCodec(),
+        verify_csrf=allow,
+        verify_submission_token=allow,
+        issue_submission_token=lambda _request: uuid4().hex,
+        authorize_action=harness.authorize,
+        load_record=harness.load_record,
+        token_service=harness.token_service,
+        idempotency_store=harness.idempotency,
+    )
+    app = _PrincipalMiddleware(Starlette(routes=build_action_routes(binding)))
+    parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    shared = "exception-submission-token"
+
+    async with _client(app) as client:
+        with pytest.raises(RuntimeError, match="boom"):
+            await client.post(
+                f"/orders/{parent}/_actions/explode",
+                content=urlencode(
+                    [
+                        ("csrf_token", "csrf"),
+                        ("submission_token", shared),
+                    ]
+                ),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                follow_redirects=False,
+            )
+
+    token_hash = hashlib.sha256(shared.encode()).hexdigest()
+    assert harness.idempotency.statuses[token_hash] is IdempotencyStatus.FAILED_FINAL
+
+
+@pytest.mark.anyio
+async def test_execution_rakit_error_is_terminal_but_keeps_public_translation(
+    harness: ActionHarness,
+) -> None:
+    async def allow(_request: object) -> bool:
+        return True
+
+    calls: list[str] = []
+
+    def reject(_context: ActionContext) -> ActionSuccess:
+        calls.append("called")
+        raise RakitError(
+            code=ErrorCode.VALIDATION_FAILED,
+            message="Domain operation failed",
+            status_code=400,
+        )
+
+    action = ActionDefinition(
+        action_id="domain_error",
+        label="Domain error",
+        scope=ActionScope.RECORD,
+        resource_id="orders",
+        permission=action_permission_requirement("approve", admin_id="ops"),
+        executor=DomainActionExecutor(reject),
+    )
+    binding = ActionBinding(
+        routes=(
+            (
+                RouteDefinition(
+                    route_name="resource:orders:action:domain_error",
+                    methods=("GET", "POST"),
+                    path="/orders/{identity}/_actions/domain_error",
+                    owner_id="orders",
+                ),
+                CompiledActionDefinition(
+                    definition=action,
+                    permission=cast(PermissionRequirement, action.permission),
+                ),
+            ),
+        ),
+        templates=build_templates(()),
+        codec=IdentityCodec(),
+        verify_csrf=allow,
+        verify_submission_token=allow,
+        issue_submission_token=lambda _request: uuid4().hex,
+        authorize_action=harness.authorize,
+        load_record=harness.load_record,
+        token_service=harness.token_service,
+        idempotency_store=harness.idempotency,
+    )
+    app = _PrincipalMiddleware(Starlette(routes=build_action_routes(binding)))
+    parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    shared = "rakit-error-submission-token"
+
+    async with _client(app) as client:
+        response = await client.post(
+            f"/orders/{parent}/_actions/domain_error",
+            content=urlencode(
+                [
+                    ("csrf_token", "csrf"),
+                    ("submission_token", shared),
+                ]
+            ),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+        retry = await client.post(
+            f"/orders/{parent}/_actions/domain_error",
+            content=urlencode(
+                [
+                    ("csrf_token", "csrf"),
+                    ("submission_token", shared),
+                ]
+            ),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+
+    token_hash = hashlib.sha256(shared.encode()).hexdigest()
+    assert response.status_code == 400
+    assert "Domain operation failed" in response.text
+    assert retry.status_code == 409
+    assert "cannot be retried" in retry.text
+    assert calls == ["called"]
+    assert harness.idempotency.statuses[token_hash] is IdempotencyStatus.FAILED_FINAL
+
+
+@pytest.mark.anyio
+async def test_plan_construction_failure_releases_idempotency_reservation(
+    harness: ActionHarness,
+) -> None:
+    async def allow(_request: object) -> bool:
+        return True
+
+    action = ActionDefinition(
+        action_id="plan_error",
+        label="Plan error",
+        scope=ActionScope.RECORD,
+        resource_id="orders",
+        permission=action_permission_requirement("approve", admin_id="ops"),
+        executor=DomainActionExecutor(lambda _context: ActionSuccess()),
+    )
+    compiled = CompiledActionDefinition(
+        definition=action,
+        permission=cast(PermissionRequirement, action.permission),
+    )
+
+    async def authorize_wrong_target(
+        request: Request,
+        compiled_action: CompiledActionDefinition,
+        _identity: RecordIdentity | None,
+    ) -> OperationAuthorization | None:
+        principal = cast(Principal, request.scope.get("state", {}).get("principal"))
+        if principal is None or not compiled_action.permission.matches(principal):
+            return None
+        assert principal.subject_id is not None
+        return OperationAuthorization.for_requirement(
+            admin_id="ops",
+            resource_id="orders",
+            operation="action:plan_error",
+            principal_id=principal.subject_id,
+            requirement=compiled_action.permission,
+            target_identity=RecordIdentity(values={"id": 2}),
+        )
+
+    binding = ActionBinding(
+        routes=(
+            (
+                RouteDefinition(
+                    route_name="resource:orders:action:plan_error",
+                    methods=("GET", "POST"),
+                    path="/orders/{identity}/_actions/plan_error",
+                    owner_id="orders",
+                ),
+                compiled,
+            ),
+        ),
+        templates=build_templates(()),
+        codec=IdentityCodec(),
+        verify_csrf=allow,
+        verify_submission_token=allow,
+        issue_submission_token=lambda _request: uuid4().hex,
+        authorize_action=authorize_wrong_target,
+        load_record=harness.load_record,
+        token_service=harness.token_service,
+        idempotency_store=harness.idempotency,
+    )
+    app = _PrincipalMiddleware(Starlette(routes=build_action_routes(binding)))
+    parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    shared = "plan-error-submission-token"
+
+    async with _client(app) as client:
+        with pytest.raises(ValueError, match="authorization target"):
+            await client.post(
+                f"/orders/{parent}/_actions/plan_error",
+                content=urlencode(
+                    [
+                        ("csrf_token", "csrf"),
+                        ("submission_token", shared),
+                    ]
+                ),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                follow_redirects=False,
+            )
+
+    token_hash = hashlib.sha256(shared.encode()).hexdigest()
+    assert token_hash not in harness.idempotency.claims
+    assert token_hash not in harness.idempotency.statuses

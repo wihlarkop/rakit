@@ -23,6 +23,7 @@ from datetime import timedelta
 from html import escape
 from typing import Any
 
+import anyio
 from pydantic import TypeAdapter
 from rakit_core.actions import (
     ActionAvailability,
@@ -49,7 +50,12 @@ from rakit_core.di import ServiceResolver
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.events import EventPublisher
 from rakit_core.forms import FormIssue, FormSchema, FormState, FormValidationError
-from rakit_core.idempotency import IdempotencyStatus, IdempotencyStore, OperationReceipt
+from rakit_core.idempotency import (
+    IdempotencyReservation,
+    IdempotencyStatus,
+    IdempotencyStore,
+    OperationReceipt,
+)
 from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_core.mutations import OperationAuthorization
 from rakit_core.operations import (
@@ -74,6 +80,14 @@ from .security.cookies import CSRF_COOKIE_NAME
 
 _CONFIRMATION_TTL = timedelta(minutes=15)
 _MAX_ACTION_FIELDS = 500
+
+
+async def _fail_final_reservation(
+    store: IdempotencyStore,
+    reservation: IdempotencyReservation,
+) -> None:
+    with anyio.CancelScope(shield=True):
+        await store.fail_final(reservation)
 
 
 @dataclass(frozen=True)
@@ -692,6 +706,12 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
                         ActionSuccess(message="Action already completed"),
                         fallback_location=_owner_location(binding, request, identity, owner_path),
                     )
+                if reservation.status is IdempotencyStatus.FAILED_FINAL:
+                    return _rejected_response(
+                        request,
+                        "This submission has already failed and cannot be retried",
+                        409,
+                    )
                 if not reservation.claimed:
                     return _rejected_response(request, "Action is already in progress", 409)
 
@@ -699,6 +719,11 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
                 if reservation is not None:
                     assert binding.idempotency_store is not None
                     await binding.idempotency_store.release(reservation)
+
+            async def fail_final() -> None:
+                if reservation is not None:
+                    assert binding.idempotency_store is not None
+                    await _fail_final_reservation(binding.idempotency_store, reservation)
 
             context = _action_context(
                 binding,
@@ -746,18 +771,31 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
                 concurrency_token=tokens.get("concurrency_token"),
                 confirmation_token=tokens.get("confirmation_token"),
             )
-            try:
-                plan = build_action_operation_plan(context, idempotency_fingerprint=fingerprint)
-                result = await _run_action_operation(binding, request, plan, authorization)
-            except RakitError as exc:
-                if reservation is not None:
-                    assert binding.idempotency_store is not None
-                    await binding.idempotency_store.release(reservation)
+
+            def rakit_error_response(exc: RakitError) -> Response:
                 status_code = exc.status_code or 400
                 message = exc.message or "Action rejected"
                 if status_code == 409:
                     message = "This action is no longer available"
                 return _rejected_response(request, message, status_code)
+
+            try:
+                plan = build_action_operation_plan(context, idempotency_fingerprint=fingerprint)
+            except RakitError as exc:
+                await release()
+                return rakit_error_response(exc)
+            except BaseException:
+                await release()
+                raise
+
+            try:
+                result = await _run_action_operation(binding, request, plan, authorization)
+            except RakitError as exc:
+                await fail_final()
+                return rakit_error_response(exc)
+            except BaseException:
+                await fail_final()
+                raise
             if isinstance(result, ActionValidation):
                 if reservation is not None:
                     assert binding.idempotency_store is not None
