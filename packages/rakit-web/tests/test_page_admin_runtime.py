@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+from conftest import LifespanDriver
 from rakit import Admin, SecretValue
 from rakit_core.actions import (
     ActionDefinition,
@@ -15,7 +16,14 @@ from rakit_core.auth import Principal, SessionRecord
 from rakit_core.definitions import PageDefinition
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, OperationReceipt
-from rakit_core.pages import DomainPageHandler, PageRedirect, PreparedPageMutationHandler
+from rakit_core.operations import current_operation_context
+from rakit_core.pages import (
+    DomainPageHandler,
+    PageContext,
+    PageRedirect,
+    PageResult,
+    PreparedPageMutationHandler,
+)
 from rakit_core.transactions import TransactionPolicy
 from rakit_web.security.cookies import SESSION_COOKIE_NAME
 
@@ -126,6 +134,45 @@ async def test_admin_serves_static_page_with_exact_compiled_permission() -> None
     assert response.status_code == 200
     assert "Report" in response.text
     assert forbidden.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_admin_page_handler_runs_inside_operation_scope_with_principal() -> None:
+    seen: list[tuple[str, str, bool]] = []
+
+    async def handler(context: PageContext) -> PageResult[dict[str, bool]]:
+        operation = current_operation_context()
+        assert operation is not None
+        assert operation.services is not None
+        assert context.principal is not None
+        seen.append(
+            (
+                operation.operation,
+                context.principal.subject_id or "",
+                operation.principal is context.principal,
+            )
+        )
+        return PageResult(payload={"scoped": True}, message="Scoped")
+
+    admin = _admin(frozenset({"ops.pages.report.view"}))
+    admin.register_page(
+        PageDefinition(
+            page_id="report",
+            path="/reports",
+            label="Report",
+            handler=DomainPageHandler(handler),
+        )
+    )
+    app = admin.asgi()
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost")
+    client.cookies.set(SESSION_COOKIE_NAME, "token")
+
+    async with LifespanDriver(app), client:
+        response = await client.get("/reports")
+
+    assert response.status_code == 200
+    assert "Scoped" in response.text
+    assert seen == [("page:report", "operator", True)]
 
 
 def test_compiled_page_requires_authentication_at_runtime() -> None:
