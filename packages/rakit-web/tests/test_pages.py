@@ -5,9 +5,9 @@ from collections.abc import Awaitable, Callable
 import httpx
 import pytest
 from pydantic import BaseModel, Field
-from rakit_core.auth import Principal
 from rakit_core.compiler import ApplicationBuilder, compile_application
-from rakit_core.definitions import PageDefinition
+from rakit_core.definitions import CompiledPageDefinition, PageDefinition, RouteDefinition
+from rakit_core.errors import RakitError
 from rakit_core.idempotency import (
     IdempotencyReservation,
     IdempotencyStatus,
@@ -81,7 +81,9 @@ class _MemoryIdempotencyStore:
         self._claims[key] = (fingerprint, IdempotencyStatus.FAILED_FINAL, None)
 
 
-def _compiled_page(definition: PageDefinition):
+def _compiled_page(
+    definition: PageDefinition,
+) -> tuple[RouteDefinition, CompiledPageDefinition]:
     builder = ApplicationBuilder(admin_id="ops")
     builder.add_page(definition)
     compiled = compile_application(builder)
@@ -110,7 +112,7 @@ def _app(
     route, compiled = _compiled_page(definition)
 
     async def authorize(
-        _request: Request, compiled_page
+        _request: Request, compiled_page: CompiledPageDefinition
     ) -> OperationAuthorization | None:
         return _authorization(compiled_page.permission, str(definition.page_id))
 
@@ -137,7 +139,8 @@ async def test_read_only_page_parses_typed_query_and_executes_handler() -> None:
 
     async def handler(context: PageContext) -> PageResult[dict[str, int]]:
         assert isinstance(context.values, _ReadInput)
-        assert isinstance(context.principal, Principal) is False
+        assert context.authorization is not None
+        assert context.principal is None
         seen.append((context.values.limit, context.authorization.operation))
         return PageResult(payload={"limit": context.values.limit}, message="Loaded")
 
@@ -295,7 +298,7 @@ async def test_page_rejection_releases_reservation_for_retry() -> None:
     calls = 0
     store = _MemoryIdempotencyStore()
 
-    async def handler(_context: PageContext):
+    async def handler(_context: PageContext) -> PageRejected | PageRedirect:
         nonlocal calls
         calls += 1
         if calls == 1:
@@ -402,11 +405,11 @@ async def test_mutating_page_rendered_result_fails_closed_after_execution() -> N
             issue_submission=lambda _request: "token",
         )
     ) as client:
-        response = await client.post(
-            "/rebuild",
-            data={"reason": "bad", "csrf_token": "csrf", "submission_token": "token"},
-        )
+        with pytest.raises(RakitError) as caught:
+            await client.post(
+                "/rebuild",
+                data={"reason": "bad", "csrf_token": "csrf", "submission_token": "token"},
+            )
 
-    assert response.status_code == 500
-    assert response.json()["details"]["reason"] == "post_redirect_required"
+    assert caught.value.details["reason"] == "post_redirect_required"
     assert store.fail_final_calls == 1
