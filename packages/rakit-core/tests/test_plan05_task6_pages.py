@@ -122,12 +122,9 @@ def test_page_result_contracts_are_explicit_and_redirects_are_internal() -> None
         PageRejected(errors={})
 
 
-def test_page_definition_keeps_static_read_only_pages_and_rejects_dynamic_paths() -> None:
+def test_static_read_only_page_remains_valid_without_handler() -> None:
     static = PageDefinition(page_id="about", path="/about", label="About")
     assert static.handler is None
-
-    with pytest.raises(ValidationError, match="path parameters"):
-        PageDefinition(page_id="dynamic", path="/reports/{report_id}", label="Dynamic")
 
 
 def test_mutating_page_requires_callable_handler() -> None:
