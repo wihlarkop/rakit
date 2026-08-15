@@ -8,9 +8,7 @@ from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.relationships import RelationshipDefinition
 
 
-def _invalid_declaration(
-    admin_cls: type[ResourceAdmin], attribute: str, reason: str
-) -> RakitError:
+def _invalid_declaration(admin_cls: type[ResourceAdmin], attribute: str, reason: str) -> RakitError:
     return RakitError(
         code=ErrorCode.CONFIG_INVALID,
         message=f"Invalid {admin_cls.__name__}.{attribute} declaration.",
@@ -23,9 +21,7 @@ def _invalid_declaration(
     )
 
 
-def resource_relationships(
-    admin_cls: type[ResourceAdmin],
-) -> tuple[RelationshipDefinition, ...]:
+def resource_relationships(admin_cls: type[ResourceAdmin]) -> tuple[RelationshipDefinition, ...]:
     raw = getattr(admin_cls, "relationships", ())
     if not isinstance(raw, list | tuple):
         raise _invalid_declaration(admin_cls, "relationships", "collection_required")
