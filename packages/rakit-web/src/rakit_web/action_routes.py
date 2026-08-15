@@ -434,6 +434,135 @@ def _action_result_response(
     )
 
 
+def _receipt_message(receipt: OperationReceipt) -> str | None:
+    if receipt.payload is None:
+        return None
+    message = receipt.payload.get("message")
+    return message if isinstance(message, str) else None
+
+
+def _validated_receipt_location(location: str | None) -> str | None:
+    if location is None:
+        return None
+    try:
+        return ActionRedirect(location=location).location
+    except ValueError:
+        return None
+
+
+def _action_result_receipt(
+    result: ActionResult[Any],
+    *,
+    operation_id: str,
+    fallback_location: str,
+) -> OperationReceipt:
+    if isinstance(result, ActionSuccess):
+        payload = {"message": result.message} if result.message is not None else None
+        return OperationReceipt(
+            operation_id=operation_id,
+            status="succeeded",
+            result_kind="success",
+            redirect_route=fallback_location,
+            payload=payload,
+        )
+    if isinstance(result, ActionRedirect):
+        payload = {"message": result.message} if result.message is not None else None
+        return OperationReceipt(
+            operation_id=operation_id,
+            status="succeeded",
+            result_kind="redirect",
+            redirect_route=result.location,
+            payload=payload,
+        )
+    if isinstance(result, ActionRefresh):
+        payload: dict[str, object] = {"target": result.target}
+        if result.message is not None:
+            payload["message"] = result.message
+        return OperationReceipt(
+            operation_id=operation_id,
+            status="succeeded",
+            result_kind="refresh",
+            redirect_route=fallback_location,
+            payload=payload,
+        )
+    if isinstance(result, ActionRendered):
+        return OperationReceipt(
+            operation_id=operation_id,
+            status="succeeded",
+            result_kind="rendered",
+            redirect_route=fallback_location,
+        )
+    return OperationReceipt(
+        operation_id=operation_id,
+        status="succeeded",
+        result_kind="unreplayable",
+        redirect_route=fallback_location,
+    )
+
+
+def _completed_action_response(
+    request: Request,
+    receipt: OperationReceipt | None,
+    *,
+    fallback_location: str,
+) -> Response:
+    if receipt is None:
+        return _rejected_response(
+            request,
+            "Action already completed, but its original response cannot be replayed",
+            409,
+        )
+
+    replay_location = _validated_receipt_location(receipt.redirect_route) or fallback_location
+    message = _receipt_message(receipt)
+
+    # Backward compatibility for receipts written before semantic result kinds
+    # were stored.  Those receipts already recorded the safe owner location.
+    if receipt.result_kind == "action":
+        return _action_result_response(
+            request,
+            ActionSuccess(message="Action already completed"),
+            fallback_location=replay_location,
+        )
+    if receipt.result_kind == "success":
+        return _action_result_response(
+            request,
+            ActionSuccess(message=message),
+            fallback_location=replay_location,
+        )
+    if receipt.result_kind == "redirect":
+        location = _validated_receipt_location(receipt.redirect_route)
+        if location is None:
+            return _rejected_response(
+                request,
+                "Action already completed, but its original response cannot be replayed",
+                409,
+            )
+        return _action_result_response(
+            request,
+            ActionRedirect(location=location, message=message),
+            fallback_location=fallback_location,
+        )
+    if receipt.result_kind == "refresh":
+        target = receipt.payload.get("target") if receipt.payload is not None else None
+        if not isinstance(target, str) or not target:
+            return _rejected_response(
+                request,
+                "Action already completed, but its original response cannot be replayed",
+                409,
+            )
+        return _action_result_response(
+            request,
+            ActionRefresh(target=target, message=message),
+            fallback_location=replay_location,
+        )
+    return _rejected_response(
+        request,
+        "Action already completed, but its original response cannot be replayed",
+        409,
+    )
+
+
 def _rejected_response(request: Request, message: str, status_code: int) -> Response:
     safe_message = escape(message, quote=True)
     if request.headers.get("HX-Request") == "true":
@@ -685,6 +814,7 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
             ):
                 return _rejected_response(request, "Action confirmation is invalid or stale", 409)
 
+            fallback_location = _owner_location(binding, request, identity, owner_path)
             reservation = None
             fingerprint = _action_fingerprint(action.action_id, identity, submitted)
             if binding.idempotency_store is not None:
@@ -701,10 +831,10 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
                         request, "Submission token is bound to another action", 409
                     )
                 if reservation.status is IdempotencyStatus.COMPLETED:
-                    return _action_result_response(
+                    return _completed_action_response(
                         request,
-                        ActionSuccess(message="Action already completed"),
-                        fallback_location=_owner_location(binding, request, identity, owner_path),
+                        reservation.completed_receipt,
+                        fallback_location=fallback_location,
                     )
                 if reservation.status is IdempotencyStatus.FAILED_FINAL:
                     return _rejected_response(
@@ -819,23 +949,22 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
                 return _action_result_response(
                     request,
                     result,
-                    fallback_location=_owner_location(binding, request, identity, owner_path),
+                    fallback_location=fallback_location,
                 )
             if reservation is not None:
                 assert binding.idempotency_store is not None
                 await binding.idempotency_store.complete(
                     reservation,
-                    OperationReceipt(
+                    _action_result_receipt(
+                        result,
                         operation_id=str(reservation.reservation_id),
-                        status="succeeded",
-                        result_kind="action",
-                        redirect_route=_owner_location(binding, request, identity, owner_path),
+                        fallback_location=fallback_location,
                     ),
                 )
             return _action_result_response(
                 request,
                 result,
-                fallback_location=_owner_location(binding, request, identity, owner_path),
+                fallback_location=fallback_location,
             )
 
         async def action_endpoint(
