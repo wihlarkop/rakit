@@ -199,12 +199,45 @@ def validate_operation_transaction_contract[TInput, TResult](
 
     AUTO and MANUAL both mean a Rakit-owned root unit of work exists and the
     executor must participate in it; DISABLED is the explicit escape hatch
-    for unmanaged side effects.  ``OperationPlan.__post_init__`` already
-    rejects mutating+READ_ONLY and non-mutating+AUTO; this adds the
-    capability requirement.
+    for unmanaged side effects. Strong concurrency additionally requires a
+    mutating AUTO operation whose executor advertises atomic UoW concurrency.
     """
+    if plan.concurrency_required:
+        if not plan.mutating or plan.transaction_policy is not TransactionPolicy.AUTO:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message=(
+                    f'Strong concurrency for operation "{plan.operation_id}" requires '
+                    "a mutating operation with TransactionPolicy.AUTO."
+                ),
+                status_code=500,
+                details={
+                    "operation_id": plan.operation_id,
+                    "transaction_policy": str(plan.transaction_policy),
+                    "reason": "invalid_concurrency_transaction_policy",
+                },
+            )
+        if (
+            not plan.executor_capabilities.participates_in_uow
+            or not plan.executor_capabilities.atomic_concurrency
+        ):
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message=(
+                    f'Strong concurrency for operation "{plan.operation_id}" requires '
+                    "an executor with atomic unit-of-work participation."
+                ),
+                status_code=500,
+                details={
+                    "operation_id": plan.operation_id,
+                    "transaction_policy": str(plan.transaction_policy),
+                    "reason": "atomic_concurrency_not_supported",
+                },
+            )
+
     if not plan.mutating:
         return
+
     if plan.transaction_policy in (TransactionPolicy.AUTO, TransactionPolicy.MANUAL):
         if not plan.executor_capabilities.participates_in_uow:
             raise RakitError(
@@ -215,6 +248,11 @@ def validate_operation_transaction_contract[TInput, TResult](
                     "in the operation unit of work."
                 ),
                 status_code=500,
+                details={
+                    "operation_id": plan.operation_id,
+                    "transaction_policy": str(plan.transaction_policy),
+                    "reason": "executor_not_uow_managed",
+                },
             )
 
 
