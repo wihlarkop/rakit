@@ -2,6 +2,7 @@
 
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager
+from typing import Any, cast
 
 from rakit_core.actions import ActionScope
 from rakit_core.compiler import CompiledApplication
@@ -66,7 +67,7 @@ def build_admin_bulk_action_routes(
     # Resource list templates are shared across bindings. The helper filters
     # per request, so action labels/URLs are not exposed to principals that do
     # not satisfy the exact compiler-resolved permission.
-    templates.env.globals["rakit_bulk_actions"] = bulk_action_views
+    cast(dict[str, Any], templates.env.globals)["rakit_bulk_actions"] = bulk_action_views
 
     async def authorize_action(
         request: Request,
@@ -76,9 +77,7 @@ def build_admin_bulk_action_routes(
         principal = request.scope.get("state", {}).get("principal")
         if principal is None or not principal.authenticated:
             return None
-        if not compiled_action.permission.matches(
-            principal, superuser_bypass=superuser_bypass
-        ):
+        if not compiled_action.permission.matches(principal, superuser_bypass=superuser_bypass):
             return None
         if principal.subject_id is None:
             return None
@@ -147,9 +146,7 @@ def build_admin_bulk_action_routes(
             load_record=load_record,
             token_service=token_service,
             idempotency_store=idempotency_store,
-            concurrency=(
-                ConcurrencyTokenService(token_service) if provider is not None else None
-            ),
+            concurrency=ConcurrencyTokenService(token_service) if provider is not None else None,
             concurrency_resource_id=resource_id if provider is not None else None,
             record_version=provider.version_for if provider is not None else None,
             deadline_seconds=deadline_seconds,
