@@ -1,9 +1,10 @@
 """Admin composition helpers for compiled Plan 05 custom pages."""
 
-from collections.abc import AbstractSet, Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager
 
 from rakit_core.actions import ActionDefinition, ActionScope
+from rakit_core.auth import Principal
 from rakit_core.compiler import ApplicationBuilder, CompiledApplication
 from rakit_core.definitions import CompiledPageDefinition, PageDefinition
 from rakit_core.di import ServiceResolver
@@ -11,6 +12,7 @@ from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.idempotency import IdempotencyStore
 from rakit_core.mutations import OperationAuthorization
 from rakit_core.operations import resolve_operation_executor_capabilities
+from rakit_core.permissions import PermissionRequirement
 from rakit_core.transactions import OperationUnitOfWorkFactory, TransactionPolicy
 from starlette.requests import Request
 from starlette.routing import Route
@@ -28,9 +30,7 @@ def register_public_page(
 ) -> None:
     """Atomically validate and register a Page plus its PAGE-scoped actions."""
 
-    existing_action_ids: AbstractSet[str] = {
-        str(action.action_id) for action in builder.actions
-    }
+    existing_action_ids = {str(action.action_id) for action in builder.actions}
     declared_ids = tuple(str(action.action_id) for action in actions)
     if len(declared_ids) != len(set(declared_ids)) or set(declared_ids) & existing_action_ids:
         raise RakitError(
@@ -58,7 +58,7 @@ def register_public_page(
         builder.add_action(action)
 
 
-def page_requirement_map(compiled: CompiledApplication) -> dict[str, object]:
+def page_requirement_map(compiled: CompiledApplication) -> dict[str, PermissionRequirement]:
     return {
         compiled_page.definition.path: compiled_page.permission
         for compiled_page in compiled.compiled_pages
@@ -82,9 +82,7 @@ def validate_page_runtime(
             status_code=500,
         )
 
-    mutating_pages = tuple(
-        item for item in compiled.compiled_pages if item.definition.mutating
-    )
+    mutating_pages = tuple(item for item in compiled.compiled_pages if item.definition.mutating)
     if mutating_pages and idempotency_store is None:
         raise RakitError(
             code=ErrorCode.CONFIG_INVALID,
@@ -99,8 +97,7 @@ def validate_page_runtime(
 
     for compiled_page in mutating_pages:
         page = compiled_page.definition
-        handler = page.handler
-        capabilities = resolve_operation_executor_capabilities(handler)
+        capabilities = resolve_operation_executor_capabilities(page.handler)
         if page.transaction_policy in (TransactionPolicy.AUTO, TransactionPolicy.MANUAL):
             if not capabilities.participates_in_uow:
                 raise RakitError(
@@ -156,12 +153,10 @@ def build_admin_page_routes(
         compiled_page: CompiledPageDefinition,
     ) -> OperationAuthorization | None:
         state = request.scope.get("state", {})
-        principal = state.get("principal") if isinstance(state, dict) else None
-        if principal is None or not principal.authenticated:
+        principal = state.get("principal") if isinstance(state, Mapping) else None
+        if not isinstance(principal, Principal) or not principal.authenticated:
             return None
-        if not compiled_page.permission.matches(
-            principal, superuser_bypass=superuser_bypass
-        ):
+        if not compiled_page.permission.matches(principal, superuser_bypass=superuser_bypass):
             return None
         if principal.subject_id is None:
             return None
@@ -176,10 +171,7 @@ def build_admin_page_routes(
 
     route_by_name = {route.route_name: route for route in compiled.routes}
     pairs = tuple(
-        (
-            route_by_name[f"page:{compiled_page.definition.page_id}"],
-            compiled_page,
-        )
+        (route_by_name[f"page:{compiled_page.definition.page_id}"], compiled_page)
         for compiled_page in compiled.compiled_pages
     )
     binding = PageBinding(
