@@ -381,7 +381,7 @@ async def _form_input(
             {},
             {name: ("File uploads are not supported by custom pages",) for name in non_string_fields},
         )
-    submitted = {
+    submitted: dict[str, object] = {
         str(name): value
         for name, value in items
         if isinstance(value, str) and str(name) not in _RESERVED_FORM_FIELDS
@@ -527,6 +527,7 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
                 return _rejected_response("Page submission is already in progress", 409)
 
             async def release() -> None:
+                assert binding.idempotency_store is not None
                 await binding.idempotency_store.release(reservation)
 
             context = PageContext(
