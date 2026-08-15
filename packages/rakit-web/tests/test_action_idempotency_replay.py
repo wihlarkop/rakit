@@ -6,26 +6,26 @@ from rakit_core.actions import ActionRedirect, ActionRefresh, ActionRendered, Ac
 from rakit_core.idempotency import OperationReceipt
 from rakit_web.action_routes import _action_result_receipt, _completed_action_response
 from starlette.requests import Request
+from starlette.types import Scope
 
 
 def _request(*, htmx: bool = False) -> Request:
     headers: list[tuple[bytes, bytes]] = []
     if htmx:
         headers.append((b"hx-request", b"true"))
-    return Request(
-        {
-            "type": "http",
-            "http_version": "1.1",
-            "method": "POST",
-            "scheme": "http",
-            "path": "/orders/_actions/example",
-            "raw_path": b"/orders/_actions/example",
-            "query_string": b"",
-            "headers": headers,
-            "client": ("127.0.0.1", 12345),
-            "server": ("test", 80),
-        }
-    )
+    scope: Scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/orders/_actions/example",
+        "raw_path": b"/orders/_actions/example",
+        "query_string": b"",
+        "headers": headers,
+        "client": ("127.0.0.1", 12345),
+        "server": ("test", 80),
+    }
+    return Request(scope)
 
 
 def test_success_receipt_omits_arbitrary_payload_and_replays_message() -> None:
@@ -37,6 +37,7 @@ def test_success_receipt_omits_arbitrary_payload_and_replays_message() -> None:
 
     assert receipt.result_kind == "success"
     assert receipt.redirect_route == "/orders"
+    assert receipt.payload is not None
     assert receipt.payload == {"message": "Order updated"}
     assert "secret" not in receipt.payload
 
