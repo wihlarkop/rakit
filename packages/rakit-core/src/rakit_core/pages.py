@@ -1,8 +1,8 @@
 """Backend-neutral custom page execution primitives for Plan 05 Task 6.
 
-Pages are permission-bound application operations.  Core owns their typed
+Pages are permission-bound application operations. Core owns their typed
 results and operation plan; web adapters own HTTP parsing and template
-rendering.  Mutating pages use POST/Redirect/Get: a successful mutating page
+rendering. Mutating pages use POST/Redirect/Get: a successful mutating page
 must return :class:`PageRedirect`, which makes idempotent replay safe without
 persisting arbitrary rendered payloads.
 """
@@ -27,7 +27,6 @@ from rakit_core.operations import (
     resolve_operation_executor_capabilities,
     validate_operation_transaction_contract,
 )
-from rakit_core.transactions import TransactionPolicy
 
 
 @dataclass(frozen=True)
@@ -39,19 +38,19 @@ class PageResult[TPagePayload]:
     status_code: int = 200
 
     def __post_init__(self) -> None:
-        if not 200 <= self.status_code < 400:
-            raise ValueError("Rendered page status_code must be between 200 and 399")
+        if not 200 <= self.status_code < 300:
+            raise ValueError("Rendered page status_code must be a 2xx status")
 
 
 @dataclass(frozen=True)
 class PageRedirect:
-    """Safe internal redirect, used for POST/Redirect/Get and optional GET redirects."""
+    """Safe internal redirect used for POST/Redirect/Get and optional GET redirects."""
 
     location: str
     message: str | None = None
 
     def __post_init__(self) -> None:
-        # Reuse the already sealed ActionRedirect trust-boundary validation.
+        # Reuse the already sealed internal-redirect trust-boundary validation.
         ActionRedirect(location=self.location)
 
 
@@ -70,9 +69,7 @@ class PageRejected:
             raise ValueError("Rejected page status_code must be a 4xx status")
 
 
-type PageExecutionResult[TPagePayload] = (
-    PageResult[TPagePayload] | PageRedirect | PageRejected
-)
+type PageExecutionResult[TPagePayload] = PageResult[TPagePayload] | PageRedirect | PageRejected
 
 
 @dataclass(frozen=True)
@@ -146,7 +143,7 @@ def _validate_page_result(result: object) -> PageExecutionResult[Any]:
 
 def _page_result_is_success(result: object, *, mutating: bool) -> bool:
     if mutating:
-        # Mutating pages are deliberately PRG-only.  A rendered or rejected
+        # Mutating pages are deliberately PRG-only. A rendered or rejected
         # result rolls the root UoW back before the web layer translates it.
         return isinstance(result, PageRedirect)
     return isinstance(result, PageResult | PageRedirect)
