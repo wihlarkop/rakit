@@ -97,7 +97,8 @@ async def _count(factory: async_sessionmaker[AsyncSession]) -> int:
         return int(await session.scalar(select(func.count(Item.id))) or 0)
 
 
-def test_sqlalchemy_plugin_registers_the_generic_uow_factory(session_factory) -> None:
+@pytest.mark.anyio
+async def test_sqlalchemy_plugin_registers_the_generic_uow_factory(session_factory) -> None:
     builder = ApplicationBuilder(admin_id="ops")
     SQLAlchemyPlugin(session_factory=session_factory).configure(builder)
     resolver = builder.registry.application_scope()
@@ -229,9 +230,7 @@ async def test_rollback_discards_events_and_manual_commit_detaches_generic_uow(s
         publisher.publish(ItemCreated())
         return "rejected"
 
-    await run_operation_plan(
-        _plan(rejected), rollback_context, unit_of_work_factory=factory
-    )
+    await run_operation_plan(_plan(rejected), rollback_context, unit_of_work_factory=factory)
     assert observed_uows == []
 
     manual_context = _context(events=publisher)
