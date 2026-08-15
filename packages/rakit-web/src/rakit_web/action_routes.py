@@ -131,14 +131,15 @@ def _owner_path(route: RouteDefinition) -> str:
     The canonical grammar is ``{owner_path}/{_actions}/{action_id}`` for
     RESOURCE, RECORD, and PAGE action routes; the owner destination is the
     prefix before the ``/_actions/`` segment (e.g. ``/orders/{identity}``
-    for ``/orders/{identity}/_actions/approve``).
+    for ``/orders/{identity}/_actions/approve``).  A root owner ("/") yields
+    "/" so framework-generated destinations are never empty.
     """
     owner_path, separator, _ = route.path.rpartition(f"/{RESOURCE_ACTION_SEGMENT}/")
     if not separator:
         raise ValueError(
             f"Action route {route.route_name!r} must live under /{RESOURCE_ACTION_SEGMENT}/"
         )
-    return owner_path
+    return owner_path or "/"
 
 
 def _with_identity(binding: ActionBinding, identity: RecordIdentity | None, path: str) -> str:

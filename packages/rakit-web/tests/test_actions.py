@@ -115,6 +115,84 @@ def _compiled_action_routes() -> tuple[tuple[RouteDefinition, CompiledActionDefi
     return compile_application(builder).action_routes
 
 
+def _compiled_root_page_action_routes() -> tuple[
+    tuple[RouteDefinition, CompiledActionDefinition], ...
+]:
+    """Compile a root page ("/") with one PAGE action and return the pairs."""
+    builder = ApplicationBuilder(admin_id="ops")
+    builder.add_page(PageDefinition(page_id="root", path="/", label="Root"))
+    builder.add_action(
+        ActionDefinition(
+            action_id="refresh",
+            label="Refresh indexes",
+            scope=ActionScope.PAGE,
+            page_id="root",
+            permission=action_permission_requirement("refresh", admin_id="ops"),
+            executor=DomainActionExecutor(lambda _context: ActionSuccess()),
+        )
+    )
+    return compile_application(builder).action_routes
+
+
+def _compiled_root_resource_action_routes() -> tuple[
+    tuple[RouteDefinition, CompiledActionDefinition], ...
+]:
+    """Compile a root resource ("/") with RESOURCE + RECORD actions."""
+    builder = ApplicationBuilder(admin_id="ops")
+    builder.add_resource(
+        ResourceDefinition(
+            resource_id="orders",
+            path="/",
+            label="Orders",
+            singular_label="Order",
+            field_policy=ResourceFieldPolicy(list_fields=("id",), detail_fields=("id",)),
+        ),
+        _CompileDataSource(),
+    )
+    builder.add_action(
+        ActionDefinition(
+            action_id="export",
+            label="Export orders",
+            scope=ActionScope.RESOURCE,
+            resource_id="orders",
+            permission=action_permission_requirement("export", admin_id="ops"),
+            executor=DomainActionExecutor(lambda _context: ActionSuccess()),
+        )
+    )
+    builder.add_action(
+        ActionDefinition(
+            action_id="approve",
+            label="Approve order",
+            scope=ActionScope.RECORD,
+            resource_id="orders",
+            permission=action_permission_requirement("approve", admin_id="ops"),
+            executor=DomainActionExecutor(lambda _context: ActionSuccess()),
+        )
+    )
+    return compile_application(builder).action_routes
+
+
+def _binding(harness: "ActionHarness", pairs: object) -> ActionBinding:
+    async def allow(_request: object) -> bool:
+        return True
+
+    return ActionBinding(
+        routes=cast(tuple[tuple[RouteDefinition, CompiledActionDefinition], ...], pairs),
+        templates=build_templates(()),
+        codec=IdentityCodec(),
+        verify_csrf=allow,
+        verify_submission_token=allow,
+        issue_submission_token=lambda _request: uuid4().hex,
+        authorize_action=harness.authorize,
+        load_record=harness.load_record,
+        record_version=lambda record: cast(OrderRecord, record).version,
+        concurrency=harness.concurrency,
+        concurrency_resource_id="orders",
+        token_service=harness.token_service,
+        idempotency_store=harness.idempotency,
+    )
+
+
 class MemoryIdempotencyStore:
     def __init__(self) -> None:
         self.claims: dict[str, tuple[str, OperationReceipt | None]] = {}
@@ -485,6 +563,7 @@ class _PrincipalMiddleware:
                         "ops.actions.rebuild.execute",
                         "ops.actions.export.execute",
                         "ops.actions.resync.execute",
+                        "ops.actions.refresh.execute",
                         "ops.actions.audit.execute",
                     }
                 )
@@ -1360,3 +1439,105 @@ async def test_no_action_index_routes_exist(harness: ActionHarness) -> None:
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
             assert response.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_root_page_action_path_and_owner_destination(harness: ActionHarness) -> None:
+    pairs = _compiled_root_page_action_routes()
+    assert pairs[0][0].path == "/_actions/refresh"
+
+    binding = _binding(harness, pairs)
+    app = _PrincipalMiddleware(Starlette(routes=build_action_routes(binding)))
+    async with _client(app) as client:
+        page = await client.get("/_actions/refresh")
+        assert page.status_code == 200
+        assert 'href="/"' in page.text
+        assert 'action="/_actions/refresh"' in page.text
+        assert (await client.get("/_actions")).status_code == 404
+        tokens = _form_values(page.text)
+        executed = await client.post(
+            "/_actions/refresh",
+            content=urlencode(
+                [
+                    ("csrf_token", "csrf"),
+                    ("submission_token", tokens["submission_token"]),
+                ]
+            ),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+
+    assert executed.status_code == 303
+    assert executed.headers["location"] == "/"
+
+
+@pytest.mark.anyio
+async def test_root_resource_and_record_action_paths_and_owner_destinations(
+    harness: ActionHarness,
+) -> None:
+    pairs = _compiled_root_resource_action_routes()
+    paths = {route.path for route, _ in pairs}
+    assert "/_actions/export" in paths
+    assert "/{identity}/_actions/approve" in paths
+    assert not any("//" in path for path in paths)
+
+    binding = _binding(harness, pairs)
+    app = _PrincipalMiddleware(Starlette(routes=build_action_routes(binding)))
+    parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    async with _client(app) as client:
+        export = await client.get("/_actions/export")
+        assert export.status_code == 200
+        assert 'href="/"' in export.text
+        assert 'action="/_actions/export"' in export.text
+        export_tokens = _form_values(export.text)
+        executed_export = await client.post(
+            "/_actions/export",
+            content=urlencode(
+                [
+                    ("csrf_token", "csrf"),
+                    ("submission_token", export_tokens["submission_token"]),
+                ]
+            ),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+
+        record = await client.get(f"/{parent}/_actions/approve")
+        assert record.status_code == 200
+        assert f'href="/{parent}"' in record.text
+        assert f'action="/{parent}/_actions/approve"' in record.text
+        record_tokens = _form_values(record.text)
+        executed_record = await client.post(
+            f"/{parent}/_actions/approve",
+            content=urlencode(
+                [
+                    ("csrf_token", "csrf"),
+                    ("submission_token", record_tokens["submission_token"]),
+                ]
+            ),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+
+    assert executed_export.status_code == 303
+    assert executed_export.headers["location"] == "/"
+    assert executed_record.status_code == 303
+    assert executed_record.headers["location"] == f"/{parent}"
+
+
+@pytest.mark.anyio
+async def test_root_owner_destinations_keep_mount_prefix(harness: ActionHarness) -> None:
+    binding = _binding(harness, _compiled_root_resource_action_routes())
+    inner: Any = _PrincipalMiddleware(Starlette(routes=build_action_routes(binding)))
+    mounted = Starlette(routes=[Mount("/admin", app=inner)])
+    parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    async with _client(mounted) as client:
+        page = await client.get("/admin/_actions/export")
+        assert page.status_code == 200
+        assert 'href="/admin/"' in page.text
+        assert 'action="/admin/_actions/export"' in page.text
+
+        record = await client.get(f"/admin/{parent}/_actions/approve")
+        assert record.status_code == 200
+        assert f'href="/admin/{parent}"' in record.text
+        assert f'action="/admin/{parent}/_actions/approve"' in record.text

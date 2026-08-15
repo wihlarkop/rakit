@@ -631,6 +631,17 @@ def _validate_plan05_definitions(
     )
 
 
+def _join_owner_path(owner_path: str, *child_segments: str) -> str:
+    """Join an owner absolute path with framework child path segments.
+
+    Preserves exactly one slash between segments, so a root owner ("/")
+    never produces an accidental double slash and never yields an empty
+    application path.
+    """
+    parts = [part.strip("/") for part in (owner_path, *child_segments)]
+    return "/" + "/".join(part for part in parts if part)
+
+
 def _application_definition_routes(builder: ApplicationBuilder) -> tuple[RouteDefinition, ...]:
     routes: list[RouteDefinition] = []
     for page in builder.pages:
@@ -659,7 +670,7 @@ def _application_definition_routes(builder: ApplicationBuilder) -> tuple[RouteDe
             RouteDefinition(
                 route_name=f"page:{page.page_id}:action:{action.action_id}",
                 methods=("GET", "POST"),
-                path=f"{page.path.rstrip('/')}/{RESOURCE_ACTION_SEGMENT}/{action.action_id}",
+                path=_join_owner_path(page.path, RESOURCE_ACTION_SEGMENT, action.action_id),
                 owner_id=page.page_id,
             )
         )
@@ -721,7 +732,7 @@ def _resource_definition_routes(builder: ApplicationBuilder) -> tuple[RouteDefin
             if action.scope.value == "record"
             else RESOURCE_ACTION_SEGMENT
         )
-        path = f"{resource.path}/{suffix}/{action.action_id}"
+        path = _join_owner_path(resource.path, suffix, action.action_id)
         owner_id = resource.resource_id
         route_name = f"resource:{resource.resource_id}:action:{action.action_id}"
         routes.append(

@@ -194,3 +194,74 @@ def test_action_routes_are_frozen_compiler_metadata() -> None:
         assert route.framework_owned is False
         assert route.methods == ("GET", "POST")
         assert compiled_action.permission is not None
+
+
+def test_root_page_owner_action_path_is_canonical() -> None:
+    builder = ApplicationBuilder(admin_id="ops")
+    builder.add_page(PageDefinition(page_id="root", path="/", label="Root"))
+    builder.add_action(
+        ActionDefinition(
+            action_id="refresh",
+            label="Refresh",
+            scope=ActionScope.PAGE,
+            page_id="root",
+            executor=_executor(),
+        )
+    )
+
+    compiled = compile_application(builder)
+
+    by_name = {route.route_name: route for route in compiled.routes}
+    assert by_name["page:root:action:refresh"].path == "/_actions/refresh"
+    assert all("//" not in route.path for route in compiled.routes)
+    assert compiled.action_routes[0][0].path == "/_actions/refresh"
+
+
+def test_root_resource_owner_action_paths_are_canonical_and_bulk_route_less() -> None:
+    builder = ApplicationBuilder(admin_id="ops")
+    builder.add_resource(_resource("orders", "/"), _DataSource())
+    builder.add_action(
+        ActionDefinition(
+            action_id="export",
+            label="Export",
+            scope=ActionScope.RESOURCE,
+            resource_id="orders",
+            executor=_executor(),
+        )
+    )
+    builder.add_action(
+        ActionDefinition(
+            action_id="approve",
+            label="Approve",
+            scope=ActionScope.RECORD,
+            resource_id="orders",
+            executor=_executor(),
+        )
+    )
+    builder.add_action(
+        ActionDefinition(
+            action_id="bulk_archive",
+            label="Bulk archive",
+            scope=ActionScope.BULK,
+            resource_id="orders",
+            executor=_executor(),
+        )
+    )
+
+    compiled = compile_application(builder)
+
+    by_name = {route.route_name: route for route in compiled.routes}
+    assert by_name["resource:orders:action:export"].path == "/_actions/export"
+    assert by_name["resource:orders:action:approve"].path == "/{identity}/_actions/approve"
+    assert all("//" not in route.path for route in compiled.routes)
+    assert not any("bulk_archive" in route.path for route in compiled.routes)
+    paired = {compiled_action.definition.action_id for _, compiled_action in compiled.action_routes}
+    assert paired == {"export", "approve"}
+
+
+def test_normal_non_root_action_paths_are_byte_for_byte_unchanged() -> None:
+    _, compiled = _compiled()
+    by_name = {route.route_name: route for route in compiled.routes}
+    assert by_name["resource:orders:action:export"].path == "/orders/_actions/export"
+    assert by_name["resource:orders:action:approve"].path == "/orders/{identity}/_actions/approve"
+    assert by_name["page:report:action:refresh"].path == "/reports/_actions/refresh"
