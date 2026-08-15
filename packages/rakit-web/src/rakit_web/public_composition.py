@@ -1,5 +1,7 @@
 """Validation helpers for declaration-style ResourceAdmin composition."""
 
+from collections.abc import Collection
+
 from rakit_core.actions import ActionDefinition, ActionScope
 from rakit_core.admin_types import ResourceAdmin
 from rakit_core.errors import ErrorCode, RakitError
@@ -36,7 +38,11 @@ def resource_relationships(
     return relationships
 
 
-def resource_actions(admin_cls: type[ResourceAdmin]) -> tuple[ActionDefinition, ...]:
+def resource_actions(
+    admin_cls: type[ResourceAdmin],
+    *,
+    existing_action_ids: Collection[str] = (),
+) -> tuple[ActionDefinition, ...]:
     raw = getattr(admin_cls, "actions", ())
     if not isinstance(raw, list | tuple):
         raise _invalid_declaration(admin_cls, "actions", "collection_required")
@@ -45,6 +51,8 @@ def resource_actions(admin_cls: type[ResourceAdmin]) -> tuple[ActionDefinition, 
         raise _invalid_declaration(admin_cls, "actions", "definition_required")
     ids = tuple(str(item.action_id) for item in actions)
     if len(ids) != len(set(ids)):
+        raise _invalid_declaration(admin_cls, "actions", "duplicate_action")
+    if set(ids) & set(existing_action_ids):
         raise _invalid_declaration(admin_cls, "actions", "duplicate_action")
     for action in actions:
         if action.scope is ActionScope.PAGE:
