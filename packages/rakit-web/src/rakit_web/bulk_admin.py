@@ -20,7 +20,7 @@ from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 
 from ._paths import mounted_path
-from .bulk_runtime import BulkActionBinding, build_bulk_action_routes
+from .bulk_routes import BulkActionBinding, build_bulk_action_routes
 
 
 def build_admin_bulk_action_routes(
