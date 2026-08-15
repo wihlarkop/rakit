@@ -24,6 +24,11 @@ from rakit_core.actions import (
     DomainActionExecutor,
 )
 from rakit_core.auth import Principal, SessionRecord
+from rakit_core.concurrency import (
+    AttributeVersionProvider,
+    ConcurrencyVersionProvider,
+    SnapshotVersionProvider,
+)
 from rakit_core.crypto import TokenService
 from rakit_core.definitions import PageDefinition
 from rakit_core.errors import ErrorCode, RakitError
@@ -1503,6 +1508,8 @@ async def test_actions_requiring_concurrency_fail_closed(session_factory) -> Non
         admin.asgi()
     assert caught.value.code == ErrorCode.CONFIG_INVALID
     assert "concurrency" in caught.value.message
+    assert "approve" in caught.value.message
+    assert "widgets" in caught.value.message
 
 
 class _DedupIdempotencyStore:
@@ -1934,3 +1941,307 @@ async def test_bulk_only_admin_needs_no_operation_store(session_factory) -> None
     async with _LifespanDriver(app), client:
         await _login(client)
         assert (await client.get("/widgets/_actions/bulk_archive")).status_code == 404
+
+
+# --- B2B2: generic RECORD concurrency for Admin actions --------------------
+
+
+def _concurrent_approve_action() -> tuple[ActionDefinition, list[int]]:
+    calls: list[int] = []
+
+    async def approve_handler(context: ActionContext) -> ActionSuccess:
+        record = cast(Widget, context.record)
+        calls.append(record.id)
+        return ActionSuccess(message="Widget approved")
+
+    action = ActionDefinition(
+        action_id="approve",
+        label="Approve widget",
+        scope=ActionScope.RECORD,
+        resource_id="widgets",
+        requires_concurrency=True,
+        executor=DomainActionExecutor(approve_handler),
+    )
+    return action, calls
+
+
+async def _open_concurrent_action_form(
+    client: httpx.AsyncClient, csrf: str, url: str
+) -> tuple[str, str, str]:
+    page = await client.get(url)
+    assert page.status_code == 200
+    tokens = _action_tokens(page.text)
+    return csrf, tokens["submission_token"], tokens["concurrency_token"]
+
+
+async def _concurrent_admin(
+    session_factory,
+    backend: _ConfigurableAuthBackend,
+    action: ActionDefinition,
+    *,
+    provider: object = AttributeVersionProvider("revision"),
+    store: IdempotencyStore | None = None,
+) -> Admin:
+    admin = _build_action_admin(
+        session_factory,
+        backend,
+        action,
+        idempotency_store=store if store is not None else _DedupIdempotencyStore(),
+    )
+    admin.register_concurrency_provider("widgets", cast(ConcurrencyVersionProvider, provider))
+    return admin
+
+
+async def test_concurrent_record_action_missing_provider_fails_closed(
+    session_factory,
+) -> None:
+    action, _ = _concurrent_approve_action()
+    admin = _build_action_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.approve.execute"})),
+        action,
+    )
+
+    with pytest.raises(RakitError) as caught:
+        admin.asgi()
+    assert caught.value.code == ErrorCode.CONFIG_INVALID
+    assert "concurrency" in caught.value.message
+    assert "approve" in caught.value.message
+    assert "widgets" in caught.value.message
+
+
+async def test_concurrent_get_issues_token_without_reserving_or_executing(
+    session_factory,
+) -> None:
+    action, calls = _concurrent_approve_action()
+    store = _DedupIdempotencyStore()
+    admin = await _concurrent_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.approve.execute"})),
+        action,
+        store=store,
+    )
+    app, client = await _client_for(admin)
+    identity = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    async with _LifespanDriver(app), client:
+        await _login(client)
+        page = await client.get(f"/widgets/{identity}/_actions/approve")
+        assert page.status_code == 200
+        tokens = _action_tokens(page.text)
+        assert "concurrency_token" in tokens
+        assert tokens["concurrency_token"]
+
+    assert store.begin_calls == 0
+    assert calls == []
+
+
+async def test_concurrent_post_with_unchanged_record_succeeds(
+    session_factory,
+) -> None:
+    action, calls = _concurrent_approve_action()
+    admin = await _concurrent_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.approve.execute"})),
+        action,
+    )
+    app, client = await _client_for(admin)
+    identity = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        csrf, submission, concurrency_token = await _open_concurrent_action_form(
+            client, csrf, f"/widgets/{identity}/_actions/approve"
+        )
+        executed = await client.post(
+            f"/widgets/{identity}/_actions/approve",
+            data={
+                "csrf_token": csrf,
+                "submission_token": submission,
+                "concurrency_token": concurrency_token,
+            },
+            follow_redirects=False,
+        )
+
+    assert executed.status_code == 303
+    assert executed.headers["location"] == f"/widgets/{identity}"
+    assert calls == [1]
+
+
+async def test_concurrent_post_with_stale_record_fails_before_executor(
+    session_factory,
+) -> None:
+    action, calls = _concurrent_approve_action()
+    admin = await _concurrent_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.approve.execute"})),
+        action,
+    )
+    app, client = await _client_for(admin)
+    identity = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        csrf, submission, concurrency_token = await _open_concurrent_action_form(
+            client, csrf, f"/widgets/{identity}/_actions/approve"
+        )
+        async with session_factory() as session:
+            stored = await session.get(Widget, 1)
+            assert stored is not None
+            stored.revision += 1
+            await session.commit()
+        rejected = await client.post(
+            f"/widgets/{identity}/_actions/approve",
+            data={
+                "csrf_token": csrf,
+                "submission_token": submission,
+                "concurrency_token": concurrency_token,
+            },
+            follow_redirects=False,
+        )
+
+    assert rejected.status_code == 409
+    assert calls == []
+
+
+async def test_concurrency_token_for_one_record_cannot_authorize_another(
+    session_factory,
+) -> None:
+    action, calls = _concurrent_approve_action()
+    admin = await _concurrent_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.approve.execute"})),
+        action,
+    )
+    app, client = await _client_for(admin)
+    identity_a = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    identity_b = IdentityCodec().encode(RecordIdentity(values={"id": 2}))
+    async with _LifespanDriver(app), client:
+        async with session_factory() as session:
+            session.add(Widget(id=2, name="Second"))
+            await session.commit()
+        csrf = await _login(client)
+        csrf, submission, concurrency_token = await _open_concurrent_action_form(
+            client, csrf, f"/widgets/{identity_a}/_actions/approve"
+        )
+        rejected = await client.post(
+            f"/widgets/{identity_b}/_actions/approve",
+            data={
+                "csrf_token": csrf,
+                "submission_token": submission,
+                "concurrency_token": concurrency_token,
+            },
+            follow_redirects=False,
+        )
+
+    assert rejected.status_code == 409
+    assert calls == []
+
+
+async def test_snapshot_concurrency_provider_serves_concurrent_action(
+    session_factory,
+) -> None:
+    action, calls = _concurrent_approve_action()
+    admin = await _concurrent_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.approve.execute"})),
+        action,
+        provider=SnapshotVersionProvider(fields=("revision",)),
+    )
+    app, client = await _client_for(admin)
+    identity = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        csrf, submission, concurrency_token = await _open_concurrent_action_form(
+            client, csrf, f"/widgets/{identity}/_actions/approve"
+        )
+        executed = await client.post(
+            f"/widgets/{identity}/_actions/approve",
+            data={
+                "csrf_token": csrf,
+                "submission_token": submission,
+                "concurrency_token": concurrency_token,
+            },
+            follow_redirects=False,
+        )
+        fresh_csrf, fresh_submission, _ = await _open_concurrent_action_form(
+            client, csrf, f"/widgets/{identity}/_actions/approve"
+        )
+        missing_token = await client.post(
+            f"/widgets/{identity}/_actions/approve",
+            data={"csrf_token": fresh_csrf, "submission_token": fresh_submission},
+            follow_redirects=False,
+        )
+
+    assert executed.status_code == 303
+    assert calls == [1]
+    assert missing_token.status_code == 409
+
+
+async def test_non_concurrent_record_action_needs_no_provider(session_factory) -> None:
+    action = ActionDefinition(
+        action_id="approve",
+        label="Approve widget",
+        scope=ActionScope.RECORD,
+        resource_id="widgets",
+        executor=DomainActionExecutor(lambda _context: ActionSuccess()),
+    )
+    admin = _build_action_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.approve.execute"})),
+        action,
+    )
+    app, client = await _client_for(admin)
+    identity = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        csrf, submission = await _open_action_form(
+            client, csrf, f"/widgets/{identity}/_actions/approve"
+        )
+        executed = await client.post(
+            f"/widgets/{identity}/_actions/approve",
+            data={"csrf_token": csrf, "submission_token": submission},
+            follow_redirects=False,
+        )
+
+    assert executed.status_code == 303
+
+
+async def test_duplicate_concurrency_provider_registration_fails(
+    session_factory,
+) -> None:
+    admin = _build_admin(session_factory, _ConfigurableAuthBackend(permissions=frozenset()))
+    provider = AttributeVersionProvider("revision")
+    admin.register_concurrency_provider("widgets", provider)
+    with pytest.raises(RakitError) as caught:
+        admin.register_concurrency_provider("widgets", provider)
+    assert caught.value.code == ErrorCode.CONFIG_INVALID
+    assert "already has" in caught.value.message
+
+
+async def test_unknown_resource_concurrency_provider_fails(session_factory) -> None:
+    admin = _build_admin(session_factory, _ConfigurableAuthBackend(permissions=frozenset()))
+    with pytest.raises(RakitError) as caught:
+        admin.register_concurrency_provider("ghost", AttributeVersionProvider("version"))
+    assert caught.value.code == ErrorCode.CONFIG_INVALID
+    assert "unknown resource" in caught.value.message
+
+
+async def test_concurrent_off_scope_record_stays_inaccessible(session_factory) -> None:
+    action, calls = _concurrent_approve_action()
+    admin = await _concurrent_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.approve.execute"})),
+        action,
+    )
+    app, client = await _client_for(admin)
+    identity = IdentityCodec().encode(RecordIdentity(values={"id": 999}))
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        page = await client.get(f"/widgets/{identity}/_actions/approve")
+        assert page.status_code == 404
+        rejected = await client.post(
+            f"/widgets/{identity}/_actions/approve",
+            data={"csrf_token": csrf, "submission_token": "x"},
+            follow_redirects=False,
+        )
+
+    assert rejected.status_code == 404
+    assert calls == []

@@ -12,6 +12,7 @@ from rakit_core.actions import ActionScope
 from rakit_core.admin_types import ModelAdmin, ResourceAdmin
 from rakit_core.auth import AuthBackend, SessionStore
 from rakit_core.compiler import ApplicationBuilder, CompiledApplication, Plugin, compile_application
+from rakit_core.concurrency import ConcurrencyTokenService, ConcurrencyVersionProvider
 from rakit_core.config import RakitConfig, SecretValue
 from rakit_core.crypto import TokenService
 from rakit_core.definitions import (
@@ -218,6 +219,7 @@ class Admin:
         )
         self._builder = ApplicationBuilder(admin_id=admin_id)
         self._operation_idempotency_store = operation_idempotency_store
+        self._concurrency_providers: dict[str, ConcurrencyVersionProvider] = {}
         self._event_bus = event_bus if event_bus is not None else EventBus()
         self._builder.registry.add_value(EventBus, self._event_bus, scope=ServiceScope.APPLICATION)
         self._builder.registry.add_factory(
@@ -378,6 +380,45 @@ class Admin:
         )
         self._resource_services[admin_cls.resource_id] = ResourceService(data_source)
         self._resource_definitions[admin_cls.resource_id] = definition
+
+    def register_concurrency_provider(
+        self, resource_id: str, provider: ConcurrencyVersionProvider
+    ) -> None:
+        """Register the backend-neutral concurrency provider for one resource.
+
+        RECORD actions declaring ``requires_concurrency`` are served through
+        this provider: the provider supplies the record version bound into
+        the signed concurrency token (issued at GET, verified against fresh
+        scoped state at POST).  Registration is resource-level, pre-compile,
+        and never guessed from adapters.
+        """
+        if self.compiled is not None:
+            raise RuntimeError("Cannot register concurrency providers after compilation")
+        if resource_id not in self._resource_services:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message=(f'Concurrency provider references unknown resource "{resource_id}".'),
+                status_code=500,
+                details={"resource_id": resource_id, "reason": "unknown_resource"},
+            )
+        if resource_id in self._concurrency_providers:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message=(f'Resource "{resource_id}" already has a concurrency provider.'),
+                status_code=500,
+                details={"resource_id": resource_id, "reason": "duplicate_provider"},
+            )
+        if not callable(getattr(provider, "version_for", None)):
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message=(
+                    f'Concurrency provider for resource "{resource_id}" does not '
+                    "implement version_for."
+                ),
+                status_code=500,
+                details={"resource_id": resource_id, "reason": "invalid_provider_contract"},
+            )
+        self._concurrency_providers[resource_id] = provider
 
     def register_write_resource(self, resource_id: str, binding: WriteResourceBinding) -> None:
         """Register the explicit Plan 04 write policy for an existing resource.
@@ -540,6 +581,7 @@ class Admin:
             )
             if not pairs:
                 continue
+            provider = self._concurrency_providers.get(resource_id)
 
             async def load_record(
                 identity: RecordIdentity, service: ResourceService = service
@@ -561,6 +603,11 @@ class Admin:
                     issue_submission_token=issue_submission_token,
                     authorize_action=authorize_action,
                     load_record=load_record,
+                    concurrency=(
+                        ConcurrencyTokenService(token_service) if provider is not None else None
+                    ),
+                    concurrency_resource_id=resource_id if provider is not None else None,
+                    record_version=(provider.version_for if provider is not None else None),
                     token_service=token_service,
                     idempotency_store=idempotency_store,
                     deadline_seconds=self._mutation_deadline_seconds,
@@ -670,18 +717,20 @@ class Admin:
                     ),
                     status_code=500,
                 )
-            unsupported = sorted(
-                compiled.definition.action_id
-                for _, compiled in self.compiled.action_routes
-                if compiled.definition.requires_concurrency
+            missing_providers = sorted(
+                (
+                    f"{compiled.definition.action_id} (resource {compiled.definition.resource_id})"
+                    for _, compiled in self.compiled.action_routes
+                    if compiled.definition.requires_concurrency
+                    and compiled.definition.resource_id not in self._concurrency_providers
+                )
             )
-            if unsupported:
+            if missing_providers:
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
                     message=(
-                        "Compiled actions requiring concurrency cannot be served yet "
-                        "because no generic concurrency version provider seam exists: "
-                        + ", ".join(unsupported)
+                        "Compiled RECORD actions require a registered concurrency "
+                        "provider for their resource: " + ", ".join(missing_providers)
                     ),
                     status_code=500,
                 )
