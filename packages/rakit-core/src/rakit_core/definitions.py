@@ -66,6 +66,8 @@ class PageDefinition(BaseModel):
             raise ValueError("Page label must not be empty")
         if not self.template.strip():
             raise ValueError("Page template must not be empty")
+        if "{" in self.path or "}" in self.path:
+            raise ValueError("Page paths cannot contain path parameters")
         if self.mutating and (self.handler is None or not callable(self.handler)):
             raise ValueError(f"Mutating page {self.page_id!r} requires a callable handler")
         return self
