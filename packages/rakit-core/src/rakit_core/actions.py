@@ -30,6 +30,9 @@ from rakit_core.operations import (
     OperationExecutor,
     OperationKind,
     OperationPlan,
+    OperationExecutorCapabilities,
+    resolve_operation_executor_capabilities,
+    validate_operation_transaction_contract,
 )
 from rakit_core.permissions import PermissionRequirement
 from rakit_core.transactions import TransactionPolicy
@@ -308,9 +311,14 @@ class DomainActionExecutor:
 
     The callable may be synchronous or asynchronous; it receives the full
     ``ActionContext`` (scoped record, parsed values, authorization) and must
-    return an ``ActionResult``.  Transaction ownership remains with the
-    execution layer/UoW the callable participates in.
+    return an ``ActionResult``.  Arbitrary application code may control its
+    own external resources, so Rakit cannot prove atomic persistence
+    ownership: capabilities are NONE (no UoW participation, no atomic
+    concurrency).  Valid uses are read-only operations and explicit
+    ``transaction_policy=DISABLED`` side-effect operations.
     """
+
+    capabilities: OperationExecutorCapabilities = OperationExecutorCapabilities()
 
     def __init__(
         self,
@@ -332,10 +340,17 @@ class PreparedMutationExecutor:
 
     ``prepare`` derives an opaque mutation plan from the action context;
     ``commit`` applies that plan through the adapter's existing mutation
-    service inside its own operation-scoped unit of work.  This lets a record
-    action (e.g. "Approve Order") reuse the normal update pipeline instead of
-    writing ORM objects directly.
+    service.  ``participates_in_uow=True`` means the commit callback must use
+    a Rakit operation-aware mutation service -- it must never open an
+    independent transaction Rakit cannot roll back.  Atomic concurrency is
+    NOT advertised yet: C2B must reconcile root action authorization, CRUD
+    mutation authorization, the active root UoW, and a true atomic
+    persistence proof before that claim becomes truthful.
     """
+
+    capabilities: OperationExecutorCapabilities = OperationExecutorCapabilities(
+        participates_in_uow=True
+    )
 
     def __init__(
         self,
@@ -377,6 +392,16 @@ async def resolve_availability(
     return cast(ActionAvailabilityDecision, decision)
 
 
+def _action_result_is_success(result: object) -> bool:
+    """Whether a returned ActionResult represents a successful durable outcome.
+
+    Rejected/validation results and any unknown result kind must never mark
+    the root UoW successful -- an unsupported result must not be durably
+    committed before the web layer rejects its translation.
+    """
+    return isinstance(result, (ActionSuccess, ActionRedirect, ActionRefresh, ActionRendered))
+
+
 def build_action_operation_plan(
     context: ActionContext,
     *,
@@ -413,6 +438,17 @@ def build_action_operation_plan(
             )
         target_identity = None
     executor = action.executor
+    capabilities = resolve_operation_executor_capabilities(executor)
+    if action.requires_concurrency and not (
+        action.mutating
+        and action.transaction_policy is TransactionPolicy.AUTO
+        and capabilities.participates_in_uow
+        and capabilities.atomic_concurrency
+    ):
+        raise ValueError(
+            f"Action {action.action_id!r} requires strong concurrency: a mutating AUTO "
+            "operation with atomic unit-of-work participation"
+        )
 
     def execute(
         operation_context: OperationContext, action_context: ActionContext
@@ -420,7 +456,7 @@ def build_action_operation_plan(
         return executor.execute(action_context)
 
     plan_execute: OperationExecutor[ActionContext, ActionResult[Any]] = execute
-    return cast(
+    plan = cast(
         OperationPlan[ActionContext, ActionResult[Any]],
         OperationPlan(
             operation_id=action.action_id,
@@ -433,9 +469,13 @@ def build_action_operation_plan(
             concurrency_required=action.requires_concurrency,
             confirmation_required=action.needs_confirmation,
             idempotency_fingerprint=idempotency_fingerprint,
+            executor_capabilities=capabilities,
+            result_is_success=_action_result_is_success,
             execute=plan_execute,
         ),
     )
+    validate_operation_transaction_contract(plan)
+    return plan
 
 
 async def resolve_preview(

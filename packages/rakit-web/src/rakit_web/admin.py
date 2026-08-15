@@ -21,7 +21,7 @@ from rakit_core.definitions import (
     ResourceFieldPolicy,
     RouteDefinition,
 )
-from rakit_core.di import ServiceRegistry, ServiceResolver, ServiceScope
+from rakit_core.di import ServiceKey, ServiceRegistry, ServiceResolver, ServiceScope
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.events import EventBus, EventPublisher
 from rakit_core.idempotency import IdempotencyStore
@@ -32,6 +32,7 @@ from rakit_core.mutations import (
     OperationAuthorization,
     OperationAuthorizationSet,
 )
+from rakit_core.operations import resolve_operation_executor_capabilities
 from rakit_core.relationship_mutations import (
     CreateRelated,
     DeleteRelated,
@@ -39,6 +40,7 @@ from rakit_core.relationship_mutations import (
     UpdateRelated,
 )
 from rakit_core.resources import ResourceService
+from rakit_core.transactions import OperationUnitOfWorkFactory, TransactionPolicy
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse
@@ -540,6 +542,7 @@ class Admin:
         verify_submission_token: Callable[[Request], Awaitable[bool]],
         token_service: TokenService,
         operation_scope: Callable[[], AbstractAsyncContextManager[ServiceResolver]],
+        unit_of_work_factory: Callable[[], OperationUnitOfWorkFactory | None],
     ) -> tuple[ActionBinding, ...]:
         """Materialize the compiled action routes as web bindings.
 
@@ -623,6 +626,7 @@ class Admin:
                     idempotency_store=idempotency_store,
                     deadline_seconds=self._mutation_deadline_seconds,
                     operation_scope=operation_scope,
+                    unit_of_work_factory=unit_of_work_factory,
                     label=self.config.title,
                 )
             )
@@ -645,6 +649,7 @@ class Admin:
                     idempotency_store=idempotency_store,
                     deadline_seconds=self._mutation_deadline_seconds,
                     operation_scope=operation_scope,
+                    unit_of_work_factory=unit_of_work_factory,
                     label=self.config.title,
                 )
             )
@@ -747,6 +752,90 @@ class Admin:
                     ),
                     status_code=500,
                 )
+            uow_factory_registered = (
+                ServiceKey(OperationUnitOfWorkFactory, None) in self._compiled_registry.providers
+                if self._compiled_registry is not None
+                else False
+            )
+            for _, compiled in self.compiled.action_routes:
+                action = compiled.definition
+                owner = (
+                    action.resource_id if action.scope is not ActionScope.PAGE else action.page_id
+                )
+                capabilities = resolve_operation_executor_capabilities(action.executor)
+                if action.mutating and action.transaction_policy in (
+                    TransactionPolicy.AUTO,
+                    TransactionPolicy.MANUAL,
+                ):
+                    if not capabilities.participates_in_uow:
+                        raise RakitError(
+                            code=ErrorCode.CONFIG_INVALID,
+                            message=(
+                                f'Action "{action.action_id}" ({action.scope.value}, owner '
+                                f'"{owner}") declares {action.transaction_policy.value} '
+                                "transaction policy but its executor does not participate "
+                                "in the operation unit of work."
+                            ),
+                            status_code=500,
+                            details={
+                                "action_id": action.action_id,
+                                "owner": owner,
+                                "transaction_policy": str(action.transaction_policy),
+                                "reason": "executor_not_uow_managed",
+                            },
+                        )
+                    if not uow_factory_registered:
+                        raise RakitError(
+                            code=ErrorCode.CONFIG_INVALID,
+                            message=(
+                                f'Action "{action.action_id}" ({action.scope.value}, owner '
+                                f'"{owner}") requires a registered operation unit-of-work '
+                                "provider (install a persistence plugin such as "
+                                "SQLAlchemyPlugin)."
+                            ),
+                            status_code=500,
+                            details={
+                                "action_id": action.action_id,
+                                "owner": owner,
+                                "transaction_policy": str(action.transaction_policy),
+                                "reason": "operation_uow_not_configured",
+                            },
+                        )
+                if action.requires_concurrency:
+                    if not (
+                        action.mutating and action.transaction_policy is TransactionPolicy.AUTO
+                    ):
+                        raise RakitError(
+                            code=ErrorCode.CONFIG_INVALID,
+                            message=(
+                                f'Action "{action.action_id}" requires strong concurrency, '
+                                "which needs a mutating operation with an automatic "
+                                "transaction policy."
+                            ),
+                            status_code=500,
+                            details={
+                                "action_id": action.action_id,
+                                "owner": owner,
+                                "transaction_policy": str(action.transaction_policy),
+                                "reason": "invalid_concurrency_transaction_policy",
+                            },
+                        )
+                    if not capabilities.atomic_concurrency:
+                        raise RakitError(
+                            code=ErrorCode.CONFIG_INVALID,
+                            message=(
+                                f'Action "{action.action_id}" requires strong concurrency, '
+                                "but its executor does not provide atomic concurrency "
+                                "(sanctioned managed mutation support is not available yet)."
+                            ),
+                            status_code=500,
+                            details={
+                                "action_id": action.action_id,
+                                "owner": owner,
+                                "transaction_policy": str(action.transaction_policy),
+                                "reason": "atomic_concurrency_not_supported",
+                            },
+                        )
             if self._operation_idempotency_store is None:
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
@@ -992,6 +1081,11 @@ class Admin:
                 ):
                     yield operation_services
 
+            def action_uow_factory() -> OperationUnitOfWorkFactory | None:
+                if self._application_resolver is None:
+                    return None
+                return self._application_resolver.require(OperationUnitOfWorkFactory)
+
             for write_binding in self._write_resource_bindings.values():
                 secured_binding = replace(
                     write_binding,
@@ -1023,6 +1117,7 @@ class Admin:
                     verify_submission_token=verify_submission_token,
                     token_service=write_token_service,
                     operation_scope=operation_scope,
+                    unit_of_work_factory=action_uow_factory,
                 ):
                     action_routes.extend(build_action_routes(action_binding))
 

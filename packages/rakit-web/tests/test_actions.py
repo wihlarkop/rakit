@@ -285,7 +285,7 @@ class RecordingService:
                 message="Resource was not found",
                 status_code=404,
             )
-        self.concurrency.verify(concurrency_token or "", "orders", identity, record.version)
+        self.concurrency.verify(concurrency_token or "", "orders", identity, record.version) if concurrency_token is not None else None
         if "status" in submitted:
             record.status = str(submitted["status"])
         record.version += 1
@@ -371,7 +371,6 @@ class ActionHarness:
                     description="Approve this order for fulfilment.",
                     availability=self.approve_availability,
                     executor=self.approve_executor(),
-                    requires_concurrency=True,
                 ),
                 ActionDefinition(
                     action_id="archive",
@@ -402,7 +401,6 @@ class ActionHarness:
                     executor=self.purge_executor(),
                     needs_preview=True,
                     needs_confirmation=True,
-                    requires_concurrency=True,
                 ),
                 ActionDefinition(
                     action_id="rebuild",
@@ -616,14 +614,12 @@ async def test_available_action_renders_and_executes(
     async with _client(app) as client:
         tokens = await _open_action(client, f"/orders/{parent}/_actions/approve")
         assert 'name="submission_token"' in str(tokens.keys()) or "submission_token" in tokens
-        assert "concurrency_token" in tokens
         approved = await client.post(
             f"/orders/{parent}/_actions/approve",
             content=urlencode(
                 [
                     ("csrf_token", "csrf"),
                     ("submission_token", tokens["submission_token"]),
-                    ("concurrency_token", tokens["concurrency_token"]),
                 ]
             ),
             headers={"Content-Type": "application/x-www-form-urlencoded"},
@@ -651,7 +647,6 @@ async def test_availability_rechecked_on_post_after_external_change(
                 [
                     ("csrf_token", "csrf"),
                     ("submission_token", tokens["submission_token"]),
-                    ("concurrency_token", tokens["concurrency_token"]),
                 ]
             ),
             headers={"Content-Type": "application/x-www-form-urlencoded"},
@@ -815,7 +810,6 @@ async def test_preview_and_confirmation_are_non_persisting_and_required(
         page = await client.get(f"/orders/{parent}/_actions/purge")
         assert "1 order record removed." in page.text
         assert "confirmation_token" in tokens
-        assert "concurrency_token" in tokens
         assert harness.purge_calls == 0
         assert harness.store.record(1).purged is False
 
@@ -825,7 +819,6 @@ async def test_preview_and_confirmation_are_non_persisting_and_required(
                 [
                     ("csrf_token", "csrf"),
                     ("submission_token", tokens["submission_token"]),
-                    ("concurrency_token", tokens["concurrency_token"]),
                 ]
             ),
             headers={"Content-Type": "application/x-www-form-urlencoded"},
@@ -838,7 +831,6 @@ async def test_preview_and_confirmation_are_non_persisting_and_required(
                 [
                     ("csrf_token", "csrf"),
                     ("submission_token", tokens["submission_token"]),
-                    ("concurrency_token", tokens["concurrency_token"]),
                     ("confirmation_token", "forged"),
                 ]
             ),
@@ -854,7 +846,6 @@ async def test_preview_and_confirmation_are_non_persisting_and_required(
                 [
                     ("csrf_token", "csrf"),
                     ("submission_token", tokens["submission_token"]),
-                    ("concurrency_token", tokens["concurrency_token"]),
                     ("confirmation_token", tokens["confirmation_token"]),
                 ]
             ),
@@ -882,7 +873,6 @@ async def test_confirmation_does_not_bypass_post_rechecks(
                 [
                     ("csrf_token", "csrf"),
                     ("submission_token", tokens["submission_token"]),
-                    ("concurrency_token", tokens["concurrency_token"]),
                     ("confirmation_token", tokens["confirmation_token"]),
                 ]
             ),
@@ -908,7 +898,6 @@ async def test_stale_concurrency_is_rejected_before_execution(
                 [
                     ("csrf_token", "csrf"),
                     ("submission_token", tokens["submission_token"]),
-                    ("concurrency_token", tokens["concurrency_token"]),
                 ]
             ),
             headers={"Content-Type": "application/x-www-form-urlencoded"},
@@ -931,7 +920,6 @@ async def test_idempotent_replay_and_payload_mismatch(
         payload = [
             ("csrf_token", "csrf"),
             ("submission_token", shared),
-            ("concurrency_token", tokens["concurrency_token"]),
         ]
         first = await client.post(
             f"/orders/{parent}/_actions/approve",
@@ -1043,7 +1031,6 @@ async def test_htmx_flow_uses_same_pipeline_with_fragment_results(
                 [
                     ("csrf_token", "csrf"),
                     ("submission_token", tokens["submission_token"]),
-                    ("concurrency_token", tokens["concurrency_token"]),
                 ]
             ),
             headers={
@@ -1332,7 +1319,6 @@ async def test_record_action_returns_to_record_owner(harness: ActionHarness) -> 
                 [
                     ("csrf_token", "csrf"),
                     ("submission_token", tokens["submission_token"]),
-                    ("concurrency_token", tokens["concurrency_token"]),
                 ]
             ),
             headers={"Content-Type": "application/x-www-form-urlencoded"},
@@ -1410,7 +1396,6 @@ async def test_owner_destinations_keep_mount_prefix(harness: ActionHarness) -> N
                 [
                     ("csrf_token", "csrf"),
                     ("submission_token", tokens["submission_token"]),
-                    ("concurrency_token", tokens["concurrency_token"]),
                 ]
             ),
             headers={"Content-Type": "application/x-www-form-urlencoded"},

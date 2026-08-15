@@ -9,12 +9,38 @@ from typing import Self
 import anyio
 from rakit_core.events import EventPublisher
 from rakit_core.operations import OperationContext
-from rakit_core.transactions import TransactionPolicy
+from rakit_core.transactions import OperationUnitOfWorkFactory, TransactionPolicy
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 _active_uow: ContextVar["SQLAlchemyUnitOfWork | None"] = ContextVar(
     "rakit_active_sqlalchemy_uow", default=None
 )
+
+
+class SQLAlchemyOperationUnitOfWorkFactory:
+    """Adapter implementing the backend-neutral ``OperationUnitOfWorkFactory``.
+
+    Opens the existing ``SQLAlchemyUnitOfWork`` over the exact session factory
+    installed by ``SQLAlchemyPlugin`` -- there is deliberately only one
+    session factory per admin.
+    """
+
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._session_factory = session_factory
+
+    def open(
+        self,
+        *,
+        policy: TransactionPolicy,
+        event_publisher: EventPublisher | None,
+        operation_context: OperationContext,
+    ) -> "SQLAlchemyUnitOfWork":
+        return SQLAlchemyUnitOfWork(
+            self._session_factory,
+            policy=policy,
+            event_publisher=event_publisher,
+            operation_context=operation_context,
+        )
 
 
 class SQLAlchemyUnitOfWork:

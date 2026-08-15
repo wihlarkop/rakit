@@ -56,10 +56,11 @@ from rakit_core.operations import (
     OperationContext,
     OperationPlan,
     activate_operation_context,
-    execute_operation_plan,
     new_operation_id,
+    run_operation_plan,
     run_with_deadline,
 )
+from rakit_core.transactions import OperationUnitOfWorkFactory
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 from starlette.routing import Route
@@ -102,6 +103,7 @@ class ActionBinding:
     idempotency_store: IdempotencyStore | None = None
     deadline_seconds: float | None = None
     operation_scope: Callable[[], AbstractAsyncContextManager[ServiceResolver]] | None = None
+    unit_of_work_factory: Callable[[], OperationUnitOfWorkFactory | None] | None = None
     label: str = "Actions"
 
     def __post_init__(self) -> None:
@@ -258,9 +260,10 @@ async def _run_action_operation(
 
     Enters the request + operation service scopes (when the binding has an
     operation scope), populates the full ``OperationContext`` from request
-    and authorization state, activates it, and runs the plan through
-    ``execute_operation_plan`` -- the single application execution boundary.
-    Deadline behavior is preserved via ``run_with_deadline``.
+    and authorization state, activates it, and runs the plan through the core
+    operation lifecycle runner -- AUTO/MANUAL transaction semantics belong to
+    core, never to the web layer.  Deadline behavior is preserved via
+    ``run_with_deadline``.
     """
     deadline = (
         Deadline.after(binding.deadline_seconds) if binding.deadline_seconds is not None else None
@@ -275,6 +278,9 @@ async def _run_action_operation(
 
     async def run_with_services() -> ActionResult[Any]:
         nonlocal services, events
+        unit_of_work_factory = (
+            binding.unit_of_work_factory() if binding.unit_of_work_factory is not None else None
+        )
         context = OperationContext(
             deadline=deadline,
             cancellation=CancellationContext(),
@@ -294,8 +300,13 @@ async def _run_action_operation(
         with activate_operation_context(context):
             context.checkpoint()
             if deadline is None:
-                return await execute_operation_plan(plan, context)
-            return await run_with_deadline(execute_operation_plan(plan, context), deadline)
+                return await run_operation_plan(
+                    plan, context, unit_of_work_factory=unit_of_work_factory
+                )
+            return await run_with_deadline(
+                run_operation_plan(plan, context, unit_of_work_factory=unit_of_work_factory),
+                deadline,
+            )
 
     if binding.operation_scope is not None:
         async with binding.operation_scope() as operation_services:

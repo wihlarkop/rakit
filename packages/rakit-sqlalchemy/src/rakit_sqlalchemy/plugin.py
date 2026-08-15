@@ -3,11 +3,13 @@ from rakit_core.datasource import DataSource
 from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.di import ServiceScope
 from rakit_core.errors import ErrorCode, RakitError
+from rakit_core.transactions import OperationUnitOfWorkFactory
 from sqlalchemy.exc import NoInspectionAvailable
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .datasource import SQLAlchemyDataSource
 from .introspection import UnsupportedFieldPolicyError, UnsupportedIdentityError, inspect_model
+from .uow import SQLAlchemyOperationUnitOfWorkFactory
 
 
 class SQLAlchemyPlugin:
@@ -19,6 +21,11 @@ class SQLAlchemyPlugin:
     def configure(self, builder: ApplicationBuilder) -> None:
         builder.registry.add_value(
             async_sessionmaker, self._session_factory, scope=ServiceScope.APPLICATION
+        )
+        builder.registry.add_value(
+            OperationUnitOfWorkFactory,
+            SQLAlchemyOperationUnitOfWorkFactory(self._session_factory),
+            scope=ServiceScope.APPLICATION,
         )
         builder.register_adapter("sqlalchemy", self._claim)
 

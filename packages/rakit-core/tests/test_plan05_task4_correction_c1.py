@@ -2,7 +2,9 @@
 
 ``build_action_operation_plan`` maps a prepared ``ActionContext`` onto the
 generic ``OperationPlan`` seam; ``execute_operation_plan`` is the single
-application execution boundary (RBAC never re-run in core).
+application execution boundary (RBAC never re-run in core).  C2A adds the
+executor capability contract: mutating AUTO/MANUAL requires UoW
+participation, and ``requires_concurrency`` means strong concurrency.
 """
 
 import pytest
@@ -13,6 +15,7 @@ from rakit_core.actions import (
     ActionScope,
     ActionSuccess,
     DomainActionExecutor,
+    PreparedMutationExecutor,
     build_action_operation_plan,
 )
 from rakit_core.auth import Principal
@@ -22,12 +25,24 @@ from rakit_core.mutations import OperationAuthorization
 from rakit_core.operations import (
     CancellationContext,
     OperationContext,
+    OperationExecutorCapabilities,
     OperationKind,
     activate_operation_context,
     execute_operation_plan,
+    resolve_operation_executor_capabilities,
 )
 from rakit_core.permissions import PermissionRequirement
 from rakit_core.transactions import TransactionPolicy
+
+
+class _AtomicExecutor(DomainActionExecutor):
+    capabilities = OperationExecutorCapabilities(
+        participates_in_uow=True, atomic_concurrency=True
+    )
+
+
+class _UowExecutor(DomainActionExecutor):
+    capabilities = OperationExecutorCapabilities(participates_in_uow=True)
 
 
 def _executor() -> DomainActionExecutor:
@@ -52,7 +67,7 @@ def _authorization(
     )
 
 
-def _record_action() -> ActionDefinition:
+def _record_action(*, executor: object = None) -> ActionDefinition:
     return ActionDefinition(
         action_id="approve",
         label="Approve",
@@ -64,7 +79,7 @@ def _record_action() -> ActionDefinition:
         needs_confirmation=True,
         needs_preview=True,
         preview=lambda _context: ActionPreview(title="Approve", description="Approve order"),
-        executor=_executor(),
+        executor=executor if executor is not None else _AtomicExecutor(_executor()._handler),
     )
 
 
@@ -210,6 +225,17 @@ def test_idempotency_fingerprint_is_carried_byte_for_byte() -> None:
     assert plan.idempotency_fingerprint == "fp-123"
 
 
+def test_plan_carries_resolved_executor_capabilities() -> None:
+    assert resolve_operation_executor_capabilities(_executor()) == OperationExecutorCapabilities()
+    assert resolve_operation_executor_capabilities(_UowExecutor(_executor()._handler)) == (
+        OperationExecutorCapabilities(participates_in_uow=True)
+    )
+    plan = build_action_operation_plan(_record_context())
+    assert plan.executor_capabilities == OperationExecutorCapabilities(
+        participates_in_uow=True, atomic_concurrency=True
+    )
+
+
 @pytest.mark.anyio
 async def test_execute_operation_plan_invokes_executor_once() -> None:
     calls: list[int] = []
@@ -307,6 +333,83 @@ def test_plan_fails_closed_on_invalid_contexts() -> None:
                 ),
             )
         )
+
+
+def test_mutating_auto_requires_uow_participation() -> None:
+    identity = RecordIdentity(values={"id": 7})
+    context = ActionContext(
+        definition=ActionDefinition(
+            action_id="approve",
+            label="Approve",
+            scope=ActionScope.RECORD,
+            resource_id="orders",
+            mutating=True,
+            transaction_policy=TransactionPolicy.AUTO,
+            executor=_executor(),
+        ),
+        scope=ActionScope.RECORD,
+        identity=identity,
+        record=object(),
+        authorization=_authorization(target_identity=identity),
+    )
+    with pytest.raises(RakitError, match="participates in the operation unit of work"):
+        build_action_operation_plan(context)
+
+    managed_context = ActionContext(
+        definition=ActionDefinition(
+            action_id="approve",
+            label="Approve",
+            scope=ActionScope.RECORD,
+            resource_id="orders",
+            mutating=True,
+            transaction_policy=TransactionPolicy.AUTO,
+            executor=_UowExecutor(_executor()._handler),
+        ),
+        scope=ActionScope.RECORD,
+        identity=identity,
+        record=object(),
+        authorization=_authorization(target_identity=identity),
+    )
+    plan = build_action_operation_plan(managed_context)
+    assert plan.executor_capabilities.participates_in_uow is True
+
+
+def test_concurrency_requires_strong_semantics() -> None:
+    identity = RecordIdentity(values={"id": 7})
+    base = dict(
+        action_id="approve",
+        label="Approve",
+        scope=ActionScope.RECORD,
+        resource_id="orders",
+        requires_concurrency=True,
+    )
+    for kwargs, match in (
+        (
+            {"executor": _executor(), "mutating": True, "transaction_policy": TransactionPolicy.DISABLED},
+            "strong concurrency",
+        ),
+        ({"executor": _executor(), "mutating": False}, "strong concurrency"),
+        (
+            {
+                "mutating": True,
+                "transaction_policy": TransactionPolicy.AUTO,
+                "executor": PreparedMutationExecutor(
+                    lambda _context: {}, lambda _plan, _context: ActionSuccess()
+                ),
+            },
+            "strong concurrency",
+        ),
+    ):
+        definition = ActionDefinition(**base, **kwargs)
+        context = ActionContext(
+            definition=definition,
+            scope=ActionScope.RECORD,
+            identity=identity,
+            record=object(),
+            authorization=_authorization(target_identity=identity),
+        )
+        with pytest.raises(ValueError, match=match):
+            build_action_operation_plan(context)
 
 
 @pytest.mark.anyio

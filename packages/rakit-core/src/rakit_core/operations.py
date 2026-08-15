@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from time import monotonic
 from typing import cast
@@ -20,7 +20,11 @@ from rakit_core.events import EventPublisher
 from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import OperationAuthorization
 from rakit_core.permissions import PermissionRequirement
-from rakit_core.transactions import TransactionPolicy
+from rakit_core.transactions import (
+    OperationUnitOfWork,
+    OperationUnitOfWorkFactory,
+    TransactionPolicy,
+)
 
 
 def _timeout_error() -> RakitError:
@@ -66,9 +70,49 @@ class OperationKind(StrEnum):
     RELATIONSHIP = "relationship"
 
 
+@dataclass(frozen=True)
+class OperationExecutorCapabilities:
+    """Backend-neutral metadata describing how an operation executor works.
+
+    ``participates_in_uow`` means the executor writes through the Rakit-owned
+    root unit of work (it never opens an independent transaction that Rakit
+    could not roll back).  ``atomic_concurrency`` means the executor performs
+    its persistence write atomically against the verified concurrency state.
+    Unknown executors resolve to the all-None default: Rakit guarantees
+    nothing it cannot prove.
+    """
+
+    participates_in_uow: bool = False
+    atomic_concurrency: bool = False
+
+    def __post_init__(self) -> None:
+        if self.atomic_concurrency and not self.participates_in_uow:
+            raise ValueError("Atomic concurrency requires unit-of-work participation")
+
+
+def resolve_operation_executor_capabilities(
+    executor: object,
+) -> OperationExecutorCapabilities:
+    """Resolve an executor's declared capabilities with a safe NONE default.
+
+    An executor with a valid explicit ``capabilities`` attribute is trusted;
+    anything else -- including objects that merely happen to have an
+    ``execute`` method -- resolves to no UoW participation and no atomic
+    concurrency guarantee.
+    """
+    capabilities = getattr(executor, "capabilities", None)
+    if isinstance(capabilities, OperationExecutorCapabilities):
+        return capabilities
+    return OperationExecutorCapabilities()
+
+
 type OperationExecutor[TInput, TResult] = Callable[
     ["OperationContext", TInput], TResult | Awaitable[TResult]
 ]
+
+
+def _default_result_is_success(result: object) -> bool:
+    return True
 
 
 @dataclass(frozen=True)
@@ -76,9 +120,10 @@ class OperationPlan[TInput, TResult]:
     """Immutable, backend-neutral execution seam for Plan 05 operations.
 
     It deliberately carries policy and a typed executor but does not own a
-    concrete unit of work.  A web or adapter operation runner supplies that
-    lifecycle later, preserving one operation model without pulling SQLAlchemy
-    or HTTP concerns into core.
+    concrete unit of work.  ``executor_capabilities`` records what the
+    executor truthfully supports, and ``result_is_success`` classifies
+    whether a returned result represents a successful durable operation
+    (the operation lifecycle uses it for AUTO commit decisions).
     """
 
     operation_id: str
@@ -92,6 +137,10 @@ class OperationPlan[TInput, TResult]:
     concurrency_required: bool = False
     confirmation_required: bool = False
     idempotency_fingerprint: str | None = None
+    executor_capabilities: OperationExecutorCapabilities = field(
+        default_factory=OperationExecutorCapabilities
+    )
+    result_is_success: Callable[[TResult], bool] = _default_result_is_success
 
     def __post_init__(self) -> None:
         if not self.operation_id:
@@ -143,6 +192,85 @@ def validate_operation_authorization[TInput, TResult](
         )
 
 
+def validate_operation_transaction_contract[TInput, TResult](
+    plan: OperationPlan[TInput, TResult],
+) -> None:
+    """Fail closed when a plan's transaction policy outruns its executor.
+
+    AUTO and MANUAL both mean a Rakit-owned root unit of work exists and the
+    executor must participate in it; DISABLED is the explicit escape hatch
+    for unmanaged side effects.  ``OperationPlan.__post_init__`` already
+    rejects mutating+READ_ONLY and non-mutating+AUTO; this adds the
+    capability requirement.
+    """
+    if not plan.mutating:
+        return
+    if plan.transaction_policy in (TransactionPolicy.AUTO, TransactionPolicy.MANUAL):
+        if not plan.executor_capabilities.participates_in_uow:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message=(
+                    f"Mutating {plan.transaction_policy.value} operation "
+                    f'"{plan.operation_id}" requires an executor that participates '
+                    "in the operation unit of work."
+                ),
+                status_code=500,
+            )
+
+
+async def run_operation_plan[TInput, TResult](
+    plan: OperationPlan[TInput, TResult],
+    context: "OperationContext",
+    *,
+    unit_of_work_factory: OperationUnitOfWorkFactory | None,
+) -> TResult:
+    """Run one operation through its transaction lifecycle.
+
+    AUTO/MANUAL mutating operations open a root backend-neutral unit of work
+    (required), expose it on ``OperationContext.unit_of_work``, execute the
+    plan, and let the UoW own the durable outcome: AUTO marks success only
+    for results classified successful by ``plan.result_is_success``; MANUAL
+    never auto-commits; exceptions and unsuccessful results roll back during
+    UoW teardown.  DISABLED and READ_ONLY operations execute without a root
+    UoW.  Authorization validation remains exactly ``execute_operation_plan``.
+    """
+    validate_operation_transaction_contract(plan)
+    if plan.mutating and plan.transaction_policy in (
+        TransactionPolicy.AUTO,
+        TransactionPolicy.MANUAL,
+    ):
+        if unit_of_work_factory is None:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message=(
+                    f'Mutating {plan.transaction_policy.value} operation '
+                    f'"{plan.operation_id}" requires a registered operation '
+                    "unit-of-work provider."
+                ),
+                status_code=500,
+            )
+        async with unit_of_work_factory.open(
+            policy=plan.transaction_policy,
+            event_publisher=context.events,
+            operation_context=context,
+        ) as unit_of_work:
+            object.__setattr__(context, "unit_of_work", unit_of_work)
+            try:
+                result = await execute_operation_plan(plan, context)
+            except BaseException:
+                raise
+            else:
+                if (
+                    plan.transaction_policy is TransactionPolicy.AUTO
+                    and plan.result_is_success(result)
+                ):
+                    await unit_of_work.mark_success()
+                return result
+            finally:
+                object.__setattr__(context, "unit_of_work", None)
+    return await execute_operation_plan(plan, context)
+
+
 async def execute_operation_plan[TInput, TResult](
     plan: OperationPlan[TInput, TResult], context: "OperationContext"
 ) -> TResult:
@@ -172,6 +300,7 @@ class OperationContext:
     permission_requirement: PermissionRequirement | None = None
     services: ServiceResolver | None = None
     events: EventPublisher | None = None
+    unit_of_work: OperationUnitOfWork | None = None
 
     def __post_init__(self) -> None:
         if self.principal is not None and not self.principal_id:
