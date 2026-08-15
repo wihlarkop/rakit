@@ -1,6 +1,6 @@
 """Admin composition adapter for compiled BULK action routes."""
 
-from collections.abc import AbstractSet, Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager
 
 from rakit_core.actions import ActionScope
