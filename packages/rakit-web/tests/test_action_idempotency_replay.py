@@ -6,6 +6,7 @@ from rakit_core.actions import ActionRedirect, ActionRefresh, ActionRendered, Ac
 from rakit_core.idempotency import OperationReceipt
 from rakit_web.action_routes import _action_result_receipt, _completed_action_response
 from starlette.requests import Request
+from starlette.responses import Response
 from starlette.types import Scope
 
 
@@ -28,9 +29,8 @@ def _request(*, htmx: bool = False) -> Request:
     return Request(scope)
 
 
-def _body_text(response: object) -> str:
-    body = getattr(response, "body")
-    return bytes(body).decode()
+def _body_text(response: Response) -> str:
+    return bytes(response.body).decode()
 
 
 def test_success_receipt_omits_arbitrary_payload_and_replays_message() -> None:
