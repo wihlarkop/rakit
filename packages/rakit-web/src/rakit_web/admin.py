@@ -48,7 +48,11 @@ from starlette.routing import Mount, Route
 from starlette.templating import Jinja2Templates
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from .action_routes import ActionBinding, build_action_routes
+from .action_routes import (
+    ActionBinding,
+    AdvancedActionResponseAdapter,
+    build_action_routes,
+)
 from .assets import static_files
 from .auth_routes import _verify_csrf, build_auth_routes
 from .form_routes import WriteResourceBinding, build_write_routes
@@ -166,6 +170,7 @@ class Admin:
         mutation_deadline_seconds: float = 30.0,
         event_bus: EventBus | None = None,
         operation_idempotency_store: IdempotencyStore | None = None,
+        advanced_action_response_adapter: AdvancedActionResponseAdapter | None = None,
     ) -> None:
         security_config: dict[str, object] = {
             "secret_key": secret_key,
@@ -221,6 +226,7 @@ class Admin:
         )
         self._builder = ApplicationBuilder(admin_id=admin_id)
         self._operation_idempotency_store = operation_idempotency_store
+        self._advanced_action_response_adapter = advanced_action_response_adapter
         self._concurrency_providers: dict[str, ConcurrencyVersionProvider] = {}
         self._event_bus = event_bus if event_bus is not None else EventBus()
         self._builder.registry.add_value(EventBus, self._event_bus, scope=ServiceScope.APPLICATION)
@@ -627,6 +633,7 @@ class Admin:
                     deadline_seconds=self._mutation_deadline_seconds,
                     operation_scope=operation_scope,
                     unit_of_work_factory=unit_of_work_factory,
+                    advanced_response_adapter=self._advanced_action_response_adapter,
                     label=self.config.title,
                 )
             )
@@ -650,6 +657,7 @@ class Admin:
                     deadline_seconds=self._mutation_deadline_seconds,
                     operation_scope=operation_scope,
                     unit_of_work_factory=unit_of_work_factory,
+                    advanced_response_adapter=self._advanced_action_response_adapter,
                     label=self.config.title,
                 )
             )

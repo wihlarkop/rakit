@@ -15,6 +15,7 @@ enhancement of the same pipeline.
 """
 
 import hashlib
+import inspect
 import json
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager
@@ -26,6 +27,7 @@ from typing import Any
 import anyio
 from pydantic import TypeAdapter
 from rakit_core.actions import (
+    ActionAdvancedResponse,
     ActionAvailability,
     ActionAvailabilityDecision,
     ActionContext,
@@ -81,6 +83,10 @@ from .security.cookies import CSRF_COOKIE_NAME
 _CONFIRMATION_TTL = timedelta(minutes=15)
 _MAX_ACTION_FIELDS = 500
 
+type AdvancedActionResponseAdapter = Callable[
+    [Request, ActionAdvancedResponse], Response | Awaitable[Response]
+]
+
 
 async def _fail_final_reservation(
     store: IdempotencyStore,
@@ -120,6 +126,7 @@ class ActionBinding:
     deadline_seconds: float | None = None
     operation_scope: Callable[[], AbstractAsyncContextManager[ServiceResolver]] | None = None
     unit_of_work_factory: Callable[[], OperationUnitOfWorkFactory | None] | None = None
+    advanced_response_adapter: AdvancedActionResponseAdapter | None = None
     label: str = "Actions"
 
     def __post_init__(self) -> None:
@@ -434,6 +441,40 @@ def _action_result_response(
     )
 
 
+async def _action_result_response_with_adapter(
+    binding: ActionBinding,
+    request: Request,
+    result: ActionResult[Any],
+    *,
+    fallback_location: str,
+) -> Response:
+    if not isinstance(result, ActionAdvancedResponse):
+        return _action_result_response(
+            request,
+            result,
+            fallback_location=fallback_location,
+        )
+    adapter = binding.advanced_response_adapter
+    if adapter is None:
+        raise RakitError(
+            code=ErrorCode.CONFIG_INVALID,
+            message="Action advanced responses require a configured web response adapter.",
+            status_code=500,
+        )
+    response = adapter(request, result)
+    if isinstance(response, Response):
+        return response
+    if inspect.isawaitable(response):
+        resolved = await response
+        if isinstance(resolved, Response):
+            return resolved
+    raise RakitError(
+        code=ErrorCode.CONFIG_INVALID,
+        message="Action advanced response adapters must return a Starlette Response.",
+        status_code=500,
+    )
+
+
 def _receipt_message(receipt: OperationReceipt) -> str | None:
     if receipt.payload is None:
         return None
@@ -490,6 +531,13 @@ def _action_result_receipt(
             operation_id=operation_id,
             status="succeeded",
             result_kind="rendered",
+            redirect_route=fallback_location,
+        )
+    if isinstance(result, ActionAdvancedResponse):
+        return OperationReceipt(
+            operation_id=operation_id,
+            status="succeeded",
+            result_kind="advanced",
             redirect_route=fallback_location,
         )
     return OperationReceipt(
@@ -951,6 +999,16 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
                     result,
                     fallback_location=fallback_location,
                 )
+            try:
+                response = await _action_result_response_with_adapter(
+                    binding,
+                    request,
+                    result,
+                    fallback_location=fallback_location,
+                )
+            except BaseException:
+                await fail_final()
+                raise
             if reservation is not None:
                 assert binding.idempotency_store is not None
                 await binding.idempotency_store.complete(
@@ -961,11 +1019,7 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
                         fallback_location=fallback_location,
                     ),
                 )
-            return _action_result_response(
-                request,
-                result,
-                fallback_location=fallback_location,
-            )
+            return response
 
         async def action_endpoint(
             request: Request,
@@ -1155,5 +1209,6 @@ def _owner_location(
 
 __all__ = [
     "ActionBinding",
+    "AdvancedActionResponseAdapter",
     "build_action_routes",
 ]
