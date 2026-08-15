@@ -60,7 +60,7 @@ from rakit_core.operations import (
     run_operation_plan,
     run_with_deadline,
 )
-from rakit_core.transactions import OperationUnitOfWorkFactory
+from rakit_core.transactions import OperationUnitOfWorkFactory, TransactionPolicy
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 from starlette.routing import Route
@@ -278,8 +278,14 @@ async def _run_action_operation(
 
     async def run_with_services() -> ActionResult[Any]:
         nonlocal services, events
+        needs_uow = plan.mutating and plan.transaction_policy in (
+            TransactionPolicy.AUTO,
+            TransactionPolicy.MANUAL,
+        )
         unit_of_work_factory = (
-            binding.unit_of_work_factory() if binding.unit_of_work_factory is not None else None
+            binding.unit_of_work_factory()
+            if needs_uow and binding.unit_of_work_factory is not None
+            else None
         )
         context = OperationContext(
             deadline=deadline,
