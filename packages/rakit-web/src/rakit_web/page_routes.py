@@ -142,6 +142,17 @@ def _validation_issues(exc: ValidationError) -> dict[str, tuple[str, ...]]:
     return issues
 
 
+def _unknown_input_issues(
+    schema: type[BaseModel] | None, submitted: Mapping[str, object]
+) -> dict[str, tuple[str, ...]]:
+    known = set(schema.model_fields) if schema is not None else set()
+    return {
+        name: ("Unknown page input field",)
+        for name in submitted
+        if name not in known
+    }
+
+
 def _template_args(
     binding: PageBinding,
     request: Request,
@@ -332,8 +343,6 @@ async def _run_page_operation(
 
 def _model_values(schema: type[BaseModel] | None, submitted: Mapping[str, object]) -> BaseModel | None:
     if schema is None:
-        if submitted:
-            raise ValueError("Page does not accept input")
         return None
     return schema.model_validate(dict(submitted))
 
@@ -361,6 +370,17 @@ async def _form_input(
     names = [str(name) for name, _ in items]
     if len(names) != len(set(names)):
         return {}, {}, {"__root__": ("Duplicate form fields are not allowed",)}
+    non_string_fields = tuple(
+        str(name)
+        for name, value in items
+        if str(name) not in _RESERVED_FORM_FIELDS and not isinstance(value, str)
+    )
+    if non_string_fields:
+        return (
+            {},
+            {},
+            {name: ("File uploads are not supported by custom pages",) for name in non_string_fields},
+        )
     submitted = {
         str(name): value
         for name, value in items
@@ -401,6 +421,16 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
                     issues=pre_issues,
                     status_code=422,
                 )
+            unknown_issues = _unknown_input_issues(page.input_schema, submitted)
+            if unknown_issues:
+                return _render_page(
+                    binding,
+                    request,
+                    compiled_page,
+                    submitted=submitted,
+                    issues=unknown_issues,
+                    status_code=422,
+                )
             try:
                 values = _model_values(page.input_schema, submitted)
             except ValidationError as exc:
@@ -412,8 +442,6 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
                     issues=_validation_issues(exc),
                     status_code=422,
                 )
-            except ValueError:
-                return _rejected_response("This page does not accept query input", 400)
 
             if page.handler is None:
                 return _render_page(binding, request, compiled_page, result=PageResult())
@@ -456,6 +484,16 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
                     issues=pre_issues,
                     status_code=422,
                 )
+            unknown_issues = _unknown_input_issues(page.input_schema, submitted)
+            if unknown_issues:
+                return _render_page(
+                    binding,
+                    request,
+                    compiled_page,
+                    submitted=submitted,
+                    issues=unknown_issues,
+                    status_code=422,
+                )
             try:
                 values = _model_values(page.input_schema, submitted)
             except ValidationError as exc:
@@ -467,8 +505,6 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
                     issues=_validation_issues(exc),
                     status_code=422,
                 )
-            except ValueError:
-                return _rejected_response("This page does not accept form input", 400)
 
             submission_token = tokens.get("submission_token")
             if not submission_token or not await binding.verify_submission_token(request):
