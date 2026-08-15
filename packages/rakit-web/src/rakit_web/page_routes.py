@@ -10,6 +10,7 @@ from typing import Any
 
 import anyio
 from pydantic import BaseModel, ValidationError
+from rakit_core.auth import Principal
 from rakit_core.definitions import CompiledPageDefinition, RouteDefinition
 from rakit_core.di import ServiceResolver
 from rakit_core.errors import ErrorCode, RakitError
@@ -99,9 +100,14 @@ def _page_fingerprint(page_id: str, submitted: Mapping[str, object]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def _safe_mapping(request: Request) -> Mapping[str, object]:
+def _request_state(request: Request) -> Mapping[str, object]:
     state = request.scope.get("state", {})
     return state if isinstance(state, Mapping) else {}
+
+
+def _principal(request: Request) -> Principal | None:
+    principal = _request_state(request).get("principal")
+    return principal if isinstance(principal, Principal) else None
 
 
 def _field_views(
@@ -142,17 +148,20 @@ def _template_args(
     compiled: CompiledPageDefinition,
     *,
     result: PageResult[Any] | None = None,
-    submitted: Mapping[str, object] = {},
-    issues: Mapping[str, tuple[str, ...]] = {},
+    submitted: Mapping[str, object] | None = None,
+    issues: Mapping[str, tuple[str, ...]] | None = None,
+    message: str | None = None,
 ) -> dict[str, object]:
     page = compiled.definition
+    safe_submitted = submitted or {}
+    safe_issues = issues or {}
     return {
         "binding_label": binding.label,
         "page": page,
         "payload": result.payload if result is not None else None,
-        "message": result.message if result is not None else None,
-        "fields": _field_views(page.input_schema, submitted, issues),
-        "issues": issues,
+        "message": message if message is not None else (result.message if result is not None else None),
+        "fields": _field_views(page.input_schema, safe_submitted, safe_issues),
+        "issues": safe_issues,
         "form_action": mounted_path(request, page.path),
         "csrf_token": request.cookies.get(CSRF_COOKIE_NAME, ""),
         "submission_token": (
@@ -169,8 +178,9 @@ def _render_page(
     compiled: CompiledPageDefinition,
     *,
     result: PageResult[Any] | None = None,
-    submitted: Mapping[str, object] = {},
-    issues: Mapping[str, tuple[str, ...]] = {},
+    submitted: Mapping[str, object] | None = None,
+    issues: Mapping[str, tuple[str, ...]] | None = None,
+    message: str | None = None,
     status_code: int | None = None,
 ) -> Response:
     page = compiled.definition
@@ -184,6 +194,7 @@ def _render_page(
             result=result,
             submitted=submitted,
             issues=issues,
+            message=message,
         ),
         status_code=status_code or (result.status_code if result is not None else 200),
         headers={"Cache-Control": "no-store"},
@@ -207,7 +218,7 @@ def _result_response(
     compiled: CompiledPageDefinition,
     result: PageExecutionResult[Any],
     *,
-    submitted: Mapping[str, object] = {},
+    submitted: Mapping[str, object] | None = None,
 ) -> Response:
     if isinstance(result, PageResult):
         return _render_page(binding, request, compiled, result=result, submitted=submitted)
@@ -224,6 +235,7 @@ def _result_response(
             compiled,
             submitted=submitted,
             issues={name: (message,) for name, message in result.errors.items()},
+            message=result.message,
             status_code=result.status_code,
         )
     raise RakitError(
@@ -273,7 +285,7 @@ async def _run_page_operation(
     deadline = (
         Deadline.after(binding.deadline_seconds) if binding.deadline_seconds is not None else None
     )
-    request_state = _safe_mapping(request)
+    request_state = _request_state(request)
     services: ServiceResolver | None = None
     events: EventPublisher | None = None
 
@@ -292,7 +304,7 @@ async def _run_page_operation(
             cancellation=CancellationContext(),
             request_id=str(request_state.get("request_id", "")),
             operation_id=new_operation_id(),
-            principal=request_state.get("principal"),
+            principal=_principal(request),
             principal_id=authorization.principal_id,
             session_id=str(request_state.get("session_id", "")),
             admin_id=authorization.admin_id,
@@ -305,9 +317,7 @@ async def _run_page_operation(
         )
         with activate_operation_context(operation_context):
             operation_context.checkpoint()
-            operation = run_operation_plan(
-                plan, operation_context, unit_of_work_factory=uow_factory
-            )
+            operation = run_operation_plan(plan, operation_context, unit_of_work_factory=uow_factory)
             if deadline is None:
                 return await operation
             return await run_with_deadline(operation, deadline)
@@ -367,7 +377,6 @@ async def _form_input(
 def build_page_routes(binding: PageBinding) -> list[Route]:
     routes: list[Route] = []
     for route_definition, compiled_page in binding.routes:
-        page = compiled_page.definition
 
         async def page_get(
             request: Request,
@@ -412,7 +421,7 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
                 definition=page,
                 values=values,
                 authorization=authorization,
-                principal=_safe_mapping(request).get("principal"),
+                principal=_principal(request),
             )
             try:
                 plan = build_page_operation_plan(context)
@@ -488,12 +497,10 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
                 definition=page,
                 values=values,
                 authorization=authorization,
-                principal=_safe_mapping(request).get("principal"),
+                principal=_principal(request),
             )
             try:
-                plan = build_page_operation_plan(
-                    context, idempotency_fingerprint=fingerprint
-                )
+                plan = build_page_operation_plan(context, idempotency_fingerprint=fingerprint)
             except BaseException:
                 await release()
                 raise
