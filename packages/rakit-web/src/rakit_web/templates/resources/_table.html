@@ -1,3 +1,4 @@
+{% set bulk_actions = rakit_bulk_actions(request, resource.resource_id) if rakit_bulk_actions is defined else () %}
 <div data-rakit-resource-controls="{{ resource.resource_id }}">
   {% if search_enabled %}
   <form method="get" data-rakit-search action="{{ resource_path }}">
@@ -37,9 +38,25 @@
   </p>
 </div>
 
+{% if bulk_actions %}
+<form method="get" data-rakit-bulk-actions="{{ resource.resource_id }}">
+  <div class="mb-3 flex flex-wrap items-center gap-2" role="group" aria-label="Bulk actions">
+    <span class="text-sm text-slate-600">Selected rows:</span>
+    {% for action in bulk_actions %}
+    <button
+      class="rakit-button rakit-button-secondary"
+      type="submit"
+      formaction="{{ action.url }}"
+    >{{ action.label }}</button>
+    {% endfor %}
+  </div>
+{% endif %}
 <table data-rakit-resource="{{ resource.resource_id }}">
   <thead>
     <tr>
+      {% if bulk_actions %}
+      <th scope="col"><span class="sr-only">Select</span></th>
+      {% endif %}
       {% for header in sort_headers %}
       <th scope="col" aria-sort="{{ header.aria_sort }}">
         {% if header.url %}
@@ -54,6 +71,18 @@
   <tbody>
     {% for row in rows %}
     <tr>
+      {% if bulk_actions %}
+      <td>
+        {% if row.detail_url %}
+        <input
+          type="checkbox"
+          name="selected"
+          value="{{ row.detail_url }}"
+          aria-label="Select row {{ loop.index }}"
+        />
+        {% endif %}
+      </td>
+      {% endif %}
       {% for cell in row.cells %}
       <td>
         {% if loop.first and row.detail_url %}
@@ -66,11 +95,14 @@
     </tr>
     {% else %}
     <tr>
-      <td colspan="{{ fields | length }}">No records.</td>
+      <td colspan="{{ (fields | length) + (1 if bulk_actions else 0) }}">No records.</td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
+{% if bulk_actions %}
+</form>
+{% endif %}
 
 <nav aria-label="Resource pagination" data-rakit-pagination>
   {% if pagination.previous_url %}
