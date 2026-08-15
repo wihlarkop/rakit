@@ -1,5 +1,5 @@
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
 
 import httpx
 import pytest
@@ -22,6 +22,7 @@ from rakit_core.definitions import (
     ResourceFieldPolicy,
     RouteDefinition,
 )
+from rakit_core.di import ServiceResolver
 from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, OperationReceipt
 from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_core.query import PageResult, ResourceQuery
@@ -29,6 +30,7 @@ from rakit_core.resources import ResourceService
 from rakit_web.bulk_admin import build_admin_bulk_action_routes
 from rakit_web.resource_routes import ResourceBinding, build_resource_routes, build_templates
 from starlette.applications import Starlette
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 
 class _DataSource:
@@ -76,17 +78,17 @@ class _MemoryStore:
 
 
 class _PrincipalApp:
-    def __init__(self, app: Any, principal: Principal) -> None:
+    def __init__(self, app: ASGIApp, principal: Principal) -> None:
         self.app = app
         self.principal = principal
 
-    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http":
             scope.setdefault("state", {})["principal"] = self.principal
         await self.app(scope, receive, send)
 
 
-def _app(principal: Principal) -> Any:
+def _app(principal: Principal) -> ASGIApp:
     permission = action_permission_requirement("archive", admin_id="ops")
     definition = ResourceDefinition(
         resource_id="orders",
@@ -135,9 +137,9 @@ def _app(principal: Principal) -> Any:
         return True
 
     @asynccontextmanager
-    async def operation_scope():
+    async def operation_scope() -> AsyncIterator[ServiceResolver]:
         raise AssertionError("list rendering must not open an operation scope")
-        yield
+        yield  # pragma: no cover
 
     build_admin_bulk_action_routes(
         compiled=compiled,
