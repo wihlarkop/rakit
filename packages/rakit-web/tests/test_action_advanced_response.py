@@ -222,7 +222,7 @@ async def test_missing_advanced_adapter_terminalizes_reservation() -> None:
             await _post(client, "missing-adapter-token")
         duplicate = await _post(client, "missing-adapter-token")
 
-    assert exc_info.value.code is ErrorCode.CONFIG_INVALID
+    assert exc_info.value.code == ErrorCode.CONFIG_INVALID.value
     assert "configured web response adapter" in exc_info.value.message
     assert duplicate.status_code == 409
     assert "cannot be retried" in duplicate.text
@@ -243,7 +243,7 @@ async def test_invalid_advanced_adapter_result_terminalizes_reservation() -> Non
         with pytest.raises(RakitError) as exc_info:
             await _post(client, "invalid-adapter-token")
 
-    assert exc_info.value.code is ErrorCode.CONFIG_INVALID
+    assert exc_info.value.code == ErrorCode.CONFIG_INVALID.value
     assert "must return a Starlette Response" in exc_info.value.message
     assert calls == ["executed"]
     assert store.status() is IdempotencyStatus.FAILED_FINAL
