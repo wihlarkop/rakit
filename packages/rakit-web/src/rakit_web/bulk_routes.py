@@ -75,6 +75,15 @@ from .security.cookies import CSRF_COOKIE_NAME
 _BULK_CONFIRMATION_TTL = timedelta(minutes=15)
 _MAX_BULK_FIELDS = 500
 _EMPTY_SUBMITTED: Mapping[str, object] = {}
+_TRANSPORT_FIELDS = frozenset(
+    {
+        "csrf_token",
+        "submission_token",
+        "confirmation_token",
+        "concurrency_token",
+        "selected",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -156,8 +165,7 @@ def _decode_selection(
             details={"maximum": policy.synchronous_maximum},
         )
 
-    identities: list[RecordIdentity] = []
-    seen: set[str] = set()
+    by_token: dict[str, RecordIdentity] = {}
     for token in encoded:
         try:
             identity = binding.codec.decode(token)
@@ -167,18 +175,14 @@ def _decode_selection(
                 message="Bulk selection contains an invalid identity.",
                 status_code=400,
             ) from exc
-        canonical = binding.codec.encode(identity)
-        if canonical in seen:
-            continue
-        seen.add(canonical)
-        identities.append(identity)
-    if not identities:
+        by_token[binding.codec.encode(identity)] = identity
+    if not by_token:
         raise RakitError(
             code=ErrorCode.VALIDATION_FAILED,
             message="Select at least one resource before running a bulk action.",
             status_code=400,
         )
-    return tuple(identities)
+    return tuple(by_token[token] for token in sorted(by_token))
 
 
 async def _load_selection(
@@ -206,7 +210,7 @@ def _selection_fingerprint(
 ) -> str:
     payload = {
         "action_id": str(action.action_id),
-        "selection": sorted(codec.encode(identity) for identity in identities),
+        "selection": [codec.encode(identity) for identity in identities],
         "input": dict(sorted(submitted.items())),
     }
     encoded = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
@@ -232,7 +236,7 @@ def _confirmation_claims(
         "action_id": action.action_id,
         "principal_id": authorization.principal_id,
         "session_id": _session_id(request),
-        "selection": sorted(codec.encode(identity) for identity in identities),
+        "selection": [codec.encode(identity) for identity in identities],
     }
 
 
@@ -297,6 +301,52 @@ def _single_token(form: FormData, name: str) -> str | None:
     if len(values) != 1 or not isinstance(values[0], str) or not values[0]:
         return None
     return values[0]
+
+
+def _submitted_values(form: FormData) -> dict[str, object]:
+    submitted: dict[str, object] = {}
+    for name, value in form.multi_items():
+        if name in _TRANSPORT_FIELDS:
+            continue
+        if not isinstance(name, str) or not isinstance(value, str) or name in submitted:
+            raise RakitError(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="Invalid bulk action input.",
+                status_code=400,
+            )
+        submitted[name] = value
+    return submitted
+
+
+def _parse_input(
+    action: ActionDefinition,
+    form: FormData,
+) -> tuple[dict[str, object], FormState | None]:
+    if len(list(form.multi_items())) > _MAX_BULK_FIELDS:
+        raise RakitError(
+            code=ErrorCode.VALIDATION_FAILED,
+            message="Bulk action input has too many fields.",
+            status_code=400,
+        )
+    submitted = _submitted_values(form)
+    if action.input_schema is None:
+        if submitted:
+            raise RakitError(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="Invalid bulk action input.",
+                status_code=400,
+            )
+        return submitted, None
+    try:
+        return submitted, action.input_schema.parse(submitted)
+    except FormValidationError:
+        raise
+    except ValueError as exc:
+        raise RakitError(
+            code=ErrorCode.VALIDATION_FAILED,
+            message="Invalid bulk action input.",
+            status_code=400,
+        ) from exc
 
 
 def _bulk_context(
@@ -379,6 +429,17 @@ def _concurrency_tokens(
     )
 
 
+def _concurrency_form_tokens(form: FormData) -> list[str]:
+    values = form.getlist("concurrency_token")
+    if any(not isinstance(value, str) or not value for value in values):
+        raise RakitError(
+            code=ErrorCode.VALIDATION_FAILED,
+            message="Invalid bulk concurrency snapshot.",
+            status_code=400,
+        )
+    return [value for value in values if isinstance(value, str)]
+
+
 def _verify_concurrency_tokens(
     binding: BulkActionBinding,
     action: ActionDefinition,
@@ -417,55 +478,6 @@ def _verify_concurrency_tokens(
             code=ErrorCode.RESOURCE_CONFLICT,
             message="A selected resource changed after the bulk action was opened.",
             status_code=409,
-        ) from exc
-
-
-def _parse_input(
-    action: ActionDefinition,
-    form: FormData,
-) -> tuple[dict[str, object], FormState | None]:
-    reserved = {
-        "csrf_token",
-        "submission_token",
-        "confirmation_token",
-        "concurrency_token",
-        "selected",
-    }
-    items = list(form.multi_items())
-    if len(items) > _MAX_BULK_FIELDS:
-        raise RakitError(
-            code=ErrorCode.VALIDATION_FAILED,
-            message="Bulk action input has too many fields.",
-            status_code=400,
-        )
-    submitted: dict[str, object] = {}
-    for name, value in items:
-        if name in reserved:
-            continue
-        if not isinstance(name, str) or not isinstance(value, str) or name in submitted:
-            raise RakitError(
-                code=ErrorCode.VALIDATION_FAILED,
-                message="Invalid bulk action input.",
-                status_code=400,
-            )
-        submitted[name] = value
-    if action.input_schema is None:
-        if submitted:
-            raise RakitError(
-                code=ErrorCode.VALIDATION_FAILED,
-                message="Invalid bulk action input.",
-                status_code=400,
-            )
-        return submitted, None
-    try:
-        return submitted, action.input_schema.parse(submitted)
-    except FormValidationError:
-        raise
-    except ValueError as exc:
-        raise RakitError(
-            code=ErrorCode.VALIDATION_FAILED,
-            message="Invalid bulk action input.",
-            status_code=400,
         ) from exc
 
 
@@ -562,7 +574,11 @@ def _validated_location(location: str | None) -> str | None:
 
 
 def _completed_response(request: Request, receipt: OperationReceipt | None) -> Response:
-    if receipt is None or receipt.result_kind != "bulk":
+    if (
+        receipt is None
+        or receipt.result_kind != "bulk"
+        or not isinstance(receipt.payload, Mapping)
+    ):
         return _rejected_response(
             request,
             "Bulk action already completed, but its response cannot be replayed",
@@ -575,9 +591,8 @@ def _completed_response(request: Request, receipt: OperationReceipt | None) -> R
             "Bulk action already completed, but its response cannot be replayed",
             409,
         )
-    payload = receipt.payload or {}
-    succeeded = payload.get("succeeded")
-    selected = payload.get("selected")
+    succeeded = receipt.payload.get("succeeded")
+    selected = receipt.payload.get("selected")
     message = (
         f"Bulk action already completed: {succeeded}/{selected} succeeded"
         if isinstance(succeeded, int) and isinstance(selected, int)
@@ -696,17 +711,6 @@ async def _render_bulk_form(
     )
 
 
-def _concurrency_form_tokens(form: FormData) -> list[str]:
-    values = form.getlist("concurrency_token")
-    if any(not isinstance(value, str) or not value for value in values):
-        raise RakitError(
-            code=ErrorCode.VALIDATION_FAILED,
-            message="Invalid bulk concurrency snapshot.",
-            status_code=400,
-        )
-    return [value for value in values if isinstance(value, str)]
-
-
 def build_bulk_action_routes(binding: BulkActionBinding) -> list[Route]:
     routes: list[Route] = []
     for route_definition, compiled in binding.routes:
@@ -755,6 +759,7 @@ def build_bulk_action_routes(binding: BulkActionBinding) -> list[Route]:
             request: Request,
             action: ActionDefinition = action,
             compiled: CompiledActionDefinition = compiled,
+            route_path: str = route_path,
             owner_path: str = owner_path,
         ) -> Response:
             if not await binding.verify_csrf(request):
@@ -778,17 +783,14 @@ def build_bulk_action_routes(binding: BulkActionBinding) -> list[Route]:
                         action,
                         _selection_tokens_from_form(form),
                     )
+                    submitted = _submitted_values(form)
                     selection = await _load_selection(binding, identities)
                     await _target_contexts(
                         binding,
                         request,
                         compiled,
                         selection,
-                        submitted={
-                            key: value
-                            for key, value in form.items()
-                            if isinstance(key, str) and isinstance(value, str)
-                        },
+                        submitted=submitted,
                         values=None,
                     )
                 except RakitError as selection_error:
@@ -802,14 +804,10 @@ def build_bulk_action_routes(binding: BulkActionBinding) -> list[Route]:
                     request,
                     action,
                     root_authorization,
-                    route_definition.path,
+                    route_path,
                     owner_path,
                     selection,
-                    submitted={
-                        key: value
-                        for key, value in form.items()
-                        if isinstance(key, str) and isinstance(value, str)
-                    },
+                    submitted=submitted,
                     issues=exc.state.issues,
                     status_code=422,
                 )
