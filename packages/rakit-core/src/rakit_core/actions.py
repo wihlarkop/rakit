@@ -86,14 +86,18 @@ class ActionRedirect:
     def __post_init__(self) -> None:
         location = self.location
         if not location.startswith("/") or location.startswith("//"):
-            raise ValueError("Action redirect locations must be internal application paths")
+            raise ValueError(
+                "Action redirect locations must be absolute internal application paths"
+            )
         if "\\" in location:
             raise ValueError("Action redirect locations must not contain backslashes")
         if any(ord(character) < 0x20 or ord(character) == 0x7F for character in location):
             raise ValueError("Action redirect locations must not contain control characters")
         parsed = urlsplit(location)
         if parsed.scheme or parsed.netloc:
-            raise ValueError("Action redirect locations must be internal application paths")
+            raise ValueError(
+                "Action redirect locations must be absolute internal application paths"
+            )
 
 
 @dataclass(frozen=True)
