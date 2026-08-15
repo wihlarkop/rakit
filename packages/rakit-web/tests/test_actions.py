@@ -1,6 +1,7 @@
 """Plan 05 Task 4 unified actions: web translation and security contract tests."""
 
 import re
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Any, cast
 from urllib.parse import urlencode
@@ -45,8 +46,10 @@ from rakit_core.idempotency import (
 )
 from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_core.mutations import OperationAuthorization
+from rakit_core.operations import OperationExecutorCapabilities
 from rakit_core.permissions import PermissionRequirement
 from rakit_core.query import PageResult, ResourceQuery
+from rakit_core.transactions import OperationUnitOfWork, TransactionPolicy
 from rakit_web.action_routes import ActionBinding, build_action_routes
 from rakit_web.resource_routes import build_templates
 from starlette.applications import Starlette
@@ -893,7 +896,88 @@ async def test_confirmation_does_not_bypass_post_rechecks(
 async def test_stale_concurrency_is_rejected_before_execution(
     harness: ActionHarness,
 ) -> None:
-    app = harness.build()
+    calls: list[int] = []
+
+    class AtomicPrecheckExecutor(DomainActionExecutor):
+        capabilities = OperationExecutorCapabilities(
+            participates_in_uow=True,
+            atomic_concurrency=True,
+        )
+
+    class NeverOpenedUnitOfWorkFactory:
+        def open(
+            self, **_kwargs: object
+        ) -> AbstractAsyncContextManager[OperationUnitOfWork, bool | None]:
+            raise AssertionError("stale web precheck must reject before opening the UoW")
+
+    async def execute(context: ActionContext) -> ActionSuccess:
+        calls.append(cast(OrderRecord, context.record).id)
+        return ActionSuccess(message="Order approved")
+
+    action = ActionDefinition(
+        action_id="approve",
+        label="Approve order",
+        scope=ActionScope.RECORD,
+        resource_id="orders",
+        permission=action_permission_requirement("approve", admin_id="ops"),
+        executor=AtomicPrecheckExecutor(execute),
+        mutating=True,
+        transaction_policy=TransactionPolicy.AUTO,
+        requires_concurrency=True,
+    )
+    compiled = CompiledActionDefinition(
+        definition=action,
+        permission=cast(PermissionRequirement, action.permission),
+    )
+
+    async def allow(_request: object) -> bool:
+        return True
+
+    async def authorize(
+        request: Request,
+        compiled_action: CompiledActionDefinition,
+        identity: RecordIdentity | None,
+    ) -> OperationAuthorization | None:
+        principal = cast(Principal, request.scope.get("state", {}).get("principal"))
+        if principal is None or not compiled_action.permission.matches(principal):
+            return None
+        assert principal.subject_id is not None
+        return OperationAuthorization.for_requirement(
+            admin_id="ops",
+            resource_id="orders",
+            operation="action:approve",
+            principal_id=principal.subject_id,
+            requirement=compiled_action.permission,
+            target_identity=identity,
+        )
+
+    binding = ActionBinding(
+        routes=(
+            (
+                RouteDefinition(
+                    route_name="resource:orders:action:approve",
+                    methods=("GET", "POST"),
+                    path="/orders/{identity}/_actions/approve",
+                    owner_id="orders",
+                ),
+                compiled,
+            ),
+        ),
+        templates=build_templates(()),
+        codec=IdentityCodec(),
+        verify_csrf=allow,
+        verify_submission_token=allow,
+        issue_submission_token=lambda _request: uuid4().hex,
+        authorize_action=authorize,
+        load_record=harness.load_record,
+        record_version=lambda record: cast(OrderRecord, record).version,
+        concurrency=harness.concurrency,
+        concurrency_resource_id="orders",
+        token_service=harness.token_service,
+        idempotency_store=harness.idempotency,
+        unit_of_work_factory=lambda: NeverOpenedUnitOfWorkFactory(),
+    )
+    app = _PrincipalMiddleware(Starlette(routes=build_action_routes(binding)))
     parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
     async with _client(app) as client:
         tokens = await _open_action(client, f"/orders/{parent}/_actions/approve")
@@ -904,12 +988,15 @@ async def test_stale_concurrency_is_rejected_before_execution(
                 [
                     ("csrf_token", "csrf"),
                     ("submission_token", tokens["submission_token"]),
+                    ("concurrency_token", tokens["concurrency_token"]),
                 ]
             ),
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             follow_redirects=False,
         )
+
     assert rejected.status_code == 409
+    assert calls == []
     assert harness.service.update_calls == 0
     assert harness.store.record(1).status == "pending"
 

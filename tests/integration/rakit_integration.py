@@ -20,8 +20,6 @@ from rakit_core.actions import (
     ActionContext,
     ActionDefinition,
     ActionScope,
-    ActionSuccess,
-    PreparedMutationExecutor,
 )
 from rakit_core.auth import Principal
 from rakit_core.concurrency import AttributeVersionProvider, ConcurrencyTokenService
@@ -42,7 +40,6 @@ from rakit_core.mutations import (
     OperationAuthorization,
     OperationAuthorizationSet,
 )
-from rakit_core.operations import OperationExecutorCapabilities
 from rakit_core.permissions import PermissionRequirement
 from rakit_core.relationship_mutations import (
     CreateRelated,
@@ -60,6 +57,7 @@ from rakit_core.relationships import (
 )
 from rakit_core.resources import ResourceService
 from rakit_core.transactions import TransactionPolicy
+from rakit_sqlalchemy.action_mutations import SQLAlchemyActionUpdateExecutor
 from rakit_sqlalchemy.datasource import SQLAlchemyDataSource
 from rakit_sqlalchemy.mutations import SQLAlchemyMutationService
 from rakit_sqlalchemy.relationship_mutations import SQLAlchemyRelationshipMutationService
@@ -220,21 +218,13 @@ class MemoryIdempotencyStore:
 
 
 _REQ_ORDERS_UPDATE = PermissionRequirement.all_of("integration.orders.update")
+_REQ_APPROVE = PermissionRequirement.all_of("integration.actions.approve.execute")
 _REQ_LINE_CREATE = PermissionRequirement.all_of("integration.line_items.create")
 _REQ_LINE_UPDATE = PermissionRequirement.all_of("integration.line_items.update")
 _REQ_LINE_DELETE = PermissionRequirement.all_of("integration.line_items.delete")
 
 _ADMIN_ID = "integration"
 _PRINCIPAL_ID = "tester"
-
-
-class _IntegrationAtomicPreparedMutationExecutor(PreparedMutationExecutor):
-    # Test-only bridge. Production PreparedMutationExecutor deliberately keeps
-    # atomic_concurrency=False until C2B introduces the sanctioned public path.
-    capabilities = OperationExecutorCapabilities(
-        participates_in_uow=True,
-        atomic_concurrency=True,
-    )
 
 
 class RenderedFormParser(HTMLParser):
@@ -748,15 +738,6 @@ def build_app(factory: async_sessionmaker[AsyncSession]) -> IntegrationApp:
     def approve_prepare(_context: ActionContext) -> dict[str, object]:
         return {"status": "approved"}
 
-    async def approve_commit(plan: object, context: ActionContext) -> ActionSuccess[object]:
-        await parent_writer.update(
-            cast(RecordIdentity, context.identity),
-            cast(dict[str, object], plan),
-            concurrency_token=context.concurrency_token,
-            authorization=context.authorization,
-        )
-        return ActionSuccess(message="Order approved")
-
     async def authorize_action(
         request: Request,
         compiled_action: CompiledActionDefinition,
@@ -768,7 +749,7 @@ def build_app(factory: async_sessionmaker[AsyncSession]) -> IntegrationApp:
         return OperationAuthorization.for_requirement(
             admin_id=_ADMIN_ID,
             resource_id="orders",
-            operation="update",
+            operation="action:approve",
             principal_id=_PRINCIPAL_ID,
             requirement=compiled_action.permission,
             target_identity=identity,
@@ -789,18 +770,19 @@ def build_app(factory: async_sessionmaker[AsyncSession]) -> IntegrationApp:
                         label="Approve order",
                         scope=ActionScope.RECORD,
                         resource_id="orders",
-                        permission=_REQ_ORDERS_UPDATE,
+                        permission=_REQ_APPROVE,
                         description="Approve this order for fulfilment.",
                         availability=approve_availability,
-                        executor=_IntegrationAtomicPreparedMutationExecutor(
+                        executor=SQLAlchemyActionUpdateExecutor(
+                            parent_writer,
                             approve_prepare,
-                            approve_commit,
+                            message="Order approved",
                         ),
                         mutating=True,
                         transaction_policy=TransactionPolicy.AUTO,
                         requires_concurrency=True,
                     ),
-                    permission=_REQ_ORDERS_UPDATE,
+                    permission=_REQ_APPROVE,
                 ),
             ),
         ),

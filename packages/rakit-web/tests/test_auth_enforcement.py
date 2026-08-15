@@ -44,8 +44,13 @@ from rakit_core.idempotency import (
 )
 from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_core.mutations import MutationHooks, ResourceCreated
-from rakit_core.operations import OperationContext, current_operation_context
+from rakit_core.operations import (
+    OperationContext,
+    OperationExecutorCapabilities,
+    current_operation_context,
+)
 from rakit_core.permissions import PermissionRequirement
+from rakit_core.transactions import TransactionPolicy
 from rakit_sqlalchemy.mutations import SQLAlchemyMutationService
 from rakit_web.form_routes import WriteResourceBinding
 from rakit_web.resource_routes import build_templates
@@ -1499,7 +1504,9 @@ async def test_actions_requiring_concurrency_fail_closed(session_factory) -> Non
         scope=ActionScope.RECORD,
         resource_id="widgets",
         requires_concurrency=True,
-        executor=DomainActionExecutor(lambda _context: ActionSuccess()),
+        mutating=True,
+        transaction_policy=TransactionPolicy.AUTO,
+        executor=_AtomicConcurrencyTestExecutor(lambda _context: ActionSuccess()),
     )
     admin = _build_action_admin(
         session_factory,
@@ -1946,7 +1953,15 @@ async def test_bulk_only_admin_needs_no_operation_store(session_factory) -> None
         assert (await client.get("/widgets/_actions/bulk_archive")).status_code == 404
 
 
-# --- B2B2: generic RECORD concurrency for Admin actions --------------------
+class _AtomicConcurrencyTestExecutor(DomainActionExecutor):
+    # Web-boundary double only; adapter-level durable atomicity is proven in C2B tests.
+    capabilities = OperationExecutorCapabilities(
+        participates_in_uow=True,
+        atomic_concurrency=True,
+    )
+
+
+# --- B2B2/C2B: generic RECORD concurrency for Admin actions ----------------
 
 
 def _concurrent_approve_action() -> tuple[ActionDefinition, list[int]]:
@@ -1963,7 +1978,9 @@ def _concurrent_approve_action() -> tuple[ActionDefinition, list[int]]:
         scope=ActionScope.RECORD,
         resource_id="widgets",
         requires_concurrency=True,
-        executor=DomainActionExecutor(approve_handler),
+        mutating=True,
+        transaction_policy=TransactionPolicy.AUTO,
+        executor=_AtomicConcurrencyTestExecutor(approve_handler),
     )
     return action, calls
 
