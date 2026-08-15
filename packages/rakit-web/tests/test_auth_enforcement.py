@@ -2245,3 +2245,59 @@ async def test_concurrent_off_scope_record_stays_inaccessible(session_factory) -
 
     assert rejected.status_code == 404
     assert calls == []
+
+
+# --- B2B2.1: full ConcurrencyVersionProvider contract enforcement ----------
+
+
+class _VersionOnlyProvider:
+    def version_for(self, record: object) -> object:
+        return None
+
+
+class _TwoMethodProvider:
+    def version_for(self, record: object) -> object:
+        return None
+
+    def predicate_values_for(self, record: object) -> dict[str, object]:
+        return {}
+
+
+class _NonCallableMemberProvider:
+    def version_for(self, record: object) -> object:
+        return None
+
+    def predicate_values_for(self, record: object) -> dict[str, object]:
+        return {}
+
+    next_values_for = object()
+
+
+async def test_concurrency_provider_requires_the_full_contract(
+    session_factory,
+) -> None:
+    cases = (
+        (_VersionOnlyProvider(), ("predicate_values_for", "next_values_for")),
+        (_TwoMethodProvider(), ("next_values_for",)),
+        (_NonCallableMemberProvider(), ("next_values_for",)),
+    )
+    for provider, expected_missing in cases:
+        admin = _build_admin(session_factory, _ConfigurableAuthBackend(permissions=frozenset()))
+        with pytest.raises(RakitError) as caught:
+            admin.register_concurrency_provider(
+                "widgets", cast(ConcurrencyVersionProvider, provider)
+            )
+        assert caught.value.code == ErrorCode.CONFIG_INVALID
+        details = caught.value.details
+        assert details["reason"] == "invalid_provider_contract"
+        assert details["resource_id"] == "widgets"
+        assert set(details["members"]) == set(expected_missing)
+
+
+async def test_full_contract_providers_register(session_factory) -> None:
+    for provider in (
+        AttributeVersionProvider("revision"),
+        SnapshotVersionProvider(fields=("revision",)),
+    ):
+        admin = _build_admin(session_factory, _ConfigurableAuthBackend(permissions=frozenset()))
+        admin.register_concurrency_provider("widgets", cast(ConcurrencyVersionProvider, provider))

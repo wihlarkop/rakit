@@ -408,15 +408,25 @@ class Admin:
                 status_code=500,
                 details={"resource_id": resource_id, "reason": "duplicate_provider"},
             )
-        if not callable(getattr(provider, "version_for", None)):
+        missing_members = tuple(
+            name
+            for name in ("version_for", "predicate_values_for", "next_values_for")
+            if not callable(getattr(provider, name, None))
+        )
+        if missing_members:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message=(
                     f'Concurrency provider for resource "{resource_id}" does not '
-                    "implement version_for."
+                    "implement the full ConcurrencyVersionProvider contract "
+                    f"(missing or non-callable: {', '.join(missing_members)})."
                 ),
                 status_code=500,
-                details={"resource_id": resource_id, "reason": "invalid_provider_contract"},
+                details={
+                    "resource_id": resource_id,
+                    "reason": "invalid_provider_contract",
+                    "members": missing_members,
+                },
             )
         self._concurrency_providers[resource_id] = provider
 
