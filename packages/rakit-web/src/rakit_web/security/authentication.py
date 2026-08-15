@@ -14,7 +14,7 @@ pitfall, and so a rejection short-circuits without ever invoking the
 downstream app.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from urllib.parse import unquote
 
 from rakit_core.auth import ANONYMOUS_PRINCIPAL, AuthBackend, Principal, SessionStore
@@ -232,6 +232,7 @@ def build_requirement_resolver(
     admin_id: str,
     resource_paths: dict[str, str],
     writable_resources: frozenset[str] = frozenset(),
+    action_requirements: Mapping[str, PermissionRequirement] | None = None,
 ) -> Callable[..., PermissionRequirement | None]:
     """Map a request path to the permission it requires.
 
@@ -241,6 +242,15 @@ def build_requirement_resolver(
     permission -- Plan 03 ships read-only resources, so there is no
     per-operation split to make yet. Every other non-public path requires
     `{admin_id}.access` (the admin shell).
+
+    `action_requirements` maps each compiled action route pattern (the
+    compiler-owned path, with a literal `{identity}` segment for RECORD
+    actions) to its exact compiled permission. Action routes are matched
+    before resource prefixes so a path like `/orders/_actions/export` is
+    never misclassified as an ordinary resource read, and a principal
+    holding only `orders.read`/`orders.update` can never reach an action
+    through the middleware. The action route handler independently
+    re-evaluates the same compiled requirement.
     """
     access_requirement = PermissionRequirement.all_of(f"{admin_id}.access")
     read_requirements = {
@@ -250,6 +260,12 @@ def build_requirement_resolver(
         )
         for path, resource_id in resource_paths.items()
     }
+
+    action_patterns = [
+        (pattern.strip("/").split("/"), requirement)
+        for pattern, requirement in (action_requirements or {}).items()
+    ]
+    action_patterns.sort(key=lambda item: len(item[0]), reverse=True)
 
     # Longest prefix first: with nested resource paths (`/orders` and
     # `/orders/lines`), the most specific match must win. Returning
@@ -263,6 +279,13 @@ def build_requirement_resolver(
     def resolve(path: str, method: str = "GET") -> PermissionRequirement | None:
         if is_public_path(path):
             return None
+        segments = path.strip("/").split("/")
+        for pattern_segments, requirement in action_patterns:
+            if len(pattern_segments) == len(segments) and all(
+                pattern_segment == segment or pattern_segment == "{identity}"
+                for pattern_segment, segment in zip(pattern_segments, segments, strict=True)
+            ):
+                return requirement
         for resource_path, (resource_id, requirement) in ordered_requirements:
             if path == resource_path or path.startswith(f"{resource_path}/"):
                 if resource_id in writable_resources:

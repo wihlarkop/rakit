@@ -1,5 +1,5 @@
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import timedelta
@@ -8,16 +8,22 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import structlog
+from rakit_core.actions import ActionScope
 from rakit_core.admin_types import ModelAdmin, ResourceAdmin
 from rakit_core.auth import AuthBackend, SessionStore
 from rakit_core.compiler import ApplicationBuilder, CompiledApplication, Plugin, compile_application
 from rakit_core.config import RakitConfig, SecretValue
 from rakit_core.crypto import TokenService
-from rakit_core.definitions import ResourceDefinition, ResourceFieldPolicy, RouteDefinition
+from rakit_core.definitions import (
+    CompiledActionDefinition,
+    ResourceDefinition,
+    ResourceFieldPolicy,
+    RouteDefinition,
+)
 from rakit_core.di import ServiceRegistry, ServiceResolver, ServiceScope
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.events import EventBus, EventPublisher
-from rakit_core.identity import RecordIdentity
+from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_core.mutations import (
     MutationAuthorization,
     MutationOperation,
@@ -35,8 +41,10 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Mount, Route
+from starlette.templating import Jinja2Templates
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from .action_routes import ActionBinding, build_action_routes
 from .assets import static_files
 from .auth_routes import _verify_csrf, build_auth_routes
 from .form_routes import WriteResourceBinding, build_write_routes
@@ -468,6 +476,121 @@ class Admin:
             self._compiled_registry = self._builder.registry
         return self.compiled
 
+    def _action_bindings(
+        self,
+        *,
+        templates: Jinja2Templates,
+        codec: IdentityCodec,
+        verify_csrf: Callable[[Request], Awaitable[bool]],
+        issue_submission_token: Callable[[Request], str],
+        verify_submission_token: Callable[[Request], Awaitable[bool]],
+        token_service: TokenService,
+    ) -> tuple[ActionBinding, ...]:
+        """Materialize the compiled action routes as web bindings.
+
+        Pairs are grouped by declared owner: RECORD/RESOURCE actions use the
+        owning resource's canonical scoped ``ResourceService`` as the record
+        loader, and PAGE actions share one binding.  Authorization always
+        evaluates the exact compiler-resolved permission.  Requires auth,
+        CSRF/submission plumbing, and the fail-closed capability checks to
+        have run before this is called.
+        """
+        assert self.compiled is not None
+
+        async def authorize_action(
+            request: Request,
+            compiled_action: CompiledActionDefinition,
+            identity: RecordIdentity | None,
+        ) -> OperationAuthorization | None:
+            principal = request.scope.get("state", {}).get("principal")
+            if principal is None or not principal.authenticated:
+                return None
+            if not compiled_action.permission.matches(
+                principal, superuser_bypass=self._superuser_bypass
+            ):
+                return None
+            assert principal.subject_id is not None
+            definition = compiled_action.definition
+            owner_id = (
+                definition.page_id
+                if definition.scope is ActionScope.PAGE
+                else definition.resource_id
+            )
+            assert owner_id is not None
+            return OperationAuthorization.for_requirement(
+                admin_id=self.config.admin_id,
+                resource_id=owner_id,
+                operation=f"action:{definition.action_id}",
+                principal_id=principal.subject_id,
+                requirement=compiled_action.permission,
+                target_identity=identity,
+            )
+
+        idempotency_by_resource = {
+            resource_id: binding.idempotency_store
+            for resource_id, binding in self._write_resource_bindings.items()
+            if binding.idempotency_store is not None
+        }
+        bindings: list[ActionBinding] = []
+        for resource_id, service in self._resource_services.items():
+            pairs = tuple(
+                (route, compiled)
+                for route, compiled in self.compiled.action_routes
+                if compiled.definition.scope in (ActionScope.RECORD, ActionScope.RESOURCE)
+                and compiled.definition.resource_id == resource_id
+            )
+            if not pairs:
+                continue
+
+            async def load_record(
+                identity: RecordIdentity, service: ResourceService = service
+            ) -> object | None:
+                try:
+                    return await service.detail(identity)
+                except RakitError as exc:
+                    if exc.code is ErrorCode.RESOURCE_NOT_FOUND:
+                        return None
+                    raise
+
+            bindings.append(
+                ActionBinding(
+                    routes=pairs,
+                    templates=templates,
+                    codec=codec,
+                    verify_csrf=verify_csrf,
+                    verify_submission_token=verify_submission_token,
+                    issue_submission_token=issue_submission_token,
+                    authorize_action=authorize_action,
+                    load_record=load_record,
+                    token_service=token_service,
+                    idempotency_store=idempotency_by_resource.get(resource_id),
+                    deadline_seconds=self._mutation_deadline_seconds,
+                    label=self.config.title,
+                )
+            )
+        page_pairs = tuple(
+            (route, compiled)
+            for route, compiled in self.compiled.action_routes
+            if compiled.definition.scope is ActionScope.PAGE
+        )
+        if page_pairs:
+            bindings.append(
+                ActionBinding(
+                    routes=page_pairs,
+                    templates=templates,
+                    codec=codec,
+                    verify_csrf=verify_csrf,
+                    verify_submission_token=verify_submission_token,
+                    issue_submission_token=issue_submission_token,
+                    authorize_action=authorize_action,
+                    token_service=token_service,
+                    idempotency_store=None,
+                    deadline_seconds=self._mutation_deadline_seconds,
+                    label=self.config.title,
+                )
+            )
+        return tuple(bindings)
+
     async def _open_application_resolver(self) -> None:
         assert self._compiled_registry is not None
         self._application_resolver = self._compiled_registry.application_scope()
@@ -531,6 +654,38 @@ class Admin:
             resource_routes.extend(build_resource_routes(binding))
 
         write_routes: list[Route] = []
+        action_routes: list[Route] = []
+        if self.compiled is not None and self.compiled.action_routes:
+            if self._auth_backend is None or self._session_store is None:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID,
+                    message="Compiled actions require configured authentication.",
+                    status_code=500,
+                )
+            if self.config.security.secret_key is None:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID,
+                    message=(
+                        "A security.secret_key is required to serve compiled actions "
+                        "(it derives the CSRF and submission-token signing key)."
+                    ),
+                    status_code=500,
+                )
+            unsupported = sorted(
+                compiled.definition.action_id
+                for _, compiled in self.compiled.action_routes
+                if compiled.definition.requires_concurrency
+            )
+            if unsupported:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID,
+                    message=(
+                        "Compiled actions requiring concurrency cannot be served yet "
+                        "because no generic concurrency version provider seam exists: "
+                        + ", ".join(unsupported)
+                    ),
+                    status_code=500,
+                )
         requirement_resolver = build_requirement_resolver(
             admin_id=self.config.admin_id,
             resource_paths={
@@ -538,6 +693,11 @@ class Admin:
                 for resource_id, definition in self._resource_definitions.items()
             },
             writable_resources=frozenset(self._write_resource_bindings),
+            action_requirements=(
+                {route.path: compiled.permission for route, compiled in self.compiled.action_routes}
+                if self.compiled is not None
+                else {}
+            ),
         )
         if self._session_store is not None and self.config.security.secret_key is not None:
             write_token_service = TokenService.single_key(
@@ -781,6 +941,18 @@ class Admin:
                     )
                     write_routes.extend(relationship_routes)
 
+            action_routes: list[Route] = []
+            if self.compiled is not None and self.compiled.action_routes:
+                for action_binding in self._action_bindings(
+                    templates=templates,
+                    codec=IdentityCodec(),
+                    verify_csrf=verify_write_csrf,
+                    issue_submission_token=issue_submission_token,
+                    verify_submission_token=verify_submission_token,
+                    token_service=write_token_service,
+                ):
+                    action_routes.extend(build_action_routes(action_binding))
+
         app = Starlette(
             debug=self.config.debug,
             routes=[Route("/", home)],
@@ -822,6 +994,8 @@ class Admin:
             )
             for route in auth_routes:
                 app.routes.append(route)
+        for route in action_routes:
+            app.routes.append(route)
         app.state.rakit = SimpleNamespace(resources=bindings)
 
         # Authentication/authorization wrap the routed app *inside* the

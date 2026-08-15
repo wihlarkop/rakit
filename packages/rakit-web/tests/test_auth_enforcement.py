@@ -15,8 +15,17 @@ from typing import cast
 import httpx
 import pytest
 from rakit import Admin, ModelAdmin, SecretValue
+from rakit_core.actions import (
+    ActionAvailabilityDecision,
+    ActionContext,
+    ActionDefinition,
+    ActionScope,
+    ActionSuccess,
+    DomainActionExecutor,
+)
 from rakit_core.auth import Principal, SessionRecord
 from rakit_core.crypto import TokenService
+from rakit_core.definitions import PageDefinition
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.events import EventBus, EventPublisher
 from rakit_core.fields import FieldDefinition
@@ -25,6 +34,7 @@ from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, Op
 from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_core.mutations import MutationHooks, ResourceCreated
 from rakit_core.operations import OperationContext, current_operation_context
+from rakit_core.permissions import PermissionRequirement
 from rakit_sqlalchemy.mutations import SQLAlchemyMutationService
 from rakit_web.form_routes import WriteResourceBinding
 from rakit_web.resource_routes import build_templates
@@ -1028,3 +1038,451 @@ async def test_no_cookie_at_all_is_not_treated_as_an_invalidated_session(
         assert not any(
             "rakit_session=" in value for value in response.headers.get_list("set-cookie")
         )
+
+
+# --- B2A: compiled actions served through the real Admin runtime ----------
+
+
+def _action_tokens(page_text: str) -> dict[str, str]:
+    return dict(re.findall(r'name="([^"]+)" value="([^"]*)"', page_text))
+
+
+def _build_action_admin(
+    session_factory,
+    backend: _ConfigurableAuthBackend,
+    *actions: ActionDefinition,
+) -> Admin:
+    """The B2A integration proof: only the public Admin surface is used --
+    no ActionBinding, no build_action_routes, no manual Starlette wiring."""
+    admin = _build_admin(session_factory, backend)
+    for action in actions:
+        admin.builder.add_action(action)
+    return admin
+
+
+async def _open_action_form(client: httpx.AsyncClient, csrf: str, url: str) -> tuple[str, str]:
+    page = await client.get(url)
+    assert page.status_code == 200
+    tokens = _action_tokens(page.text)
+    return csrf, tokens["submission_token"]
+
+
+async def test_resource_action_through_admin_executes_exactly_once(
+    session_factory,
+) -> None:
+    calls: list[int] = []
+
+    async def resync_handler(context: ActionContext) -> ActionSuccess:
+        if context.record is not None:
+            calls.append(cast(Widget, context.record).id)
+        return ActionSuccess(message="Orders resynced")
+
+    action = ActionDefinition(
+        action_id="resync",
+        label="Resync widgets",
+        scope=ActionScope.RESOURCE,
+        resource_id="widgets",
+        permission=PermissionRequirement.all_of("operations.actions.resync.execute"),
+        executor=DomainActionExecutor(resync_handler),
+    )
+    admin = _build_action_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.resync.execute"})),
+        action,
+    )
+    app, client = await _client_for(admin)
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        csrf, submission = await _open_action_form(client, csrf, "/widgets/_actions/resync")
+        executed = await client.post(
+            "/widgets/_actions/resync",
+            data={"csrf_token": csrf, "submission_token": submission},
+            follow_redirects=False,
+        )
+
+    assert executed.status_code == 303
+    assert executed.headers["location"] == "/widgets"
+    assert calls == []
+
+
+async def test_record_action_through_admin_executes_against_scoped_record(
+    session_factory,
+) -> None:
+    calls: list[int] = []
+
+    async def approve_handler(context: ActionContext) -> ActionSuccess:
+        record = cast(Widget, context.record)
+        calls.append(record.id)
+        async with session_factory() as session:
+            stored = await session.get(Widget, record.id)
+            assert stored is not None
+            stored.name = "Approved"
+            await session.commit()
+        return ActionSuccess(message="Widget approved")
+
+    def availability(context: ActionContext) -> ActionAvailabilityDecision:
+        record = cast(Widget, context.record)
+        if record.name == "Sprocket":
+            return ActionAvailabilityDecision.available()
+        return ActionAvailabilityDecision.disabled("Widget is not pending")
+
+    action = ActionDefinition(
+        action_id="approve",
+        label="Approve widget",
+        scope=ActionScope.RECORD,
+        resource_id="widgets",
+        availability=availability,
+        executor=DomainActionExecutor(approve_handler),
+    )
+    admin = _build_action_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.approve.execute"})),
+        action,
+    )
+    app, client = await _client_for(admin)
+    identity = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        csrf, submission = await _open_action_form(
+            client, csrf, f"/widgets/{identity}/_actions/approve"
+        )
+        executed = await client.post(
+            f"/widgets/{identity}/_actions/approve",
+            data={"csrf_token": csrf, "submission_token": submission},
+            follow_redirects=False,
+        )
+
+    assert executed.status_code == 303
+    assert executed.headers["location"] == f"/widgets/{identity}"
+    assert calls == [1]
+    async with session_factory() as session:
+        assert (await session.get(Widget, 1)).name == "Approved"
+
+
+async def test_off_scope_record_action_is_inaccessible_and_never_executes(
+    session_factory,
+) -> None:
+    calls: list[int] = []
+
+    async def approve_handler(context: ActionContext) -> ActionSuccess:
+        calls.append(cast(Widget, context.record).id)
+        return ActionSuccess()
+
+    action = ActionDefinition(
+        action_id="approve",
+        label="Approve widget",
+        scope=ActionScope.RECORD,
+        resource_id="widgets",
+        executor=DomainActionExecutor(approve_handler),
+    )
+    admin = _build_action_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.approve.execute"})),
+        action,
+    )
+    app, client = await _client_for(admin)
+    identity = IdentityCodec().encode(RecordIdentity(values={"id": 999}))
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        page = await client.get(f"/widgets/{identity}/_actions/approve")
+        assert page.status_code == 404
+        rejected = await client.post(
+            f"/widgets/{identity}/_actions/approve",
+            data={"csrf_token": csrf, "submission_token": "x"},
+            follow_redirects=False,
+        )
+
+    assert rejected.status_code == 404
+    assert calls == []
+
+
+async def test_action_without_exact_compiled_permission_is_denied(
+    session_factory,
+) -> None:
+    calls: list[str] = []
+
+    async def resync_handler(_context: ActionContext) -> ActionSuccess:
+        calls.append("executed")
+        return ActionSuccess()
+
+    action = ActionDefinition(
+        action_id="resync",
+        label="Resync widgets",
+        scope=ActionScope.RESOURCE,
+        resource_id="widgets",
+        permission=PermissionRequirement.all_of("operations.actions.resync.execute"),
+        executor=DomainActionExecutor(resync_handler),
+    )
+    # Holds admin shell access AND resource read -- but not the action's
+    # exact compiled permission. Resource read is never action authorization.
+    admin = _build_action_admin(
+        session_factory,
+        _ConfigurableAuthBackend(
+            permissions=frozenset({"operations.access", "operations.resources.widgets.read"})
+        ),
+        action,
+    )
+    app, client = await _client_for(admin)
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        page = await client.get("/widgets/_actions/resync")
+        assert page.status_code == 403
+        rejected = await client.post(
+            "/widgets/_actions/resync",
+            data={"csrf_token": csrf, "submission_token": "x"},
+            follow_redirects=False,
+        )
+
+    assert rejected.status_code == 403
+    assert calls == []
+
+
+async def test_omitted_action_permission_uses_compiled_default(
+    session_factory,
+) -> None:
+    calls: list[str] = []
+
+    async def resync_handler(_context: ActionContext) -> ActionSuccess:
+        calls.append("executed")
+        return ActionSuccess()
+
+    action = ActionDefinition(
+        action_id="resync",
+        label="Resync widgets",
+        scope=ActionScope.RESOURCE,
+        resource_id="widgets",
+        executor=DomainActionExecutor(resync_handler),
+    )
+    admin = _build_action_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.resync.execute"})),
+        action,
+    )
+    app, client = await _client_for(admin)
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        csrf, submission = await _open_action_form(client, csrf, "/widgets/_actions/resync")
+        executed = await client.post(
+            "/widgets/_actions/resync",
+            data={"csrf_token": csrf, "submission_token": submission},
+            follow_redirects=False,
+        )
+
+    assert executed.status_code == 303
+    assert calls == ["executed"]
+
+
+async def test_action_get_renders_and_never_executes(session_factory) -> None:
+    calls: list[str] = []
+
+    async def resync_handler(_context: ActionContext) -> ActionSuccess:
+        calls.append("executed")
+        return ActionSuccess()
+
+    action = ActionDefinition(
+        action_id="resync",
+        label="Resync widgets",
+        scope=ActionScope.RESOURCE,
+        resource_id="widgets",
+        executor=DomainActionExecutor(resync_handler),
+    )
+    admin = _build_action_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.resync.execute"})),
+        action,
+    )
+    app, client = await _client_for(admin)
+    async with _LifespanDriver(app), client:
+        await _login(client)
+        first = await client.get("/widgets/_actions/resync")
+        second = await client.get("/widgets/_actions/resync")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert calls == []
+
+
+async def test_action_post_rechecks_availability_against_fresh_state(
+    session_factory,
+) -> None:
+    calls: list[int] = []
+
+    async def approve_handler(context: ActionContext) -> ActionSuccess:
+        calls.append(cast(Widget, context.record).id)
+        return ActionSuccess()
+
+    def availability(context: ActionContext) -> ActionAvailabilityDecision:
+        record = cast(Widget, context.record)
+        if record.name == "Sprocket":
+            return ActionAvailabilityDecision.available()
+        return ActionAvailabilityDecision.disabled("Widget is not pending")
+
+    action = ActionDefinition(
+        action_id="approve",
+        label="Approve widget",
+        scope=ActionScope.RECORD,
+        resource_id="widgets",
+        availability=availability,
+        executor=DomainActionExecutor(approve_handler),
+    )
+    admin = _build_action_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.approve.execute"})),
+        action,
+    )
+    app, client = await _client_for(admin)
+    identity = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        csrf, submission = await _open_action_form(
+            client, csrf, f"/widgets/{identity}/_actions/approve"
+        )
+        async with session_factory() as session:
+            stored = await session.get(Widget, 1)
+            assert stored is not None
+            stored.name = "Taken"
+            await session.commit()
+        rejected = await client.post(
+            f"/widgets/{identity}/_actions/approve",
+            data={"csrf_token": csrf, "submission_token": submission},
+            follow_redirects=False,
+        )
+
+    assert rejected.status_code == 409
+    assert calls == []
+
+
+async def test_admin_served_actions_keep_canonical_paths_only(
+    session_factory,
+) -> None:
+    action = ActionDefinition(
+        action_id="resync",
+        label="Resync widgets",
+        scope=ActionScope.RESOURCE,
+        resource_id="widgets",
+        executor=DomainActionExecutor(lambda _context: ActionSuccess()),
+    )
+    admin = _build_action_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.resync.execute"})),
+        action,
+    )
+    compiled = admin.compile()
+    assert any(
+        route.route_name == "resource:widgets:action:resync"
+        and route.path == "/widgets/_actions/resync"
+        and route.methods == ("GET", "POST")
+        for route in compiled.routes
+    )
+    app, client = await _client_for(admin)
+    async with _LifespanDriver(app), client:
+        await _login(client)
+        assert (await client.get("/widgets/_actions/resync")).status_code == 200
+        legacy = await client.get("/widgets/actions/resync")
+        assert legacy.status_code in (403, 404)
+
+
+async def test_bulk_action_stays_route_less_through_real_admin(
+    session_factory,
+) -> None:
+    action = ActionDefinition(
+        action_id="bulk_archive",
+        label="Bulk archive",
+        scope=ActionScope.BULK,
+        resource_id="widgets",
+        executor=DomainActionExecutor(lambda _context: ActionSuccess()),
+    )
+    admin = _build_action_admin(
+        session_factory,
+        _ConfigurableAuthBackend(
+            permissions=frozenset({"operations.access", "operations.resources.widgets.read"})
+        ),
+        action,
+    )
+    app, client = await _client_for(admin)
+    async with _LifespanDriver(app), client:
+        await _login(client)
+        response = await client.get("/widgets/_actions/bulk_archive")
+        assert response.status_code == 404
+
+
+async def test_page_action_served_through_admin(session_factory) -> None:
+    calls: list[str] = []
+
+    async def refresh_handler(_context: ActionContext) -> ActionSuccess:
+        calls.append("executed")
+        return ActionSuccess(message="Indexes rebuilt")
+
+    action = ActionDefinition(
+        action_id="refresh",
+        label="Refresh indexes",
+        scope=ActionScope.PAGE,
+        page_id="report",
+        executor=DomainActionExecutor(refresh_handler),
+    )
+    admin = _build_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.refresh.execute"})),
+    )
+    admin.builder.add_page(PageDefinition(page_id="report", path="/reports", label="Report"))
+    admin.builder.add_action(action)
+    app, client = await _client_for(admin)
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        csrf, submission = await _open_action_form(client, csrf, "/reports/_actions/refresh")
+        executed = await client.post(
+            "/reports/_actions/refresh",
+            data={"csrf_token": csrf, "submission_token": submission},
+            follow_redirects=False,
+        )
+
+    assert executed.status_code == 303
+    assert executed.headers["location"] == "/reports"
+    assert calls == ["executed"]
+
+
+async def test_actions_without_authentication_fail_closed(session_factory) -> None:
+    action = ActionDefinition(
+        action_id="resync",
+        label="Resync widgets",
+        scope=ActionScope.RESOURCE,
+        resource_id="widgets",
+        executor=DomainActionExecutor(lambda _context: ActionSuccess()),
+    )
+    admin = Admin(
+        admin_id="operations",
+        title="Operations",
+        debug=False,
+        secret_key=SecretValue("x" * 32),
+    )
+    from rakit.sqlalchemy import SQLAlchemyPlugin
+
+    admin.install(SQLAlchemyPlugin(session_factory=session_factory))
+    admin.register(WidgetAdmin)
+    admin.builder.add_action(action)
+
+    with pytest.raises(RakitError) as caught:
+        admin.asgi()
+    assert caught.value.code == ErrorCode.CONFIG_INVALID
+    assert "authentication" in caught.value.message
+
+
+async def test_actions_requiring_concurrency_fail_closed(session_factory) -> None:
+    action = ActionDefinition(
+        action_id="approve",
+        label="Approve widget",
+        scope=ActionScope.RECORD,
+        resource_id="widgets",
+        requires_concurrency=True,
+        executor=DomainActionExecutor(lambda _context: ActionSuccess()),
+    )
+    admin = _build_action_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.approve.execute"})),
+        action,
+    )
+
+    with pytest.raises(RakitError) as caught:
+        admin.asgi()
+    assert caught.value.code == ErrorCode.CONFIG_INVALID
+    assert "concurrency" in caught.value.message
