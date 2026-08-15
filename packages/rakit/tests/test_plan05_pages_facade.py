@@ -2,6 +2,7 @@
 
 from rakit import (
     DomainPageHandler,
+    PageContext,
     PageDefinition,
     PageRedirect,
     PageRejected,
@@ -11,6 +12,7 @@ from rakit import (
 
 
 def test_page_types_are_available_from_the_public_facade() -> None:
+    assert PageContext.__name__ == "PageContext"
     assert PageDefinition.__name__ == "PageDefinition"
     assert PageResult.__name__ == "PageResult"
     assert PageRedirect.__name__ == "PageRedirect"
