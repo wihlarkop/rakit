@@ -22,6 +22,8 @@ from rakit_core.operations import (
 from rakit_core.permissions import PermissionRequirement
 from rakit_core.transactions import TransactionPolicy
 
+_MANAGED_EXECUTOR_CAPABILITIES = OperationExecutorCapabilities(participates_in_uow=True)
+
 
 @dataclass
 class _FakeUnitOfWork:
@@ -31,7 +33,7 @@ class _FakeUnitOfWork:
     rollbacks: int = 0
     completed: bool = False
 
-    async def __aenter__(self) -> "_FakeUnitOfWork":
+    async def __aenter__(self) -> _FakeUnitOfWork:
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> bool:
@@ -98,9 +100,7 @@ def _plan(
     execute,
     *,
     policy: TransactionPolicy = TransactionPolicy.AUTO,
-    capabilities: OperationExecutorCapabilities = OperationExecutorCapabilities(
-        participates_in_uow=True
-    ),
+    capabilities: OperationExecutorCapabilities | None = None,
     success=lambda result: result == "ok",
     concurrency: bool = False,
 ) -> OperationPlan[None, str]:
@@ -113,16 +113,21 @@ def _plan(
         mutating=policy is not TransactionPolicy.READ_ONLY,
         transaction_policy=policy,
         concurrency_required=concurrency,
-        executor_capabilities=capabilities,
+        executor_capabilities=(
+            capabilities if capabilities is not None else _MANAGED_EXECUTOR_CAPABILITIES
+        ),
         result_is_success=success,
     )
 
 
 def test_executor_capability_contract_is_fail_closed() -> None:
     assert resolve_operation_executor_capabilities(object()) == OperationExecutorCapabilities()
-    assert resolve_operation_executor_capabilities(
-        DomainActionExecutor(lambda _context: ActionSuccess())
-    ) == OperationExecutorCapabilities()
+    assert (
+        resolve_operation_executor_capabilities(
+            DomainActionExecutor(lambda _context: ActionSuccess())
+        )
+        == OperationExecutorCapabilities()
+    )
     assert resolve_operation_executor_capabilities(
         PreparedMutationExecutor(lambda _context: {}, lambda _plan, _context: ActionSuccess())
     ) == OperationExecutorCapabilities(participates_in_uow=True)

@@ -9,7 +9,7 @@ from typing import Self
 import anyio
 from rakit_core.events import EventPublisher
 from rakit_core.operations import OperationContext
-from rakit_core.transactions import OperationUnitOfWorkFactory, TransactionPolicy
+from rakit_core.transactions import TransactionPolicy
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 _active_uow: ContextVar["SQLAlchemyUnitOfWork | None"] = ContextVar(

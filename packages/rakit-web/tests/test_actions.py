@@ -285,7 +285,13 @@ class RecordingService:
                 message="Resource was not found",
                 status_code=404,
             )
-        self.concurrency.verify(concurrency_token or "", "orders", identity, record.version) if concurrency_token is not None else None
+        if concurrency_token is not None:
+            self.concurrency.verify(
+                concurrency_token or "",
+                "orders",
+                identity,
+                record.version,
+            )
         if "status" in submitted:
             record.status = str(submitted["status"])
         record.version += 1
@@ -915,7 +921,7 @@ async def test_idempotent_replay_and_payload_mismatch(
     app = harness.build()
     parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
     async with _client(app) as client:
-        tokens = await _open_action(client, f"/orders/{parent}/_actions/approve")
+        await _open_action(client, f"/orders/{parent}/_actions/approve")
         shared = "same-submission-token"
         payload = [
             ("csrf_token", "csrf"),

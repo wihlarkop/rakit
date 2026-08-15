@@ -2313,14 +2313,18 @@ async def test_admin_action_executes_through_operation_plan(session_factory, mon
     import rakit_web.action_routes as action_routes_module
 
     operation_contexts: list[OperationContext] = []
-    original_execute = action_routes_module.execute_operation_plan
+    original_run = action_routes_module.run_operation_plan
 
-    async def spy_execute(plan, context):
+    async def spy_run(plan, context, *, unit_of_work_factory):
         operation_contexts.append(context)
         assert current_operation_context() is context
-        return await original_execute(plan, context)
+        return await original_run(
+            plan,
+            context,
+            unit_of_work_factory=unit_of_work_factory,
+        )
 
-    monkeypatch.setattr(action_routes_module, "execute_operation_plan", spy_execute)
+    monkeypatch.setattr(action_routes_module, "run_operation_plan", spy_run)
     action = ActionDefinition(
         action_id="resync",
         label="Resync widgets",
@@ -2441,13 +2445,17 @@ async def test_page_action_executes_through_operation_plan(session_factory, monk
     import rakit_web.action_routes as action_routes_module
 
     operation_contexts: list[OperationContext] = []
-    original_execute = action_routes_module.execute_operation_plan
+    original_run = action_routes_module.run_operation_plan
 
-    async def spy_execute(plan, context):
+    async def spy_run(plan, context, *, unit_of_work_factory):
         operation_contexts.append(context)
-        return await original_execute(plan, context)
+        return await original_run(
+            plan,
+            context,
+            unit_of_work_factory=unit_of_work_factory,
+        )
 
-    monkeypatch.setattr(action_routes_module, "execute_operation_plan", spy_execute)
+    monkeypatch.setattr(action_routes_module, "run_operation_plan", spy_run)
     action = ActionDefinition(
         action_id="refresh",
         label="Refresh indexes",
@@ -2484,13 +2492,17 @@ async def test_stale_concurrent_post_never_reaches_operation_plan(
     import rakit_web.action_routes as action_routes_module
 
     plan_calls: list[object] = []
-    original_execute = action_routes_module.execute_operation_plan
+    original_run = action_routes_module.run_operation_plan
 
-    async def spy_execute(plan, context):
+    async def spy_run(plan, context, *, unit_of_work_factory):
         plan_calls.append(plan)
-        return await original_execute(plan, context)
+        return await original_run(
+            plan,
+            context,
+            unit_of_work_factory=unit_of_work_factory,
+        )
 
-    monkeypatch.setattr(action_routes_module, "execute_operation_plan", spy_execute)
+    monkeypatch.setattr(action_routes_module, "run_operation_plan", spy_run)
     action, calls = _concurrent_approve_action()
     admin = await _concurrent_admin(
         session_factory,

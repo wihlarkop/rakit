@@ -213,7 +213,9 @@ async def test_events_dispatch_only_after_commit_and_see_no_completed_uow(sessio
 
 
 @pytest.mark.anyio
-async def test_rollback_discards_events_and_manual_commit_detaches_generic_uow(session_factory) -> None:
+async def test_rollback_discards_events_and_manual_commit_detaches_generic_uow(
+    session_factory,
+) -> None:
     bus = EventBus()
     publisher = EventPublisher(bus)
     rollback_context = _context(events=publisher)

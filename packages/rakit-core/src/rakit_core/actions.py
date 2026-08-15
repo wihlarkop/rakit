@@ -28,9 +28,9 @@ from rakit_core.mutations import OperationAuthorization
 from rakit_core.operations import (
     OperationContext,
     OperationExecutor,
+    OperationExecutorCapabilities,
     OperationKind,
     OperationPlan,
-    OperationExecutorCapabilities,
     resolve_operation_executor_capabilities,
     validate_operation_transaction_contract,
 )
@@ -405,7 +405,7 @@ def _action_result_is_success(result: object) -> bool:
     the root UoW successful -- an unsupported result must not be durably
     committed before the web layer rejects its translation.
     """
-    return isinstance(result, (ActionSuccess, ActionRedirect, ActionRefresh, ActionRendered))
+    return isinstance(result, ActionSuccess | ActionRedirect | ActionRefresh | ActionRendered)
 
 
 def build_action_operation_plan(

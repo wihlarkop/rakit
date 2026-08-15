@@ -89,19 +89,9 @@ _C2A_SUPERSEDED_PRECHECK_TESTS = {
     "test_actions.py::test_stale_concurrency_is_rejected_before_execution",
 }
 
-# C1's direct execute_operation_plan spy pinned the pre-C2A web seam. C2A
-# deliberately inserts run_operation_plan around that execution boundary so
-# transaction-policy/UoW lifecycle belongs to core. The replacement C2A core
-# + real-Admin tests prove the new lifecycle; keep the old seam-spies strict
-# xfailed until final Task-4 cleanup removes or retargets them.
-_C2A_SUPERSEDED_EXECUTION_SEAM_TESTS = {
-    "test_auth_enforcement.py::test_admin_action_executes_through_operation_plan",
-    "test_auth_enforcement.py::test_page_action_executes_through_operation_plan",
-}
-
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    superseded = _C2A_SUPERSEDED_PRECHECK_TESTS | _C2A_SUPERSEDED_EXECUTION_SEAM_TESTS
+    superseded = _C2A_SUPERSEDED_PRECHECK_TESTS
     for item in items:
         # anyio appends parametrization such as ``[asyncio]`` to the node id;
         # normalize that suffix before matching our stable file::test names.
@@ -110,8 +100,8 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             item.add_marker(
                 pytest.mark.xfail(
                     reason=(
-                        "C2A supersedes the precheck-only/direct-execution action seam; "
-                        "C2B/final Task-4 cleanup owns the replacement atomic path"
+                        "C2A supersedes the precheck-only action concurrency seam; "
+                        "C2B owns the replacement atomic managed-mutation path"
                     ),
                     strict=True,
                 )

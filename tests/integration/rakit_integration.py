@@ -42,6 +42,7 @@ from rakit_core.mutations import (
     OperationAuthorization,
     OperationAuthorizationSet,
 )
+from rakit_core.operations import OperationExecutorCapabilities
 from rakit_core.permissions import PermissionRequirement
 from rakit_core.relationship_mutations import (
     CreateRelated,
@@ -58,9 +59,11 @@ from rakit_core.relationships import (
     RelationshipOrderingDefinition,
 )
 from rakit_core.resources import ResourceService
+from rakit_core.transactions import TransactionPolicy
 from rakit_sqlalchemy.datasource import SQLAlchemyDataSource
 from rakit_sqlalchemy.mutations import SQLAlchemyMutationService
 from rakit_sqlalchemy.relationship_mutations import SQLAlchemyRelationshipMutationService
+from rakit_sqlalchemy.uow import SQLAlchemyOperationUnitOfWorkFactory
 from rakit_web.action_routes import ActionBinding, build_action_routes
 from rakit_web.assets import static_files
 from rakit_web.form_routes import WriteResourceBinding, build_write_routes
@@ -223,6 +226,15 @@ _REQ_LINE_DELETE = PermissionRequirement.all_of("integration.line_items.delete")
 
 _ADMIN_ID = "integration"
 _PRINCIPAL_ID = "tester"
+
+
+class _IntegrationAtomicPreparedMutationExecutor(PreparedMutationExecutor):
+    # Test-only bridge. Production PreparedMutationExecutor deliberately keeps
+    # atomic_concurrency=False until C2B introduces the sanctioned public path.
+    capabilities = OperationExecutorCapabilities(
+        participates_in_uow=True,
+        atomic_concurrency=True,
+    )
 
 
 class RenderedFormParser(HTMLParser):
@@ -780,7 +792,12 @@ def build_app(factory: async_sessionmaker[AsyncSession]) -> IntegrationApp:
                         permission=_REQ_ORDERS_UPDATE,
                         description="Approve this order for fulfilment.",
                         availability=approve_availability,
-                        executor=PreparedMutationExecutor(approve_prepare, approve_commit),
+                        executor=_IntegrationAtomicPreparedMutationExecutor(
+                            approve_prepare,
+                            approve_commit,
+                        ),
+                        mutating=True,
+                        transaction_policy=TransactionPolicy.AUTO,
                         requires_concurrency=True,
                     ),
                     permission=_REQ_ORDERS_UPDATE,
@@ -800,6 +817,7 @@ def build_app(factory: async_sessionmaker[AsyncSession]) -> IntegrationApp:
         token_service=token_service,
         idempotency_store=store,
         deadline_seconds=60,
+        unit_of_work_factory=lambda: SQLAlchemyOperationUnitOfWorkFactory(factory),
     )
     app = _PrincipalMiddleware(
         Starlette(

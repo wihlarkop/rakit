@@ -36,7 +36,11 @@ class _AuthBackend:
         return Principal(subject_id="1", authenticated=True, permissions=self.permissions)
 
     async def authenticate(self, identifier: str, password: str) -> Principal | None:
-        return self._principal() if (identifier, password) == ("admin@example.com", "password") else None
+        return (
+            self._principal()
+            if (identifier, password) == ("admin@example.com", "password")
+            else None
+        )
 
     async def resolve_principal(self, subject_id: str) -> Principal | None:
         return self._principal() if subject_id == "1" else None
@@ -80,7 +84,9 @@ class _IdempotencyStore:
     async def begin(self, token_hash: str, *, fingerprint: str) -> IdempotencyReservation:
         return IdempotencyReservation(1, IdempotencyStatus.IN_PROGRESS)
 
-    async def complete(self, reservation: IdempotencyReservation, receipt: OperationReceipt) -> None:
+    async def complete(
+        self, reservation: IdempotencyReservation, receipt: OperationReceipt
+    ) -> None:
         return None
 
     async def release(self, reservation: IdempotencyReservation) -> None:

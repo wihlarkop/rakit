@@ -7,6 +7,8 @@ executor capability contract: mutating AUTO/MANUAL requires UoW
 participation, and ``requires_concurrency`` means strong concurrency.
 """
 
+from typing import Any
+
 import pytest
 from rakit_core.actions import (
     ActionContext,
@@ -36,9 +38,7 @@ from rakit_core.transactions import TransactionPolicy
 
 
 class _AtomicExecutor(DomainActionExecutor):
-    capabilities = OperationExecutorCapabilities(
-        participates_in_uow=True, atomic_concurrency=True
-    )
+    capabilities = OperationExecutorCapabilities(participates_in_uow=True, atomic_concurrency=True)
 
 
 class _UowExecutor(DomainActionExecutor):
@@ -377,7 +377,7 @@ def test_mutating_auto_requires_uow_participation() -> None:
 
 
 def test_concurrency_requires_strong_semantics() -> None:
-    base = dict(
+    base: dict[str, Any] = dict(
         action_id="approve",
         label="Approve",
         scope=ActionScope.RECORD,

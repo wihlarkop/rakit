@@ -238,22 +238,24 @@ def validate_operation_transaction_contract[TInput, TResult](
     if not plan.mutating:
         return
 
-    if plan.transaction_policy in (TransactionPolicy.AUTO, TransactionPolicy.MANUAL):
-        if not plan.executor_capabilities.participates_in_uow:
-            raise RakitError(
-                code=ErrorCode.CONFIG_INVALID,
-                message=(
-                    f"Mutating {plan.transaction_policy.value} operation "
-                    f'"{plan.operation_id}" requires an executor that participates '
-                    "in the operation unit of work."
-                ),
-                status_code=500,
-                details={
-                    "operation_id": plan.operation_id,
-                    "transaction_policy": str(plan.transaction_policy),
-                    "reason": "executor_not_uow_managed",
-                },
-            )
+    if (
+        plan.transaction_policy in (TransactionPolicy.AUTO, TransactionPolicy.MANUAL)
+        and not plan.executor_capabilities.participates_in_uow
+    ):
+        raise RakitError(
+            code=ErrorCode.CONFIG_INVALID,
+            message=(
+                f"Mutating {plan.transaction_policy.value} operation "
+                f'"{plan.operation_id}" requires an executor that participates '
+                "in the operation unit of work."
+            ),
+            status_code=500,
+            details={
+                "operation_id": plan.operation_id,
+                "transaction_policy": str(plan.transaction_policy),
+                "reason": "executor_not_uow_managed",
+            },
+        )
 
 
 async def run_operation_plan[TInput, TResult](
@@ -281,7 +283,7 @@ async def run_operation_plan[TInput, TResult](
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message=(
-                    f'Mutating {plan.transaction_policy.value} operation '
+                    f"Mutating {plan.transaction_policy.value} operation "
                     f'"{plan.operation_id}" requires a registered operation '
                     "unit-of-work provider."
                 ),
@@ -298,9 +300,8 @@ async def run_operation_plan[TInput, TResult](
             except BaseException:
                 raise
             else:
-                if (
-                    plan.transaction_policy is TransactionPolicy.AUTO
-                    and plan.result_is_success(result)
+                if plan.transaction_policy is TransactionPolicy.AUTO and plan.result_is_success(
+                    result
                 ):
                     await unit_of_work.mark_success()
                 return result
