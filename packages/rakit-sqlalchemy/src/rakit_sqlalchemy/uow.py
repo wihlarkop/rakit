@@ -190,21 +190,32 @@ class SQLAlchemyUnitOfWork:
         Transaction bookkeeping deliberately remains in the active root UoW,
         including for explicit MANUAL commits.  Event handlers are post-commit
         application work, though, and may start another SQLAlchemy operation.
-        Temporarily clearing only this ContextVar lets that work own a fresh
+        Temporarily clearing both the SQLAlchemy ContextVar and the generic
+        ``OperationContext.unit_of_work`` reference lets that work own a fresh
         UoW/session while preserving the surrounding root UoW's teardown and
         public MANUAL timing.
         """
 
         if self.event_publisher is None:
             return
-        if _active_uow.get() is not self:
-            await self.event_publisher.after_commit()
-            return
-        token = _active_uow.set(None)
+        operation_context = self.operation_context
+        detach_operation_uow = (
+            operation_context is not None and operation_context.unit_of_work is self
+        )
+        if detach_operation_uow:
+            object.__setattr__(operation_context, "unit_of_work", None)
         try:
-            await self.event_publisher.after_commit()
+            if _active_uow.get() is not self:
+                await self.event_publisher.after_commit()
+                return
+            token = _active_uow.set(None)
+            try:
+                await self.event_publisher.after_commit()
+            finally:
+                _active_uow.reset(token)
         finally:
-            _active_uow.reset(token)
+            if detach_operation_uow:
+                object.__setattr__(operation_context, "unit_of_work", self)
 
     async def _finish_commit_callbacks(self) -> None:
         """Finish durable bookkeeping, then dispatch post-commit events safely."""
