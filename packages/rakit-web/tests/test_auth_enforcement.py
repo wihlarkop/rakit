@@ -24,6 +24,7 @@ from rakit_core.actions import (
     DomainActionExecutor,
 )
 from rakit_core.auth import Principal, SessionRecord
+from rakit_core.bulk import BulkPolicy
 from rakit_core.concurrency import (
     AttributeVersionProvider,
     ConcurrencyVersionProvider,
@@ -1411,7 +1412,7 @@ async def test_admin_served_actions_keep_canonical_paths_only(
         assert legacy.status_code in (403, 404)
 
 
-async def test_bulk_action_stays_route_less_through_real_admin(
+async def test_bulk_action_route_is_permission_gated_through_real_admin(
     session_factory,
 ) -> None:
     action = ActionDefinition(
@@ -1420,6 +1421,7 @@ async def test_bulk_action_stays_route_less_through_real_admin(
         scope=ActionScope.BULK,
         resource_id="widgets",
         executor=DomainActionExecutor(lambda _context: ActionSuccess()),
+        bulk_policy=BulkPolicy(require_concurrency_snapshot=False),
     )
     admin = _build_action_admin(
         session_factory,
@@ -1428,11 +1430,19 @@ async def test_bulk_action_stays_route_less_through_real_admin(
         ),
         action,
     )
+    compiled = admin.compile()
+    assert any(
+        route.route_name == "resource:widgets:action:bulk_archive"
+        and route.path == "/widgets/_actions/bulk_archive"
+        and route.methods == ("GET", "POST")
+        for route in compiled.routes
+    )
+
     app, client = await _client_for(admin)
     async with _LifespanDriver(app), client:
         await _login(client)
         response = await client.get("/widgets/_actions/bulk_archive")
-        assert response.status_code == 404
+        assert response.status_code == 403
 
 
 async def test_page_action_served_through_admin(session_factory) -> None:
@@ -1931,26 +1941,28 @@ async def test_admin_without_actions_needs_no_operation_store(session_factory) -
         assert (await client.get("/widgets", follow_redirects=False)).status_code == 200
 
 
-async def test_bulk_only_admin_needs_no_operation_store(session_factory) -> None:
+async def test_bulk_only_admin_requires_operation_store(session_factory) -> None:
     action = ActionDefinition(
         action_id="bulk_archive",
         label="Bulk archive",
         scope=ActionScope.BULK,
         resource_id="widgets",
         executor=DomainActionExecutor(lambda _context: ActionSuccess()),
+        bulk_policy=BulkPolicy(require_concurrency_snapshot=False),
     )
     admin = _build_action_admin(
         session_factory,
         _ConfigurableAuthBackend(
-            permissions=frozenset({"operations.access", "operations.resources.widgets.read"})
+            permissions=frozenset({"operations.actions.bulk_archive.execute"})
         ),
         action,
         idempotency_store=None,
     )
-    app, client = await _client_for(admin)
-    async with _LifespanDriver(app), client:
-        await _login(client)
-        assert (await client.get("/widgets/_actions/bulk_archive")).status_code == 404
+
+    with pytest.raises(RakitError) as caught:
+        admin.asgi()
+    assert caught.value.code == ErrorCode.CONFIG_INVALID
+    assert "idempotency" in caught.value.message
 
 
 class _AtomicConcurrencyTestExecutor(DomainActionExecutor):

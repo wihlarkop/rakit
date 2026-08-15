@@ -178,8 +178,7 @@ class _Harness:
 
     def encoded(self, *record_ids: int) -> list[str]:
         return [
-            self.codec.encode(RecordIdentity(values={"id": record_id}))
-            for record_id in record_ids
+            self.codec.encode(RecordIdentity(values={"id": record_id})) for record_id in record_ids
         ]
 
     def app(self) -> Starlette:
@@ -190,9 +189,7 @@ class _Harness:
             self.action.bulk_policy is not None
             and self.action.bulk_policy.require_concurrency_snapshot
         )
-        record_version = (
-            (lambda record: cast(_Record, record).version) if needs_snapshot else None
-        )
+        record_version = (lambda record: cast(_Record, record).version) if needs_snapshot else None
         binding = BulkActionBinding(
             routes=((self.route, self.compiled),),
             templates=build_templates(()),
@@ -204,9 +201,7 @@ class _Harness:
             load_record=self.load_record,
             token_service=self.token_service,
             idempotency_store=self.idempotency,
-            concurrency=(
-                ConcurrencyTokenService(self.token_service) if needs_snapshot else None
-            ),
+            concurrency=(ConcurrencyTokenService(self.token_service) if needs_snapshot else None),
             concurrency_resource_id="orders" if needs_snapshot else None,
             record_version=record_version,
         )

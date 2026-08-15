@@ -488,9 +488,7 @@ async def _run_plan[TInput, TResult](
     authorization: OperationAuthorization,
 ) -> TResult:
     deadline = (
-        Deadline.after(binding.deadline_seconds)
-        if binding.deadline_seconds is not None
-        else None
+        Deadline.after(binding.deadline_seconds) if binding.deadline_seconds is not None else None
     )
     request_state = request.scope.get("state", {})
     request_state = request_state if isinstance(request_state, Mapping) else {}
@@ -574,11 +572,7 @@ def _validated_location(location: str | None) -> str | None:
 
 
 def _completed_response(request: Request, receipt: OperationReceipt | None) -> Response:
-    if (
-        receipt is None
-        or receipt.result_kind != "bulk"
-        or not isinstance(receipt.payload, Mapping)
-    ):
+    if receipt is None or receipt.result_kind != "bulk" or not isinstance(receipt.payload, Mapping):
         return _rejected_response(
             request,
             "Bulk action already completed, but its response cannot be replayed",
@@ -611,10 +605,7 @@ def _outcome_response(
     outcome: BulkActionOutcome,
     fallback: str,
 ) -> Response:
-    message = (
-        f"Bulk action completed: {outcome.succeeded_count}/"
-        f"{outcome.selected_count} succeeded"
-    )
+    message = f"Bulk action completed: {outcome.succeeded_count}/{outcome.selected_count} succeeded"
     if outcome.execution is BulkExecutionPolicy.ATOMIC and not outcome.all_succeeded:
         first = next(
             (item for item in outcome.items if item.status is BulkItemStatus.REJECTED),
@@ -622,9 +613,7 @@ def _outcome_response(
         )
         return _rejected_response(
             request,
-            first.message
-            if first is not None and first.message
-            else "Bulk action was rejected",
+            first.message if first is not None and first.message else "Bulk action was rejected",
             409,
         )
     if outcome.succeeded_count == 0:
@@ -681,9 +670,7 @@ async def _render_bulk_form(
     issues: tuple[FormIssue, ...] = (),
     status_code: int = 200,
 ) -> Response:
-    encoded_selection = tuple(
-        binding.codec.encode(identity) for identity in selection.identities
-    )
+    encoded_selection = tuple(binding.codec.encode(identity) for identity in selection.identities)
     concurrency_tokens = _concurrency_tokens(binding, action, selection)
     confirmation_token = (
         _issue_confirmation(binding, request, action, authorization, selection)

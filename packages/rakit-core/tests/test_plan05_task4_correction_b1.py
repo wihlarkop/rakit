@@ -114,9 +114,7 @@ def test_resource_record_page_and_bulk_action_paths_are_canonical() -> None:
     assert by_name["resource:orders:action:export"].path == "/orders/_actions/export"
     assert by_name["resource:orders:action:approve"].path == "/orders/{identity}/_actions/approve"
     assert by_name["page:report:action:refresh"].path == "/reports/_actions/refresh"
-    assert by_name["resource:orders:action:bulk_archive"].path == (
-        "/orders/_actions/bulk_archive"
-    )
+    assert by_name["resource:orders:action:bulk_archive"].path == ("/orders/_actions/bulk_archive")
 
 
 def test_every_executable_action_route_declares_get_and_post() -> None:
@@ -274,7 +272,5 @@ def test_normal_non_root_action_paths_are_byte_for_byte_unchanged() -> None:
     by_name = {route.route_name: route for route in compiled.routes}
     assert by_name["resource:orders:action:export"].path == "/orders/_actions/export"
     assert by_name["resource:orders:action:approve"].path == "/orders/{identity}/_actions/approve"
-    assert by_name["resource:orders:action:bulk_archive"].path == (
-        "/orders/_actions/bulk_archive"
-    )
+    assert by_name["resource:orders:action:bulk_archive"].path == ("/orders/_actions/bulk_archive")
     assert by_name["page:report:action:refresh"].path == "/reports/_actions/refresh"

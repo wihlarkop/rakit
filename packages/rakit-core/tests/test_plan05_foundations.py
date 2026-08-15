@@ -311,7 +311,9 @@ def test_compiles_plan05_definitions_routes_and_permission_metadata() -> None:
         "operations.resources.orders.update"
     )
     assert compiled_relationship.route_path == "/orders/{identity}/_relationships/customer"
-    bulk_route = next(route for route in compiled.routes if route.path == "/orders/_actions/archive")
+    bulk_route = next(
+        route for route in compiled.routes if route.path == "/orders/_actions/archive"
+    )
     assert compiled.compiled_actions[0].permission == PermissionRequirement.all_of(
         "operations.actions.archive.execute"
     )
