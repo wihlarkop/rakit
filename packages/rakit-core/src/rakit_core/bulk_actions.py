@@ -35,10 +35,31 @@ def _require_bulk_context(context: ActionContext) -> None:
         raise ValueError("Bulk operation plans require a BULK action")
     if context.identity is None or context.record is None:
         raise ValueError("Bulk target contexts require a scoped identity and record")
-    if context.authorization is None:
+    authorization = context.authorization
+    if authorization is None:
         raise ValueError("Bulk target contexts require authorization")
-    if context.authorization.target_identity != context.identity:
+    if authorization.target_identity != context.identity:
         raise ValueError("Bulk target authorization must bind the selected identity")
+    if authorization.resource_id != context.definition.resource_id:
+        raise ValueError("Bulk target authorization must bind the owning resource")
+    if authorization.operation != f"action:{context.definition.action_id}":
+        raise ValueError("Bulk target authorization must bind the action operation")
+
+
+def _require_root_capability(
+    context: ActionContext,
+    root: OperationAuthorization,
+) -> None:
+    authorization = context.authorization
+    assert authorization is not None
+    if (
+        authorization.admin_id != root.admin_id
+        or authorization.resource_id != root.resource_id
+        or authorization.operation != root.operation
+        or authorization.principal_id != root.principal_id
+        or authorization.requirement != root.requirement
+    ):
+        raise ValueError("Bulk target authorization must match the root action capability")
 
 
 def _item_outcome(context: ActionContext, result: ActionResult[Any]) -> BulkItemOutcome:
@@ -139,6 +160,12 @@ def build_atomic_bulk_operation_plan(
         raise ValueError("Atomic bulk target contexts must share one action definition")
     if authorization.target_identity is not None:
         raise ValueError("Atomic bulk root authorization cannot bind one target identity")
+    if authorization.resource_id != action.resource_id:
+        raise ValueError("Atomic bulk root authorization must bind the owning resource")
+    if authorization.operation != f"action:{action.action_id}":
+        raise ValueError("Atomic bulk root authorization must bind the action operation")
+    for context in contexts:
+        _require_root_capability(context, authorization)
     if action.mutating and action.transaction_policy is not TransactionPolicy.AUTO:
         raise ValueError("Mutating ATOMIC bulk actions require TransactionPolicy.AUTO")
     assert action.executor is not None
