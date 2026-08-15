@@ -26,10 +26,12 @@ from rakit_core.bulk_actions import build_atomic_bulk_operation_plan
 from rakit_core.compiler import ApplicationBuilder, compile_application
 from rakit_core.datasource import DataSourceCapabilities
 from rakit_core.definitions import ResourceDefinition, ResourceFieldPolicy
+from rakit_core.errors import RakitError
 from rakit_core.events import EventPublisher
 from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import OperationAuthorization
 from rakit_core.operations import CancellationContext, OperationContext, run_operation_plan
+from rakit_core.permissions import PermissionRequirement
 from rakit_core.query import PageResult, ResourceQuery
 from rakit_core.transactions import OperationUnitOfWorkFactory, TransactionPolicy
 
@@ -107,7 +109,7 @@ def _resource() -> ResourceDefinition:
     )
 
 
-def _permission():
+def _permission() -> PermissionRequirement:
     return action_permission_requirement("archive", admin_id="ops")
 
 
@@ -189,10 +191,10 @@ def test_compiler_rejects_mutating_atomic_bulk_without_auto_transaction() -> Non
     builder.add_resource(_resource(), _DataSource())
     builder.add_action(action)
 
-    with pytest.raises(Exception) as caught:
+    with pytest.raises(RakitError) as caught:
         compile_application(builder)
 
-    assert getattr(caught.value, "details", {}).get("reason") == "atomic_bulk_requires_auto"
+    assert caught.value.details["reason"] == "atomic_bulk_requires_auto"
 
 
 def test_bulk_selection_requires_nonempty_unique_targets() -> None:
