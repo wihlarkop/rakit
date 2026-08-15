@@ -1,6 +1,5 @@
 """Focused regression coverage for explicit advanced action web responses."""
 
-from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
 import httpx
