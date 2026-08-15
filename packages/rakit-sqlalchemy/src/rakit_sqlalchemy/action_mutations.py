@@ -1,12 +1,12 @@
 """Sanctioned SQLAlchemy mutation executors for Task 4 Correction C2B.
 
 The ordinary :class:`~rakit_core.actions.PreparedMutationExecutor` can only
-promise participation in a Rakit-owned unit of work.  This module contains the
+promise participation in a Rakit-owned unit of work. This module contains the
 narrow adapter-owned path that can additionally prove atomic optimistic
 concurrency: a RECORD action delegates to ``SQLAlchemyMutationService``'s
 existing ``update_in_uow`` primitive using the active root operation UoW.
 
-The action permission remains the authoritative permission.  The executor
+The action permission remains the authoritative permission. The executor
 creates an exact nested ``update`` capability carrying that same requirement;
 it never asks for, invents, or masquerades as the resource's generic update
 permission.
@@ -21,6 +21,7 @@ from rakit_core.actions import (
     ActionSuccess,
     PreparedMutationExecutor,
 )
+from rakit_core.concurrency import AttributeVersionProvider
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.mutations import MutationResult, OperationAuthorization, OperationAuthorizationSet
 from rakit_core.operations import OperationExecutorCapabilities, current_operation_context
@@ -33,11 +34,16 @@ from .uow import SQLAlchemyUnitOfWork
 class SQLAlchemyActionUpdateExecutor(PreparedMutationExecutor):
     """Execute one prepared RECORD update inside the active action root UoW.
 
-    This is the sanctioned C2B path for action-driven SQLAlchemy updates.  It
+    This is the sanctioned C2B path for action-driven SQLAlchemy updates. It
     deliberately advertises ``atomic_concurrency=True`` only because it calls
     ``SQLAlchemyMutationService.update_in_uow`` with the exact active root UoW;
     that primitive performs the concurrency predicate at the SQL UPDATE write
     boundary and defers events/lifecycle observers to the root transaction.
+
+    C2B supports only an atomically advanceable ``AttributeVersionProvider``.
+    Snapshot providers intentionally remain unsupported here: their predicate
+    can detect stale reads, but because they do not advance a dedicated version
+    two concurrent actions that mutate other fields could both match it.
     """
 
     capabilities = OperationExecutorCapabilities(
@@ -52,9 +58,15 @@ class SQLAlchemyActionUpdateExecutor(PreparedMutationExecutor):
         *,
         message: str | None = None,
     ) -> None:
-        if mutation_service._concurrency_provider is None or mutation_service._concurrency is None:
+        provider = mutation_service._concurrency_provider
+        if (
+            not isinstance(provider, AttributeVersionProvider)
+            or mutation_service._concurrency is None
+            or not mutation_service._attribute_version_is_safe(provider.field)
+        ):
             raise ValueError(
-                "SQLAlchemy action updates require mutation-service concurrency configuration"
+                "SQLAlchemy action updates require an atomically advanceable "
+                "attribute concurrency provider"
             )
         self._mutation_service = mutation_service
         self._session_factory = mutation_service._session_factory
