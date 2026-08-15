@@ -55,9 +55,11 @@ from .action_routes import (
 )
 from .assets import static_files
 from .auth_routes import _verify_csrf, build_auth_routes
+from .bulk_admin import build_admin_bulk_action_routes
 from .form_routes import WriteResourceBinding, build_write_routes
 from .lifecycle import LifecycleManager
 from .logging import bind_request_context, configure_logging, reset_request_context
+from .public_composition import resource_actions, resource_relationships
 from .relationship_routes import build_relationship_routes
 from .resource_routes import ResourceBinding, build_resource_routes, build_templates
 from .security.authentication import (
@@ -313,6 +315,11 @@ class Admin:
                 )
 
         field_policy = _normalize_field_policy(admin_cls)
+        relationships = resource_relationships(admin_cls)
+        actions = resource_actions(
+            admin_cls,
+            existing_action_ids={str(action.action_id) for action in self._builder.actions},
+        )
 
         if issubclass(admin_cls, ModelAdmin):
             claims = [
@@ -360,8 +367,11 @@ class Admin:
             label=admin_cls.label,
             singular_label=admin_cls.singular_label,
             field_policy=field_policy,
+            relationships=relationships,
         )
         self._builder.add_resource(definition, data_source)
+        for action in actions:
+            self._builder.add_action(action)
         self._builder.add_route(
             RouteDefinition(
                 route_name=f"resource:{definition.resource_id}:list",
@@ -1114,7 +1124,7 @@ class Admin:
                     )
                     write_routes.extend(relationship_routes)
 
-            action_routes: list[Route] = []
+            action_routes = []
             if self.compiled is not None and self.compiled.action_routes:
                 for action_binding in self._action_bindings(
                     templates=templates,
@@ -1127,6 +1137,26 @@ class Admin:
                     unit_of_work_factory=action_uow_factory,
                 ):
                     action_routes.extend(build_action_routes(action_binding))
+                assert self._operation_idempotency_store is not None
+                action_routes.extend(
+                    build_admin_bulk_action_routes(
+                        compiled=self.compiled,
+                        resource_services=self._resource_services,
+                        concurrency_providers=self._concurrency_providers,
+                        templates=templates,
+                        verify_csrf=verify_write_csrf,
+                        verify_submission_token=verify_submission_token,
+                        issue_submission_token=issue_submission_token,
+                        token_service=write_token_service,
+                        idempotency_store=self._operation_idempotency_store,
+                        admin_id=self.config.admin_id,
+                        superuser_bypass=self._superuser_bypass,
+                        deadline_seconds=self._mutation_deadline_seconds,
+                        operation_scope=operation_scope,
+                        unit_of_work_factory=action_uow_factory,
+                        label=self.config.title,
+                    )
+                )
 
         app = Starlette(
             debug=self.config.debug,
