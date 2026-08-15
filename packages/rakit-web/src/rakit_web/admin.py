@@ -705,6 +705,7 @@ class Admin:
     def asgi(self) -> ASGIApp:
         self.compile()
         assert self.compiled is not None
+        compiled_app = self.compiled
 
         async def home(_request: Request) -> PlainTextResponse:
             return PlainTextResponse(self.config.title)
@@ -980,7 +981,7 @@ class Admin:
                 capabilities: list[OperationAuthorization] = []
                 relationship_by_id = {
                     (entry.source_resource_id, str(entry.definition.relationship_id)): entry
-                    for entry in self.compiled.relationships
+                    for entry in compiled_app.relationships
                 }
                 for raw_change in changes:
                     if not isinstance(raw_change, RelationshipChangePlan):
@@ -1066,7 +1067,7 @@ class Admin:
                 entry = next(
                     (
                         candidate
-                        for candidate in self.compiled.relationships
+                        for candidate in compiled_app.relationships
                         if candidate.source_resource_id == resource_id
                         and str(candidate.definition.relationship_id) == relationship_id
                     ),
