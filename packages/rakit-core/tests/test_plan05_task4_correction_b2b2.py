@@ -1,7 +1,8 @@
 """PLAN 05 TASK 4 CORRECTION B2B2: generic RECORD concurrency for actions.
 
-``ActionDefinition.requires_concurrency`` is a Task-4 RECORD-only flag; the
-runtime capability is a backend-neutral ``ConcurrencyVersionProvider``
+``ActionDefinition.requires_concurrency`` is a Task-4 RECORD-only strong
+concurrency flag; C2A additionally requires a mutating AUTO transaction. The
+runtime version capability remains a backend-neutral ``ConcurrencyVersionProvider``
 registered per resource (Task 5 owns bulk concurrency snapshots).
 """
 
@@ -18,6 +19,7 @@ from rakit_core.config import SecretValue
 from rakit_core.crypto import TokenService
 from rakit_core.errors import RakitError
 from rakit_core.identity import RecordIdentity
+from rakit_core.transactions import TransactionPolicy
 
 
 def _executor() -> DomainActionExecutor:
@@ -34,6 +36,8 @@ def test_requires_concurrency_is_valid_only_for_record_scope() -> None:
                 resource_id="orders" if scope is not ActionScope.PAGE else None,
                 page_id="report" if scope is ActionScope.PAGE else None,
                 requires_concurrency=True,
+                mutating=True,
+                transaction_policy=TransactionPolicy.AUTO,
                 executor=_executor(),
             )
 
@@ -43,9 +47,34 @@ def test_requires_concurrency_is_valid_only_for_record_scope() -> None:
         scope=ActionScope.RECORD,
         resource_id="orders",
         requires_concurrency=True,
+        mutating=True,
+        transaction_policy=TransactionPolicy.AUTO,
         executor=_executor(),
     )
     assert record.requires_concurrency is True
+
+
+def test_requires_concurrency_also_requires_mutating_auto_transaction() -> None:
+    with pytest.raises(ValueError, match="strong concurrency"):
+        ActionDefinition(
+            action_id="approve",
+            label="Approve",
+            scope=ActionScope.RECORD,
+            resource_id="orders",
+            requires_concurrency=True,
+            executor=_executor(),
+        )
+    with pytest.raises(ValueError, match="strong concurrency"):
+        ActionDefinition(
+            action_id="approve",
+            label="Approve",
+            scope=ActionScope.RECORD,
+            resource_id="orders",
+            requires_concurrency=True,
+            mutating=True,
+            transaction_policy=TransactionPolicy.DISABLED,
+            executor=_executor(),
+        )
 
 
 def test_concurrency_token_is_bound_to_resource_and_identity() -> None:

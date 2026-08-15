@@ -45,8 +45,12 @@ class _UowExecutor(DomainActionExecutor):
     capabilities = OperationExecutorCapabilities(participates_in_uow=True)
 
 
+def _handler(_context: ActionContext) -> ActionSuccess:
+    return ActionSuccess(payload={"ok": True})
+
+
 def _executor() -> DomainActionExecutor:
-    return DomainActionExecutor(lambda _context: ActionSuccess(payload={"ok": True}))
+    return DomainActionExecutor(_handler)
 
 
 def _authorization(
@@ -67,7 +71,7 @@ def _authorization(
     )
 
 
-def _record_action(*, executor: object = None) -> ActionDefinition:
+def _record_action(*, executor: object | None = None) -> ActionDefinition:
     return ActionDefinition(
         action_id="approve",
         label="Approve",
@@ -79,7 +83,7 @@ def _record_action(*, executor: object = None) -> ActionDefinition:
         needs_confirmation=True,
         needs_preview=True,
         preview=lambda _context: ActionPreview(title="Approve", description="Approve order"),
-        executor=executor if executor is not None else _AtomicExecutor(_executor()._handler),
+        executor=executor if executor is not None else _AtomicExecutor(_handler),
     )
 
 
@@ -94,9 +98,7 @@ def _record_context() -> ActionContext:
     )
 
 
-def _operation_context(
-    context: ActionContext,
-) -> OperationContext:
+def _operation_context(context: ActionContext) -> OperationContext:
     assert context.authorization is not None
     return OperationContext(
         deadline=None,
@@ -227,7 +229,7 @@ def test_idempotency_fingerprint_is_carried_byte_for_byte() -> None:
 
 def test_plan_carries_resolved_executor_capabilities() -> None:
     assert resolve_operation_executor_capabilities(_executor()) == OperationExecutorCapabilities()
-    assert resolve_operation_executor_capabilities(_UowExecutor(_executor()._handler)) == (
+    assert resolve_operation_executor_capabilities(_UowExecutor(_handler)) == (
         OperationExecutorCapabilities(participates_in_uow=True)
     )
     plan = build_action_operation_plan(_record_context())
@@ -363,7 +365,7 @@ def test_mutating_auto_requires_uow_participation() -> None:
             resource_id="orders",
             mutating=True,
             transaction_policy=TransactionPolicy.AUTO,
-            executor=_UowExecutor(_executor()._handler),
+            executor=_UowExecutor(_handler),
         ),
         scope=ActionScope.RECORD,
         identity=identity,
@@ -375,7 +377,6 @@ def test_mutating_auto_requires_uow_participation() -> None:
 
 
 def test_concurrency_requires_strong_semantics() -> None:
-    identity = RecordIdentity(values={"id": 7})
     base = dict(
         action_id="approve",
         label="Approve",
@@ -383,33 +384,35 @@ def test_concurrency_requires_strong_semantics() -> None:
         resource_id="orders",
         requires_concurrency=True,
     )
-    for kwargs, match in (
-        (
-            {"executor": _executor(), "mutating": True, "transaction_policy": TransactionPolicy.DISABLED},
-            "strong concurrency",
-        ),
-        ({"executor": _executor(), "mutating": False}, "strong concurrency"),
-        (
-            {
-                "mutating": True,
-                "transaction_policy": TransactionPolicy.AUTO,
-                "executor": PreparedMutationExecutor(
-                    lambda _context: {}, lambda _plan, _context: ActionSuccess()
-                ),
-            },
-            "strong concurrency",
-        ),
+    for kwargs in (
+        {
+            "executor": _executor(),
+            "mutating": True,
+            "transaction_policy": TransactionPolicy.DISABLED,
+        },
+        {"executor": _executor(), "mutating": False},
     ):
-        definition = ActionDefinition(**base, **kwargs)
-        context = ActionContext(
-            definition=definition,
-            scope=ActionScope.RECORD,
-            identity=identity,
-            record=object(),
-            authorization=_authorization(target_identity=identity),
-        )
-        with pytest.raises(ValueError, match=match):
-            build_action_operation_plan(context)
+        with pytest.raises(ValueError, match="strong concurrency"):
+            ActionDefinition(**base, **kwargs)
+
+    definition = ActionDefinition(
+        **base,
+        mutating=True,
+        transaction_policy=TransactionPolicy.AUTO,
+        executor=PreparedMutationExecutor(
+            lambda _context: {}, lambda _plan, _context: ActionSuccess()
+        ),
+    )
+    identity = RecordIdentity(values={"id": 7})
+    context = ActionContext(
+        definition=definition,
+        scope=ActionScope.RECORD,
+        identity=identity,
+        record=object(),
+        authorization=_authorization(target_identity=identity),
+    )
+    with pytest.raises(ValueError, match="strong concurrency"):
+        build_action_operation_plan(context)
 
 
 @pytest.mark.anyio
