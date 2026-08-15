@@ -11,6 +11,7 @@ from rakit_core.definitions import PageDefinition
 from rakit_core.errors import RakitError
 from rakit_core.pages import (
     DomainPageHandler,
+    PageContext,
     PageExecutionResult,
     PageRedirect,
     PageRejected,
@@ -38,6 +39,7 @@ __all__ = [
     "BulkPolicy",
     "DomainPageHandler",
     "ModelAdmin",
+    "PageContext",
     "PageDefinition",
     "PageExecutionResult",
     "PageRedirect",
