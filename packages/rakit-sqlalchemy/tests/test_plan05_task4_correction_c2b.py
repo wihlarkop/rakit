@@ -32,7 +32,12 @@ from rakit_sqlalchemy.uow import SQLAlchemyOperationUnitOfWorkFactory
 from rakit_web.action_routes import ActionBinding, build_action_routes
 from rakit_web.resource_routes import build_templates
 from sqlalchemy import event, select
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql.elements import ColumnElement
 from starlette.applications import Starlette
@@ -311,7 +316,7 @@ async def test_atomic_write_predicate_can_reject_after_web_precheck(
     def impossible_write_condition(record: object) -> tuple[ColumnElement[bool], ...]:
         return (
             *original_conditions(record),
-            cast(ColumnElement[bool], Order.version == 999),
+            Order.version == 999,
         )
 
     async with httpx.AsyncClient(
