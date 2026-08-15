@@ -82,6 +82,23 @@ def validate_page_runtime(
             status_code=500,
         )
 
+    for compiled_page in compiled.compiled_pages:
+        page = compiled_page.definition
+        if "{" in page.path or "}" in page.path:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message=(
+                    f'Page "{page.page_id}" uses a parameterized path, but Task 6 '
+                    "custom-page runtime supports static paths only."
+                ),
+                status_code=500,
+                details={
+                    "page_id": str(page.page_id),
+                    "path": page.path,
+                    "reason": "page_path_parameters_not_supported",
+                },
+            )
+
     mutating_pages = tuple(item for item in compiled.compiled_pages if item.definition.mutating)
     if mutating_pages and idempotency_store is None:
         raise RakitError(
