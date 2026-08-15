@@ -28,6 +28,11 @@ def _request(*, htmx: bool = False) -> Request:
     return Request(scope)
 
 
+def _body_text(response: object) -> str:
+    body = getattr(response, "body")
+    return bytes(body).decode()
+
+
 def test_success_receipt_omits_arbitrary_payload_and_replays_message() -> None:
     receipt = _action_result_receipt(
         ActionSuccess(payload={"secret": "must-not-persist"}, message="Order updated"),
@@ -111,7 +116,7 @@ def test_rendered_receipt_does_not_persist_trusted_html_or_payload() -> None:
 
     replay = _completed_action_response(_request(), receipt, fallback_location="/orders")
     assert replay.status_code == 409
-    body = replay.body.decode()
+    body = _body_text(replay)
     assert "cannot be replayed" in body
     assert "private fragment" not in body
     assert "must-not-persist" not in body
@@ -129,7 +134,7 @@ def test_corrupt_redirect_receipt_fails_closed() -> None:
     replay = _completed_action_response(_request(), receipt, fallback_location="/orders")
 
     assert replay.status_code == 409
-    assert "cannot be replayed" in replay.body.decode()
+    assert "cannot be replayed" in _body_text(replay)
     assert "location" not in replay.headers
 
 
