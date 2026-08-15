@@ -25,6 +25,12 @@ from rakit_core.config import MachineId
 from rakit_core.forms import FormIssue, FormSchema, FormState
 from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import OperationAuthorization
+from rakit_core.operations import (
+    OperationContext,
+    OperationExecutor,
+    OperationKind,
+    OperationPlan,
+)
 from rakit_core.permissions import PermissionRequirement
 from rakit_core.transactions import TransactionPolicy
 
@@ -371,6 +377,67 @@ async def resolve_availability(
     return cast(ActionAvailabilityDecision, decision)
 
 
+def build_action_operation_plan(
+    context: ActionContext,
+    *,
+    idempotency_fingerprint: str | None = None,
+) -> OperationPlan[ActionContext, ActionResult[Any]]:
+    """Map a prepared ActionContext onto the canonical operation seam.
+
+    The web boundary prepares authorization, scoped loading, parsing, and
+    availability; this mapper derives the immutable ``OperationPlan`` from
+    the canonical ``ActionDefinition`` and fails closed when the context
+    cannot form a legitimate operation.  It never re-runs RBAC -- the plan's
+    authorization is the exact capability constructed by the web boundary,
+    and ``execute_operation_plan`` validates that capability against the
+    active ``OperationContext``.
+    """
+    action = context.definition
+    if action.executor is None:
+        raise ValueError(f"Action {action.action_id!r} requires an executor")
+    authorization = context.authorization
+    if authorization is None:
+        raise ValueError(f"Action {action.action_id!r} has no authorization capability")
+    if authorization.target_identity != context.identity:
+        raise ValueError(
+            f"Action {action.action_id!r} authorization target does not match its context identity"
+        )
+    if action.scope is ActionScope.RECORD:
+        if context.identity is None:
+            raise ValueError(f"RECORD action {action.action_id!r} requires a record identity")
+        target_identity = context.identity
+    else:
+        if context.identity is not None:
+            raise ValueError(
+                f"{action.scope.value} action {action.action_id!r} cannot carry a record identity"
+            )
+        target_identity = None
+    executor = action.executor
+
+    def execute(
+        operation_context: OperationContext, action_context: ActionContext
+    ) -> Awaitable[ActionResult[Any]]:
+        return executor.execute(action_context)
+
+    plan_execute: OperationExecutor[ActionContext, ActionResult[Any]] = execute
+    return cast(
+        OperationPlan[ActionContext, ActionResult[Any]],
+        OperationPlan(
+            operation_id=action.action_id,
+            kind=OperationKind.ACTION,
+            input=context,
+            authorization=authorization,
+            target_identity=target_identity,
+            mutating=action.mutating,
+            transaction_policy=action.transaction_policy,
+            concurrency_required=action.requires_concurrency,
+            confirmation_required=action.needs_confirmation,
+            idempotency_fingerprint=idempotency_fingerprint,
+            execute=plan_execute,
+        ),
+    )
+
+
 async def resolve_preview(
     definition: ActionDefinition, context: ActionContext
 ) -> ActionPreview | None:
@@ -405,6 +472,7 @@ __all__ = [
     "DomainActionExecutor",
     "PreparedMutationExecutor",
     "action_permission_requirement",
+    "build_action_operation_plan",
     "resolve_availability",
     "resolve_preview",
 ]

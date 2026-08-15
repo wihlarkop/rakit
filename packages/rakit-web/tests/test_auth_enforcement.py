@@ -31,6 +31,7 @@ from rakit_core.concurrency import (
 )
 from rakit_core.crypto import TokenService
 from rakit_core.definitions import PageDefinition
+from rakit_core.di import ServiceScope
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.events import EventBus, EventPublisher
 from rakit_core.fields import FieldDefinition
@@ -224,6 +225,7 @@ def _build_admin(
     *,
     event_bus: EventBus | None = None,
     operation_idempotency_store: IdempotencyStore | None = None,
+    mutation_deadline_seconds: float = 30.0,
 ) -> Admin:
     from rakit.sqlalchemy import SQLAlchemyPlugin
 
@@ -237,6 +239,7 @@ def _build_admin(
         login_rate_limiter=_TestRateLimiter(),
         event_bus=event_bus,
         operation_idempotency_store=operation_idempotency_store,
+        mutation_deadline_seconds=mutation_deadline_seconds,
     )
     admin.install(SQLAlchemyPlugin(session_factory=session_factory))
     admin.register(WidgetAdmin)
@@ -2301,3 +2304,221 @@ async def test_full_contract_providers_register(session_factory) -> None:
     ):
         admin = _build_admin(session_factory, _ConfigurableAuthBackend(permissions=frozenset()))
         admin.register_concurrency_provider("widgets", cast(ConcurrencyVersionProvider, provider))
+
+
+# --- C1: actions execute through canonical OperationPlan -------------------
+
+
+async def test_admin_action_executes_through_operation_plan(session_factory, monkeypatch) -> None:
+    import rakit_web.action_routes as action_routes_module
+
+    operation_contexts: list[OperationContext] = []
+    original_execute = action_routes_module.execute_operation_plan
+
+    async def spy_execute(plan, context):
+        operation_contexts.append(context)
+        assert current_operation_context() is context
+        return await original_execute(plan, context)
+
+    monkeypatch.setattr(action_routes_module, "execute_operation_plan", spy_execute)
+    action = ActionDefinition(
+        action_id="resync",
+        label="Resync widgets",
+        scope=ActionScope.RESOURCE,
+        resource_id="widgets",
+        executor=DomainActionExecutor(lambda _context: ActionSuccess()),
+    )
+    admin = _build_action_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.resync.execute"})),
+        action,
+    )
+    app, client = await _client_for(admin)
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        csrf, submission = await _open_action_form(client, csrf, "/widgets/_actions/resync")
+        executed = await client.post(
+            "/widgets/_actions/resync",
+            data={"csrf_token": csrf, "submission_token": submission},
+            follow_redirects=False,
+        )
+
+    assert executed.status_code == 303
+    assert len(operation_contexts) == 1
+    context = operation_contexts[0]
+    assert context.admin_id == "operations"
+    assert context.resource_id == "widgets"
+    assert context.operation == "action:resync"
+    assert context.principal_id == "1"
+    assert context.permission_requirement == PermissionRequirement.all_of(
+        "operations.actions.resync.execute"
+    )
+    assert context.session_id == "1"
+    assert context.services is not None
+    assert context.events is context.services.require(EventPublisher)
+    assert current_operation_context() is None
+
+
+async def test_operation_scoped_service_is_per_operation(session_factory) -> None:
+    class _OperationScopedMarker:
+        pass
+
+    seen: list[object] = []
+
+    async def resync_handler(_context: ActionContext) -> ActionSuccess:
+        operation_context = current_operation_context()
+        assert operation_context is not None
+        assert operation_context.services is not None
+        seen.append(operation_context.services.require(_OperationScopedMarker))
+        return ActionSuccess()
+
+    action = ActionDefinition(
+        action_id="resync",
+        label="Resync widgets",
+        scope=ActionScope.RESOURCE,
+        resource_id="widgets",
+        executor=DomainActionExecutor(resync_handler),
+    )
+    admin = _build_action_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.resync.execute"})),
+        action,
+    )
+    admin.builder.registry.add_factory(
+        _OperationScopedMarker,
+        lambda _resolver: _OperationScopedMarker(),
+        scope=ServiceScope.OPERATION,
+    )
+    app, client = await _client_for(admin)
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        for _ in range(2):
+            csrf, submission = await _open_action_form(client, csrf, "/widgets/_actions/resync")
+            executed = await client.post(
+                "/widgets/_actions/resync",
+                data={"csrf_token": csrf, "submission_token": submission},
+                follow_redirects=False,
+            )
+            assert executed.status_code == 303
+
+    assert len(seen) == 2
+    assert seen[0] is not seen[1]
+
+
+async def test_slow_admin_action_is_terminated_by_deadline(session_factory) -> None:
+    async def slow_handler(_context: ActionContext) -> ActionSuccess:
+        await asyncio.sleep(0.5)
+        return ActionSuccess()
+
+    action = ActionDefinition(
+        action_id="resync",
+        label="Resync widgets",
+        scope=ActionScope.RESOURCE,
+        resource_id="widgets",
+        executor=DomainActionExecutor(slow_handler),
+    )
+    admin = _build_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.resync.execute"})),
+        operation_idempotency_store=_DedupIdempotencyStore(),
+        mutation_deadline_seconds=0.05,
+    )
+    admin.builder.add_action(action)
+    app, client = await _client_for(admin)
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        csrf, submission = await _open_action_form(client, csrf, "/widgets/_actions/resync")
+        executed = await client.post(
+            "/widgets/_actions/resync",
+            data={"csrf_token": csrf, "submission_token": submission},
+            follow_redirects=False,
+        )
+
+    assert executed.status_code == 504
+
+
+async def test_page_action_executes_through_operation_plan(session_factory, monkeypatch) -> None:
+    import rakit_web.action_routes as action_routes_module
+
+    operation_contexts: list[OperationContext] = []
+    original_execute = action_routes_module.execute_operation_plan
+
+    async def spy_execute(plan, context):
+        operation_contexts.append(context)
+        return await original_execute(plan, context)
+
+    monkeypatch.setattr(action_routes_module, "execute_operation_plan", spy_execute)
+    action = ActionDefinition(
+        action_id="refresh",
+        label="Refresh indexes",
+        scope=ActionScope.PAGE,
+        page_id="report",
+        executor=DomainActionExecutor(lambda _context: ActionSuccess()),
+    )
+    admin = _build_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.refresh.execute"})),
+        operation_idempotency_store=_DedupIdempotencyStore(),
+    )
+    admin.builder.add_page(PageDefinition(page_id="report", path="/reports", label="Report"))
+    admin.builder.add_action(action)
+    app, client = await _client_for(admin)
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        csrf, submission = await _open_action_form(client, csrf, "/reports/_actions/refresh")
+        executed = await client.post(
+            "/reports/_actions/refresh",
+            data={"csrf_token": csrf, "submission_token": submission},
+            follow_redirects=False,
+        )
+
+    assert executed.status_code == 303
+    assert len(operation_contexts) == 1
+    assert operation_contexts[0].operation == "action:refresh"
+    assert operation_contexts[0].resource_id == "report"
+
+
+async def test_stale_concurrent_post_never_reaches_operation_plan(
+    session_factory, monkeypatch
+) -> None:
+    import rakit_web.action_routes as action_routes_module
+
+    plan_calls: list[object] = []
+    original_execute = action_routes_module.execute_operation_plan
+
+    async def spy_execute(plan, context):
+        plan_calls.append(plan)
+        return await original_execute(plan, context)
+
+    monkeypatch.setattr(action_routes_module, "execute_operation_plan", spy_execute)
+    action, calls = _concurrent_approve_action()
+    admin = await _concurrent_admin(
+        session_factory,
+        _ConfigurableAuthBackend(permissions=frozenset({"operations.actions.approve.execute"})),
+        action,
+    )
+    app, client = await _client_for(admin)
+    identity = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    async with _LifespanDriver(app), client:
+        csrf = await _login(client)
+        csrf, submission, concurrency_token = await _open_concurrent_action_form(
+            client, csrf, f"/widgets/{identity}/_actions/approve"
+        )
+        async with session_factory() as session:
+            stored = await session.get(Widget, 1)
+            assert stored is not None
+            stored.revision += 1
+            await session.commit()
+        rejected = await client.post(
+            f"/widgets/{identity}/_actions/approve",
+            data={
+                "csrf_token": csrf,
+                "submission_token": submission,
+                "concurrency_token": concurrency_token,
+            },
+            follow_redirects=False,
+        )
+
+    assert rejected.status_code == 409
+    assert plan_calls == []
+    assert calls == []

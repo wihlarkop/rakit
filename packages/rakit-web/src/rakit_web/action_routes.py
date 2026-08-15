@@ -17,9 +17,10 @@ enhancement of the same pipeline.
 import hashlib
 import json
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, cast
+from typing import Any
 
 from rakit_core.actions import (
     ActionAvailability,
@@ -34,6 +35,7 @@ from rakit_core.actions import (
     ActionScope,
     ActionSuccess,
     ActionValidation,
+    build_action_operation_plan,
     resolve_availability,
     resolve_preview,
 )
@@ -41,7 +43,9 @@ from rakit_core.compiler import RESOURCE_ACTION_SEGMENT
 from rakit_core.concurrency import ConcurrencyTokenService
 from rakit_core.crypto import TokenService
 from rakit_core.definitions import CompiledActionDefinition, RouteDefinition
+from rakit_core.di import ServiceResolver
 from rakit_core.errors import ErrorCode, RakitError
+from rakit_core.events import EventPublisher
 from rakit_core.forms import FormIssue, FormSchema, FormValidationError
 from rakit_core.idempotency import IdempotencyStatus, IdempotencyStore, OperationReceipt
 from rakit_core.identity import IdentityCodec, RecordIdentity
@@ -50,7 +54,9 @@ from rakit_core.operations import (
     CancellationContext,
     Deadline,
     OperationContext,
+    OperationPlan,
     activate_operation_context,
+    execute_operation_plan,
     new_operation_id,
     run_with_deadline,
 )
@@ -95,6 +101,7 @@ class ActionBinding:
     token_service: TokenService | None = None
     idempotency_store: IdempotencyStore | None = None
     deadline_seconds: float | None = None
+    operation_scope: Callable[[], AbstractAsyncContextManager[ServiceResolver]] | None = None
     label: str = "Actions"
 
     def __post_init__(self) -> None:
@@ -241,33 +248,61 @@ def _action_context(
     )
 
 
-async def _execute_in_context(
+async def _run_action_operation(
     binding: ActionBinding,
     request: Request,
+    plan: OperationPlan[ActionContext, ActionResult[Any]],
     authorization: OperationAuthorization,
-    awaitable: Awaitable[ActionResult],
-) -> ActionResult:
+) -> ActionResult[Any]:
+    """Execute one prepared action operation at the canonical seam.
+
+    Enters the request + operation service scopes (when the binding has an
+    operation scope), populates the full ``OperationContext`` from request
+    and authorization state, activates it, and runs the plan through
+    ``execute_operation_plan`` -- the single application execution boundary.
+    Deadline behavior is preserved via ``run_with_deadline``.
+    """
     deadline = (
         Deadline.after(binding.deadline_seconds) if binding.deadline_seconds is not None else None
     )
-    context = OperationContext(
-        deadline=deadline,
-        cancellation=CancellationContext(),
-        request_id=cast(str, request.scope.get("state", {}).get("request_id", "")),
-        operation_id=new_operation_id(),
-        principal=request.scope.get("state", {}).get("principal"),
-        principal_id=authorization.principal_id,
-        admin_id=authorization.admin_id,
-        resource_id=authorization.resource_id,
-        operation=authorization.operation,
-        permissions=authorization.permissions,
-        permission_requirement=authorization.requirement,
-    )
-    with activate_operation_context(context):
-        context.checkpoint()
-        if deadline is None:
-            return await awaitable
-        return await run_with_deadline(awaitable, deadline)
+    request_state = request.scope.get("state", {})
+    request_state = request_state if isinstance(request_state, Mapping) else {}
+    session_id = request_state.get("session_id")
+    if not isinstance(session_id, str):
+        session_id = ""
+    services: ServiceResolver | None = None
+    events: EventPublisher | None = None
+
+    async def run_with_services() -> ActionResult[Any]:
+        nonlocal services, events
+        context = OperationContext(
+            deadline=deadline,
+            cancellation=CancellationContext(),
+            request_id=str(request_state.get("request_id", "")),
+            operation_id=new_operation_id(),
+            principal=request_state.get("principal"),
+            principal_id=authorization.principal_id,
+            session_id=session_id,
+            admin_id=authorization.admin_id,
+            resource_id=authorization.resource_id,
+            operation=authorization.operation,
+            permissions=authorization.permissions,
+            permission_requirement=authorization.requirement,
+            services=services,
+            events=events,
+        )
+        with activate_operation_context(context):
+            context.checkpoint()
+            if deadline is None:
+                return await execute_operation_plan(plan, context)
+            return await run_with_deadline(execute_operation_plan(plan, context), deadline)
+
+    if binding.operation_scope is not None:
+        async with binding.operation_scope() as operation_services:
+            services = operation_services
+            events = operation_services.require(EventPublisher)
+            return await run_with_services()
+    return await run_with_services()
 
 
 def _action_result_response(
@@ -484,11 +519,11 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
                 return _rejected_response(request, "Action confirmation is invalid or stale", 409)
 
             reservation = None
+            fingerprint = _action_fingerprint(action.action_id, identity, submitted)
             if binding.idempotency_store is not None:
                 submission_token = tokens.get("submission_token")
                 if not submission_token or not await binding.verify_submission_token(request):
                     return _rejected_response(request, "Invalid submission token", 409)
-                fingerprint = _action_fingerprint(action.action_id, identity, submitted)
                 try:
                     reservation = await binding.idempotency_store.begin(
                         hashlib.sha256(submission_token.encode()).hexdigest(),
@@ -559,13 +594,8 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
                 confirmation_token=tokens.get("confirmation_token"),
             )
             try:
-                assert action.executor is not None
-                result = await _execute_in_context(
-                    binding,
-                    request,
-                    authorization,
-                    cast(Awaitable[ActionResult], action.executor.execute(context)),
-                )
+                plan = build_action_operation_plan(context, idempotency_fingerprint=fingerprint)
+                result = await _run_action_operation(binding, request, plan, authorization)
             except RakitError as exc:
                 if reservation is not None:
                     assert binding.idempotency_store is not None

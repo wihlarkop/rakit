@@ -1,6 +1,6 @@
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import replace
 from datetime import timedelta
 from math import isfinite
@@ -539,6 +539,7 @@ class Admin:
         issue_submission_token: Callable[[Request], str],
         verify_submission_token: Callable[[Request], Awaitable[bool]],
         token_service: TokenService,
+        operation_scope: Callable[[], AbstractAsyncContextManager[ServiceResolver]],
     ) -> tuple[ActionBinding, ...]:
         """Materialize the compiled action routes as web bindings.
 
@@ -621,6 +622,7 @@ class Admin:
                     token_service=token_service,
                     idempotency_store=idempotency_store,
                     deadline_seconds=self._mutation_deadline_seconds,
+                    operation_scope=operation_scope,
                     label=self.config.title,
                 )
             )
@@ -642,6 +644,7 @@ class Admin:
                     token_service=token_service,
                     idempotency_store=idempotency_store,
                     deadline_seconds=self._mutation_deadline_seconds,
+                    operation_scope=operation_scope,
                     label=self.config.title,
                 )
             )
@@ -979,18 +982,17 @@ class Admin:
                     "path"
                 ) == request.scope.get("path", "")
 
+            @asynccontextmanager
+            async def operation_scope() -> AsyncIterator[ServiceResolver]:
+                if self._application_resolver is None:
+                    raise RuntimeError("Application services are not available")
+                async with (
+                    self._application_resolver.request_scope() as request_services,
+                    request_services.operation_scope() as operation_services,
+                ):
+                    yield operation_services
+
             for write_binding in self._write_resource_bindings.values():
-
-                @asynccontextmanager
-                async def operation_scope() -> AsyncIterator[ServiceResolver]:
-                    if self._application_resolver is None:
-                        raise RuntimeError("Application services are not available")
-                    async with (
-                        self._application_resolver.request_scope() as request_services,
-                        request_services.operation_scope() as operation_services,
-                    ):
-                        yield operation_services
-
                 secured_binding = replace(
                     write_binding,
                     authorize=authorize_write,
@@ -1020,6 +1022,7 @@ class Admin:
                     issue_submission_token=issue_submission_token,
                     verify_submission_token=verify_submission_token,
                     token_service=write_token_service,
+                    operation_scope=operation_scope,
                 ):
                     action_routes.extend(build_action_routes(action_binding))
 
