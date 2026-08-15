@@ -1,9 +1,10 @@
-"""PLAN 05 TASK 4 CORRECTION B1: canonical compiler action-route contract.
+"""PLAN 05 action-route compiler contract through Task 5.
 
 The compiler owns action route metadata (path, methods, stable route name,
-owner).  Every executable PAGE / RESOURCE / RECORD action exposes GET + POST;
-``mutating`` is execution/transaction semantics, not an HTTP-method switch.
-BULK actions compile as definitions but own no route until Task 5.
+owner). Every executable PAGE / RESOURCE / RECORD / BULK action exposes
+GET + POST; ``mutating`` is execution/transaction semantics, not an
+HTTP-method switch. Task 5 extends the Task 4 contract by making BULK routes
+compiler-owned too.
 """
 
 from rakit_core.actions import (
@@ -105,7 +106,7 @@ def _compiled() -> tuple[ApplicationBuilder, CompiledApplication]:
     return builder, compile_application(builder)
 
 
-def test_resource_record_page_action_paths_are_canonical() -> None:
+def test_resource_record_page_and_bulk_action_paths_are_canonical() -> None:
     builder, compiled = _compiled()
     assert builder.resources[0].path == "/orders"
 
@@ -113,12 +114,15 @@ def test_resource_record_page_action_paths_are_canonical() -> None:
     assert by_name["resource:orders:action:export"].path == "/orders/_actions/export"
     assert by_name["resource:orders:action:approve"].path == "/orders/{identity}/_actions/approve"
     assert by_name["page:report:action:refresh"].path == "/reports/_actions/refresh"
+    assert by_name["resource:orders:action:bulk_archive"].path == (
+        "/orders/_actions/bulk_archive"
+    )
 
 
 def test_every_executable_action_route_declares_get_and_post() -> None:
     _, compiled = _compiled()
     action_routes = [route for route in compiled.routes if ":action:" in route.route_name]
-    assert len(action_routes) == 3
+    assert len(action_routes) == 4
     assert all(route.methods == ("GET", "POST") for route in action_routes)
 
 
@@ -128,9 +132,11 @@ def test_route_names_are_owner_aware_and_stable() -> None:
     assert set(by_name) >= {
         "resource:orders:action:export",
         "resource:orders:action:approve",
+        "resource:orders:action:bulk_archive",
         "page:report:action:refresh",
     }
     assert by_name["resource:orders:action:export"].owner_id == "orders"
+    assert by_name["resource:orders:action:bulk_archive"].owner_id == "orders"
     assert by_name["page:report:action:refresh"].owner_id == "report"
 
 
@@ -160,27 +166,31 @@ def test_omitted_permission_receives_generated_default() -> None:
     )
 
 
-def test_bulk_actions_compile_without_routes_and_pairs() -> None:
+def test_bulk_actions_compile_with_routes_and_pairs() -> None:
     _, compiled = _compiled()
     bulk = next(
         compiled_action
         for compiled_action in compiled.compiled_actions
         if compiled_action.definition.action_id == "bulk_archive"
     )
+    route = next(
+        route
+        for route in compiled.routes
+        if route.route_name == "resource:orders:action:bulk_archive"
+    )
+
     assert bulk.definition.scope is ActionScope.BULK
-    assert not any("bulk_archive" in route.path for route in compiled.routes)
-    assert all(pair[1].definition.action_id != "bulk_archive" for pair in compiled.action_routes)
+    assert route.path == "/orders/_actions/bulk_archive"
+    assert (route, bulk) in compiled.action_routes
 
 
-def test_action_routes_pair_every_non_bulk_compiled_action() -> None:
+def test_action_routes_pair_every_compiled_action() -> None:
     _, compiled = _compiled()
     paired = {compiled_action.definition.action_id for _, compiled_action in compiled.action_routes}
-    non_bulk = {
-        compiled_action.definition.action_id
-        for compiled_action in compiled.compiled_actions
-        if compiled_action.definition.scope is not ActionScope.BULK
+    compiled_ids = {
+        compiled_action.definition.action_id for compiled_action in compiled.compiled_actions
     }
-    assert paired == non_bulk == {"export", "approve", "refresh"}
+    assert paired == compiled_ids == {"export", "approve", "refresh", "bulk_archive"}
 
     for route, compiled_action in compiled.action_routes:
         assert route in compiled.routes
@@ -217,7 +227,7 @@ def test_root_page_owner_action_path_is_canonical() -> None:
     assert compiled.action_routes[0][0].path == "/_actions/refresh"
 
 
-def test_root_resource_owner_action_paths_are_canonical_and_bulk_route_less() -> None:
+def test_root_resource_owner_action_paths_are_canonical_including_bulk() -> None:
     builder = ApplicationBuilder(admin_id="ops")
     builder.add_resource(_resource("orders", "/"), _DataSource())
     builder.add_action(
@@ -253,10 +263,10 @@ def test_root_resource_owner_action_paths_are_canonical_and_bulk_route_less() ->
     by_name = {route.route_name: route for route in compiled.routes}
     assert by_name["resource:orders:action:export"].path == "/_actions/export"
     assert by_name["resource:orders:action:approve"].path == "/{identity}/_actions/approve"
+    assert by_name["resource:orders:action:bulk_archive"].path == "/_actions/bulk_archive"
     assert all("//" not in route.path for route in compiled.routes)
-    assert not any("bulk_archive" in route.path for route in compiled.routes)
     paired = {compiled_action.definition.action_id for _, compiled_action in compiled.action_routes}
-    assert paired == {"export", "approve"}
+    assert paired == {"export", "approve", "bulk_archive"}
 
 
 def test_normal_non_root_action_paths_are_byte_for_byte_unchanged() -> None:
@@ -264,4 +274,7 @@ def test_normal_non_root_action_paths_are_byte_for_byte_unchanged() -> None:
     by_name = {route.route_name: route for route in compiled.routes}
     assert by_name["resource:orders:action:export"].path == "/orders/_actions/export"
     assert by_name["resource:orders:action:approve"].path == "/orders/{identity}/_actions/approve"
+    assert by_name["resource:orders:action:bulk_archive"].path == (
+        "/orders/_actions/bulk_archive"
+    )
     assert by_name["page:report:action:refresh"].path == "/reports/_actions/refresh"
