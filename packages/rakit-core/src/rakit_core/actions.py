@@ -289,7 +289,20 @@ class ActionDefinition(BaseModel):
         if self.needs_confirmation and not self.needs_preview:
             raise ValueError(f"Action {self.action_id!r} confirmation requires a preview step")
         if self.needs_confirmation and self.input_schema is not None:
-            raise ValueError(f"Action {self.action_id!r} confirmation flows do not take form input")
+            if not self.needs_form:
+                raise ValueError(
+                    f"Action {self.action_id!r} typed confirmation requires a form step"
+                )
+            unsafe_confirmation_fields = tuple(
+                field.field_id
+                for field in self.input_schema.fields
+                if field.writable and (not field.readable or field.sensitive)
+            )
+            if unsafe_confirmation_fields:
+                raise ValueError(
+                    f"Action {self.action_id!r} confirmation cannot round-trip hidden or "
+                    "sensitive writable fields: " + ", ".join(unsafe_confirmation_fields)
+                )
         return self
 
 

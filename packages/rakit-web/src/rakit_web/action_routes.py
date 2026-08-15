@@ -23,6 +23,7 @@ from datetime import timedelta
 from html import escape
 from typing import Any
 
+from pydantic import TypeAdapter
 from rakit_core.actions import (
     ActionAvailability,
     ActionAvailabilityDecision,
@@ -47,7 +48,7 @@ from rakit_core.definitions import CompiledActionDefinition, RouteDefinition
 from rakit_core.di import ServiceResolver
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.events import EventPublisher
-from rakit_core.forms import FormIssue, FormSchema, FormValidationError
+from rakit_core.forms import FormIssue, FormSchema, FormState, FormValidationError
 from rakit_core.idempotency import IdempotencyStatus, IdempotencyStore, OperationReceipt
 from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_core.mutations import OperationAuthorization
@@ -168,6 +169,53 @@ def _action_fingerprint(
     }
     encoded = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _confirmation_input_fingerprint(
+    schema: FormSchema | None,
+    state: FormState | None,
+) -> str:
+    canonical: dict[str, object] = {}
+    if schema is not None and state is not None:
+        fields = {field.field_id: field for field in schema.fields}
+        for field_id in sorted(state.normalized):
+            field = fields[field_id]
+            value = state.normalized[field_id]
+            canonical[field_id] = (
+                None
+                if value is None
+                else TypeAdapter(field.python_type).dump_python(value, mode="json")
+            )
+    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _session_id(request: Request) -> str:
+    state = request.scope.get("state", {})
+    if not isinstance(state, Mapping):
+        return ""
+    session_id = state.get("session_id")
+    return session_id if isinstance(session_id, str) else ""
+
+
+def _confirmation_claims(
+    request: Request,
+    action: ActionDefinition,
+    identity: RecordIdentity | None,
+    authorization: OperationAuthorization,
+    input_fingerprint: str,
+) -> dict[str, object]:
+    owner_id = action.page_id if action.scope is ActionScope.PAGE else action.resource_id
+    return {
+        "admin_id": authorization.admin_id,
+        "scope": action.scope.value,
+        "owner_id": owner_id,
+        "action_id": action.action_id,
+        "identity": dict(identity.values) if identity is not None else None,
+        "principal_id": authorization.principal_id,
+        "session_id": _session_id(request),
+        "input_fingerprint": input_fingerprint,
+    }
 
 
 def _identity(
@@ -432,8 +480,14 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
             decision = await resolve_availability(action, context)
             if decision.availability is ActionAvailability.HIDDEN:
                 return _rejected_response(request, "Resource was not found", 404)
+            typed_confirmation = action.needs_confirmation and action.input_schema is not None
             concurrency_token = None
-            if action.requires_concurrency and record is not None and identity is not None:
+            if (
+                action.requires_concurrency
+                and not typed_confirmation
+                and record is not None
+                and identity is not None
+            ):
                 assert binding.concurrency is not None
                 assert binding.concurrency_resource_id is not None
                 assert binding.record_version is not None
@@ -443,11 +497,18 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
                     binding.record_version(record),
                 )
             preview = None
-            if action.needs_preview:
+            if action.needs_preview and not typed_confirmation:
                 preview = await resolve_preview(action, context)
             confirmation_token = None
-            if action.needs_confirmation:
-                confirmation_token = _issue_confirmation(binding, action, identity)
+            if action.needs_confirmation and not typed_confirmation:
+                confirmation_token = _issue_confirmation(
+                    binding,
+                    request,
+                    action,
+                    identity,
+                    authorization,
+                    _confirmation_input_fingerprint(None, None),
+                )
             template_args = _template_args(
                 binding,
                 request,
@@ -532,8 +593,81 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
             elif submitted:
                 return _rejected_response(request, "Invalid action input", 400)
 
+            input_fingerprint = _confirmation_input_fingerprint(action.input_schema, state)
+            typed_confirmation = action.needs_confirmation and action.input_schema is not None
+            if typed_confirmation and not tokens.get("confirmation_token"):
+                submission_token = tokens.get("submission_token")
+                if not submission_token or not await binding.verify_submission_token(request):
+                    return _rejected_response(request, "Invalid submission token", 409)
+                typed_context = _action_context(
+                    binding,
+                    request,
+                    action,
+                    identity=identity,
+                    record=record,
+                    authorization=authorization,
+                    submitted=submitted,
+                    values=state,
+                )
+                decision = await resolve_availability(action, typed_context)
+                if decision.availability is not ActionAvailability.AVAILABLE:
+                    return _rejected_response(request, "This action is no longer available", 409)
+                preview = await resolve_preview(action, typed_context)
+                confirmation_token = _issue_confirmation(
+                    binding,
+                    request,
+                    action,
+                    identity,
+                    authorization,
+                    input_fingerprint,
+                )
+                concurrency_token = None
+                if action.requires_concurrency and identity is not None and record is not None:
+                    assert binding.concurrency is not None
+                    assert binding.concurrency_resource_id is not None
+                    assert binding.record_version is not None
+                    concurrency_token = binding.concurrency.issue(
+                        binding.concurrency_resource_id,
+                        identity,
+                        binding.record_version(record),
+                    )
+                template_args = _template_args(
+                    binding,
+                    request,
+                    action,
+                    identity,
+                    decision,
+                    preview,
+                    submitted=submitted,
+                    issues=(),
+                    concurrency_token=concurrency_token,
+                    confirmation_token=confirmation_token,
+                    route_path=route_path,
+                    owner_path=owner_path,
+                )
+                template = (
+                    "actions/_confirm.html"
+                    if request.headers.get("HX-Request") == "true"
+                    else "actions/confirm.html"
+                )
+                headers = {"Cache-Control": "no-store"}
+                if request.headers.get("HX-Request") == "true":
+                    headers["HX-Retarget"] = "#rakit-action-root"
+                return binding.templates.TemplateResponse(
+                    request,
+                    template,
+                    template_args,
+                    headers=headers,
+                )
+
             if action.needs_confirmation and not _verify_confirmation(
-                binding, action, identity, tokens.get("confirmation_token")
+                binding,
+                request,
+                action,
+                identity,
+                authorization,
+                input_fingerprint,
+                tokens.get("confirmation_token"),
             ):
                 return _rejected_response(request, "Action confirmation is invalid or stale", 409)
 
@@ -690,21 +824,33 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
 
 def _issue_confirmation(
     binding: ActionBinding,
+    request: Request,
     action: ActionDefinition,
     identity: RecordIdentity | None,
+    authorization: OperationAuthorization,
+    input_fingerprint: str,
 ) -> str:
     assert binding.token_service is not None
-    claims = {
-        "action_id": action.action_id,
-        "identity": dict(identity.values) if identity is not None else None,
-    }
-    return binding.token_service.issue_in("action_confirmation", claims, _CONFIRMATION_TTL)
+    return binding.token_service.issue_in(
+        "action_confirmation",
+        _confirmation_claims(
+            request,
+            action,
+            identity,
+            authorization,
+            input_fingerprint,
+        ),
+        _CONFIRMATION_TTL,
+    )
 
 
 def _verify_confirmation(
     binding: ActionBinding,
+    request: Request,
     action: ActionDefinition,
     identity: RecordIdentity | None,
+    authorization: OperationAuthorization,
+    input_fingerprint: str,
     token: str | None,
 ) -> bool:
     if not token:
@@ -714,9 +860,13 @@ def _verify_confirmation(
         claims = binding.token_service.verify(token, expected_purpose="action_confirmation")
     except ValueError:
         return False
-    if claims.get("action_id") != action.action_id:
-        return False
-    return claims.get("identity") == (dict(identity.values) if identity is not None else None)
+    return claims == _confirmation_claims(
+        request,
+        action,
+        identity,
+        authorization,
+        input_fingerprint,
+    )
 
 
 def _template_args(
@@ -734,6 +884,19 @@ def _template_args(
     route_path: str,
     owner_path: str,
 ) -> dict[str, object]:
+    confirmation_fields = tuple(
+        {
+            "name": field.field_id,
+            "value": submitted[field.field_id],
+        }
+        for field in (action.input_schema.fields if action.input_schema is not None else ())
+        if (
+            field.writable
+            and field.readable
+            and not field.sensitive
+            and field.field_id in submitted
+        )
+    )
     return {
         "action": action,
         "binding_label": binding.label,
@@ -744,6 +907,7 @@ def _template_args(
         "submission_token": binding.issue_submission_token(request),
         "concurrency_token": concurrency_token or "",
         "confirmation_token": confirmation_token or "",
+        "confirmation_fields": confirmation_fields,
         "form_action": mounted_path(request, _with_identity(binding, identity, route_path)),
         "cancel_url": _owner_location(binding, request, identity, owner_path),
         "preview": preview,

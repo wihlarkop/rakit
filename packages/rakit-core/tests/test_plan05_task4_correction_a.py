@@ -231,12 +231,43 @@ def test_form_preview_confirmation_contract_is_retained() -> None:
         _definition(needs_preview=True)
     with pytest.raises(ValueError, match="preview step"):
         _definition(needs_confirmation=True)
-    with pytest.raises(ValueError, match="confirmation flows"):
+    typed_confirmation_schema = FormSchema(
+        fields=(FieldDefinition(field_id="reason", python_type=str, required=True),)
+    )
+    typed_confirmation = _definition(
+        needs_form=True,
+        needs_confirmation=True,
+        needs_preview=True,
+        preview=_preview,
+        input_schema=typed_confirmation_schema,
+    )
+    assert typed_confirmation.input_schema is typed_confirmation_schema
+
+    with pytest.raises(ValueError, match="typed confirmation requires a form step"):
         _definition(
             needs_confirmation=True,
             needs_preview=True,
             preview=_preview,
-            input_schema=FormSchema(fields=()),
+            input_schema=typed_confirmation_schema,
+        )
+
+    unsafe_schema = FormSchema(
+        fields=(
+            FieldDefinition(
+                field_id="opaque",
+                python_type=str,
+                readable=False,
+                writable=True,
+            ),
+        )
+    )
+    with pytest.raises(ValueError, match="hidden or sensitive writable fields"):
+        _definition(
+            needs_form=True,
+            needs_confirmation=True,
+            needs_preview=True,
+            preview=_preview,
+            input_schema=unsafe_schema,
         )
 
     schema = FormSchema(

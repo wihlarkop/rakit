@@ -3,6 +3,7 @@
 import re
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any, cast
 from urllib.parse import urlencode
 from uuid import uuid4
@@ -1638,3 +1639,365 @@ async def test_root_owner_destinations_keep_mount_prefix(harness: ActionHarness)
         assert record.status_code == 200
         assert f'href="/admin/{parent}"' in record.text
         assert f'action="/admin/{parent}/_actions/approve"' in record.text
+
+
+def _typed_confirmation_app(
+    harness: ActionHarness,
+    *,
+    calls: list[int],
+    preview_values: list[int],
+    subject: str = "tester",
+    session_id: str = "session-a",
+) -> Any:
+    def preview(context: ActionContext) -> ActionPreview:
+        assert context.values is not None
+        value = cast(int, context.values["retention_days"])
+        preview_values.append(value)
+        return ActionPreview(
+            title="Archive with retention?",
+            description=f"Retention: {value} days",
+            impact="The order will be archived.",
+        )
+
+    def execute(context: ActionContext) -> ActionSuccess:
+        assert context.values is not None
+        calls.append(cast(int, context.values["retention_days"]))
+        return ActionSuccess(message="Archived")
+
+    action = ActionDefinition(
+        action_id="archive_confirmed",
+        label="Archive confirmed",
+        scope=ActionScope.RECORD,
+        resource_id="orders",
+        permission=action_permission_requirement("approve", admin_id="ops"),
+        input_schema=FormSchema(
+            fields=(
+                FieldDefinition(
+                    field_id="retention_days",
+                    python_type=int,
+                    required=True,
+                    label="Retention days",
+                ),
+            )
+        ),
+        preview=preview,
+        executor=DomainActionExecutor(execute),
+        needs_form=True,
+        needs_preview=True,
+        needs_confirmation=True,
+    )
+    compiled = CompiledActionDefinition(
+        definition=action,
+        permission=cast(PermissionRequirement, action.permission),
+    )
+
+    async def allow(_request: object) -> bool:
+        return True
+
+    binding = ActionBinding(
+        routes=(
+            (
+                RouteDefinition(
+                    route_name="resource:orders:action:archive_confirmed",
+                    methods=("GET", "POST"),
+                    path="/orders/{identity}/_actions/archive_confirmed",
+                    owner_id="orders",
+                ),
+                compiled,
+            ),
+        ),
+        templates=build_templates(()),
+        codec=IdentityCodec(),
+        verify_csrf=allow,
+        verify_submission_token=allow,
+        issue_submission_token=lambda _request: uuid4().hex,
+        authorize_action=harness.authorize,
+        load_record=harness.load_record,
+        token_service=harness.token_service,
+        idempotency_store=harness.idempotency,
+    )
+
+    class SessionMiddleware:
+        def __init__(self, app: Any) -> None:
+            self.app = app
+
+        async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+            if scope["type"] == "http":
+                scope.setdefault("state", {})["session_id"] = session_id
+            await self.app(scope, receive, send)
+
+    return SessionMiddleware(
+        _PrincipalMiddleware(
+            Starlette(routes=build_action_routes(binding)),
+            subject=subject,
+        )
+    )
+
+
+@pytest.mark.anyio
+async def test_typed_confirmation_uses_normalized_payload_and_defers_execution(
+    harness: ActionHarness,
+) -> None:
+    calls: list[int] = []
+    preview_values: list[int] = []
+    app = _typed_confirmation_app(
+        harness,
+        calls=calls,
+        preview_values=preview_values,
+    )
+    parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+
+    async with _client(app) as client:
+        opened = await client.get(f"/orders/{parent}/_actions/archive_confirmed")
+        assert opened.status_code == 200
+        opened_tokens = _form_values(opened.text)
+        assert "confirmation_token" not in opened_tokens
+
+        stage_one = await client.post(
+            f"/orders/{parent}/_actions/archive_confirmed",
+            content=urlencode(
+                [
+                    ("csrf_token", "csrf"),
+                    ("submission_token", opened_tokens["submission_token"]),
+                    ("retention_days", "007"),
+                ]
+            ),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+        assert stage_one.status_code == 200
+        assert calls == []
+        assert preview_values == [7]
+        assert harness.idempotency.claims == {}
+        assert "Retention: 7 days" in stage_one.text
+        confirmation = _form_values(stage_one.text)
+        assert confirmation["retention_days"] == "007"
+        assert confirmation["confirmation_token"]
+
+        tampered = await client.post(
+            f"/orders/{parent}/_actions/archive_confirmed",
+            content=urlencode(
+                [
+                    ("csrf_token", "csrf"),
+                    ("submission_token", confirmation["submission_token"]),
+                    ("confirmation_token", confirmation["confirmation_token"]),
+                    ("retention_days", "8"),
+                ]
+            ),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+        assert tampered.status_code == 409
+        assert calls == []
+        assert harness.idempotency.claims == {}
+
+        confirmed = await client.post(
+            f"/orders/{parent}/_actions/archive_confirmed",
+            content=urlencode(
+                [
+                    ("csrf_token", "csrf"),
+                    ("submission_token", confirmation["submission_token"]),
+                    ("confirmation_token", confirmation["confirmation_token"]),
+                    ("retention_days", "7"),
+                ]
+            ),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+
+    assert confirmed.status_code == 303
+    assert calls == [7]
+
+
+@pytest.mark.anyio
+async def test_typed_confirmation_htmx_stage_returns_fragment_without_execution(
+    harness: ActionHarness,
+) -> None:
+    calls: list[int] = []
+    preview_values: list[int] = []
+    app = _typed_confirmation_app(
+        harness,
+        calls=calls,
+        preview_values=preview_values,
+    )
+    parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+
+    async with _client(app) as client:
+        opened = await client.get(f"/orders/{parent}/_actions/archive_confirmed")
+        tokens = _form_values(opened.text)
+        stage_one = await client.post(
+            f"/orders/{parent}/_actions/archive_confirmed",
+            content=urlencode(
+                [
+                    ("csrf_token", "csrf"),
+                    ("submission_token", tokens["submission_token"]),
+                    ("retention_days", "5"),
+                ]
+            ),
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "HX-Request": "true",
+            },
+            follow_redirects=False,
+        )
+
+    assert stage_one.status_code == 200
+    assert "<html" not in stage_one.text.lower()
+    assert 'id="rakit-action-root"' in stage_one.text
+    assert "confirmation_token" in _form_values(stage_one.text)
+    assert calls == []
+    assert harness.idempotency.claims == {}
+
+
+@pytest.mark.anyio
+async def test_confirmation_is_bound_to_record_principal_and_session(
+    harness: ActionHarness,
+) -> None:
+    calls: list[int] = []
+    preview_values: list[int] = []
+    parent_one = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    parent_two = IdentityCodec().encode(RecordIdentity(values={"id": 2}))
+    stage_app = _typed_confirmation_app(
+        harness,
+        calls=calls,
+        preview_values=preview_values,
+        subject="tester",
+        session_id="session-a",
+    )
+
+    async with _client(stage_app) as client:
+        opened = await client.get(f"/orders/{parent_one}/_actions/archive_confirmed")
+        opened_tokens = _form_values(opened.text)
+        stage_one = await client.post(
+            f"/orders/{parent_one}/_actions/archive_confirmed",
+            content=urlencode(
+                [
+                    ("csrf_token", "csrf"),
+                    ("submission_token", opened_tokens["submission_token"]),
+                    ("retention_days", "3"),
+                ]
+            ),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+    confirmation = _form_values(stage_one.text)
+
+    async def attempt(app: Any, parent: str) -> int:
+        async with _client(app) as client:
+            response = await client.post(
+                f"/orders/{parent}/_actions/archive_confirmed",
+                content=urlencode(
+                    [
+                        ("csrf_token", "csrf"),
+                        ("submission_token", confirmation["submission_token"]),
+                        ("confirmation_token", confirmation["confirmation_token"]),
+                        ("retention_days", "3"),
+                    ]
+                ),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                follow_redirects=False,
+            )
+        return response.status_code
+
+    assert await attempt(stage_app, parent_two) == 409
+    assert (
+        await attempt(
+            _typed_confirmation_app(
+                harness,
+                calls=calls,
+                preview_values=preview_values,
+                subject="other",
+                session_id="session-a",
+            ),
+            parent_one,
+        )
+        == 409
+    )
+    assert (
+        await attempt(
+            _typed_confirmation_app(
+                harness,
+                calls=calls,
+                preview_values=preview_values,
+                subject="tester",
+                session_id="session-b",
+            ),
+            parent_one,
+        )
+        == 409
+    )
+    assert calls == []
+    assert harness.idempotency.claims == {}
+
+
+@pytest.mark.anyio
+async def test_confirmation_rejects_wrong_purpose_and_expiry(
+    harness: ActionHarness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[int] = []
+    preview_values: list[int] = []
+    now = [1_000_000.0]
+    monkeypatch.setattr("rakit_core.crypto.time.time", lambda: now[0])
+    app = _typed_confirmation_app(
+        harness,
+        calls=calls,
+        preview_values=preview_values,
+    )
+    parent = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+
+    async with _client(app) as client:
+        opened = await client.get(f"/orders/{parent}/_actions/archive_confirmed")
+        opened_tokens = _form_values(opened.text)
+        stage_one = await client.post(
+            f"/orders/{parent}/_actions/archive_confirmed",
+            content=urlencode(
+                [
+                    ("csrf_token", "csrf"),
+                    ("submission_token", opened_tokens["submission_token"]),
+                    ("retention_days", "4"),
+                ]
+            ),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+        confirmation = _form_values(stage_one.text)
+
+        wrong_purpose = harness.token_service.issue_in(
+            "different_confirmation",
+            {},
+            timedelta(minutes=15),
+        )
+        wrong = await client.post(
+            f"/orders/{parent}/_actions/archive_confirmed",
+            content=urlencode(
+                [
+                    ("csrf_token", "csrf"),
+                    ("submission_token", confirmation["submission_token"]),
+                    ("confirmation_token", wrong_purpose),
+                    ("retention_days", "4"),
+                ]
+            ),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+        assert wrong.status_code == 409
+
+        now[0] += 16 * 60
+        expired = await client.post(
+            f"/orders/{parent}/_actions/archive_confirmed",
+            content=urlencode(
+                [
+                    ("csrf_token", "csrf"),
+                    ("submission_token", confirmation["submission_token"]),
+                    ("confirmation_token", confirmation["confirmation_token"]),
+                    ("retention_days", "4"),
+                ]
+            ),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+
+    assert expired.status_code == 409
+    assert calls == []
+    assert harness.idempotency.claims == {}
