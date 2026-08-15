@@ -146,11 +146,7 @@ def _unknown_input_issues(
     schema: type[BaseModel] | None, submitted: Mapping[str, object]
 ) -> dict[str, tuple[str, ...]]:
     known = set(schema.model_fields) if schema is not None else set()
-    return {
-        name: ("Unknown page input field",)
-        for name in submitted
-        if name not in known
-    }
+    return {name: ("Unknown page input field",) for name in submitted if name not in known}
 
 
 def _template_args(
@@ -170,7 +166,9 @@ def _template_args(
         "binding_label": binding.label,
         "page": page,
         "payload": result.payload if result is not None else None,
-        "message": message if message is not None else (result.message if result is not None else None),
+        "message": message
+        if message is not None
+        else (result.message if result is not None else None),
         "fields": _field_views(page.input_schema, safe_submitted, safe_issues),
         "issues": safe_issues,
         "form_action": mounted_path(request, page.path),
@@ -328,7 +326,9 @@ async def _run_page_operation(
         )
         with activate_operation_context(operation_context):
             operation_context.checkpoint()
-            operation = run_operation_plan(plan, operation_context, unit_of_work_factory=uow_factory)
+            operation = run_operation_plan(
+                plan, operation_context, unit_of_work_factory=uow_factory
+            )
             if deadline is None:
                 return await operation
             return await run_with_deadline(operation, deadline)
@@ -341,7 +341,9 @@ async def _run_page_operation(
     return await run_with_services()
 
 
-def _model_values(schema: type[BaseModel] | None, submitted: Mapping[str, object]) -> BaseModel | None:
+def _model_values(
+    schema: type[BaseModel] | None, submitted: Mapping[str, object]
+) -> BaseModel | None:
     if schema is None:
         return None
     return schema.model_validate(dict(submitted))
@@ -379,7 +381,10 @@ async def _form_input(
         return (
             {},
             {},
-            {name: ("File uploads are not supported by custom pages",) for name in non_string_fields},
+            {
+                name: ("File uploads are not supported by custom pages",)
+                for name in non_string_fields
+            },
         )
     submitted: dict[str, object] = {
         str(name): value

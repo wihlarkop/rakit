@@ -87,7 +87,9 @@ def _compiled_page(
     builder = ApplicationBuilder(admin_id="ops")
     builder.add_page(definition)
     compiled = compile_application(builder)
-    route = next(route for route in compiled.routes if route.route_name == f"page:{definition.page_id}")
+    route = next(
+        route for route in compiled.routes if route.route_name == f"page:{definition.page_id}"
+    )
     return route, compiled.compiled_pages[0]
 
 

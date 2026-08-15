@@ -51,9 +51,7 @@ def _app(definition: PageDefinition, store: _Store | None = None) -> Starlette:
     builder.add_page(definition)
     compiled = compile_application(builder)
     route = next(
-        route
-        for route in compiled.routes
-        if route.route_name == f"page:{definition.page_id}"
+        route for route in compiled.routes if route.route_name == f"page:{definition.page_id}"
     )
     compiled_page = compiled.compiled_pages[0]
 
