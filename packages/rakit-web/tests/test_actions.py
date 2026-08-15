@@ -1152,7 +1152,7 @@ async def test_execution_rejection_does_not_mutate_state(
         executor=DomainActionExecutor(
             lambda _context: ActionRejected(
                 errors={},
-                message="Rejected by policy",
+                message="<img src=x onerror=alert(1)>",
             )
         ),
     )
@@ -1200,7 +1200,26 @@ async def test_execution_rejection_does_not_mutate_state(
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             follow_redirects=False,
         )
+        rejected_htmx = await client.post(
+            f"/orders/{parent}/_actions/fail",
+            content=urlencode(
+                [
+                    ("csrf_token", "csrf"),
+                    ("submission_token", tokens["submission_token"]),
+                ]
+            ),
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "HX-Request": "true",
+            },
+            follow_redirects=False,
+        )
     assert rejected.status_code == 409
+    assert rejected_htmx.status_code == 409
+    assert "<img src=x onerror=alert(1)>" not in rejected.text
+    assert "<img src=x onerror=alert(1)>" not in rejected_htmx.text
+    assert "&lt;img src=x onerror=alert(1)&gt;" in rejected.text
+    assert "&lt;img src=x onerror=alert(1)&gt;" in rejected_htmx.text
     assert harness.store.record(1).status == "pending"
 
 

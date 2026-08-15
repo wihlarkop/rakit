@@ -20,6 +20,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import timedelta
+from html import escape
 from typing import Any
 
 from rakit_core.actions import (
@@ -372,15 +373,16 @@ def _action_result_response(
 
 
 def _rejected_response(request: Request, message: str, status_code: int) -> Response:
+    safe_message = escape(message, quote=True)
     if request.headers.get("HX-Request") == "true":
         return Response(
             status_code=status_code,
-            content=f"<div class='rakit-error' role='alert'>{message}</div>",
+            content=f"<div class='rakit-error' role='alert'>{safe_message}</div>",
             headers={"Cache-Control": "no-store", "HX-Retarget": "#rakit-action-root"},
         )
     return HTMLResponse(
         "<main class='mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8'>"
-        f"<section class='rakit-panel p-4'><p class='text-sm text-red-900'>{message}</p>"
+        f"<section class='rakit-panel p-4'><p class='text-sm text-red-900'>{safe_message}</p>"
         "<a class='rakit-button rakit-button-secondary mt-4' href='javascript:history.back()'>"
         "Go back</a></section></main>",
         status_code=status_code,

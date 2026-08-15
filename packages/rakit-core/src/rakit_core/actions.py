@@ -16,6 +16,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol, cast, runtime_checkable
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -83,8 +84,16 @@ class ActionRedirect:
     message: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.location.startswith("/"):
-            raise ValueError("Action redirect locations must be absolute application paths")
+        location = self.location
+        if not location.startswith("/") or location.startswith("//"):
+            raise ValueError("Action redirect locations must be internal application paths")
+        if "\\" in location:
+            raise ValueError("Action redirect locations must not contain backslashes")
+        if any(ord(character) < 0x20 or ord(character) == 0x7F for character in location):
+            raise ValueError("Action redirect locations must not contain control characters")
+        parsed = urlsplit(location)
+        if parsed.scheme or parsed.netloc:
+            raise ValueError("Action redirect locations must be internal application paths")
 
 
 @dataclass(frozen=True)

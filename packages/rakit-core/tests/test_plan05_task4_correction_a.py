@@ -13,6 +13,7 @@ from rakit_core.actions import (
     ActionDefinition,
     ActionPreview,
     ActionPreviewResolver,
+    ActionRedirect,
     ActionScope,
     ActionSuccess,
     DomainActionExecutor,
@@ -267,3 +268,35 @@ def test_bulk_actions_compile_to_definitions_with_default_policy() -> None:
         if compiled_action.definition.action_id == "bulk_archive"
     )
     assert compiled_bulk.definition.bulk_policy is not None
+
+
+@pytest.mark.parametrize(
+    "location",
+    (
+        "/",
+        "/orders/1",
+        "/orders/1?tab=history",
+        "/orders/1#events",
+    ),
+)
+def test_action_redirect_accepts_internal_application_paths(location: str) -> None:
+    assert ActionRedirect(location=location).location == location
+
+
+@pytest.mark.parametrize(
+    "location",
+    (
+        "",
+        "orders/1",
+        "//evil.example",
+        "///evil.example",
+        "https://evil.example",
+        "/\\evil.example",
+        "/orders\r\nLocation: https://evil.example",
+        "/orders\x00evil",
+        "/orders\x7fevil",
+    ),
+)
+def test_action_redirect_rejects_unsafe_locations(location: str) -> None:
+    with pytest.raises(ValueError):
+        ActionRedirect(location=location)

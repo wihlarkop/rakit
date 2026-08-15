@@ -825,8 +825,7 @@ class Admin:
                             code=ErrorCode.CONFIG_INVALID,
                             message=(
                                 f'Action "{action.action_id}" requires strong concurrency, '
-                                "but its executor does not provide atomic concurrency "
-                                "(sanctioned managed mutation support is not available yet)."
+                                "but its executor does not provide atomic concurrency."
                             ),
                             status_code=500,
                             details={
