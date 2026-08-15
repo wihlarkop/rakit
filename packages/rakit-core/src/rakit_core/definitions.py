@@ -55,12 +55,19 @@ class PageDefinition(BaseModel):
     permission: PermissionRequirement | None = None
     input_schema: type[BaseModel] | None = None
     handler: Callable[..., object] | None = None
+    template: str = "pages/page.html"
     mutating: bool = False
     transaction_policy: TransactionPolicy = TransactionPolicy.READ_ONLY
 
     @model_validator(mode="after")
-    def _validate_transaction_policy(self) -> "PageDefinition":
+    def _validate_page_contract(self) -> "PageDefinition":
         _validate_operation_transaction_policy(self.mutating, self.transaction_policy)
+        if not self.label.strip():
+            raise ValueError("Page label must not be empty")
+        if not self.template.strip():
+            raise ValueError("Page template must not be empty")
+        if self.handler is None or not callable(self.handler):
+            raise ValueError(f"Page {self.page_id!r} requires a callable handler")
         return self
 
 
