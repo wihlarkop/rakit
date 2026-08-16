@@ -13,8 +13,9 @@ class _IdParser(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = dict(attrs)
-        if isinstance(attributes.get("id"), str):
-            self.ids.append(attributes["id"])
+        element_id = attributes.get("id")
+        if isinstance(element_id, str):
+            self.ids.append(element_id)
         if tag == "h1":
             self.h1_count += 1
 
