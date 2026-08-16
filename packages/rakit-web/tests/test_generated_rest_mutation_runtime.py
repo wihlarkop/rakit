@@ -299,7 +299,9 @@ async def test_idempotency_key_is_isolated_between_authenticated_principals() ->
     async with httpx.AsyncClient(transport=first_transport, base_url="http://localhost") as client:
         first = await client.post("/api/users", json={"email": "same@example.com"}, headers=headers)
     async with httpx.AsyncClient(transport=second_transport, base_url="http://localhost") as client:
-        second = await client.post("/api/users", json={"email": "same@example.com"}, headers=headers)
+        second = await client.post(
+            "/api/users", json={"email": "same@example.com"}, headers=headers
+        )
 
     assert first.status_code == 201
     assert second.status_code == 201
