@@ -1,0 +1,72 @@
+name: Generated CRUD Integration Patch
+
+on:
+  push:
+    branches: [feat/generated-crud-api-foundation]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: "${{ github.event.head_commit.message == 'ci: apply generated CRUD integration patch' }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/generated-crud-api-foundation
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages --dev --locked
+      - name: Patch integration seams
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          # Add a transport-neutral resource operation kind.
+          path = Path('packages/rakit-core/src/rakit_core/operations.py')
+          text = path.read_text()
+          old = '    PAGE = "page"\n    RELATIONSHIP = "relationship"\n'
+          new = '    PAGE = "page"\n    RELATIONSHIP = "relationship"\n    RESOURCE = "resource"\n'
+          assert old in text
+          path.write_text(text.replace(old, new, 1))
+
+          # Carry ResourceAdmin.api into the canonical ResourceDefinition.
+          path = Path('packages/rakit-web/src/rakit_web/admin.py')
+          text = path.read_text()
+          old = '''            field_policy=field_policy,\n            relationships=relationships,\n        )\n'''
+          new = '''            field_policy=field_policy,\n            relationships=relationships,\n            api=admin_cls.api,\n        )\n'''
+          assert old in text
+          path.write_text(text.replace(old, new, 1))
+
+          # Expose neutral FieldDefinition metadata from SQLAlchemy datasource.
+          path = Path('packages/rakit-sqlalchemy/src/rakit_sqlalchemy/datasource.py')
+          text = path.read_text()
+          old = 'from rakit_core.errors import ErrorCode, RakitError\nfrom rakit_core.identity import RecordIdentity\n'
+          new = (
+              'from rakit_core.errors import ErrorCode, RakitError\n'
+              'from rakit_core.fields import FieldDefinition, infer_field_security\n'
+              'from rakit_core.identity import RecordIdentity\n'
+          )
+          assert old in text
+          text = text.replace(old, new, 1)
+          old = '''    @property\n    def identity_fields(self) -> tuple[str, ...]:\n        return (self._metadata.identity_field,)\n\n    @property\n    def relationship_metadata(self) -> dict[str, RelationshipMetadata]:\n'''
+          new = '''    @property\n    def identity_fields(self) -> tuple[str, ...]:\n        return (self._metadata.identity_field,)\n\n    @property\n    def field_definitions(self) -> tuple[FieldDefinition, ...]:\n        search_fields = set(self._field_policy.search_fields)\n        filter_fields = set(self._field_policy.filter_fields)\n        sort_fields = set(self._field_policy.sort_fields)\n        return tuple(\n            infer_field_security(\n                FieldDefinition(\n                    field_id=metadata.attribute_name,\n                    python_type=metadata.python_type,\n                    readable=True,\n                    writable=metadata.writable,\n                    searchable=metadata.attribute_name in search_fields,\n                    filterable=metadata.attribute_name in filter_fields,\n                    sortable=metadata.attribute_name in sort_fields,\n                    required=metadata.required,\n                    nullable=metadata.nullable,\n                )\n            )\n            for metadata in self._metadata.field_metadata\n        )\n\n    @property\n    def relationship_metadata(self) -> dict[str, RelationshipMetadata]:\n'''
+          assert old in text
+          path.write_text(text.replace(old, new, 1))
+          PY
+          uv run ruff format \
+            packages/rakit-core/src/rakit_core/operations.py \
+            packages/rakit-web/src/rakit_web/admin.py \
+            packages/rakit-sqlalchemy/src/rakit_sqlalchemy/datasource.py
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            packages/rakit-core/src/rakit_core/operations.py \
+            packages/rakit-web/src/rakit_web/admin.py \
+            packages/rakit-sqlalchemy/src/rakit_sqlalchemy/datasource.py
+          git commit -m "feat: integrate generated CRUD adapter seams"
+          git push origin HEAD:feat/generated-crud-api-foundation
