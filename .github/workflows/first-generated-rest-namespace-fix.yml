@@ -1,0 +1,41 @@
+name: First Generated REST Namespace Fix
+
+on:
+  push:
+    branches: [feat/first-generated-rest-read]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: "${{ github.event.head_commit.message == 'ci: fix generated REST namespace coexistence' }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/first-generated-rest-read
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages --dev --locked
+      - name: Restore custom API namespace coexistence
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('packages/rakit-core/src/rakit_core/compiler.py')
+          text = path.read_text()
+          old = 'RESERVED_PATH_PREFIXES = ("/_system", "/auth", "/api")\n'
+          new = 'RESERVED_PATH_PREFIXES = ("/_system", "/auth")\n'
+          assert old in text
+          path.write_text(text.replace(old, new, 1))
+          PY
+          uv run ruff format packages/rakit-core/src/rakit_core/compiler.py
+          uv run ruff check packages/rakit-core/src/rakit_core/compiler.py
+      - name: Commit namespace fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/rakit-core/src/rakit_core/compiler.py
+          git commit -m "fix(core): let custom API routes coexist with generated REST"
+          git push origin HEAD:feat/first-generated-rest-read
