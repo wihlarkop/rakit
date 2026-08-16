@@ -1,0 +1,81 @@
+name: First Generated REST Mutation Hardening
+
+on:
+  push:
+    branches: [feat/first-generated-rest-mutations]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: "${{ github.event.head_commit.message == 'ci: apply generated REST mutation hardening' }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/first-generated-rest-mutations
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages --dev --locked
+      - name: Apply mutation hardening
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('packages/rakit-web/src/rakit_web/generated_rest_runtime.py')
+          text = path.read_text()
+
+          old = '''async def _run_mutation(\n    binding: GeneratedRestBinding,\n    request: Request,\n    generated_request: GeneratedCrudRequest,\n    authorization: OperationAuthorization,\n    *,\n    idempotency_fingerprint: str,\n) -> object:\n'''
+          new = '''async def _run_mutation(\n    binding: GeneratedRestBinding,\n    request: Request,\n    generated_request: GeneratedCrudRequest,\n    authorization: OperationAuthorization,\n    *,\n    idempotency_fingerprint: str,\n) -> tuple[object, str]:\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''        with activate_operation_context(context):\n            return await run_operation_plan(\n                plan,\n                context,\n                unit_of_work_factory=binding.unit_of_work_factory,\n            )\n'''
+          new = '''        with activate_operation_context(context):\n            result = await run_operation_plan(\n                plan,\n                context,\n                unit_of_work_factory=binding.unit_of_work_factory,\n            )\n        return result, context.operation_id\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''async def _claim_mutation(\n    binding: GeneratedRestBinding,\n    key: str,\n    fingerprint: str,\n) -> tuple[IdempotencyReservation, Response | None]:\n'''
+          new = '''async def _claim_mutation(\n    binding: GeneratedRestBinding,\n    key: str,\n    fingerprint: str,\n    *,\n    principal_id: str,\n    operation: GeneratedCrudOperation,\n) -> tuple[IdempotencyReservation, Response | None]:\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''        reservation = await store.begin(\n            hashlib.sha256(key.encode()).hexdigest(),\n            fingerprint=fingerprint,\n        )\n'''
+          new = '''        token_scope = "\\0".join(\n            (\n                binding.admin_id,\n                principal_id,\n                binding.api.resource_id,\n                operation.value,\n                key,\n            )\n        )\n        reservation = await store.begin(\n            hashlib.sha256(token_scope.encode()).hexdigest(),\n            fingerprint=fingerprint,\n        )\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''async def _complete_mutation(\n    binding: GeneratedRestBinding,\n    reservation: IdempotencyReservation,\n    response: Response,\n) -> None:\n'''
+          new = '''async def _complete_mutation(\n    binding: GeneratedRestBinding,\n    reservation: IdempotencyReservation,\n    response: Response,\n    *,\n    operation_id: str,\n) -> None:\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+          text = text.replace('            operation_id=new_operation_id(),\n', '            operation_id=operation_id,\n', 1)
+
+          old = '''            generated_request = GeneratedCrudRequest.update_partial(\n                identity,\n                generated_input,\n                concurrency_token=_if_match_token(binding, request),\n            )\n'''
+          new = '''            if not generated_input.present_fields:\n                raise RakitError(\n                    code=ErrorCode.VALIDATION_FAILED,\n                    message="Generated PATCH requires at least one field.",\n                    status_code=422,\n                    details={\n                        "resource_id": binding.api.resource_id,\n                        "reason": "generated_api_patch_empty",\n                    },\n                )\n            generated_request = GeneratedCrudRequest.update_partial(\n                identity,\n                generated_input,\n                concurrency_token=_if_match_token(binding, request),\n            )\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''        reservation, replay = await _claim_mutation(binding, key, fingerprint)\n'''
+          new = '''        reservation, replay = await _claim_mutation(\n            binding,\n            key,\n            fingerprint,\n            principal_id=authorization.principal_id,\n            operation=operation,\n        )\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''        result = await _run_mutation(\n            binding,\n            request,\n            generated_request,\n            authorization,\n            idempotency_fingerprint=fingerprint,\n        )\n        response = _mutation_response(binding, operation, result)\n        await _complete_mutation(binding, reservation, response)\n'''
+          new = '''        result, operation_id = await _run_mutation(\n            binding,\n            request,\n            generated_request,\n            authorization,\n            idempotency_fingerprint=fingerprint,\n        )\n        response = _mutation_response(binding, operation, result)\n        await _complete_mutation(\n            binding,\n            reservation,\n            response,\n            operation_id=operation_id,\n        )\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+          uv run ruff format packages/rakit-web/src/rakit_web/generated_rest_runtime.py
+          uv run ruff check packages/rakit-web/src/rakit_web/generated_rest_runtime.py
+          uv run pytest packages/rakit-web/tests/test_generated_rest_mutation_runtime.py -q
+      - name: Commit hardening
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/rakit-web/src/rakit_web/generated_rest_runtime.py
+          git commit -m "fix(web): harden generated REST mutation idempotency"
+          git push origin HEAD:feat/first-generated-rest-mutations
