@@ -1,4 +1,6 @@
+from collections.abc import Mapping
 from contextlib import AbstractAsyncContextManager
+from typing import cast
 
 import httpx
 import pytest
@@ -6,6 +8,7 @@ from rakit_core.auth import Principal
 from rakit_core.concurrency import ConcurrencyTokenService
 from rakit_core.config import SecretValue
 from rakit_core.crypto import TokenService
+from rakit_core.datasource import DataSourceCapabilities
 from rakit_core.definitions import ResourceDefinition, ResourceFieldPolicy
 from rakit_core.fields import FieldDefinition
 from rakit_core.generated_api import ApiExposure, CompiledResourceApi, ResourceApiDefinition
@@ -22,21 +25,25 @@ from starlette.applications import Starlette
 
 
 class VersionProvider:
-    def version_for(self, record: object):
-        assert isinstance(record, dict)
-        return record["version"]
+    @staticmethod
+    def _version(record: object) -> int:
+        values = cast(Mapping[str, object], record)
+        version = values["version"]
+        assert isinstance(version, int) and not isinstance(version, bool)
+        return version
 
-    def predicate_values_for(self, record: object):
-        assert isinstance(record, dict)
-        return {"version": record["version"]}
+    def version_for(self, record: object) -> int:
+        return self._version(record)
 
-    def next_values_for(self, record: object):
-        assert isinstance(record, dict)
-        return {"version": record["version"] + 1}
+    def predicate_values_for(self, record: object) -> Mapping[str, object]:
+        return {"version": self._version(record)}
+
+    def next_values_for(self, record: object) -> Mapping[str, object]:
+        return {"version": self._version(record) + 1}
 
 
 class DataSource:
-    capabilities = type("Capabilities", (), {"read": True})()
+    capabilities = DataSourceCapabilities(read=True)
     fields = ("id", "email", "version")
     identity_fields = ("id",)
 
