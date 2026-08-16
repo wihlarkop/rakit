@@ -2,7 +2,6 @@
 
 from collections.abc import Awaitable, Callable, Mapping
 from enum import StrEnum
-from typing import TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -102,7 +101,7 @@ class WidgetErrorResult(_WidgetResult):
     message: str = "Unable to load this widget."
 
 
-WidgetResult: TypeAlias = (
+type WidgetResult = (
     StatWidgetResult
     | TextWidgetResult
     | ListWidgetResult
@@ -110,7 +109,7 @@ WidgetResult: TypeAlias = (
     | TemplateWidgetResult
     | WidgetErrorResult
 )
-WidgetLoader: TypeAlias = Callable[[WidgetContext], WidgetResult | Awaitable[WidgetResult]]
+type WidgetLoader = Callable[[WidgetContext], WidgetResult | Awaitable[WidgetResult]]
 
 
 class WidgetDefinition(BaseModel):
