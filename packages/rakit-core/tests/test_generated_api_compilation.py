@@ -6,6 +6,8 @@ from rakit_core.definitions import ResourceDefinition, ResourceFieldPolicy
 from rakit_core.errors import RakitError
 from rakit_core.fields import FieldDefinition
 from rakit_core.generated_api import ApiExposure, GeneratedCrudOperation, ResourceApiDefinition
+from rakit_core.generated_runtime import GeneratedResourceExecutorContext
+from rakit_core.operations import OperationExecutorCapabilities
 from rakit_core.query import PageResult
 
 FIELD_DEFINITIONS = (
@@ -34,6 +36,18 @@ class FakeDataSource:
 
 class MetadataLessDataSource(FakeDataSource):
     field_definitions = None
+
+
+class FakeGeneratedExecutor:
+    capabilities = OperationExecutorCapabilities(participates_in_uow=True)
+
+    async def execute(self, context, request):
+        return request
+
+
+class FakeGeneratedExecutorProvider:
+    def build(self, context: GeneratedResourceExecutorContext) -> FakeGeneratedExecutor:
+        return FakeGeneratedExecutor()
 
 
 def _persistence_provider() -> CapabilityProvider:
@@ -146,7 +160,11 @@ def test_crud_projection_rejects_identity_and_unknown_mutation_fields() -> None:
 def test_compiled_crud_snapshots_neutral_field_metadata() -> None:
     builder = ApplicationBuilder()
     builder.register_capability_provider(_persistence_provider())
-    builder.add_resource(_resource(_crud_api()), FakeDataSource())
+    builder.add_resource(
+        _resource(_crud_api()),
+        FakeDataSource(),
+        generated_executor_provider=FakeGeneratedExecutorProvider(),
+    )
     compiled = compile_application(builder)
     assert compiled.compiled_resource_apis[0].field_definitions == FIELD_DEFINITIONS
     assert tuple(req.requirement_id for req in compiled.capability_requirements) == (
@@ -177,7 +195,11 @@ def test_custom_input_schema_requires_validation_and_serialization_capabilities(
             CapabilitySet.of("schema.input-validation", "schema.output-serialization"),
         )
     )
-    satisfied.add_resource(_resource(_crud_api(create_schema=CreateSchema)), FakeDataSource())
+    satisfied.add_resource(
+        _resource(_crud_api(create_schema=CreateSchema)),
+        FakeDataSource(),
+        generated_executor_provider=FakeGeneratedExecutorProvider(),
+    )
     compiled = compile_application(satisfied)
     assert tuple(req.requirement_id for req in compiled.capability_requirements) == (
         "generated-api:users:write",
