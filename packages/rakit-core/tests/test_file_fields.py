@@ -48,9 +48,7 @@ def test_file_field_rejects_unsafe_policy() -> None:
     with pytest.raises(ValueError):
         FileField(field_id="attachment", storage_id="documents", allowed_extensions=("pdf",))
     with pytest.raises(ValueError):
-        FileField(
-            field_id="attachment", storage_id="documents", allowed_extensions=("../pdf",)
-        )
+        FileField(field_id="attachment", storage_id="documents", allowed_extensions=("../pdf",))
     with pytest.raises(ValueError):
         FileField(field_id="attachment", storage_id="documents", allowed_mime_types=("",))
     with pytest.raises(ValueError):
