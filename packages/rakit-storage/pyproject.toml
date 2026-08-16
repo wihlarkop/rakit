@@ -6,7 +6,10 @@ build-backend = "hatchling.build"
 name = "rakit-storage"
 version = "0.1.0a1"
 requires-python = ">=3.12"
-dependencies = ["rakit-core==0.1.0a1"]
+dependencies = [
+  "pydantic>=2.12,<3",
+  "rakit-core==0.1.0a1",
+]
 
 [tool.uv.sources]
 rakit-core = { workspace = true }
