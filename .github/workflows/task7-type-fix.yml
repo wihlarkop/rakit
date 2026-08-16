@@ -17,32 +17,119 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --all-packages --dev --locked
-      - name: Narrow typed endpoint test values
+      - name: Add final Task 7 regression coverage
         shell: python
         run: |
           from pathlib import Path
 
           path = Path("packages/rakit-web/tests/test_endpoints.py")
           text = path.read_text(encoding="utf-8")
-          text = text.replace(
-              "        assert context.values is not None\n        seen.append((operation.operation, operation.services is not None))\n        verbose = context.values.verbose\n",
-              "        assert isinstance(context.values, _StatusInput)\n        seen.append((operation.operation, operation.services is not None))\n        verbose = context.values.verbose\n",
-          )
-          text = text.replace(
-              "        assert context.values is not None\n        return EndpointResult({\"accepted\": context.values.value})\n",
-              "        assert isinstance(context.values, _ChangeInput)\n        return EndpointResult({\"accepted\": context.values.value})\n",
-          )
-          text = text.replace(
-              "        assert context.values is not None\n        return EndpointResult({\"accepted\": context.values.value}, status_code=201)\n",
-              "        assert isinstance(context.values, _ChangeInput)\n        return EndpointResult({\"accepted\": context.values.value}, status_code=201)\n",
-          )
+          marker = "test_form_post_success_uses_explicit_form_source"
+          if marker not in text:
+              text += r'''
+
+
+@pytest.mark.anyio
+async def test_form_post_success_uses_explicit_form_source() -> None:
+    from rakit import EndpointInputSource
+
+    store = _MemoryIdempotencyStore()
+    admin, sessions = _private_admin(
+        frozenset({"ops.endpoints.form_change.invoke"}),
+        store=store,
+    )
+
+    @admin.api.post(
+        "/api/form-change",
+        endpoint_id="form_change",
+        input_schema=_ChangeInput,
+        input_source=EndpointInputSource.FORM,
+        output_schema=_ChangeOutput,
+        transaction_policy=TransactionPolicy.DISABLED,
+    )
+    def form_change(context: EndpointContext) -> EndpointResult[dict[str, int]]:
+        assert isinstance(context.values, _ChangeInput)
+        return EndpointResult({"accepted": context.values.value})
+
+    app = admin.asgi()
+    csrf = _csrf_token(admin, sessions.record)
+    async with LifespanDriver(app), _client(app, authenticated=True) as client:
+        client.cookies.set(CSRF_COOKIE_NAME, csrf)
+        response = await client.post(
+            "/api/form-change",
+            data={"value": "11"},
+            headers={"x-csrf-token": csrf, "idempotency-key": "form-success"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"accepted": 11}
+
+
+@pytest.mark.anyio
+async def test_post_auto_rolls_back_when_handler_raises() -> None:
+    factory = _UnitOfWorkFactory()
+    store = _MemoryIdempotencyStore()
+    admin, sessions = _private_admin(
+        frozenset({"ops.endpoints.change.invoke"}),
+        store=store,
+        uow_factory=factory,
+    )
+
+    @admin.api.post(
+        "/api/change",
+        endpoint_id="change",
+        input_schema=_ChangeInput,
+    )
+    def change(_context: EndpointContext) -> EndpointResult[dict[str, bool]]:
+        raise RuntimeError("boom")
+
+    app = admin.asgi()
+    csrf = _csrf_token(admin, sessions.record)
+    async with LifespanDriver(app), _client(app, authenticated=True) as client:
+        client.cookies.set(CSRF_COOKIE_NAME, csrf)
+        with pytest.raises(RuntimeError, match="boom"):
+            await client.post(
+                "/api/change",
+                json={"value": 1},
+                headers={"x-csrf-token": csrf, "idempotency-key": "rollback"},
+            )
+
+    assert factory.commits == 0
+    assert factory.rollbacks == 1
+
+
+@pytest.mark.anyio
+async def test_mounted_admin_endpoint_keeps_root_path_and_exact_permission() -> None:
+    from starlette.applications import Starlette
+    from starlette.routing import Mount
+
+    admin, _sessions = _private_admin(frozenset({"ops.endpoints.private.invoke"}))
+
+    @admin.api.get("/api/private", endpoint_id="private")
+    def private(_context: EndpointContext) -> EndpointResult[dict[str, bool]]:
+        return EndpointResult({"ok": True})
+
+    inner = admin.asgi()
+    outer = Starlette(routes=[Mount("/admin", app=inner)])
+    client = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=outer),
+        base_url="http://localhost",
+    )
+    client.cookies.set(SESSION_COOKIE_NAME, "token", path="/admin")
+
+    async with LifespanDriver(inner), client:
+        response = await client.get("/admin/api/private")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+'''
           path.write_text(text, encoding="utf-8")
       - run: uv run ruff check --fix packages/rakit-web/tests/test_endpoints.py
       - run: uv run ruff format packages/rakit-web/tests/test_endpoints.py
       - run: uv run ruff check packages/rakit-web/tests/test_endpoints.py
       - run: uv run ty check
       - run: uv run pytest packages/rakit-web/tests/test_endpoints.py -q
-      - name: Commit fixes when needed
+      - name: Commit coverage when green
         shell: bash
         run: |
           if git diff --quiet -- packages/rakit-web/tests/test_endpoints.py; then
@@ -52,5 +139,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add packages/rakit-web/tests/test_endpoints.py
-          git commit -m "fix(test): satisfy endpoint test quality gate"
+          git commit -m "test(web): complete endpoint regression coverage"
           git push origin HEAD:${{ github.head_ref }}
