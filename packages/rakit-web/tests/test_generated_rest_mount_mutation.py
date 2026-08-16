@@ -63,7 +63,9 @@ class UnitOfWork:
 
 
 class UnitOfWorkFactory:
-    def open(self, *, policy: TransactionPolicy, event_publisher, operation_context) -> AbstractAsyncContextManager:
+    def open(
+        self, *, policy: TransactionPolicy, event_publisher, operation_context
+    ) -> AbstractAsyncContextManager:
         return UnitOfWork()
 
 
