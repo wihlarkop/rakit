@@ -1,10 +1,11 @@
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import cast
 
 import pytest
 from rakit_core.errors import ErrorCode, RakitError
-from rakit_core.events import EventPublisher
+from rakit_core.events import DomainEvent, EventBus, EventPublisher
 from rakit_core.operations import (
     CancellationContext,
     Deadline,
@@ -28,6 +29,11 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str]
+
+
+@dataclass(frozen=True)
+class PostCommitEvent(DomainEvent):
+    pass
 
 
 @pytest.fixture
@@ -62,6 +68,255 @@ async def test_auto_policy_rolls_back_when_the_operation_raises(
 
     async with session_factory() as session:
         assert await session.scalar(select(func.count(User.id))) == 0
+
+
+@pytest.mark.anyio
+async def test_resource_lifecycle_observers_follow_event_delivery_not_bookkeeping() -> None:
+    order: list[str] = []
+
+    class Session:
+        async def commit(self) -> None:
+            order.append("database_commit")
+
+        async def rollback(self) -> None:
+            order.append("database_rollback")
+
+        async def close(self) -> None:
+            order.append("session_close")
+
+    class Publisher:
+        async def after_commit(self) -> None:
+            order.append("event_delivery")
+
+        def after_rollback(self) -> None:
+            order.append("event_rollback")
+
+    session = Session()
+    factory = cast(async_sessionmaker[AsyncSession], lambda: session)
+    async with SQLAlchemyUnitOfWork(
+        factory, event_publisher=cast(EventPublisher, Publisher())
+    ) as uow:
+        uow.before_commit(lambda: order.append("before_commit"))
+        uow.after_commit(lambda: order.append("receipt_completion"))
+        uow.after_commit_observer(lambda: order.append("resource_after_commit"))
+        await uow.mark_success()
+
+    assert order == [
+        "before_commit",
+        "database_commit",
+        "receipt_completion",
+        "event_delivery",
+        "session_close",
+        "resource_after_commit",
+    ]
+
+
+@pytest.mark.anyio
+async def test_resource_rollback_observers_follow_deferred_event_discard() -> None:
+    order: list[str] = []
+
+    class Session:
+        async def rollback(self) -> None:
+            order.append("database_rollback")
+
+        async def close(self) -> None:
+            order.append("session_close")
+
+    class Publisher:
+        async def after_commit(self) -> None:
+            return None
+
+        def after_rollback(self) -> None:
+            order.append("event_rollback")
+
+    session = Session()
+    factory = cast(async_sessionmaker[AsyncSession], lambda: session)
+    with pytest.raises(RuntimeError, match="stop"):
+        async with SQLAlchemyUnitOfWork(
+            factory, event_publisher=cast(EventPublisher, Publisher())
+        ) as uow:
+            uow.after_rollback(lambda: order.append("nonce_release"))
+            uow.after_rollback_observer(lambda: order.append("resource_after_rollback"))
+            raise RuntimeError("stop")
+
+    assert order == [
+        "database_rollback",
+        "nonce_release",
+        "event_rollback",
+        "session_close",
+        "resource_after_rollback",
+    ]
+
+
+@pytest.mark.anyio
+async def test_post_commit_observer_starts_a_fresh_uow_after_root_teardown() -> None:
+    order: list[str] = []
+
+    class Session:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def commit(self) -> None:
+            order.append(f"{self.name}:commit")
+
+        async def rollback(self) -> None:
+            order.append(f"{self.name}:rollback")
+
+        async def close(self) -> None:
+            order.append(f"{self.name}:close")
+
+    root_session = Session("root")
+    fresh_session = Session("fresh")
+    sessions = [root_session, fresh_session]
+    factory = cast(async_sessionmaker[AsyncSession], lambda: sessions.pop(0))
+
+    async def observer() -> None:
+        async with SQLAlchemyUnitOfWork(factory) as fresh_uow:
+            assert fresh_uow.session is fresh_session
+            order.append("observer:fresh-root")
+            await fresh_uow.mark_success()
+
+    async with SQLAlchemyUnitOfWork(factory) as uow:
+        uow.after_commit_observer(observer)
+        await uow.mark_success()
+
+    assert order == [
+        "root:commit",
+        "root:close",
+        "observer:fresh-root",
+        "fresh:commit",
+        "fresh:close",
+    ]
+
+
+@pytest.mark.anyio
+async def test_post_rollback_observer_starts_a_fresh_uow_after_root_teardown() -> None:
+    order: list[str] = []
+
+    class Session:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def commit(self) -> None:
+            order.append(f"{self.name}:commit")
+
+        async def rollback(self) -> None:
+            order.append(f"{self.name}:rollback")
+
+        async def close(self) -> None:
+            order.append(f"{self.name}:close")
+
+    root_session = Session("root")
+    fresh_session = Session("fresh")
+    sessions = [root_session, fresh_session]
+    factory = cast(async_sessionmaker[AsyncSession], lambda: sessions.pop(0))
+
+    async def observer() -> None:
+        async with SQLAlchemyUnitOfWork(factory) as fresh_uow:
+            assert fresh_uow.session is fresh_session
+            order.append("observer:fresh-root")
+            await fresh_uow.mark_success()
+
+    with pytest.raises(RuntimeError, match="stop"):
+        async with SQLAlchemyUnitOfWork(factory) as uow:
+            uow.after_rollback_observer(observer)
+            raise RuntimeError("stop")
+
+    assert order == [
+        "root:rollback",
+        "root:close",
+        "observer:fresh-root",
+        "fresh:commit",
+        "fresh:close",
+    ]
+
+
+@pytest.mark.anyio
+async def test_manual_and_disabled_observers_wait_for_uow_teardown() -> None:
+    order: list[str] = []
+
+    class Session:
+        async def commit(self) -> None:
+            order.append("commit")
+
+        async def rollback(self) -> None:
+            order.append("rollback")
+
+        async def close(self) -> None:
+            order.append("close")
+
+    manual_session = Session()
+    manual_factory = cast(async_sessionmaker[AsyncSession], lambda: manual_session)
+    async with SQLAlchemyUnitOfWork(manual_factory, policy=TransactionPolicy.MANUAL) as uow:
+        uow.after_commit_observer(lambda: order.append("manual_observer"))
+        await uow.commit()
+        assert order == ["commit"]
+    assert order == ["commit", "close", "manual_observer"]
+
+    order.clear()
+    disabled_session = Session()
+    disabled_factory = cast(async_sessionmaker[AsyncSession], lambda: disabled_session)
+    async with SQLAlchemyUnitOfWork(disabled_factory, policy=TransactionPolicy.DISABLED) as uow:
+        uow.after_commit_observer(lambda: order.append("disabled_observer"))
+        await uow.mark_success()
+        assert order == []
+    assert order == ["close", "disabled_observer"]
+
+
+@pytest.mark.anyio
+async def test_manual_post_commit_event_handler_starts_a_fresh_uow() -> None:
+    """Explicit MANUAL commit retains its timing without leaking its UoW."""
+
+    order: list[str] = []
+
+    class Session:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def commit(self) -> None:
+            order.append(f"{self.name}:commit")
+
+        async def rollback(self) -> None:
+            order.append(f"{self.name}:rollback")
+
+        async def close(self) -> None:
+            order.append(f"{self.name}:close")
+
+    root_session = Session("root")
+    fresh_session = Session("fresh")
+    sessions = [root_session, fresh_session]
+    factory = cast(async_sessionmaker[AsyncSession], lambda: sessions.pop(0))
+    bus = EventBus()
+    publisher = EventPublisher(bus)
+
+    async def handler(_event: PostCommitEvent) -> None:
+        async with SQLAlchemyUnitOfWork(factory) as fresh_uow:
+            assert fresh_uow.session is fresh_session
+            order.append("handler:fresh-root")
+            await fresh_uow.mark_success()
+
+    bus.subscribe(PostCommitEvent, handler)
+    async with SQLAlchemyUnitOfWork(
+        factory,
+        policy=TransactionPolicy.MANUAL,
+        event_publisher=publisher,
+    ) as uow:
+        publisher.publish(PostCommitEvent())
+        await uow.commit()
+        assert order == [
+            "root:commit",
+            "handler:fresh-root",
+            "fresh:commit",
+            "fresh:close",
+        ]
+
+    assert order == [
+        "root:commit",
+        "handler:fresh-root",
+        "fresh:commit",
+        "fresh:close",
+        "root:close",
+    ]
 
 
 @pytest.mark.anyio

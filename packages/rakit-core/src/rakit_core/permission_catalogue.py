@@ -1,7 +1,7 @@
 from pydantic import BaseModel, ConfigDict
 
+from rakit_core.actions import ActionDefinition
 from rakit_core.definitions import (
-    ActionDefinition,
     EndpointDefinition,
     PageDefinition,
     ResourceDefinition,
@@ -72,6 +72,17 @@ def generate_permission_catalogue(
                     group=resource.label,
                 )
             )
+        for relationship in resource.relationships:
+            if relationship.permission is None:
+                continue
+            for key in relationship.permission.permissions:
+                definitions.append(
+                    PermissionDefinition(
+                        key=key,
+                        label=f"Manage {relationship.label}",
+                        group=resource.label,
+                    )
+                )
     for page in pages:
         definitions.append(
             PermissionDefinition(
@@ -96,4 +107,7 @@ def generate_permission_catalogue(
                 group="Endpoints",
             )
         )
-    return PermissionCatalogue(definitions=tuple(definitions))
+    unique_definitions: dict[str, PermissionDefinition] = {}
+    for definition in definitions:
+        unique_definitions.setdefault(definition.key, definition)
+    return PermissionCatalogue(definitions=tuple(unique_definitions.values()))

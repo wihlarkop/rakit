@@ -1,0 +1,12 @@
+{
+  "name": "rakit-maintainer-assets",
+  "private": true,
+  "scripts": {
+    "css:build": "tailwindcss --input packages/rakit-web/src/rakit_web/assets/rakit.css --output packages/rakit-web/src/rakit_web/static/rakit.css --minify",
+    "css:watch": "tailwindcss --input packages/rakit-web/src/rakit_web/assets/rakit.css --output packages/rakit-web/src/rakit_web/static/rakit.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "4.1.18",
+    "tailwindcss": "4.1.18"
+  }
+}

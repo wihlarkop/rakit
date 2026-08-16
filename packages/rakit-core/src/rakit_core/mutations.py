@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from rakit_core.events import DomainEvent
 from rakit_core.identity import RecordIdentity
+from rakit_core.permissions import PermissionRequirement
 
 MutationHook = Callable[[object], object | Awaitable[object]]
 MutationOperation = Literal["create", "update", "delete"]
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class MutationAuthorization:
+class OperationAuthorization:
     """A server-derived authorization decision for one mutation operation.
 
     This is deliberately an explicit call argument rather than ambient state:
@@ -28,9 +29,98 @@ class MutationAuthorization:
 
     admin_id: str
     resource_id: str
-    operation: MutationOperation
+    operation: str
     principal_id: str
     permissions: tuple[str, ...]
+    permission_mode: Literal["all", "any"] = "all"
+    permission_requirement: PermissionRequirement | None = None
+    target_identity: RecordIdentity | None = None
+
+    def __post_init__(self) -> None:
+        derived_requirement = PermissionRequirement(
+            mode=self.permission_mode, permissions=self.permissions
+        )
+        if self.permission_requirement is None:
+            object.__setattr__(self, "permission_requirement", derived_requirement)
+
+    @property
+    def requirement(self) -> PermissionRequirement:
+        """The exact compiled requirement represented by this trusted capability."""
+
+        assert self.permission_requirement is not None
+        return self.permission_requirement
+
+    @classmethod
+    def for_requirement(
+        cls,
+        *,
+        admin_id: str,
+        resource_id: str,
+        operation: str,
+        principal_id: str,
+        requirement: PermissionRequirement,
+        target_identity: RecordIdentity | None = None,
+    ) -> "OperationAuthorization":
+        """Construct a capability from the canonical compiled requirement."""
+
+        return cls(
+            admin_id=admin_id,
+            resource_id=resource_id,
+            operation=operation,
+            principal_id=principal_id,
+            permissions=requirement.permissions,
+            permission_mode=requirement.mode,
+            permission_requirement=requirement,
+            target_identity=target_identity,
+        )
+
+
+@dataclass(frozen=True)
+class OperationAuthorizationSet:
+    """Exact, already-authorized capabilities for one composed mutation.
+
+    This is deliberately a capability *bundle*, not a second policy engine.
+    The request boundary establishes every member through the normal policy
+    path; nested graph work can then require the precise member it needs while
+    continuing to share the root :class:`OperationContext` and UoW.
+    """
+
+    root: OperationAuthorization
+    capabilities: tuple[OperationAuthorization, ...] = ()
+
+    def __post_init__(self) -> None:
+        all_capabilities = (self.root, *self.capabilities)
+        if any(
+            capability.admin_id != self.root.admin_id
+            or capability.principal_id != self.root.principal_id
+            for capability in all_capabilities
+        ):
+            raise ValueError("Operation authorization capabilities must share admin and principal")
+
+    def require(
+        self,
+        *,
+        resource_id: str,
+        operation: str,
+        requirement: PermissionRequirement,
+        target_identity: RecordIdentity | None = None,
+    ) -> OperationAuthorization:
+        """Return only an exactly matching trusted authorization decision."""
+
+        for capability in (self.root, *self.capabilities):
+            if (
+                capability.resource_id == resource_id
+                and capability.operation == operation
+                and capability.target_identity == target_identity
+                and capability.requirement == requirement
+            ):
+                return capability
+        raise ValueError("Exact operation authorization capability is missing")
+
+
+# Kept as an alias: existing CRUD signatures and public imports retain their
+# identity while non-CRUD operations can use the capability.
+MutationAuthorization = OperationAuthorization
 
 
 @dataclass(frozen=True)
@@ -110,6 +200,16 @@ class UpdateMutationPlan:
 class MutationResult:
     identity: RecordIdentity
     record: object
+
+
+@dataclass(frozen=True)
+class GraphMutationResult:
+    """Safe result of one parent mutation plus zero or more relationship changes."""
+
+    identity: RecordIdentity
+    record: object | None = None
+    relationship_results: tuple[object, ...] = ()
+    replayed: bool = False
 
 
 @dataclass(frozen=True)

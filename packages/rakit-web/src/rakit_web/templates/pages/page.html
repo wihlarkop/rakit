@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ page.label }} · {{ binding_label }}{% endblock %}
+{% block content %}
+<div id="rakit-page-root">
+  <header class="mb-6 flex flex-wrap items-end justify-between gap-3 border-b border-slate-200 pb-4">
+    <div>
+      <p class="text-sm font-medium text-slate-500">{{ binding_label }}</p>
+      <h1 class="mt-1 text-2xl font-semibold tracking-tight text-slate-950">{{ page.label }}</h1>
+    </div>
+  </header>
+
+  {% if message %}
+  <div class="mb-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950" role="status">{{ message }}</div>
+  {% endif %}
+
+  {% if issues %}
+  <div class="mb-5 rounded-lg border border-red-200 bg-red-50 p-4 text-red-950" role="alert" tabindex="-1">
+    <p>There are problems with this page input.</p>
+    <ul class="mt-2 list-disc pl-5">
+      {% for field_name, messages in issues.items() %}
+        {% for issue in messages %}<li>{{ issue }}</li>{% endfor %}
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  {% if page.mutating %}
+  <form class="space-y-5" method="post" action="{{ form_action }}" novalidate>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <input type="hidden" name="submission_token" value="{{ submission_token }}" />
+    <section class="rakit-panel space-y-4 p-4">
+      {% for field in fields %}
+      <div class="space-y-1.5">
+        <label class="block text-sm font-medium text-slate-800" for="{{ field.id }}">{{ field.label }}</label>
+        <input class="rakit-input" id="{{ field.id }}" name="{{ field.name }}" value="{{ field.value }}"{% if field.issues %} aria-invalid="true"{% endif %} />
+        {% if field.description %}<p class="text-sm text-slate-500">{{ field.description }}</p>{% endif %}
+        {% if field.issues %}<div class="rakit-error" role="alert">{% for issue in field.issues %}<p>{{ issue }}</p>{% endfor %}</div>{% endif %}
+      </div>
+      {% endfor %}
+      {% if not fields %}<p class="text-sm leading-6 text-slate-600">Continue to submit this page operation.</p>{% endif %}
+    </section>
+    <footer class="flex justify-end border-t border-slate-200 pt-4">
+      <button class="rakit-button" type="submit">Submit</button>
+    </footer>
+  </form>
+  {% else %}
+  <section class="rakit-panel p-4">
+    {% if payload is not none %}
+      <pre class="whitespace-pre-wrap text-sm leading-6 text-slate-700">{{ payload }}</pre>
+    {% else %}
+      <p class="text-sm leading-6 text-slate-600">No page content was returned.</p>
+    {% endif %}
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,32 @@
+<div id="rakit-action-root">
+  <header class="mb-6 flex flex-wrap items-end justify-between gap-3 border-b border-slate-200 pb-4">
+    <div><p class="text-sm font-medium text-slate-500">{{ binding_label }}</p><h1 class="mt-1 text-2xl font-semibold tracking-tight text-slate-950">{{ preview.title if preview else action.label }}</h1></div>
+  </header>
+  {% if availability.availability.value == "disabled" %}
+    <section class="rakit-panel p-4">
+      <p class="text-sm text-slate-600">This action is currently unavailable.</p>
+      {% if availability.reason %}<p class="mt-1 text-sm text-slate-500">{{ availability.reason }}</p>{% endif %}
+    </section>
+  {% else %}
+    <section class="rakit-panel p-4">
+      {% if preview %}
+        <p class="text-sm leading-6 text-slate-600">{{ preview.description }}</p>
+        {% if preview.impact %}<div class="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950"><p class="font-medium">Impact</p><p class="mt-1">{{ preview.impact }}</p></div>{% endif %}
+      {% else %}
+        <p class="text-sm leading-6 text-slate-600">{{ action.description }}</p>
+      {% endif %}
+      <p class="mt-4 text-sm text-slate-600">This change is applied only when you confirm and submit.</p>
+    </section>
+    <form class="space-y-5" method="post" action="{{ form_action }}" novalidate>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <input type="hidden" name="submission_token" value="{{ submission_token }}" />
+      {% if concurrency_token %}<input type="hidden" name="concurrency_token" value="{{ concurrency_token }}" />{% endif %}
+      {% if confirmation_token %}<input type="hidden" name="confirmation_token" value="{{ confirmation_token }}" />{% endif %}
+      {% for field in confirmation_fields %}<input type="hidden" name="{{ field.name }}" value="{{ field.value }}" />{% endfor %}
+      <footer class="flex justify-end gap-3 border-t border-slate-200 pt-4">
+        <a class="rakit-button rakit-button-secondary" href="{{ cancel_url }}">Cancel</a>
+        <button class="rakit-button rakit-button-danger" type="submit">{{ action.label }}</button>
+      </footer>
+    </form>
+  {% endif %}
+</div>

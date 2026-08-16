@@ -1,0 +1,43 @@
+<div id="rakit-action-root">
+  <header class="mb-6 flex flex-wrap items-end justify-between gap-3 border-b border-slate-200 pb-4">
+    <div><p class="text-sm font-medium text-slate-500">{{ binding_label }}</p><h1 class="mt-1 text-2xl font-semibold tracking-tight text-slate-950">{{ action.label }}</h1></div>
+  </header>
+  {% if action.description %}<p class="mb-4 text-sm leading-6 text-slate-600">{{ action.description }}</p>{% endif %}
+  {% if availability.availability.value == "disabled" %}
+    <section class="rakit-panel p-4">
+      <p class="text-sm text-slate-600">This action is currently unavailable.</p>
+      {% if availability.reason %}<p class="mt-1 text-sm text-slate-500">{{ availability.reason }}</p>{% endif %}
+    </section>
+  {% else %}
+    {% if issues %}
+    <div id="form-errors" class="mb-5 rounded-lg border border-red-200 bg-red-50 p-4 text-red-950" data-rakit-focus-target="form-errors" role="alert" tabindex="-1">
+      <p>There are problems with this form</p>
+      <ul>{% for issue in issues %}<li>{{ issue.message }}</li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+    <form class="space-y-5" method="post" action="{{ form_action }}" novalidate>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <input type="hidden" name="submission_token" value="{{ submission_token }}" />
+      {% if concurrency_token %}<input type="hidden" name="concurrency_token" value="{{ concurrency_token }}" />{% endif %}
+      {% if confirmation_token %}<input type="hidden" name="confirmation_token" value="{{ confirmation_token }}" />{% endif %}
+      <section class="rakit-panel p-4">
+        {% for field in fields %}
+        <div class="space-y-1.5">
+          <label class="block text-sm font-medium text-slate-800" for="{{ field.id }}">{{ field.label }}</label>
+          {% set descriptions = [] %}
+          {% if field.description %}{% set _ = descriptions.append(field.description_id) %}{% endif %}
+          {% if field.issues %}{% set _ = descriptions.append(field.error_id) %}{% endif %}
+          <input class="rakit-input" id="{{ field.id }}" name="{{ field.name }}" value="{{ field.value }}"{% if descriptions %} aria-describedby="{{ descriptions | join(' ') }}"{% endif %}{% if field.issues %} aria-invalid="true"{% endif %} />
+          {% if field.description %}<p id="{{ field.description_id }}" class="text-sm text-slate-500">{{ field.description }}</p>{% endif %}
+          {% if field.issues %}<div id="{{ field.error_id }}" class="rakit-error" role="alert">{% for issue in field.issues %}<p>{{ issue.message }}</p>{% endfor %}</div>{% endif %}
+        </div>
+        {% endfor %}
+        {% if not fields %}<p class="text-sm leading-6 text-slate-600">Continue to execute this action.</p>{% endif %}
+      </section>
+      <footer class="flex justify-end gap-3 border-t border-slate-200 pt-4">
+        <a class="rakit-button rakit-button-secondary" href="{{ cancel_url }}">Cancel</a>
+        <button class="rakit-button" type="submit">{{ 'Confirm' if action.needs_confirmation else 'Execute' }}</button>
+      </footer>
+    </form>
+  {% endif %}
+</div>

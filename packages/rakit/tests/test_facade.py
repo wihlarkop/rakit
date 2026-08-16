@@ -340,3 +340,98 @@ def test_sqlalchemy_plan04_facade_reexports_concrete_implementations() -> None:
 
     assert SQLAlchemyMutationService is RealMutationService
     assert SQLAlchemyUnitOfWork is RealUnitOfWork
+
+
+def test_plan05_foundation_contracts_preserve_facade_identity() -> None:
+    from rakit import ActionResult, ActionSuccess
+    from rakit.core import (
+        ActionDefinition,
+        ActionRedirect,
+        BulkPolicy,
+        EndpointAccessPolicy,
+        EndpointResponseKind,
+        OperationAuthorization,
+        OperationPlan,
+        RelationshipDefinition,
+        RelationshipKind,
+        resolve_record_label,
+    )
+    from rakit_core.actions import ActionDefinition as RealActionDefinition
+    from rakit_core.actions import ActionRedirect as RealActionRedirect
+    from rakit_core.actions import ActionResult as RealActionResult
+    from rakit_core.actions import ActionSuccess as RealActionSuccess
+    from rakit_core.bulk import BulkPolicy as RealBulkPolicy
+    from rakit_core.definitions import (
+        ActionDefinition as DefinitionsActionDefinition,
+    )
+    from rakit_core.endpoints import EndpointAccessPolicy as RealEndpointAccessPolicy
+    from rakit_core.endpoints import EndpointResponseKind as RealEndpointResponseKind
+    from rakit_core.mutations import OperationAuthorization as RealOperationAuthorization
+    from rakit_core.operations import OperationPlan as RealOperationPlan
+    from rakit_core.relationships import (
+        RelationshipDefinition as RealRelationshipDefinition,
+    )
+    from rakit_core.relationships import RelationshipKind as RealRelationshipKind
+    from rakit_core.relationships import resolve_record_label as RealResolveRecordLabel
+
+    assert ActionResult is RealActionResult
+    assert ActionSuccess is RealActionSuccess
+    assert ActionRedirect is RealActionRedirect
+    assert ActionDefinition is RealActionDefinition
+    assert ActionDefinition is DefinitionsActionDefinition
+    assert BulkPolicy is RealBulkPolicy
+    assert OperationAuthorization is RealOperationAuthorization
+    assert OperationPlan is RealOperationPlan
+    assert RelationshipDefinition is RealRelationshipDefinition
+    assert RelationshipKind is RealRelationshipKind
+    assert EndpointAccessPolicy is RealEndpointAccessPolicy
+    assert EndpointResponseKind is RealEndpointResponseKind
+    assert resolve_record_label is RealResolveRecordLabel
+
+
+def test_sqlalchemy_plan05_facade_reexports_relationship_inspection() -> None:
+    from rakit.sqlalchemy import inspect_relationships
+    from rakit_sqlalchemy.relationships import inspect_relationships as RealInspectRelationships
+
+    assert inspect_relationships is RealInspectRelationships
+
+
+def test_sqlalchemy_relationship_resolver_preserves_facade_identity() -> None:
+    from rakit.sqlalchemy import SQLAlchemyRelationshipResolver
+    from rakit_sqlalchemy.relationship_mutations import (
+        SQLAlchemyRelationshipResolver as RealSQLAlchemyRelationshipResolver,
+    )
+
+    assert SQLAlchemyRelationshipResolver is RealSQLAlchemyRelationshipResolver
+
+
+def test_relationship_mutation_contracts_preserve_facade_identity() -> None:
+    from rakit.core import (
+        AssociationScalarChange,
+        RelationshipCandidate,
+        RelationshipChanged,
+        RelationshipMutationKind,
+        RelationshipMutationPlan,
+        RelationshipMutationResult,
+    )
+    from rakit_core.relationship_mutations import (
+        AssociationScalarChange as RealAssociationScalarChange,
+    )
+    from rakit_core.relationship_mutations import RelationshipCandidate as RealRelationshipCandidate
+    from rakit_core.relationship_mutations import RelationshipChanged as RealRelationshipChanged
+    from rakit_core.relationship_mutations import (
+        RelationshipMutationKind as RealRelationshipMutationKind,
+    )
+    from rakit_core.relationship_mutations import (
+        RelationshipMutationPlan as RealRelationshipMutationPlan,
+    )
+    from rakit_core.relationship_mutations import (
+        RelationshipMutationResult as RealRelationshipMutationResult,
+    )
+
+    assert AssociationScalarChange is RealAssociationScalarChange
+    assert RelationshipCandidate is RealRelationshipCandidate
+    assert RelationshipChanged is RealRelationshipChanged
+    assert RelationshipMutationKind is RealRelationshipMutationKind
+    assert RelationshipMutationPlan is RealRelationshipMutationPlan
+    assert RelationshipMutationResult is RealRelationshipMutationResult

@@ -51,12 +51,6 @@ class LifespanDriver:
         await self._receive_queue.put({"type": "lifespan.startup"})
         await self._startup_complete.wait()
         if self._startup_failure_message is not None:
-            # Await the lifespan task before raising. Starlette sends
-            # `lifespan.startup.failed` and then re-raises, so the task ends
-            # in an exception; leaving it unretrieved makes anyio's asyncio
-            # runner collect it later and re-raise it against whichever test
-            # happens to be running, which makes the whole suite
-            # order-dependent.
             assert self._task is not None
             task_error: BaseException | None = None
             try:

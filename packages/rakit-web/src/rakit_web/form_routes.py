@@ -16,13 +16,14 @@ from dataclasses import dataclass, field
 from typing import Protocol, cast
 
 from rakit_core.di import ServiceResolver
-from rakit_core.errors import RakitError
+from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.events import EventPublisher
 from rakit_core.forms import (
     CollapsibleGroup,
     Column,
     CustomBlock,
     FieldLayout,
+    FormIssue,
     FormLayout,
     FormSchema,
     FormValidationError,
@@ -39,7 +40,7 @@ from rakit_core.idempotency import (
     OperationReceipt,
 )
 from rakit_core.identity import IdentityCodec, RecordIdentity
-from rakit_core.mutations import MutationAuthorization, MutationOperation
+from rakit_core.mutations import MutationAuthorization, MutationOperation, OperationAuthorizationSet
 from rakit_core.operations import (
     CancellationContext,
     Deadline,
@@ -55,6 +56,12 @@ from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 
 from ._paths import mounted_path
+from .relationship_routes import (
+    RelationshipFormBinding,
+    build_relationship_changes,
+    render_relationship_panels,
+    split_relationship_submission,
+)
 from .results import mutation_success
 from .security.cookies import CSRF_COOKIE_NAME
 
@@ -93,12 +100,52 @@ class WriteMutationService(CreateMutationService, Protocol):
     ) -> None: ...
 
 
+class GraphMutationService(WriteMutationService, Protocol):
+    async def create_graph(
+        self,
+        submitted: Mapping[str, object],
+        *,
+        relationship_changes: tuple[object, ...],
+        authorizations: OperationAuthorizationSet,
+        idempotency_token: str | None = None,
+    ) -> object: ...
+
+    async def update_graph(
+        self,
+        identity: RecordIdentity,
+        submitted: Mapping[str, object],
+        *,
+        relationship_changes: tuple[object, ...],
+        authorizations: OperationAuthorizationSet,
+        concurrency_token: str | None = None,
+        idempotency_token: str | None = None,
+    ) -> object: ...
+
+
 Verifier = Callable[[Request], Awaitable[bool]]
 SubmissionTokenIssuer = Callable[[Request], str]
 MutationAuthorizer = Callable[
     [Request, MutationOperation, RecordIdentity | None], Awaitable[MutationAuthorization | None]
 ]
+GraphMutationAuthorizer = Callable[
+    [Request, MutationAuthorization, RecordIdentity | None, tuple[object, ...]],
+    Awaitable[OperationAuthorizationSet | None],
+]
+RelationshipEditorAuthorizer = Callable[[Request, str, RecordIdentity | None], Awaitable[bool]]
 OperationScopeFactory = Callable[[], AbstractAsyncContextManager[ServiceResolver]]
+
+
+def _relationship_panel_ids(layout: FormLayout) -> set[str]:
+    def walk(node: object) -> set[str]:
+        if isinstance(node, RelationshipPanel):
+            return {node.relationship_id}
+        if isinstance(node, Tabs):
+            return {relationship_id for tab in node.tabs for relationship_id in walk(tab)}
+        if isinstance(node, Tab | Row | Column | Section | CollapsibleGroup):
+            return {relationship_id for child in node.children for relationship_id in walk(child)}
+        return set()
+
+    return {relationship_id for child in layout.children for relationship_id in walk(child)}
 
 
 @dataclass(frozen=True)
@@ -119,7 +166,25 @@ class WriteResourceBinding:
     htmx_refresh_targets: tuple[str, ...] = ()
     success_message: str | None = None
     operation_scope: OperationScopeFactory | None = None
+    relationship_form: RelationshipFormBinding | None = None
+    graph_mutation_authorizer: GraphMutationAuthorizer | None = None
+    relationship_editor_authorizer: RelationshipEditorAuthorizer | None = None
     codec: IdentityCodec = field(default_factory=IdentityCodec)
+
+    def __post_init__(self) -> None:
+        editors = (
+            {editor.relationship_id for editor in self.relationship_form.editors}
+            if self.relationship_form is not None
+            else set()
+        )
+        panels = _relationship_panel_ids(self.form_schema.resolved_layout(operation="create"))
+        panels.update(_relationship_panel_ids(self.form_schema.resolved_layout(operation="update")))
+        missing = panels - editors
+        if missing:
+            raise ValueError(
+                "RelationshipPanel references an editor that is not bound: "
+                + ", ".join(sorted(missing))
+            )
 
     @property
     def _route_resource_id(self) -> str:
@@ -139,10 +204,14 @@ class WriteResourceBinding:
 
 
 async def _parse_form(
-    request: Request, schema: FormSchema
+    request: Request, binding: WriteResourceBinding
 ) -> tuple[dict[str, object], dict[str, str]] | None:
     try:
-        form = await request.form(max_files=0, max_fields=len(schema.fields) + 4)
+        form = await request.form(
+            max_files=0,
+            max_fields=len(binding.form_schema.fields)
+            + (1_000 if binding.relationship_form else 4),
+        )
     except HTTPException:
         return None
     items = form.multi_items()
@@ -157,6 +226,10 @@ async def _parse_form(
                 return None
             values[name] = value
     tokens = {name: value for name, value in items if name in reserved and isinstance(value, str)}
+    try:
+        split_relationship_submission(binding.relationship_form, values)
+    except ValueError:
+        return None
     return values, tokens
 
 
@@ -194,6 +267,7 @@ def _layout_view(
     layout: FormLayout,
     controls: Mapping[str, Mapping[str, object]],
     issue_map: Mapping[str, tuple[object, ...]],
+    relationship_panels: Mapping[str, Mapping[str, object]],
 ) -> tuple[tuple[dict[str, object], ...], str | None]:
     ordered_invalid = [
         field_id
@@ -211,6 +285,8 @@ def _layout_view(
                 "kind": "relationship",
                 "id": node.layout_id,
                 "relationship": node.relationship_id,
+                "panel": relationship_panels.get(node.relationship_id),
+                "template": "relationships/panel.html",
             }
         if isinstance(node, CustomBlock):
             return {"kind": "custom", "id": node.layout_id, "block": node.block_id}
@@ -254,7 +330,7 @@ def _layout_view(
     return tuple(render(child) for child in layout.children), first_invalid
 
 
-def _form_response(
+async def _form_response(
     binding: WriteResourceBinding,
     request: Request,
     *,
@@ -265,6 +341,8 @@ def _form_response(
     concurrency_token: str | None = None,
     operation: str = "create",
     status_code: int = 200,
+    parent_identity: RecordIdentity | None = None,
+    relationship_issues: tuple[Mapping[str, object], ...] = (),
 ) -> Response:
     issue_map: dict[str, tuple[object, ...]] = {}
     for issue in issues:
@@ -285,8 +363,17 @@ def _form_response(
         for field in binding.form_schema.fields
         if field.writable and field.readable and not field.sensitive
     }
+    relationship_panels = await render_relationship_panels(
+        binding.relationship_form,
+        parent_identity=parent_identity,
+        submitted=submitted or {},
+        issues=relationship_issues,
+    )
     layout, first_invalid = _layout_view(
-        binding.form_schema.resolved_layout(operation=operation), controls, issue_map
+        binding.form_schema.resolved_layout(operation=operation),
+        controls,
+        issue_map,
+        relationship_panels,
     )
     return binding.templates.TemplateResponse(
         request,
@@ -322,9 +409,51 @@ def _form_response(
             "csrf_token": request.cookies.get(CSRF_COOKIE_NAME, ""),
             "submission_token": binding.issue_submission_token(request),
             "concurrency_token": concurrency_token,
+            "codec": binding.relationship_form.codec
+            if binding.relationship_form
+            else binding.codec,
         },
         status_code=status_code,
         headers={"Cache-Control": "no-store"},
+    )
+
+
+def _relationship_error_issues(error: RakitError) -> tuple[Mapping[str, object], ...]:
+    """Keep structured relationship errors out of the scalar/global form path."""
+
+    details = error.details
+    if not isinstance(details, Mapping):
+        return ()
+    issue = details.get("relationship_issue")
+    if not isinstance(issue, Mapping):
+        return ()
+    relationship_id = issue.get("relationship_id")
+    if not isinstance(relationship_id, str):
+        return ()
+    row_key = issue.get("row_key")
+    kind = issue.get("kind")
+    raw_issues = issue.get("issues")
+    if isinstance(raw_issues, tuple):
+        return tuple(
+            {
+                "relationship_id": relationship_id,
+                "row_key": row_key,
+                "field_id": raw.get("field_id") if isinstance(raw, Mapping) else None,
+                "message": raw.get("message", error.message)
+                if isinstance(raw, Mapping)
+                else error.message,
+                "kind": kind,
+            }
+            for raw in raw_issues
+        )
+    return (
+        {
+            "relationship_id": relationship_id,
+            "row_key": row_key,
+            "field_id": issue.get("field_id"),
+            "message": issue.get("message", error.message),
+            "kind": kind,
+        },
     )
 
 
@@ -381,6 +510,7 @@ async def _execute_with_deadline(
             resource_id=authorization.resource_id,
             operation=authorization.operation,
             permissions=authorization.permissions,
+            permission_requirement=authorization.requirement,
             services=services,
             events=services.require(EventPublisher) if services is not None else None,
         )
@@ -388,6 +518,31 @@ async def _execute_with_deadline(
             if deadline is None:
                 return await awaitable
             return await run_with_deadline(awaitable, deadline)
+
+
+async def _graph_authorizations(
+    binding: WriteResourceBinding,
+    request: Request,
+    root: MutationAuthorization,
+    parent_identity: RecordIdentity | None,
+    changes: tuple[object, ...],
+) -> OperationAuthorizationSet:
+    if binding.graph_mutation_authorizer is None:
+        raise RakitError(
+            code=ErrorCode.AUTH_FORBIDDEN,
+            message="Relationship graph mutation is not authorized.",
+            status_code=403,
+        )
+    authorizations = await binding.graph_mutation_authorizer(
+        request, root, parent_identity, changes
+    )
+    if authorizations is None or authorizations.root != root:
+        raise RakitError(
+            code=ErrorCode.AUTH_FORBIDDEN,
+            message="Relationship graph mutation is not authorized.",
+            status_code=403,
+        )
+    return authorizations
 
 
 async def _claim_submission(
@@ -444,7 +599,7 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
     async def create_get(request: Request) -> Response:
         if not await binding.authorize(request):
             return _error(403, "Forbidden")
-        return _form_response(
+        return await _form_response(
             binding, request, title=f"New {binding.label}", action_path=binding.create_path
         )
 
@@ -458,36 +613,69 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
             return _error(403, "Invalid CSRF token")
         if not await binding.verify_submission_token(request):
             return _error(409, "Invalid submission token")
-        parsed = await _parse_form(request, binding.form_schema)
+        parsed = await _parse_form(request, binding)
         if parsed is None:
             return _error(400, "Invalid form")
         submitted, tokens = parsed
         try:
-            state = binding.form_schema.parse(submitted)
+            scalar_submitted, _ = split_relationship_submission(
+                binding.relationship_form, submitted
+            )
+            state = binding.form_schema.parse(scalar_submitted)
             normalized = dict(state.normalized)
-            reservation, replay = await _claim_submission(
-                binding, request, submitted=normalized, tokens=tokens, operation="create"
-            )
-            if replay is not None:
-                return replay
-            await _execute_with_deadline(
-                binding,
-                request,
-                binding.mutation_service.create(state, authorization=authorization),
-                authorization,
-            )
-            if reservation is not None and binding.idempotency_store is not None:
-                await binding.idempotency_store.complete(
-                    reservation,
-                    OperationReceipt(
-                        operation_id=str(uuid.uuid4()),
-                        status="succeeded",
-                        result_kind="redirect",
-                        redirect_route=binding.path,
-                    ),
+            changes = (
+                await build_relationship_changes(
+                    binding.relationship_form, submitted, parent_identity=None
                 )
+                if binding.relationship_form is not None
+                else ()
+            )
+            if binding.relationship_form is not None:
+                graph_service = cast(GraphMutationService, binding.mutation_service)
+                if not callable(getattr(graph_service, "create_graph", None)):
+                    raise RakitError(
+                        code=ErrorCode.CONFIG_INVALID,
+                        message="Relationship forms require graph mutation support.",
+                        status_code=500,
+                    )
+                graph_authorizations = await _graph_authorizations(
+                    binding, request, authorization, None, changes
+                )
+                await _execute_with_deadline(
+                    binding,
+                    request,
+                    graph_service.create_graph(
+                        state,
+                        relationship_changes=changes,
+                        authorizations=graph_authorizations,
+                        idempotency_token=tokens.get("submission_token"),
+                    ),
+                    authorization,
+                )
+            else:
+                reservation, replay = await _claim_submission(
+                    binding, request, submitted=normalized, tokens=tokens, operation="create"
+                )
+                if replay is not None:
+                    return replay
+                await _execute_with_deadline(
+                    binding,
+                    request,
+                    binding.mutation_service.create(state, authorization=authorization),
+                    authorization,
+                )
+                if reservation is not None and binding.idempotency_store is not None:
+                    await binding.idempotency_store.complete(
+                        reservation,
+                        OperationReceipt(
+                            operation_id=str(uuid.uuid4()),
+                            status="succeeded",
+                            result_kind="redirect",
+                            redirect_route=binding.path,
+                        ),
+                    )
         except FormValidationError as exc:
-            return _form_response(
+            return await _form_response(
                 binding,
                 request,
                 title=f"New {binding.label}",
@@ -503,6 +691,19 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                 and binding.idempotency_store is not None
             ):
                 await binding.idempotency_store.release(reservation)
+            if binding.relationship_form is not None:
+                return await _form_response(
+                    binding,
+                    request,
+                    title=f"New {binding.label}",
+                    action_path=binding.create_path,
+                    submitted=submitted,
+                    issues=()
+                    if _relationship_error_issues(exc)
+                    else (FormIssue(None, exc.message),),
+                    relationship_issues=_relationship_error_issues(exc),
+                    status_code=exc.status_code,
+                )
             return _error(exc.status_code, "Invalid form")
         except ValueError:
             if (
@@ -546,13 +747,15 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
         record = await mutation_service.get(identity)
         if record is None:
             return _error(404, "Resource was not found")
-        return _form_response(
+        return await _form_response(
             binding,
             request,
             title=f"Edit {binding.label}",
             action_path=f"{binding.path}/{request.path_params['identity']}/edit",
             submitted=_record_values(binding, record),
             concurrency_token=mutation_service.issue_update_token(record),
+            parent_identity=identity,
+            operation="update",
         )
 
     async def update_post(request: Request) -> Response:
@@ -568,46 +771,81 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
             return _error(403, "Invalid CSRF token")
         if not await binding.verify_submission_token(request):
             return _error(409, "Invalid submission token")
-        parsed = await _parse_form(request, binding.form_schema)
+        parsed = await _parse_form(request, binding)
         if parsed is None:
             return _error(400, "Invalid form")
         submitted, tokens = parsed
         try:
-            state = binding.form_schema.parse(submitted)
+            scalar_submitted, _ = split_relationship_submission(
+                binding.relationship_form, submitted
+            )
+            state = binding.form_schema.parse(scalar_submitted)
             normalized = dict(state.normalized)
-            reservation, replay = await _claim_submission(
-                binding,
-                request,
-                submitted=normalized,
-                tokens=tokens,
-                operation="update",
-                identity=identity,
-            )
-            if replay is not None:
-                return replay
-            await _execute_with_deadline(
-                binding,
-                request,
-                mutation_service.update(
-                    identity,
-                    state,
-                    concurrency_token=tokens.get("concurrency_token"),
-                    authorization=authorization,
-                ),
-                authorization,
-            )
-            if reservation is not None and binding.idempotency_store is not None:
-                await binding.idempotency_store.complete(
-                    reservation,
-                    OperationReceipt(
-                        operation_id=str(uuid.uuid4()),
-                        status="succeeded",
-                        result_kind="redirect",
-                        redirect_route=binding.path,
-                    ),
+            changes = (
+                await build_relationship_changes(
+                    binding.relationship_form, submitted, parent_identity=identity
                 )
+                if binding.relationship_form is not None
+                else ()
+            )
+            if binding.relationship_form is not None:
+                graph_service = cast(GraphMutationService, mutation_service)
+                if not callable(getattr(graph_service, "update_graph", None)):
+                    raise RakitError(
+                        code=ErrorCode.CONFIG_INVALID,
+                        message="Relationship forms require graph mutation support.",
+                        status_code=500,
+                    )
+                graph_authorizations = await _graph_authorizations(
+                    binding, request, authorization, identity, changes
+                )
+                await _execute_with_deadline(
+                    binding,
+                    request,
+                    graph_service.update_graph(
+                        identity,
+                        state,
+                        relationship_changes=changes,
+                        authorizations=graph_authorizations,
+                        concurrency_token=tokens.get("concurrency_token"),
+                        idempotency_token=tokens.get("submission_token"),
+                    ),
+                    authorization,
+                )
+            else:
+                reservation, replay = await _claim_submission(
+                    binding,
+                    request,
+                    submitted=normalized,
+                    tokens=tokens,
+                    operation="update",
+                    identity=identity,
+                )
+                if replay is not None:
+                    return replay
+                await _execute_with_deadline(
+                    binding,
+                    request,
+                    mutation_service.update(
+                        identity,
+                        state,
+                        concurrency_token=tokens.get("concurrency_token"),
+                        authorization=authorization,
+                    ),
+                    authorization,
+                )
+                if reservation is not None and binding.idempotency_store is not None:
+                    await binding.idempotency_store.complete(
+                        reservation,
+                        OperationReceipt(
+                            operation_id=str(uuid.uuid4()),
+                            status="succeeded",
+                            result_kind="redirect",
+                            redirect_route=binding.path,
+                        ),
+                    )
         except FormValidationError as exc:
-            return _form_response(
+            return await _form_response(
                 binding,
                 request,
                 title=f"Edit {binding.label}",
@@ -617,6 +855,7 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                 concurrency_token=tokens.get("concurrency_token"),
                 operation="update",
                 status_code=422,
+                parent_identity=identity,
             )
         except RakitError as exc:
             if (
@@ -625,6 +864,22 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                 and binding.idempotency_store is not None
             ):
                 await binding.idempotency_store.release(reservation)
+            if binding.relationship_form is not None:
+                return await _form_response(
+                    binding,
+                    request,
+                    title=f"Edit {binding.label}",
+                    action_path=f"{binding.path}/{request.path_params['identity']}/edit",
+                    submitted=submitted,
+                    issues=()
+                    if _relationship_error_issues(exc)
+                    else (FormIssue(None, exc.message),),
+                    relationship_issues=_relationship_error_issues(exc),
+                    concurrency_token=tokens.get("concurrency_token"),
+                    operation="update",
+                    status_code=exc.status_code,
+                    parent_identity=identity,
+                )
             return _error(exc.status_code, "Mutation rejected")
         except ValueError:
             if (
@@ -678,7 +933,7 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
             return _error(403, "Invalid CSRF token")
         if not await binding.verify_submission_token(request):
             return _error(409, "Invalid submission token")
-        parsed = await _parse_form(request, binding.form_schema)
+        parsed = await _parse_form(request, binding)
         if parsed is None:
             return _error(400, "Invalid form")
         submitted, tokens = parsed

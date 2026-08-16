@@ -20,6 +20,7 @@ from rakit_core.query import (
     Sort,
     SortDirection,
 )
+from rakit_core.relationships import RelationshipDefinition, RelationshipMetadata
 from sqlalchemy import (
     Boolean,
     Date,
@@ -46,6 +47,7 @@ from .introspection import (
     UnsupportedFieldPolicyError,
     inspect_model,
 )
+from .relationships import inspect_relationships, validate_relationship_definition
 
 _OPERATOR_HANDLERS = {
     FilterOperator.EQ: lambda column, value: column == value,
@@ -383,6 +385,34 @@ class SQLAlchemyDataSource:
     def identity_fields(self) -> tuple[str, ...]:
         return (self._metadata.identity_field,)
 
+    @property
+    def relationship_metadata(self) -> dict[str, RelationshipMetadata]:
+        return inspect_relationships(self._model)
+
+    def validate_relationship(
+        self,
+        definition: RelationshipDefinition,
+        target_data_source: object,
+        association_target_data_source: object | None = None,
+    ) -> None:
+        if not isinstance(target_data_source, SQLAlchemyDataSource):
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="Relationship target must use the SQLAlchemy adapter.",
+                status_code=500,
+                details={"relationship_id": definition.relationship_id},
+            )
+        validate_relationship_definition(
+            definition,
+            source_model=self._model,
+            target_model=target_data_source._model,
+            association_target_model=(
+                association_target_data_source._model
+                if isinstance(association_target_data_source, SQLAlchemyDataSource)
+                else None
+            ),
+        )
+
     def _base_statement(self) -> Select:
         return select(self._model)
 
@@ -580,3 +610,35 @@ class SQLAlchemyDataSource:
         async with self._session_factory() as session:
             result = await session.execute(statement)
             return result.scalar_one_or_none()
+
+    def identity_for(self, record: object) -> RecordIdentity:
+        """Return this data source's canonical identity for an already-loaded record."""
+
+        return RecordIdentity(
+            values={field: getattr(record, field) for field in self.identity_fields}
+        )
+
+    def identity_conditions(self, identity: RecordIdentity) -> tuple[ColumnElement[bool], ...]:
+        """Build validated mapped identity predicates for an adapter-owned statement."""
+
+        if set(identity.values) != set(self.identity_fields):
+            raise _invalid_identity(self._metadata.identity_field)
+        return tuple(
+            getattr(self._model, field) == value for field, value in identity.values.items()
+        )
+
+    async def resolve_scoped(
+        self, session: AsyncSession, identity: RecordIdentity
+    ) -> object | None:
+        """Resolve an identity from the resource's canonical visibility scope.
+
+        This is intentionally adapter-owned so relationship writes cannot
+        substitute ``Session.get`` and accidentally bypass a host's scoped
+        base query.
+        """
+
+        return (
+            await session.scalars(
+                self.scoped_statement().where(*self.identity_conditions(identity))
+            )
+        ).one_or_none()

@@ -1,0 +1,5 @@
+{% extends "base.html" %}
+{% block title %}{{ preview.title if preview else action.label }} · {{ binding_label }}{% endblock %}
+{% block content %}
+{% include "actions/_confirm.html" %}
+{% endblock %}

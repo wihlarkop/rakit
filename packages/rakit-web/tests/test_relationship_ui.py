@@ -1,0 +1,1298 @@
+import re
+from dataclasses import dataclass
+from typing import Any, cast
+
+import httpx
+import pytest
+from rakit_core.errors import RakitError
+from rakit_core.fields import FieldDefinition
+from rakit_core.forms import FormLayout, FormSchema, RelationshipPanel
+from rakit_core.identity import IdentityCodec, RecordIdentity
+from rakit_core.mutations import MutationAuthorization, OperationAuthorizationSet
+from rakit_core.query import PageResult, ResourceQuery
+from rakit_core.relationship_mutations import (
+    ClearRelated,
+    CreateRelated,
+    DeleteRelated,
+    ReorderRelated,
+    SetRelated,
+    UnlinkRelated,
+    UpdateAssociationRelated,
+)
+from rakit_core.relationships import (
+    CompiledRelationship,
+    RelationshipCardinality,
+    RelationshipDefinition,
+    RelationshipDestructivePolicy,
+    RelationshipEditMode,
+    RelationshipKind,
+    RelationshipOrderingDefinition,
+)
+from rakit_core.resources import ResourceService
+from rakit_web.form_routes import WriteResourceBinding, build_write_routes
+from rakit_web.relationship_routes import (
+    RelationshipEditorBinding,
+    RelationshipFormBinding,
+    build_relationship_changes,
+    build_relationship_routes,
+    relationship_panel_view,
+    relationship_prefix,
+)
+from rakit_web.resource_routes import build_templates
+from starlette.applications import Starlette
+
+
+@dataclass
+class Record:
+    id: int
+    label: str
+
+
+class CandidateSource:
+    identity_fields = ("id",)
+
+    def __init__(self) -> None:
+        self.records = (Record(1, "Ada"), Record(2, "Grace"))
+
+    def identity_for(self, record: Record) -> RecordIdentity:
+        return RecordIdentity(values={"id": record.id})
+
+    async def list(self, query: ResourceQuery) -> PageResult[Record]:
+        records = self.records
+        if query.search:
+            records = tuple(record for record in records if query.search in record.label)
+        start = query.pagination.offset
+        items = records[start : start + query.pagination.per_page]
+        return PageResult(
+            items=items,
+            page=query.pagination.page,
+            per_page=query.pagination.per_page,
+            has_previous=query.pagination.page > 1,
+            has_next=start + len(items) < len(records),
+            total_count=len(records),
+        )
+
+
+class EditorProvider:
+    def __init__(self) -> None:
+        self.rows = {
+            "customer": (Record(1, "Ada"),),
+            "required_customer": (Record(1, "Ada"),),
+            "items": (Record(1, "Ada"), Record(2, "Grace")),
+        }
+
+    async def editor_page(
+        self, parent_identity, relationship_id, *, child_fields=(), page=1, per_page=25
+    ):
+        from rakit_core.relationship_mutations import RelationshipCandidate, RelationshipEditorRow
+
+        rows = tuple(
+            RelationshipEditorRow(
+                candidate=RelationshipCandidate(
+                    identity=RecordIdentity(values={"id": record.id}), label=record.label
+                ),
+                values={field: f"{record.label}-{field}" for field in child_fields},
+                concurrency_token=f"child-{record.id}",
+            )
+            for record in self.rows[relationship_id]
+        )
+        start = (page - 1) * per_page
+        items = rows[start : start + per_page]
+        return PageResult(
+            items=items,
+            page=page,
+            per_page=per_page,
+            has_previous=page > 1,
+            has_next=start + per_page < len(rows),
+            total_count=len(rows),
+        )
+
+    async def issue_concurrency_token(self, parent_identity, relationship_id):
+        return f"relationship-{relationship_id}"
+
+    async def reorder_identities(self, parent_identity, relationship_id, *, maximum):
+        rows = self.rows[relationship_id]
+        if len(rows) > maximum:
+            return None
+        return tuple(RecordIdentity(values={"id": row.id}) for row in rows)
+
+
+class PreviewProvider(EditorProvider):
+    async def preview_destructive_impact(self, plan, *, authorization):
+        return (RecordIdentity(values={"id": 1}),)
+
+    async def issue_destructive_confirmation(self, plan, *, authorization):
+        return "signed-relationship-confirmation"
+
+    async def preview_child_delete(self, parent_identity, relationship_id, child_identity):
+        return object()
+
+    async def issue_child_delete_confirmation(
+        self, parent_identity, relationship_id, child_identity
+    ):
+        return "signed-child-delete"
+
+
+class GraphService:
+    record = Record(10, "Order")
+
+    def __init__(self) -> None:
+        self.graph_updates: list[tuple[RecordIdentity | None, object, dict[str, object]]] = []
+
+    async def get(self, identity):
+        return self.record if identity.values == {"id": 10} else None
+
+    def issue_update_token(self, _record):
+        return "parent-token"
+
+    async def update_graph(self, identity, submitted, **kwargs):
+        self.graph_updates.append((identity, submitted, kwargs))
+        return object()
+
+    async def create_graph(self, submitted, **kwargs):
+        self.graph_updates.append((None, submitted, kwargs))
+        return object()
+
+    async def create(self, submitted, *, authorization=None):
+        return object()
+
+    async def update(self, identity, submitted, *, concurrency_token=None, authorization=None):
+        return object()
+
+    async def issue_delete_token(self, identity):
+        return "delete"
+
+    async def delete(self, confirmation_token, *, identity, authorization=None):
+        return None
+
+
+async def _allow(_request) -> bool:
+    return True
+
+
+async def _authorization(_request, operation, identity):
+    return MutationAuthorization(
+        admin_id="admin",
+        resource_id="orders",
+        operation=operation,
+        principal_id="tester",
+        permissions=("admin.resources.orders.update",),
+        target_identity=identity,
+    )
+
+
+async def _graph_authorization(_request, root, parent_identity, changes):
+    capabilities = []
+    for change in changes:
+        capabilities.append(
+            MutationAuthorization(
+                admin_id="admin",
+                resource_id="orders",
+                operation=change.operation_id,
+                principal_id="tester",
+                permissions=("admin.resources.orders.update",),
+                target_identity=parent_identity,
+            )
+        )
+        for step in change.steps:
+            if isinstance(step, DeleteRelated):
+                capabilities.append(
+                    MutationAuthorization(
+                        admin_id="admin",
+                        resource_id="people",
+                        operation=f"{change.operation_id}:target-delete",
+                        principal_id="tester",
+                        permissions=("admin.resources.orders.update",),
+                        target_identity=step.identity,
+                    )
+                )
+    return OperationAuthorizationSet(root=root, capabilities=tuple(capabilities))
+
+
+async def _relationship_editor_authorization(_request, _relationship_id, _parent_identity) -> bool:
+    return True
+
+
+def _compiled(
+    relationship_id: str,
+    *,
+    kind=RelationshipKind.MANY_TO_ONE,
+    cardinality=RelationshipCardinality.TO_ONE,
+    edit_mode=RelationshipEditMode.LINK,
+    nullable=True,
+    ordering=None,
+    destructive_policy=None,
+    target_delete_permission=None,
+):
+    definition = RelationshipDefinition(
+        relationship_id=relationship_id,
+        target_resource_id="people",
+        label=relationship_id.title(),
+        kind=kind,
+        cardinality=cardinality,
+        nullable=nullable,
+        writable=True,
+        edit_mode=edit_mode,
+        record_label_field="label",
+        ordered=ordering is not None,
+        ordering=ordering,
+        destructive_policy=destructive_policy or RelationshipDestructivePolicy(),
+    )
+    return CompiledRelationship(
+        source_resource_id="orders",
+        definition=definition,
+        mutation_permission=MutationAuthorization(
+            admin_id="admin",
+            resource_id="orders",
+            operation="update",
+            principal_id="tester",
+            permissions=("admin.resources.orders.update",),
+        ).requirement,
+        target_delete_permission=target_delete_permission,
+        route_path=f"/orders/{{identity}}/_relationships/{relationship_id}",
+        ordering=ordering,
+    )
+
+
+def _binding(
+    *, relationship_form: RelationshipFormBinding
+) -> tuple[WriteResourceBinding, GraphService]:
+    service = GraphService()
+    binding = WriteResourceBinding(
+        path="/orders",
+        label="Order",
+        form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="status", python_type=str, required=True),),
+            update_layout=FormLayout(
+                children=(
+                    RelationshipPanel(layout_id="customer-panel", relationship_id="customer"),
+                    RelationshipPanel(layout_id="items-panel", relationship_id="items"),
+                )
+            ),
+        ),
+        mutation_service=service,
+        templates=build_templates(()),
+        authorize=_allow,
+        verify_csrf=_allow,
+        verify_submission_token=_allow,
+        issue_submission_token=lambda _request: "submission",
+        mutation_authorizer=_authorization,
+        relationship_form=relationship_form,
+        graph_mutation_authorizer=_graph_authorization,
+        relationship_editor_authorizer=_relationship_editor_authorization,
+    )
+    return binding, service
+
+
+def _relationship_form() -> RelationshipFormBinding:
+    source = CandidateSource()
+    provider = EditorProvider()
+    customer = RelationshipEditorBinding(
+        relationship=_compiled("customer"),
+        target_service=ResourceService(cast(Any, source)),
+        state_provider=provider,
+        target_search_fields=("label",),
+    )
+    items = RelationshipEditorBinding(
+        relationship=_compiled(
+            "items",
+            kind=RelationshipKind.ONE_TO_MANY,
+            cardinality=RelationshipCardinality.TO_MANY,
+            edit_mode=RelationshipEditMode.INLINE,
+        ),
+        target_service=ResourceService(cast(Any, source)),
+        state_provider=provider,
+        target_form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="sku", python_type=str, required=True),)
+        ),
+    )
+    return RelationshipFormBinding(editors=(customer, items))
+
+
+@pytest.mark.anyio
+async def test_relationship_editors_are_scoped_and_final_post_uses_graph_update() -> None:
+    form = _relationship_form()
+    binding, service = _binding(relationship_form=form)
+    routes = [*build_write_routes(binding), *build_relationship_routes(binding, form)]
+    app = Starlette(routes=routes)
+    codec = IdentityCodec()
+    encoded_parent = codec.encode(RecordIdentity(values={"id": 10}))
+    grace = codec.encode(RecordIdentity(values={"id": 2}))
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        edit = await client.get(f"/orders/{encoded_parent}/edit")
+        assert edit.status_code == 200
+        assert "Ada" in edit.text
+        options = await client.get(
+            f"/orders/{encoded_parent}/_relationships/customer/options?q=Grace",
+            headers={"HX-Request": "true"},
+        )
+        assert "Grace" in options.text
+        assert "Ada" not in options.text
+        result = await client.post(
+            f"/orders/{encoded_parent}/edit",
+            data={
+                "status": "draft-changed",
+                "csrf_token": "csrf",
+                "submission_token": "submission",
+                "concurrency_token": "parent-token",
+                f"{relationship_prefix('customer')}set": grace,
+            },
+            follow_redirects=False,
+        )
+    assert result.status_code == 303
+    _, state, kwargs = cast(tuple[RecordIdentity, Any, dict[str, Any]], service.graph_updates[-1])
+    assert dict(state.normalized) == {"status": "draft-changed"}
+    steps = kwargs["relationship_changes"][0].steps
+    assert isinstance(steps[0], SetRelated)
+    assert steps[0].identity.values == {"id": 2}
+
+
+@pytest.mark.anyio
+async def test_inline_fragment_preserves_unsaved_child_values_without_writing() -> None:
+    form = _relationship_form()
+    binding, service = _binding(relationship_form=form)
+    app = Starlette(
+        routes=[*build_write_routes(binding), *build_relationship_routes(binding, form)]
+    )
+    encoded_parent = IdentityCodec().encode(RecordIdentity(values={"id": 10}))
+    prefix = relationship_prefix("items")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            f"/orders/{encoded_parent}/_relationships/items/page/2",
+            data={
+                "status": "draft-changed",
+                "csrf_token": "csrf",
+                f"{prefix}create__new-a__sku": "X",
+            },
+            headers={"HX-Request": "true"},
+        )
+    assert response.status_code == 200
+    assert 'value="X"' in response.text
+    assert service.graph_updates == []
+
+
+@pytest.mark.anyio
+async def test_parent_create_posts_inline_child_through_graph_root() -> None:
+    form = _relationship_form()
+    binding, service = _binding(relationship_form=form)
+    app = Starlette(routes=build_write_routes(binding))
+    prefix = relationship_prefix("items")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/orders/new",
+            data={
+                "status": "new-order",
+                "csrf_token": "csrf",
+                "submission_token": "submission",
+                f"{prefix}create__new-line__sku": "SKU-1",
+            },
+            follow_redirects=False,
+        )
+    assert response.status_code == 303
+    parent, state, kwargs = service.graph_updates[-1]
+    assert parent is None
+    assert dict(cast(Any, state).normalized) == {"status": "new-order"}
+    steps = cast(Any, kwargs["relationship_changes"])[0].steps
+    assert isinstance(steps[0], CreateRelated)
+    assert dict(steps[0].values) == {"sku": "SKU-1"}
+
+
+@pytest.mark.anyio
+async def test_relationship_parser_uses_typed_create_and_clear_steps() -> None:
+    source = CandidateSource()
+    provider = EditorProvider()
+    customer = RelationshipEditorBinding(
+        relationship=_compiled("customer"),
+        target_service=ResourceService(cast(Any, source)),
+        state_provider=provider,
+    )
+    items = RelationshipEditorBinding(
+        relationship=_compiled(
+            "items",
+            kind=RelationshipKind.ONE_TO_MANY,
+            cardinality=RelationshipCardinality.TO_MANY,
+            edit_mode=RelationshipEditMode.INLINE,
+        ),
+        target_service=ResourceService(cast(Any, source)),
+        state_provider=provider,
+        target_form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="sku", python_type=str, required=True),)
+        ),
+    )
+    changes = await build_relationship_changes(
+        RelationshipFormBinding(editors=(customer, items)),
+        {
+            f"{relationship_prefix('customer')}clear": "true",
+            f"{relationship_prefix('items')}create__new-a__sku": "X",
+        },
+        parent_identity=RecordIdentity(values={"id": 10}),
+    )
+    assert isinstance(changes[0].steps[0], ClearRelated)
+    assert any(isinstance(step, CreateRelated) for step in changes[1].steps)
+
+
+@pytest.mark.anyio
+async def test_association_fields_use_declared_schema_and_typed_step() -> None:
+    source = CandidateSource()
+
+    class AssociationProvider(EditorProvider):
+        async def editor_page(
+            self, parent_identity, relationship_id, *, child_fields=(), page=1, per_page=25
+        ):
+            from rakit_core.relationship_mutations import (
+                RelationshipCandidate,
+                RelationshipEditorRow,
+            )
+
+            assert relationship_id == "enrollments"
+            return PageResult(
+                items=(
+                    RelationshipEditorRow(
+                        candidate=RelationshipCandidate(
+                            identity=RecordIdentity(values={"id": 2}), label="Grace"
+                        ),
+                        association_identity=RecordIdentity(values={"id": 99}),
+                        values={"grade": "B"},
+                    ),
+                ),
+                page=page,
+                per_page=per_page,
+                has_previous=False,
+                has_next=False,
+            )
+
+    requirement = _compiled("customer").mutation_permission
+    definition = RelationshipDefinition(
+        relationship_id="enrollments",
+        target_resource_id="people",
+        label="Enrollments",
+        kind=RelationshipKind.ASSOCIATION_OBJECT,
+        cardinality=RelationshipCardinality.TO_MANY,
+        writable=True,
+        edit_mode=RelationshipEditMode.INLINE,
+        record_label_field="label",
+        association_fields=("grade",),
+        association_target_resource_id="people",
+    )
+    association = RelationshipEditorBinding(
+        relationship=CompiledRelationship(
+            source_resource_id="orders",
+            definition=definition,
+            mutation_permission=requirement,
+            target_delete_permission=None,
+            route_path="/orders/{identity}/_relationships/enrollments",
+        ),
+        target_service=ResourceService(cast(Any, source)),
+        state_provider=AssociationProvider(),
+        association_form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="grade", python_type=str, required=True),)
+        ),
+    )
+    codec = IdentityCodec()
+    target = codec.encode(RecordIdentity(values={"id": 2}))
+    changes = await build_relationship_changes(
+        RelationshipFormBinding(editors=(association,)),
+        {
+            f"{relationship_prefix('enrollments')}association__{target}__grade": "A",
+        },
+        parent_identity=RecordIdentity(values={"id": 10}),
+    )
+    step = changes[0].steps[0]
+    assert isinstance(step, UpdateAssociationRelated)
+    assert dict(step.values) == {"grade": "A"}
+
+    with pytest.raises(RakitError):
+        await build_relationship_changes(
+            RelationshipFormBinding(editors=(association,)),
+            {
+                f"{relationship_prefix('enrollments')}association__{target}__secret": "no",
+            },
+            parent_identity=RecordIdentity(values={"id": 10}),
+        )
+
+
+@pytest.mark.anyio
+async def test_unknown_relationship_control_is_rejected_without_a_scalar_exception() -> None:
+    with pytest.raises(RakitError):
+        await build_relationship_changes(
+            _relationship_form(),
+            {f"{relationship_prefix('customer')}unexpected": "value"},
+            parent_identity=RecordIdentity(values={"id": 10}),
+        )
+
+
+@pytest.mark.anyio
+async def test_to_many_omission_is_noop_and_unlink_is_explicit() -> None:
+    form = _relationship_form()
+    no_intent = await build_relationship_changes(
+        form,
+        {f"{relationship_prefix('items')}selection_present": "true"},
+        parent_identity=RecordIdentity(values={"id": 10}),
+    )
+    assert no_intent == ()
+
+    encoded = IdentityCodec().encode(RecordIdentity(values={"id": 2}))
+    changes = await build_relationship_changes(
+        form,
+        {f"{relationship_prefix('items')}unlink__{encoded}": encoded},
+        parent_identity=RecordIdentity(values={"id": 10}),
+    )
+    assert isinstance(changes[0].steps[0], UnlinkRelated)
+    assert changes[0].steps[0].identity.values == {"id": 2}
+
+
+@pytest.mark.anyio
+async def test_rendered_unlink_and_reorder_controls_expose_explicit_transport() -> None:
+    class TagsProvider(EditorProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.rows["tags"] = (Record(1, "Ada"), Record(2, "Grace"))
+
+    source = CandidateSource()
+    provider = TagsProvider()
+    tags = RelationshipEditorBinding(
+        relationship=_compiled(
+            "tags",
+            kind=RelationshipKind.MANY_TO_MANY,
+            cardinality=RelationshipCardinality.TO_MANY,
+        ),
+        target_service=ResourceService(cast(Any, source)),
+        state_provider=provider,
+    )
+    ordered = RelationshipEditorBinding(
+        relationship=_compiled(
+            "items",
+            kind=RelationshipKind.ONE_TO_MANY,
+            cardinality=RelationshipCardinality.TO_MANY,
+            edit_mode=RelationshipEditMode.INLINE,
+            ordering=RelationshipOrderingDefinition(position_field="position"),
+        ),
+        target_service=ResourceService(cast(Any, source)),
+        state_provider=provider,
+        target_form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="sku", python_type=str, required=True),)
+        ),
+        reorder_safe_maximum=2,
+    )
+    tags_panel = await relationship_panel_view(
+        tags, parent_identity=RecordIdentity(values={"id": 10})
+    )
+    tag_identity = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    pending_tags_panel = await relationship_panel_view(
+        tags,
+        parent_identity=RecordIdentity(values={"id": 10}),
+        submitted={f"{relationship_prefix('tags')}unlink__{tag_identity}": tag_identity},
+    )
+    ordered_panel = await relationship_panel_view(
+        ordered, parent_identity=RecordIdentity(values={"id": 10})
+    )
+    templates = build_templates(())
+    chip_markup = templates.env.get_template("relationships/to_many.html").render(
+        panel=tags_panel, codec=IdentityCodec()
+    )
+    pending_chip_markup = templates.env.get_template("relationships/to_many.html").render(
+        panel=pending_tags_panel, codec=IdentityCodec()
+    )
+    row_markup = templates.env.get_template("relationships/panel.html").render(
+        panel=ordered_panel, codec=IdentityCodec()
+    )
+
+    assert "data-rakit-unlink" in chip_markup
+    assert 'aria-pressed="true"' in pending_chip_markup
+    assert "opacity-55 line-through" in pending_chip_markup
+    assert "hx-vals=" in row_markup
+
+
+@pytest.mark.anyio
+async def test_destructive_unlink_capability_marker_survives_pending_state() -> None:
+    class DestructiveTagsProvider(PreviewProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.rows["tags"] = (Record(1, "Ada"),)
+
+    source = CandidateSource()
+    tags = RelationshipEditorBinding(
+        relationship=_compiled(
+            "tags",
+            kind=RelationshipKind.MANY_TO_MANY,
+            cardinality=RelationshipCardinality.TO_MANY,
+            destructive_policy=RelationshipDestructivePolicy(allow_delete_orphan=True),
+        ),
+        target_service=ResourceService(cast(Any, source)),
+        state_provider=DestructiveTagsProvider(),
+    )
+    tag_identity = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    active = await relationship_panel_view(tags, parent_identity=RecordIdentity(values={"id": 10}))
+    pending = await relationship_panel_view(
+        tags,
+        parent_identity=RecordIdentity(values={"id": 10}),
+        submitted={f"{relationship_prefix('tags')}unlink__{tag_identity}": tag_identity},
+    )
+    templates = build_templates(())
+    active_markup = templates.env.get_template("relationships/to_many.html").render(
+        panel=active, codec=IdentityCodec()
+    )
+    pending_markup = templates.env.get_template("relationships/to_many.html").render(
+        panel=pending, codec=IdentityCodec()
+    )
+
+    assert "data-rakit-unlink-destructive" in active_markup
+    assert "formaction=" in active_markup
+    assert "data-rakit-unlink-destructive" in pending_markup
+    assert "data-rakit-preview-unlink" not in pending_markup
+
+
+@pytest.mark.anyio
+async def test_rendered_reorder_request_changes_visible_row_order_without_persistence() -> None:
+    provider = EditorProvider()
+    editor = RelationshipEditorBinding(
+        relationship=_compiled(
+            "items",
+            kind=RelationshipKind.ONE_TO_MANY,
+            cardinality=RelationshipCardinality.TO_MANY,
+            edit_mode=RelationshipEditMode.INLINE,
+            ordering=RelationshipOrderingDefinition(position_field="position"),
+        ),
+        target_service=ResourceService(cast(Any, CandidateSource())),
+        state_provider=provider,
+        target_form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="sku", python_type=str, required=True),)
+        ),
+        reorder_safe_maximum=2,
+    )
+    form = RelationshipFormBinding(editors=(_relationship_form().editor("customer"), editor))
+    binding, service = _binding(relationship_form=form)
+    app = Starlette(
+        routes=[*build_write_routes(binding), *build_relationship_routes(binding, form)]
+    )
+    codec = IdentityCodec()
+    parent = codec.encode(RecordIdentity(values={"id": 10}))
+    first = codec.encode(RecordIdentity(values={"id": 1}))
+    second = codec.encode(RecordIdentity(values={"id": 2}))
+    prefix = relationship_prefix("items")
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            f"/orders/{parent}/_relationships/items/page/1",
+            data={
+                "csrf_token": "csrf",
+                f"{prefix}order__0000": first,
+                f"{prefix}order__0001": second,
+                f"{prefix}move__{second}__up": "up",
+            },
+            headers={"HX-Request": "true"},
+        )
+        down_response = await client.post(
+            f"/orders/{parent}/_relationships/items/page/1",
+            data={
+                "csrf_token": "csrf",
+                f"{prefix}order__0000": first,
+                f"{prefix}order__0001": second,
+                f"{prefix}move__{first}__down": "down",
+            },
+            headers={"HX-Request": "true"},
+        )
+
+    assert response.status_code == 200
+    assert response.text.index(f'data-rakit-row="{second}"') < response.text.index(
+        f'data-rakit-row="{first}"'
+    )
+    assert f'name="{prefix}move__{second}__up"' not in response.text
+    assert down_response.text.index(f'data-rakit-row="{second}"') < down_response.text.index(
+        f'data-rakit-row="{first}"'
+    )
+    assert service.graph_updates == []
+
+
+@pytest.mark.anyio
+async def test_non_nullable_to_one_clear_is_rejected() -> None:
+    source = CandidateSource()
+    editor = RelationshipEditorBinding(
+        relationship=_compiled("required_customer", nullable=False),
+        target_service=ResourceService(cast(Any, source)),
+        state_provider=EditorProvider(),
+    )
+    with pytest.raises(RakitError):
+        await build_relationship_changes(
+            RelationshipFormBinding(editors=(editor,)),
+            {f"{relationship_prefix('required_customer')}clear": "true"},
+            parent_identity=RecordIdentity(values={"id": 10}),
+        )
+
+
+@pytest.mark.anyio
+async def test_explicit_child_delete_requires_confirmation_and_never_means_unlink() -> None:
+    form = _relationship_form()
+    encoded = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    with pytest.raises(RakitError):
+        await build_relationship_changes(
+            form,
+            {f"{relationship_prefix('items')}delete_intent__{encoded}": "true"},
+            parent_identity=RecordIdentity(values={"id": 10}),
+        )
+    changes = await build_relationship_changes(
+        form,
+        {
+            f"{relationship_prefix('items')}delete_intent__{encoded}": "true",
+            f"{relationship_prefix('items')}delete__{encoded}": "signed-delete-token",
+        },
+        parent_identity=RecordIdentity(values={"id": 10}),
+    )
+    assert isinstance(changes[0].steps[0], DeleteRelated)
+    assert not any(isinstance(step, UnlinkRelated) for step in changes[0].steps)
+    with pytest.raises(RakitError, match="cannot be removed and deleted"):
+        await build_relationship_changes(
+            form,
+            {
+                f"{relationship_prefix('items')}unlink__{encoded}": encoded,
+                f"{relationship_prefix('items')}delete_intent__{encoded}": "true",
+                f"{relationship_prefix('items')}delete__{encoded}": "signed-delete-token",
+            },
+            parent_identity=RecordIdentity(values={"id": 10}),
+        )
+
+
+@pytest.mark.anyio
+async def test_bounded_complete_reorder_requires_full_identity_sequence() -> None:
+    source = CandidateSource()
+    editor = RelationshipEditorBinding(
+        relationship=_compiled(
+            "items",
+            kind=RelationshipKind.ONE_TO_MANY,
+            cardinality=RelationshipCardinality.TO_MANY,
+            edit_mode=RelationshipEditMode.INLINE,
+            ordering=RelationshipOrderingDefinition(position_field="position"),
+        ),
+        target_service=ResourceService(cast(Any, source)),
+        state_provider=EditorProvider(),
+        target_form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="sku", python_type=str, required=True),)
+        ),
+        reorder_safe_maximum=2,
+    )
+    codec = IdentityCodec()
+    identities = [codec.encode(RecordIdentity(values={"id": item})) for item in (2, 1)]
+    changes = await build_relationship_changes(
+        RelationshipFormBinding(editors=(editor,)),
+        {
+            f"{relationship_prefix('items')}order__0000": identities[0],
+            f"{relationship_prefix('items')}order__0001": identities[1],
+        },
+        parent_identity=RecordIdentity(values={"id": 10}),
+    )
+    assert isinstance(changes[0].steps[0], ReorderRelated)
+    with pytest.raises(RakitError):
+        await build_relationship_changes(
+            RelationshipFormBinding(editors=(editor,)),
+            {f"{relationship_prefix('items')}order__0000": identities[0]},
+            parent_identity=RecordIdentity(values={"id": 10}),
+        )
+
+
+@pytest.mark.anyio
+async def test_oversized_reorder_fails_closed_but_editor_pagination_remains_available() -> None:
+    source = CandidateSource()
+    provider = EditorProvider()
+    editor = RelationshipEditorBinding(
+        relationship=_compiled(
+            "items",
+            kind=RelationshipKind.ONE_TO_MANY,
+            cardinality=RelationshipCardinality.TO_MANY,
+            edit_mode=RelationshipEditMode.INLINE,
+            ordering=RelationshipOrderingDefinition(position_field="position"),
+        ),
+        target_service=ResourceService(cast(Any, source)),
+        state_provider=provider,
+        reorder_safe_maximum=1,
+        candidate_page_size=1,
+    )
+    panel = await relationship_panel_view(
+        editor,
+        parent_identity=RecordIdentity(values={"id": 10}),
+        page=1,
+    )
+    assert panel["reorderable"] is False
+    assert panel["reorder_unavailable"] is True
+    assert panel["has_next_page"] is True
+
+
+@pytest.mark.anyio
+async def test_inline_validation_issue_remains_bound_to_its_draft_field() -> None:
+    panel = await relationship_panel_view(
+        _relationship_form().editor("items"),
+        parent_identity=RecordIdentity(values={"id": 10}),
+        submitted={f"{relationship_prefix('items')}create__new-a__sku": "bad"},
+        issues=(
+            {
+                "relationship_id": "items",
+                "row_key": "new-a",
+                "field_id": "sku",
+                "message": "Required format.",
+            },
+        ),
+    )
+    relationship_issues = cast(dict[tuple[str, str], list[str]], panel["relationship_issues"])
+    assert relationship_issues[("new-a", "sku")] == ["Required format."]
+    assert panel["error_inputs"] == ({"name": "issue__new-a__sku", "value": "Required format."},)
+
+
+@pytest.mark.anyio
+async def test_destructive_preview_is_form_state_only_and_locally_bound_to_current_intent() -> None:
+    source = CandidateSource()
+    editor = RelationshipEditorBinding(
+        relationship=_compiled("customer"),
+        target_service=ResourceService(cast(Any, source)),
+        state_provider=PreviewProvider(),
+    )
+    form = RelationshipFormBinding(editors=(editor, _relationship_form().editor("items")))
+    binding, service = _binding(relationship_form=form)
+    app = Starlette(
+        routes=[*build_write_routes(binding), *build_relationship_routes(binding, form)]
+    )
+    codec = IdentityCodec()
+    parent = codec.encode(RecordIdentity(values={"id": 10}))
+    target = codec.encode(RecordIdentity(values={"id": 2}))
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            f"/orders/{parent}/_relationships/customer/preview",
+            data={
+                "csrf_token": "csrf",
+                f"{relationship_prefix('customer')}concurrency": "relationship-customer",
+                f"{relationship_prefix('customer')}set": target,
+            },
+            headers={"HX-Request": "true"},
+        )
+    assert response.status_code == 200
+    assert "signed-relationship-confirmation" in response.text
+    assert "data-rakit-preview-dialog" in response.text
+    assert "Confirm change" in response.text
+    assert "<!doctype html>" not in response.text
+    assert service.graph_updates == []
+
+
+@pytest.mark.anyio
+async def test_changed_destructive_intent_drops_stale_local_confirmation_display() -> None:
+    panel = await relationship_panel_view(
+        _relationship_form().editor("customer"),
+        parent_identity=RecordIdentity(values={"id": 10}),
+        submitted={
+            f"{relationship_prefix('customer')}set": IdentityCodec().encode(
+                RecordIdentity(values={"id": 2})
+            ),
+            f"{relationship_prefix('customer')}destructive_confirmation": "old-token",
+            f"{relationship_prefix('customer')}confirmation_intent": "wrong-fingerprint",
+        },
+    )
+    assert panel["confirmation"] is None
+
+
+@pytest.mark.anyio
+async def test_child_delete_preview_is_explicit_non_persisting_and_uses_signed_target_token() -> (
+    None
+):
+    source = CandidateSource()
+    requirement = _compiled("customer").mutation_permission
+    items = RelationshipEditorBinding(
+        relationship=_compiled(
+            "items",
+            kind=RelationshipKind.ONE_TO_MANY,
+            cardinality=RelationshipCardinality.TO_MANY,
+            edit_mode=RelationshipEditMode.INLINE,
+            destructive_policy=RelationshipDestructivePolicy(allow_child_delete=True),
+            target_delete_permission=requirement,
+        ),
+        target_service=ResourceService(cast(Any, source)),
+        state_provider=PreviewProvider(),
+    )
+    form = RelationshipFormBinding(editors=(_relationship_form().editor("customer"), items))
+    binding, service = _binding(relationship_form=form)
+    app = Starlette(
+        routes=[*build_write_routes(binding), *build_relationship_routes(binding, form)]
+    )
+    codec = IdentityCodec()
+    parent = codec.encode(RecordIdentity(values={"id": 10}))
+    child = codec.encode(RecordIdentity(values={"id": 1}))
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            f"/orders/{parent}/_relationships/items/preview",
+            data={
+                "csrf_token": "csrf",
+                f"{relationship_prefix('items')}delete_preview": child,
+            },
+            headers={"HX-Request": "true"},
+        )
+    assert response.status_code == 200
+    assert "signed-child-delete" in response.text
+    assert "data-rakit-preview-dialog" in response.text
+    assert "Mark for deletion" in response.text
+    assert service.graph_updates == []
+
+
+@pytest.mark.anyio
+async def test_clear_preview_does_not_change_selected_state_until_confirmation() -> None:
+    source = CandidateSource()
+    customer = RelationshipEditorBinding(
+        relationship=_compiled("customer"),
+        target_service=ResourceService(cast(Any, source)),
+        state_provider=PreviewProvider(),
+    )
+    form = RelationshipFormBinding(editors=(customer, _relationship_form().editor("items")))
+    binding, service = _binding(relationship_form=form)
+    app = Starlette(
+        routes=[*build_write_routes(binding), *build_relationship_routes(binding, form)]
+    )
+    codec = IdentityCodec()
+    parent = codec.encode(RecordIdentity(values={"id": 10}))
+    selected = codec.encode(RecordIdentity(values={"id": 2}))
+    prefix = relationship_prefix("customer")
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            f"/orders/{parent}/_relationships/customer/preview",
+            data={
+                "csrf_token": "csrf",
+                f"{prefix}set": selected,
+                f"{prefix}clear": "true",
+            },
+            headers={"HX-Request": "true"},
+        )
+
+    assert response.status_code == 200
+    assert "Clear Customer?" in response.text
+    assert "signed-relationship-confirmation" in response.text
+    panel = await relationship_panel_view(
+        customer,
+        parent_identity=RecordIdentity(values={"id": 10}),
+        submitted={f"{prefix}set": selected},
+    )
+    assert panel["selected"] == {selected}
+    assert service.graph_updates == []
+
+    changes = await build_relationship_changes(
+        form,
+        {
+            f"{prefix}clear": "true",
+            f"{prefix}destructive_confirmation": "signed-relationship-confirmation",
+        },
+        parent_identity=RecordIdentity(values={"id": 10}),
+    )
+    assert isinstance(changes[0].steps[0], ClearRelated)
+
+
+@pytest.mark.anyio
+async def test_unlink_preview_is_distinct_from_child_delete_and_non_persisting() -> None:
+    source = CandidateSource()
+    requirement = _compiled("customer").mutation_permission
+    items = RelationshipEditorBinding(
+        relationship=_compiled(
+            "items",
+            kind=RelationshipKind.ONE_TO_MANY,
+            cardinality=RelationshipCardinality.TO_MANY,
+            edit_mode=RelationshipEditMode.INLINE,
+            destructive_policy=RelationshipDestructivePolicy(allow_child_delete=True),
+            target_delete_permission=requirement,
+        ),
+        target_service=ResourceService(cast(Any, source)),
+        state_provider=PreviewProvider(),
+    )
+    form = RelationshipFormBinding(editors=(_relationship_form().editor("customer"), items))
+    binding, service = _binding(relationship_form=form)
+    app = Starlette(
+        routes=[*build_write_routes(binding), *build_relationship_routes(binding, form)]
+    )
+    codec = IdentityCodec()
+    parent = codec.encode(RecordIdentity(values={"id": 10}))
+    child = codec.encode(RecordIdentity(values={"id": 2}))
+    prefix = relationship_prefix("items")
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            f"/orders/{parent}/_relationships/items/preview",
+            data={
+                "csrf_token": "csrf",
+                f"{prefix}unlink_preview": child,
+                f"{prefix}unlink__{child}": child,
+            },
+            headers={"HX-Request": "true"},
+        )
+
+    assert response.status_code == 200
+    assert "Confirm removal" in response.text
+    assert f'data-rakit-unlink-identity="{child}"' in response.text
+    assert "Delete" not in response.text
+    assert service.graph_updates == []
+
+    changes = await build_relationship_changes(
+        form,
+        {
+            f"{prefix}unlink__{child}": child,
+            f"{prefix}destructive_confirmation": "signed-relationship-confirmation",
+        },
+        parent_identity=RecordIdentity(values={"id": 10}),
+    )
+    assert isinstance(changes[0].steps[0], UnlinkRelated)
+
+
+@pytest.mark.anyio
+async def test_rendered_delete_control_uses_preview_transport_and_modal_host() -> None:
+    """Exercise the request a browser builds from the rendered delete control."""
+    source = CandidateSource()
+    requirement = _compiled("customer").mutation_permission
+    items = RelationshipEditorBinding(
+        relationship=_compiled(
+            "items",
+            kind=RelationshipKind.ONE_TO_MANY,
+            cardinality=RelationshipCardinality.TO_MANY,
+            edit_mode=RelationshipEditMode.INLINE,
+            destructive_policy=RelationshipDestructivePolicy(allow_child_delete=True),
+            target_delete_permission=requirement,
+        ),
+        target_service=ResourceService(cast(Any, source)),
+        state_provider=PreviewProvider(),
+    )
+    form = RelationshipFormBinding(editors=(_relationship_form().editor("customer"), items))
+    binding, service = _binding(relationship_form=form)
+    app = Starlette(
+        routes=[*build_write_routes(binding), *build_relationship_routes(binding, form)]
+    )
+    codec = IdentityCodec()
+    parent = codec.encode(RecordIdentity(values={"id": 10}))
+    child = codec.encode(RecordIdentity(values={"id": 1}))
+    prefix = relationship_prefix("items")
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        edit = await client.get(f"/orders/{parent}/edit")
+        button = re.search(
+            r'<button[^>]*data-rakit-preview-delete[^>]*hx-post="([^"]+)"'
+            r'[^>]*hx-include="closest form"[^>]*hx-vals=\'([^\']+)\'',
+            edit.text,
+        )
+        assert button is not None
+        assert 'type="submit"' in button.group(0)
+        assert 'name="__rakit_rel__items__delete_preview"' in button.group(0)
+        assert 'formaction="/orders/{parent}/_relationships/items/preview"'.replace(
+            "{parent}", parent
+        ) in button.group(0)
+        assert 'id="rakit-dialog-root"' in edit.text
+        assert button.group(1) == f"/orders/{parent}/_relationships/items/preview"
+
+        # This is the form payload plus hx-vals that HTMX sends for the click.
+        response = await client.post(
+            button.group(1),
+            data={
+                "csrf_token": "csrf",
+                "status": "draft",
+                f"{prefix}selection_present": "true",
+                f"{prefix}delete_preview": child,
+            },
+            headers={"HX-Request": "true"},
+        )
+
+    assert response.status_code == 200
+    assert "data-rakit-preview-dialog" in response.text
+    assert "Invalid form" not in response.text
+    assert "signed-child-delete" in response.text
+    assert service.graph_updates == []
+
+
+@pytest.mark.anyio
+async def test_relationship_polish_uses_human_labels_counts_and_local_row_errors() -> None:
+    form = _relationship_form()
+    customer = await relationship_panel_view(
+        form.editor("customer"), parent_identity=RecordIdentity(values={"id": 10})
+    )
+    empty_customer = await relationship_panel_view(form.editor("customer"), parent_identity=None)
+    items = await relationship_panel_view(
+        form.editor("items"),
+        parent_identity=RecordIdentity(values={"id": 10}),
+        issues=(
+            {
+                "relationship_id": "items",
+                "row_key": IdentityCodec().encode(RecordIdentity(values={"id": 1})),
+                "kind": "row",
+                "message": "This row is no longer available.",
+            },
+        ),
+    )
+    templates = build_templates(())
+    one_rendered = templates.env.get_template("relationships/to_one.html").render(
+        panel=customer, codec=form.codec
+    )
+    empty_one_rendered = templates.env.get_template("relationships/to_one.html").render(
+        panel=empty_customer, codec=form.codec
+    )
+    many_rendered = templates.env.get_template("relationships/panel.html").render(
+        panel=items, codec=form.codec
+    )
+
+    assert customer["total_label"] == "1 item"
+    assert items["total_label"] == "2 items"
+    assert "Clear" in one_rendered
+    assert "Clear" not in empty_one_rendered
+    assert 'type="checkbox"' not in one_rendered
+    assert "Review customer" not in one_rendered
+    assert "This row is no longer available." in many_rendered
+    assert "+ Add item" in many_rendered
+
+
+@pytest.mark.anyio
+async def test_preview_validation_stays_inside_admin_ui_for_hx_and_full_requests() -> None:
+    form = _relationship_form()
+    binding, _ = _binding(relationship_form=form)
+    app = Starlette(
+        routes=[*build_write_routes(binding), *build_relationship_routes(binding, form)]
+    )
+    parent = IdentityCodec().encode(RecordIdentity(values={"id": 10}))
+    path = f"/orders/{parent}/_relationships/customer/preview"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        htmx = await client.post(path, data={"csrf_token": "csrf"}, headers={"HX-Request": "true"})
+        full = await client.post(path, data={"csrf_token": "csrf"})
+
+    assert htmx.status_code == 200
+    assert "There are problems with this form" in htmx.text
+    assert "PlainText" not in htmx.text
+    assert full.status_code == 422
+    assert "<!doctype html>" in full.text
+    assert 'role="alert"' in full.text
+    assert "There are problems with this form" in full.text
+
+
+@pytest.mark.anyio
+async def test_targeted_delete_preview_keeps_other_pending_deletes_and_final_plan() -> None:
+    source = CandidateSource()
+    requirement = _compiled("customer").mutation_permission
+    items = RelationshipEditorBinding(
+        relationship=_compiled(
+            "items",
+            kind=RelationshipKind.ONE_TO_MANY,
+            cardinality=RelationshipCardinality.TO_MANY,
+            edit_mode=RelationshipEditMode.INLINE,
+            destructive_policy=RelationshipDestructivePolicy(allow_child_delete=True),
+            target_delete_permission=requirement,
+        ),
+        target_service=ResourceService(cast(Any, source)),
+        state_provider=PreviewProvider(),
+    )
+    form = RelationshipFormBinding(editors=(_relationship_form().editor("customer"), items))
+    binding, _ = _binding(relationship_form=form)
+    app = Starlette(
+        routes=[*build_write_routes(binding), *build_relationship_routes(binding, form)]
+    )
+    codec = IdentityCodec()
+    parent = codec.encode(RecordIdentity(values={"id": 10}))
+    child_a = codec.encode(RecordIdentity(values={"id": 1}))
+    child_b = codec.encode(RecordIdentity(values={"id": 2}))
+    prefix = relationship_prefix("items")
+    submitted = {
+        "csrf_token": "csrf",
+        f"{prefix}delete_intent__{child_a}": "true",
+        f"{prefix}delete__{child_a}": "signed-a",
+        f"{prefix}delete_preview": child_b,
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            f"/orders/{parent}/_relationships/items/preview",
+            data=submitted,
+            headers={"HX-Request": "true"},
+        )
+    assert response.status_code == 200
+    assert f'data-rakit-delete-identity="{child_b}"' in response.text
+    changes = await build_relationship_changes(
+        form,
+        {
+            f"{prefix}delete_intent__{child_a}": "true",
+            f"{prefix}delete__{child_a}": "signed-a",
+            f"{prefix}delete_intent__{child_b}": "true",
+            f"{prefix}delete__{child_b}": "signed-b",
+        },
+        parent_identity=RecordIdentity(values={"id": 10}),
+    )
+    assert [
+        step.identity.values for step in changes[0].steps if isinstance(step, DeleteRelated)
+    ] == [
+        {"id": 1},
+        {"id": 2},
+    ]
+
+
+@pytest.mark.anyio
+async def test_inline_field_multiple_errors_share_one_unique_error_container() -> None:
+    form = _relationship_form()
+    binding, _ = _binding(relationship_form=form)
+    app = Starlette(
+        routes=[*build_write_routes(binding), *build_relationship_routes(binding, form)]
+    )
+    parent = IdentityCodec().encode(RecordIdentity(values={"id": 10}))
+    prefix = relationship_prefix("items")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            f"/orders/{parent}/_relationships/items/page/1",
+            data={
+                "csrf_token": "csrf",
+                f"{prefix}create__new-a__sku": "bad",
+                f"{prefix}issue__new-a__sku": "First error",
+            },
+            headers={"HX-Request": "true"},
+        )
+    assert response.status_code == 200
+    error_id = "rakit-relationship-items-new-a-sku-errors"
+    assert response.text.count(f'id="{error_id}"') == 1
+    assert f'aria-describedby="{error_id}"' in response.text
+    panel = cast(
+        dict[str, Any],
+        await relationship_panel_view(
+            form.editor("items"),
+            parent_identity=RecordIdentity(values={"id": 10}),
+            submitted={
+                f"{prefix}create__new-a__sku": "bad",
+                f"{prefix}issue__new-a__sku": "First error",
+            },
+            issues=(
+                {
+                    "relationship_id": "items",
+                    "row_key": "new-a",
+                    "field_id": "sku",
+                    "message": "Second error",
+                },
+            ),
+        ),
+    )
+    assert panel["relationship_issues"][("new-a", "sku")] == ["Second error", "First error"]
+    rendered = (
+        build_templates(())
+        .env.get_template("relationships/panel.html")
+        .render(
+            panel=panel,
+            codec=form.codec,
+        )
+    )
+    assert rendered.count(f'id="{error_id}"') == 1
+    error_container = rendered.split(f'id="{error_id}"', maxsplit=1)[1].split("</div>", maxsplit=1)[
+        0
+    ]
+    assert "First error" in error_container
+    assert "Second error" in error_container

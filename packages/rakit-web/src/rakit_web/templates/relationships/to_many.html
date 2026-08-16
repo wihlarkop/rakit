@@ -1,0 +1,20 @@
+<fieldset class="space-y-4" {% if not panel.relationship.effective_writable %}disabled{% endif %}>
+  {% if panel.concurrency_token %}<input type="hidden" name="{{ panel.prefix }}concurrency" value="{{ panel.concurrency_token }}" />{% endif %}
+  <input type="hidden" name="{{ panel.prefix }}selection_present" value="true" />
+  <label class="block text-sm font-medium text-slate-800" for="rakit-relationship-{{ panel.relationship_id }}-search">Search {{ panel.relationship.label }}</label>
+  <input class="rakit-input" id="rakit-relationship-{{ panel.relationship_id }}-search" name="{{ panel.prefix }}search" type="search" placeholder="Search {{ panel.relationship.label | lower }}" autocomplete="off"
+    {% if panel.options_path %}hx-get="{{ panel.options_path }}" hx-trigger="input changed delay:250ms" hx-include="closest form" hx-target="#rakit-relationship-{{ panel.relationship_id }}-options" hx-swap="outerHTML"{% endif %} />
+  <div><p class="mb-2 text-sm font-medium text-slate-700">Selected</p><ul class="flex flex-wrap gap-2" aria-label="Selected {{ panel.relationship.label }}">
+    {% for row in panel.rows %}
+      {% set encoded = codec.encode(row.candidate.identity) %}
+      <li class="rakit-chip{% if encoded in panel.pending_unlinks %} opacity-55 line-through{% endif %}">
+        <span>{{ row.candidate.label }}</span>
+        <input class="sr-only" data-rakit-unlink-input type="checkbox" name="{{ panel.prefix }}unlink__{{ encoded }}" value="{{ encoded }}"{% if encoded in panel.pending_unlinks %} checked{% endif %} />
+        {% if panel.unlink_destructive and encoded not in panel.pending_unlinks %}<button class="inline-flex size-6 items-center justify-center rounded-full text-slate-500 hover:bg-slate-200 hover:text-slate-900" data-rakit-unlink-action data-rakit-unlink-prefix="{{ panel.prefix }}" data-rakit-unlink-identity="{{ encoded }}" data-rakit-unlink-destructive data-rakit-preview-unlink type="submit" name="{{ panel.prefix }}unlink_preview" value="{{ encoded }}" formaction="{{ panel.preview_path }}" formmethod="post" hx-post="{{ panel.preview_path }}" hx-include="closest form" hx-vals='{"{{ panel.prefix }}unlink_preview":"{{ encoded }}","{{ panel.prefix }}unlink__{{ encoded }}":"{{ encoded }}"}' hx-target="#rakit-dialog-root" hx-swap="innerHTML" aria-label="Remove {{ row.candidate.label }} from {{ panel.relationship.label }}"><span aria-hidden="true">×</span></button>{% else %}<button class="inline-flex size-6 items-center justify-center rounded-full text-slate-500 hover:bg-slate-200 hover:text-slate-900" data-rakit-unlink-action data-rakit-unlink-prefix="{{ panel.prefix }}" data-rakit-unlink-identity="{{ encoded }}"{% if panel.unlink_destructive %} data-rakit-unlink-destructive{% endif %} type="button" aria-label="{{ 'Undo removal of' if encoded in panel.pending_unlinks else 'Remove' }} {{ row.candidate.label }} from {{ panel.relationship.label }}" aria-pressed="{{ 'true' if encoded in panel.pending_unlinks else 'false' }}"><span aria-hidden="true">×</span></button>{% endif %}
+      </li>
+    {% endfor %}
+  </ul></div>
+  <ul id="rakit-relationship-{{ panel.relationship_id }}-options" class="divide-y divide-slate-100 overflow-hidden rounded-md border border-slate-200 bg-white" aria-label="Available {{ panel.relationship.label }}">
+    <li class="px-3 py-2 text-sm text-slate-500">Start typing to find {{ panel.relationship.label | lower }}.</li>
+  </ul>
+</fieldset>

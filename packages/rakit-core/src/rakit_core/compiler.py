@@ -2,11 +2,24 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from .actions import ActionDefinition, ActionScope
+from .bulk import BulkExecutionPolicy
 from .compatibility import validate_official_package_versions
 from .datasource import DataSource
-from .definitions import ResourceDefinition, ResourceFieldPolicy, RouteDefinition
+from .definitions import (
+    CompiledActionDefinition,
+    CompiledEndpointDefinition,
+    CompiledPageDefinition,
+    EndpointDefinition,
+    PageDefinition,
+    ResourceDefinition,
+    ResourceFieldPolicy,
+    RouteDefinition,
+)
 from .di import ServiceRegistry, _RegistrySnapshot
 from .errors import ErrorCode, RakitError
+from .permissions import PermissionRequirement
+from .relationships import CompiledRelationship
 
 # Path prefixes Rakit owns. An application route allowed to occupy one of
 # these is an authorization bypass, not merely a collision: `/auth/login`
@@ -15,6 +28,10 @@ from .errors import ErrorCode, RakitError
 # would be served to anonymous callers with no permission check at all.
 # Only routes flagged `framework_owned` may live here.
 RESERVED_PATH_PREFIXES = ("/_system", "/auth")
+# These are static children that only compiled resource definitions claim.
+# They are intentionally not global framework namespaces like `/auth`.
+RESOURCE_ACTION_SEGMENT = "_actions"
+RESOURCE_RELATIONSHIP_SEGMENT = "_relationships"
 
 OFFICIAL_PACKAGE_NAMES = (
     "rakit",
@@ -60,6 +77,60 @@ def _has_path_parameter(path: str) -> bool:
     return any(_is_path_parameter(segment) for segment in path.split("/"))
 
 
+def _path_segments(path: str) -> tuple[str, ...]:
+    return () if path == "/" else tuple(path.removeprefix("/").split("/"))
+
+
+def _path_prefixes_overlap(
+    prefix: tuple[str, ...], path: tuple[str, ...], *, reserved_segment_index: int
+) -> bool:
+    """Return whether an application path enters a route-pattern subtree."""
+
+    if len(path) < len(prefix):
+        return False
+    for index, (first, second) in enumerate(zip(prefix, path[: len(prefix)], strict=True)):
+        # A dynamic application parameter cannot reserve the resource child
+        # namespace on its own: `/orders/{identity}` is the normal record
+        # route, not `/orders/_actions`. Only the reserved child segment
+        # itself is literal; the resource and record identity shape retain
+        # normalized dynamic-route overlap semantics.
+        if index == reserved_segment_index:
+            if first != second:
+                return False
+        elif first != second and not (_is_path_parameter(first) or _is_path_parameter(second)):
+            return False
+    return True
+
+
+def _uses_resource_reserved_subpath(path: str, resources: tuple[ResourceDefinition, ...]) -> bool:
+    """Keep resource child namespaces out of application route ownership.
+
+    `_actions` and `_relationships` are meaningful only below a compiled
+    resource's collection/record route shapes.  They are not global framework
+    namespaces, so unrelated paths can use those names without being blocked.
+    """
+
+    route_segments = _path_segments(path)
+    for resource in resources:
+        collection = _path_segments(resource.path)
+        reserved_subtrees = (
+            ((*collection, RESOURCE_ACTION_SEGMENT), len(collection)),
+            ((*collection, "{identity}", RESOURCE_ACTION_SEGMENT), len(collection) + 1),
+            (
+                (*collection, "{identity}", RESOURCE_RELATIONSHIP_SEGMENT),
+                len(collection) + 1,
+            ),
+        )
+        if any(
+            _path_prefixes_overlap(
+                prefix, route_segments, reserved_segment_index=reserved_segment_index
+            )
+            for prefix, reserved_segment_index in reserved_subtrees
+        ):
+            return True
+    return False
+
+
 def _is_safe_owned_static_precedence(
     first_path: str,
     first_owner: str,
@@ -83,8 +154,12 @@ def _is_safe_owned_static_precedence(
 
 @dataclass
 class ApplicationBuilder:
+    admin_id: str = "admin"
     _routes: list[RouteDefinition] = field(default_factory=list)
     _resources: list[ResourceDefinition] = field(default_factory=list)
+    _pages: list[PageDefinition] = field(default_factory=list)
+    _actions: list[ActionDefinition] = field(default_factory=list)
+    _endpoints: list[EndpointDefinition] = field(default_factory=list)
     _plugin_ids: list[str] = field(default_factory=list)
     _registry: ServiceRegistry = field(default_factory=ServiceRegistry)
     _plugin_conflicts: dict[str, tuple[str, ...]] = field(default_factory=dict)
@@ -100,6 +175,18 @@ class ApplicationBuilder:
     @property
     def resources(self) -> tuple[ResourceDefinition, ...]:
         return tuple(self._resources)
+
+    @property
+    def pages(self) -> tuple[PageDefinition, ...]:
+        return tuple(self._pages)
+
+    @property
+    def actions(self) -> tuple[ActionDefinition, ...]:
+        return tuple(self._actions)
+
+    @property
+    def endpoints(self) -> tuple[EndpointDefinition, ...]:
+        return tuple(self._endpoints)
 
     @property
     def plugins(self) -> tuple[str, ...]:
@@ -136,6 +223,24 @@ class ApplicationBuilder:
             )
         self._resources.append(definition)
         self._resource_data_sources[definition.resource_id] = data_source
+
+    def add_page(self, definition: PageDefinition) -> None:
+        self._check_not_compiled()
+        if any(existing.page_id == definition.page_id for existing in self._pages):
+            raise _duplicate_definition("page", definition.page_id)
+        self._pages.append(definition)
+
+    def add_action(self, definition: ActionDefinition) -> None:
+        self._check_not_compiled()
+        if any(existing.action_id == definition.action_id for existing in self._actions):
+            raise _duplicate_definition("action", definition.action_id)
+        self._actions.append(definition)
+
+    def add_endpoint(self, definition: EndpointDefinition) -> None:
+        self._check_not_compiled()
+        if any(existing.endpoint_id == definition.endpoint_id for existing in self._endpoints):
+            raise _duplicate_definition("endpoint", definition.endpoint_id)
+        self._endpoints.append(definition)
 
     def register_adapter(self, name: str, claim: AdapterClaim) -> None:
         self._check_not_compiled()
@@ -223,6 +328,9 @@ class ApplicationBuilder:
 class _InstallSnapshot:
     routes: list[RouteDefinition]
     resources: list[ResourceDefinition]
+    pages: list[PageDefinition]
+    actions: list[ActionDefinition]
+    endpoints: list[EndpointDefinition]
     plugin_ids: list[str]
     plugin_conflicts: dict[str, tuple[str, ...]]
     adapters: dict[str, AdapterClaim]
@@ -235,6 +343,9 @@ class _InstallSnapshot:
         return cls(
             routes=list(builder._routes),
             resources=list(builder._resources),
+            pages=list(builder._pages),
+            actions=list(builder._actions),
+            endpoints=list(builder._endpoints),
             plugin_ids=list(builder._plugin_ids),
             plugin_conflicts=dict(builder._plugin_conflicts),
             adapters=dict(builder._adapters),
@@ -246,6 +357,9 @@ class _InstallSnapshot:
     def restore(self, builder: "ApplicationBuilder") -> None:
         builder._routes[:] = self.routes
         builder._resources[:] = self.resources
+        builder._pages[:] = self.pages
+        builder._actions[:] = self.actions
+        builder._endpoints[:] = self.endpoints
         builder._plugin_ids[:] = self.plugin_ids
         builder._plugin_conflicts.clear()
         builder._plugin_conflicts.update(self.plugin_conflicts)
@@ -262,6 +376,14 @@ class CompiledApplication:
     routes: tuple[RouteDefinition, ...]
     plugins: tuple[str, ...]
     resources: tuple[ResourceDefinition, ...]
+    pages: tuple[PageDefinition, ...] = ()
+    actions: tuple[ActionDefinition, ...] = ()
+    endpoints: tuple[EndpointDefinition, ...] = ()
+    relationships: tuple[CompiledRelationship, ...] = ()
+    compiled_pages: tuple[CompiledPageDefinition, ...] = ()
+    compiled_actions: tuple[CompiledActionDefinition, ...] = ()
+    compiled_endpoints: tuple[CompiledEndpointDefinition, ...] = ()
+    action_routes: tuple[tuple[RouteDefinition, CompiledActionDefinition], ...] = ()
 
 
 def _invalid_datasource(resource_id: str, reason: str) -> RakitError:
@@ -270,6 +392,33 @@ def _invalid_datasource(resource_id: str, reason: str) -> RakitError:
         message=f'Resource "{resource_id}" has an invalid read data source.',
         status_code=500,
         details={"resource_id": resource_id, "reason": reason},
+    )
+
+
+def _duplicate_definition(kind: str, identifier: str) -> RakitError:
+    return RakitError(
+        code=ErrorCode.CONFIG_INVALID,
+        message=f'A {kind} with id "{identifier}" is already registered.',
+        status_code=500,
+        details={"kind": kind, "identifier": identifier, "reason": "duplicate_definition"},
+    )
+
+
+def _invalid_definition(kind: str, identifier: str, reason: str) -> RakitError:
+    return RakitError(
+        code=ErrorCode.CONFIG_INVALID,
+        message=f'Invalid {kind} definition "{identifier}".',
+        status_code=500,
+        details={"kind": kind, "identifier": identifier, "reason": reason},
+    )
+
+
+def _invalid_relationship(resource_id: str, relationship_id: str, reason: str) -> RakitError:
+    return RakitError(
+        code=ErrorCode.CONFIG_INVALID,
+        message="Invalid relationship configuration.",
+        status_code=500,
+        details={"resource_id": resource_id, "relationship_id": relationship_id, "reason": reason},
     )
 
 
@@ -334,6 +483,312 @@ def _validate_resource_contract(
             raise _invalid_policy(resource_id, policy_name, "unknown_field")
 
 
+def _validate_plan05_definitions(
+    builder: ApplicationBuilder,
+) -> tuple[
+    tuple[CompiledRelationship, ...],
+    tuple[CompiledPageDefinition, ...],
+    tuple[CompiledActionDefinition, ...],
+    tuple[CompiledEndpointDefinition, ...],
+]:
+    resources = {resource.resource_id: resource for resource in builder.resources}
+    compiled_relationships: list[CompiledRelationship] = []
+    compiled_pages = tuple(
+        CompiledPageDefinition(
+            definition=page,
+            permission=page.permission
+            or PermissionRequirement.all_of(f"{builder.admin_id}.pages.{page.page_id}.view"),
+        )
+        for page in builder.pages
+    )
+    compiled_actions: list[CompiledActionDefinition] = []
+    compiled_endpoints: list[CompiledEndpointDefinition] = []
+    for resource in builder.resources:
+        seen_relationships: set[str] = set()
+        source_data_source = builder._resource_data_sources[resource.resource_id]
+        for relationship in resource.relationships:
+            if relationship.relationship_id in seen_relationships:
+                raise _invalid_relationship(
+                    resource.resource_id, relationship.relationship_id, "duplicate_relationship"
+                )
+            seen_relationships.add(relationship.relationship_id)
+            target = resources.get(relationship.target_resource_id)
+            if target is None:
+                raise _invalid_relationship(
+                    resource.resource_id,
+                    relationship.relationship_id,
+                    "target_resource_not_registered",
+                )
+            if relationship.record_label_field is not None:
+                target_fields = tuple(builder._resource_data_sources[target.resource_id].fields)
+                if relationship.record_label_field not in target_fields:
+                    raise _invalid_relationship(
+                        resource.resource_id,
+                        relationship.relationship_id,
+                        "record_label_field_not_found",
+                    )
+            if relationship.association_fields and relationship.kind.value != "association_object":
+                raise _invalid_relationship(
+                    resource.resource_id,
+                    relationship.relationship_id,
+                    "association_fields_not_allowed",
+                )
+            if (
+                relationship.association_target_resource_id is not None
+                and relationship.association_target_resource_id not in resources
+            ):
+                raise _invalid_relationship(
+                    resource.resource_id,
+                    relationship.relationship_id,
+                    "association_target_resource_not_registered",
+                )
+            validate_relationship = getattr(source_data_source, "validate_relationship", None)
+            if not callable(validate_relationship):
+                raise _invalid_relationship(
+                    resource.resource_id,
+                    relationship.relationship_id,
+                    "relationship_metadata_unavailable",
+                )
+            validate_relationship(
+                relationship,
+                builder._resource_data_sources[relationship.target_resource_id],
+                (
+                    builder._resource_data_sources[relationship.association_target_resource_id]
+                    if relationship.association_target_resource_id is not None
+                    else None
+                ),
+            )
+            mutation_permission = relationship.permission or PermissionRequirement.all_of(
+                f"{builder.admin_id}.resources.{resource.resource_id}.update"
+            )
+            target_resource_id = (
+                relationship.association_target_resource_id or relationship.target_resource_id
+            )
+            target_delete_permission = (
+                PermissionRequirement.all_of(
+                    f"{builder.admin_id}.resources.{target_resource_id}.delete"
+                )
+                if relationship.destructive_policy.permits_persistent_delete
+                else None
+            )
+            compiled_relationships.append(
+                CompiledRelationship(
+                    source_resource_id=resource.resource_id,
+                    definition=relationship,
+                    mutation_permission=mutation_permission,
+                    target_delete_permission=target_delete_permission,
+                    target_create_permission=PermissionRequirement.all_of(
+                        f"{builder.admin_id}.resources.{target_resource_id}.create"
+                    ),
+                    target_update_permission=PermissionRequirement.all_of(
+                        f"{builder.admin_id}.resources.{target_resource_id}.update"
+                    ),
+                    ordering=relationship.ordering,
+                    route_path=(
+                        f"{resource.path}/{{identity}}/{RESOURCE_RELATIONSHIP_SEGMENT}/"
+                        f"{relationship.relationship_id}"
+                    ),
+                )
+            )
+
+    pages = {page.page_id: page for page in builder.pages}
+    for action in builder.actions:
+        if action.scope is ActionScope.PAGE:
+            if action.page_id not in pages:
+                raise _invalid_definition("action", action.action_id, "page_owner_not_registered")
+        elif action.resource_id not in resources:
+            raise _invalid_definition("action", action.action_id, "resource_owner_not_registered")
+        if action.scope is ActionScope.BULK:
+            policy = action.bulk_policy
+            if policy is None:
+                raise _invalid_definition("action", action.action_id, "bulk_policy_missing")
+            if (
+                action.mutating
+                and policy.execution is BulkExecutionPolicy.ATOMIC
+                and action.transaction_policy.value != "auto"
+            ):
+                raise _invalid_definition("action", action.action_id, "atomic_bulk_requires_auto")
+            if (
+                action.mutating
+                and policy.execution is BulkExecutionPolicy.BEST_EFFORT
+                and action.transaction_policy.value == "manual"
+            ):
+                raise _invalid_definition(
+                    "action", action.action_id, "best_effort_manual_not_supported"
+                )
+            if action.needs_preview:
+                raise _invalid_definition("action", action.action_id, "bulk_preview_not_supported")
+        compiled_actions.append(
+            CompiledActionDefinition(
+                definition=action,
+                permission=action.permission
+                or PermissionRequirement.all_of(
+                    f"{builder.admin_id}.actions.{action.action_id}.execute"
+                ),
+            )
+        )
+
+    for endpoint in builder.endpoints:
+        if not endpoint.methods:
+            raise _duplicate_definition("endpoint", endpoint.endpoint_id)
+        if len(set(endpoint.methods)) != len(endpoint.methods):
+            raise _duplicate_definition("endpoint", endpoint.endpoint_id)
+        if endpoint.input_schema is None and endpoint.input_source is not None:
+            raise _duplicate_definition("endpoint", endpoint.endpoint_id)
+        compiled_endpoints.append(
+            CompiledEndpointDefinition(
+                definition=endpoint,
+                permission=endpoint.permission
+                or PermissionRequirement.all_of(
+                    f"{builder.admin_id}.endpoints.{endpoint.endpoint_id}.invoke"
+                ),
+            )
+        )
+    return (
+        tuple(compiled_relationships),
+        compiled_pages,
+        tuple(compiled_actions),
+        tuple(compiled_endpoints),
+    )
+
+
+def _join_owner_path(owner_path: str, *child_segments: str) -> str:
+    """Join an owner absolute path with framework child path segments.
+
+    Preserves exactly one slash between segments, so a root owner ("/")
+    never produces an accidental double slash and never yields an empty
+    application path.
+    """
+    parts = [part.strip("/") for part in (owner_path, *child_segments)]
+    return "/" + "/".join(part for part in parts if part)
+
+
+def _application_definition_routes(builder: ApplicationBuilder) -> tuple[RouteDefinition, ...]:
+    routes: list[RouteDefinition] = []
+    for page in builder.pages:
+        routes.append(
+            RouteDefinition(
+                route_name=f"page:{page.page_id}",
+                methods=("GET", "POST") if page.mutating else ("GET",),
+                path=page.path,
+                owner_id=page.page_id,
+            )
+        )
+    for endpoint in builder.endpoints:
+        routes.append(
+            RouteDefinition(
+                route_name=f"endpoint:{endpoint.endpoint_id}",
+                methods=tuple(method.value for method in endpoint.methods),
+                path=endpoint.path,
+                owner_id=endpoint.endpoint_id,
+            )
+        )
+    for action in builder.actions:
+        if action.scope.value != "page":
+            continue
+        page = next(page for page in builder.pages if page.page_id == action.page_id)
+        routes.append(
+            RouteDefinition(
+                route_name=f"page:{page.page_id}:action:{action.action_id}",
+                methods=("GET", "POST"),
+                path=_join_owner_path(page.path, RESOURCE_ACTION_SEGMENT, action.action_id),
+                owner_id=page.page_id,
+            )
+        )
+    return tuple(routes)
+
+
+def _resource_definition_routes(builder: ApplicationBuilder) -> tuple[RouteDefinition, ...]:
+    routes: list[RouteDefinition] = []
+    resources = {resource.resource_id: resource for resource in builder.resources}
+    for resource in builder.resources:
+        for relationship in resource.relationships:
+            relationship_path = (
+                f"{resource.path}/{{identity}}/{RESOURCE_RELATIONSHIP_SEGMENT}/"
+                f"{relationship.relationship_id}"
+            )
+            routes.extend(
+                (
+                    RouteDefinition(
+                        route_name=(
+                            f"resource:{resource.resource_id}:relationship:{relationship.relationship_id}"
+                        ),
+                        methods=("GET", "POST"),
+                        path=relationship_path,
+                        owner_id=resource.resource_id,
+                    ),
+                    RouteDefinition(
+                        route_name=(
+                            f"resource:{resource.resource_id}:relationship:{relationship.relationship_id}:options"
+                        ),
+                        methods=("GET",),
+                        path=f"{relationship_path}/options",
+                        owner_id=resource.resource_id,
+                    ),
+                    RouteDefinition(
+                        route_name=(
+                            f"resource:{resource.resource_id}:relationship:{relationship.relationship_id}:page"
+                        ),
+                        methods=("POST",),
+                        path=f"{relationship_path}/page/{{page}}",
+                        owner_id=resource.resource_id,
+                    ),
+                    RouteDefinition(
+                        route_name=(
+                            f"resource:{resource.resource_id}:relationship:{relationship.relationship_id}:preview"
+                        ),
+                        methods=("POST",),
+                        path=f"{relationship_path}/preview",
+                        owner_id=resource.resource_id,
+                    ),
+                )
+            )
+    for action in builder.actions:
+        if action.scope is ActionScope.PAGE:
+            continue
+        assert action.resource_id is not None
+        resource = resources[action.resource_id]
+        suffix = (
+            f"{{identity}}/{RESOURCE_ACTION_SEGMENT}"
+            if action.scope is ActionScope.RECORD
+            else RESOURCE_ACTION_SEGMENT
+        )
+        path = _join_owner_path(resource.path, suffix, action.action_id)
+        owner_id = resource.resource_id
+        route_name = f"resource:{resource.resource_id}:action:{action.action_id}"
+        routes.append(
+            RouteDefinition(
+                route_name=route_name,
+                methods=("GET", "POST"),
+                path=path,
+                owner_id=owner_id,
+            )
+        )
+    return tuple(routes)
+
+
+def _action_route_pairs(
+    routes: tuple[RouteDefinition, ...],
+    compiled_actions: tuple[CompiledActionDefinition, ...],
+) -> tuple[tuple[RouteDefinition, CompiledActionDefinition], ...]:
+    """Pair each compiled action with its compiler-owned neutral route.
+
+    The route-name grammar ``{kind}:{owner}:action:{action_id}`` is
+    compiler-owned, and the owner is known from the action's scope, so the
+    pairing is exact: user routes can never be mistaken for action routes.
+    """
+    route_by_name = {route.route_name: route for route in routes}
+    pairs: list[tuple[RouteDefinition, CompiledActionDefinition]] = []
+    for compiled in compiled_actions:
+        action = compiled.definition
+        kind = "page" if action.scope is ActionScope.PAGE else "resource"
+        owner = action.page_id if action.scope is ActionScope.PAGE else action.resource_id
+        route = route_by_name.get(f"{kind}:{owner}:action:{action.action_id}")
+        if route is not None:
+            pairs.append((route, compiled))
+    return tuple(pairs)
+
+
 def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
     if builder._install_depth > 0:
         raise RakitError(
@@ -350,9 +805,18 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
             raise _invalid_datasource(resource.resource_id, "missing_registration")
         _validate_resource_contract(resource, data_source)
 
+    (
+        compiled_relationships,
+        compiled_pages,
+        compiled_actions,
+        compiled_endpoints,
+    ) = _validate_plan05_definitions(builder)
+
     seen: dict[str, list[tuple[str, str, str]]] = {}
     seen_route_names: dict[str, RouteDefinition] = {}
-    for route in builder.routes:
+    application_routes = (*builder.routes, *_application_definition_routes(builder))
+    all_routes = (*application_routes, *_resource_definition_routes(builder))
+    for route in all_routes:
         if not route.framework_owned and any(
             route.path == prefix or route.path.startswith(f"{prefix}/")
             for prefix in RESERVED_PATH_PREFIXES
@@ -360,6 +824,16 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
             raise RakitError(
                 code=ErrorCode.CONFIG_RESERVED_PATH,
                 message=f'Route path "{route.path}" is reserved for framework use.',
+                status_code=500,
+                details={"path": route.path, "route_name": route.route_name},
+            )
+
+        if route in application_routes and _uses_resource_reserved_subpath(
+            route.path, builder.resources
+        ):
+            raise RakitError(
+                code=ErrorCode.CONFIG_RESERVED_PATH,
+                message=f'Route path "{route.path}" is reserved for compiled resource operations.',
                 status_code=500,
                 details={"path": route.path, "route_name": route.route_name},
             )
@@ -395,4 +869,16 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
             )
 
     builder._mark_compiled()
-    return CompiledApplication(builder.routes, builder.plugins, builder.resources)
+    return CompiledApplication(
+        all_routes,
+        builder.plugins,
+        builder.resources,
+        builder.pages,
+        builder.actions,
+        builder.endpoints,
+        compiled_relationships,
+        compiled_pages,
+        compiled_actions,
+        compiled_endpoints,
+        _action_route_pairs(all_routes, compiled_actions),
+    )

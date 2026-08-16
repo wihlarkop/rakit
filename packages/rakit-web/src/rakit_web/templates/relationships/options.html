@@ -1,0 +1,8 @@
+<ul id="{{ options_id }}" class="mt-2 divide-y divide-slate-100 overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm" role="listbox">
+  {% for option in options %}
+    {% set encoded = codec.encode(option.identity) %}
+    {% if encoded not in selected %}
+      <li role="option"><label class="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"><span>{{ option.label }}</span><input class="size-4 rounded border-slate-300 text-blue-700" type="checkbox" name="{{ prefix }}link__{{ encoded }}" value="{{ encoded }}" /><span class="sr-only">Add {{ option.label }}</span></label></li>
+    {% endif %}
+  {% endfor %}
+</ul>

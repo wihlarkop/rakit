@@ -1,9 +1,33 @@
+from rakit_core.actions import (
+    ActionAdvancedResponse,
+    ActionAvailability,
+    ActionDefinition,
+    ActionRedirect,
+    ActionRefresh,
+    ActionRejected,
+    ActionRendered,
+    ActionResponseKind,
+    ActionResult,
+    ActionScope,
+    ActionSuccess,
+)
 from rakit_core.auth import (
     ANONYMOUS_PRINCIPAL,
     AuthBackend,
     Principal,
     SessionRecord,
     SessionStore,
+)
+from rakit_core.bulk import (
+    BULK_CONFIRMATION_THRESHOLD_MAXIMUM,
+    SYNCHRONOUS_BULK_TARGETS_MAXIMUM,
+    BulkActionOutcome,
+    BulkExecutionPolicy,
+    BulkItemOutcome,
+    BulkItemStatus,
+    BulkPolicy,
+    BulkSelection,
+    BulkTarget,
 )
 from rakit_core.compatibility import validate_official_package_versions
 from rakit_core.compiler import ApplicationBuilder, CompiledApplication, Plugin
@@ -23,9 +47,19 @@ from rakit_core.config import (
 )
 from rakit_core.crypto import KeyRing, SigningKey, TokenService
 from rakit_core.datasource import DataSource, DataSourceCapabilities
-from rakit_core.definitions import ResourceFieldPolicy
+from rakit_core.definitions import (
+    EndpointDefinition,
+    PageDefinition,
+    ResourceFieldPolicy,
+)
 from rakit_core.deletion import DeletePolicy, DeletionPlan, HardDeletePolicy
 from rakit_core.di import ServiceKey, ServiceRegistry, ServiceResolver, ServiceScope
+from rakit_core.endpoints import (
+    EndpointAccessPolicy,
+    EndpointInputSource,
+    EndpointMethod,
+    EndpointResponseKind,
+)
 from rakit_core.errors import (
     ErrorCode,
     ErrorDetail,
@@ -70,10 +104,18 @@ from rakit_core.mutations import (
     MutationAuthorization,
     MutationHooks,
     MutationResult,
+    OperationAuthorization,
     ResourceMutationPlan,
     UpdateMutationPlan,
 )
-from rakit_core.operations import CancellationContext, Deadline, OperationContext
+from rakit_core.operations import (
+    CancellationContext,
+    Deadline,
+    OperationContext,
+    OperationKind,
+    OperationPlan,
+    execute_operation_plan,
+)
 from rakit_core.permission_catalogue import (
     PermissionCatalogue,
     PermissionDefinition,
@@ -95,16 +137,55 @@ from rakit_core.query import (
     Sort,
     SortDirection,
 )
+from rakit_core.relationship_mutations import (
+    AssociationScalarChange,
+    RelationshipCandidate,
+    RelationshipChanged,
+    RelationshipMutationKind,
+    RelationshipMutationPlan,
+    RelationshipMutationResult,
+)
+from rakit_core.relationships import (
+    RecordLabelResolver,
+    RelationshipCardinality,
+    RelationshipDefinition,
+    RelationshipDestructivePolicy,
+    RelationshipEditMode,
+    RelationshipKind,
+    RelationshipMetadata,
+    resolve_record_label,
+)
 from rakit_core.resources import ResourceService
 from rakit_core.transactions import TransactionPolicy
 
 __all__ = [
     "ANONYMOUS_PRINCIPAL",
+    "BULK_CONFIRMATION_THRESHOLD_MAXIMUM",
+    "SYNCHRONOUS_BULK_TARGETS_MAXIMUM",
+    "ActionAdvancedResponse",
+    "ActionAvailability",
+    "ActionDefinition",
+    "ActionRedirect",
+    "ActionRefresh",
+    "ActionRejected",
+    "ActionRendered",
+    "ActionResponseKind",
+    "ActionResult",
+    "ActionScope",
+    "ActionSuccess",
     "ApplicationBuilder",
+    "AssociationScalarChange",
     "AttributeVersionProvider",
     "AuthBackend",
     "AuthorizationDecision",
     "AuthorizationPolicy",
+    "BulkActionOutcome",
+    "BulkExecutionPolicy",
+    "BulkItemOutcome",
+    "BulkItemStatus",
+    "BulkPolicy",
+    "BulkSelection",
+    "BulkTarget",
     "CancellationContext",
     "CollapsibleGroup",
     "Column",
@@ -121,6 +202,11 @@ __all__ = [
     "DeletePolicy",
     "DeletionPlan",
     "DomainEvent",
+    "EndpointAccessPolicy",
+    "EndpointDefinition",
+    "EndpointInputSource",
+    "EndpointMethod",
+    "EndpointResponseKind",
     "ErrorCode",
     "ErrorDetail",
     "EventBus",
@@ -148,8 +234,12 @@ __all__ = [
     "MutationResult",
     "NullPlacement",
     "OffsetPagination",
+    "OperationAuthorization",
     "OperationContext",
+    "OperationKind",
+    "OperationPlan",
     "OperationReceipt",
+    "PageDefinition",
     "PageResult",
     "PermissionCatalogue",
     "PermissionDefinition",
@@ -164,6 +254,18 @@ __all__ = [
     "RakitSecurityWarning",
     "RakitWarning",
     "RecordIdentity",
+    "RecordLabelResolver",
+    "RelationshipCandidate",
+    "RelationshipCardinality",
+    "RelationshipChanged",
+    "RelationshipDefinition",
+    "RelationshipDestructivePolicy",
+    "RelationshipEditMode",
+    "RelationshipKind",
+    "RelationshipMetadata",
+    "RelationshipMutationKind",
+    "RelationshipMutationPlan",
+    "RelationshipMutationResult",
     "RelationshipPanel",
     "ResourceFieldPolicy",
     "ResourceMutationPlan",
@@ -188,7 +290,9 @@ __all__ = [
     "TokenService",
     "TransactionPolicy",
     "UpdateMutationPlan",
+    "execute_operation_plan",
     "generate_permission_catalogue",
     "infer_field_security",
+    "resolve_record_label",
     "validate_official_package_versions",
 ]

@@ -1,6 +1,8 @@
 """Database-backed duplicate-submission protection."""
 
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.idempotency import (
@@ -157,6 +159,7 @@ class SQLAlchemyIdempotencyStore:
                         "status": receipt.status,
                         "result_kind": receipt.result_kind,
                         "redirect_route": receipt.redirect_route,
+                        "payload": dict(receipt.payload) if receipt.payload is not None else None,
                     },
                     expires_at=None,
                 ),
@@ -207,13 +210,14 @@ class SQLAlchemyIdempotencyStore:
         ).one_or_none()
 
     @staticmethod
-    def _receipt(value: dict[str, str | None] | None) -> OperationReceipt | None:
+    def _receipt(value: dict[str, object] | None) -> OperationReceipt | None:
         if value is None:
             return None
         operation_id = value.get("operation_id")
         status = value.get("status")
         result_kind = value.get("result_kind")
         redirect_route = value.get("redirect_route")
+        payload = value.get("payload")
         if (
             not isinstance(operation_id, str)
             or not isinstance(status, str)
@@ -225,4 +229,7 @@ class SQLAlchemyIdempotencyStore:
             status=status,
             result_kind=result_kind,
             redirect_route=redirect_route if isinstance(redirect_route, str) else None,
+            payload=(
+                dict(cast(Mapping[str, Any], payload)) if isinstance(payload, Mapping) else None
+            ),
         )

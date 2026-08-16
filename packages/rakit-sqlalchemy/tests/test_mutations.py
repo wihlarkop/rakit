@@ -118,6 +118,66 @@ async def test_create_commits_only_whitelisted_values_and_emits_event(
 
 
 @pytest.mark.anyio
+async def test_post_commit_event_handler_starts_an_independent_mutation_uow(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A deferred event handler must not inherit the root's completed session."""
+
+    opened_sessions: list[AsyncSession] = []
+
+    def tracking_session_factory() -> AsyncSession:
+        session = session_factory()
+        opened_sessions.append(session)
+        return session
+
+    bus = EventBus()
+    root_publisher = EventPublisher(bus)
+    handler_publisher = EventPublisher(bus)
+    service = SQLAlchemyMutationService(
+        model=User,
+        session_factory=cast(async_sessionmaker[AsyncSession], tracking_session_factory),
+        form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="name", python_type=str, required=True),)
+        ),
+        writable_fields=("name",),
+        identity_fields=("id",),
+        event_publisher=root_publisher,
+    )
+    authorization = _authorization("create")
+    handler_mutations = 0
+    received: list[ResourceCreated] = []
+
+    async def create_from_event(event: ResourceCreated) -> None:
+        nonlocal handler_mutations
+        received.append(event)
+        if handler_mutations:
+            return
+        handler_mutations += 1
+        await _authorized(
+            authorization,
+            service.create({"name": "Grace"}, authorization=authorization),
+            events=handler_publisher,
+        )
+
+    bus.subscribe(ResourceCreated, create_from_event)
+
+    await _authorized(
+        authorization,
+        service.create({"name": "Ada"}, authorization=authorization),
+        events=root_publisher,
+    )
+
+    # The root and handler operations each own a session.  Before the UoW
+    # context detachment, the handler inherited the completed root UoW, did
+    # not call this factory again, and its write was discarded on root close.
+    assert len(opened_sessions) == 2
+    assert handler_mutations == 1
+    assert [event.identity.values for event in received] == [{"id": 1}, {"id": 2}]
+    async with session_factory() as session:
+        assert list(await session.scalars(select(User.name).order_by(User.id))) == ["Ada", "Grace"]
+
+
+@pytest.mark.anyio
 async def test_long_lived_mutation_service_uses_each_operation_publisher(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -187,6 +247,67 @@ async def test_invalid_create_does_not_execute_or_mass_assign(
             service.create({"name": "Ada", "password_hash": "forged"}, authorization=authorization),
         )
     assert caught.value.code == ErrorCode.VALIDATION_FAILED
+
+
+@pytest.mark.anyio
+async def test_normal_update_prepares_submitted_fields_exactly_once(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    calls = 0
+
+    def parse_once(value: object) -> object:
+        nonlocal calls
+        calls += 1
+        return str(value).strip()
+
+    service = SQLAlchemyMutationService(
+        model=User,
+        session_factory=session_factory,
+        form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="name", python_type=str, parser=parse_once),)
+        ),
+        writable_fields=("name",),
+        identity_fields=("id",),
+    )
+    async with session_factory() as session:
+        session.add(User(name="before"))
+        await session.commit()
+
+    authorization = _authorization("update")
+    await _authorized(
+        authorization,
+        service.update(
+            RecordIdentity(values={"id": 1}), {"name": " after "}, authorization=authorization
+        ),
+    )
+    assert calls == 1
+    async with session_factory() as session:
+        assert (await session.scalars(select(User.name))).one() == "after"
+
+
+@pytest.mark.anyio
+async def test_normal_create_prepares_submitted_fields_exactly_once(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    calls = 0
+
+    def parse_once(value: object) -> object:
+        nonlocal calls
+        calls += 1
+        return str(value).strip()
+
+    service = SQLAlchemyMutationService(
+        model=User,
+        session_factory=session_factory,
+        form_schema=FormSchema(
+            fields=(FieldDefinition(field_id="name", python_type=str, parser=parse_once),)
+        ),
+        writable_fields=("name",),
+        identity_fields=("id",),
+    )
+    authorization = _authorization("create")
+    await _authorized(authorization, service.create({"name": " Ada "}, authorization=authorization))
+    assert calls == 1
 
 
 @pytest.mark.anyio

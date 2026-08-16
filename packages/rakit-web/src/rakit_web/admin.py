@@ -1,6 +1,6 @@
 import uuid
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import replace
 from datetime import timedelta
 from math import isfinite
@@ -8,29 +8,66 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import structlog
+from rakit_core.actions import ActionDefinition, ActionScope
 from rakit_core.admin_types import ModelAdmin, ResourceAdmin
 from rakit_core.auth import AuthBackend, SessionStore
 from rakit_core.compiler import ApplicationBuilder, CompiledApplication, Plugin, compile_application
+from rakit_core.concurrency import ConcurrencyTokenService, ConcurrencyVersionProvider
 from rakit_core.config import RakitConfig, SecretValue
 from rakit_core.crypto import TokenService
-from rakit_core.definitions import ResourceDefinition, ResourceFieldPolicy, RouteDefinition
-from rakit_core.di import ServiceRegistry, ServiceResolver, ServiceScope
+from rakit_core.definitions import (
+    CompiledActionDefinition,
+    PageDefinition,
+    ResourceDefinition,
+    ResourceFieldPolicy,
+    RouteDefinition,
+)
+from rakit_core.di import ServiceKey, ServiceRegistry, ServiceResolver, ServiceScope
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.events import EventBus, EventPublisher
-from rakit_core.identity import RecordIdentity
-from rakit_core.mutations import MutationAuthorization, MutationOperation
+from rakit_core.idempotency import IdempotencyStore
+from rakit_core.identity import IdentityCodec, RecordIdentity
+from rakit_core.mutations import (
+    MutationAuthorization,
+    MutationOperation,
+    OperationAuthorization,
+    OperationAuthorizationSet,
+)
+from rakit_core.operations import resolve_operation_executor_capabilities
+from rakit_core.relationship_mutations import (
+    CreateRelated,
+    DeleteRelated,
+    RelationshipChangePlan,
+    UpdateRelated,
+)
 from rakit_core.resources import ResourceService
+from rakit_core.transactions import OperationUnitOfWorkFactory, TransactionPolicy
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Mount, Route
+from starlette.templating import Jinja2Templates
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from .action_routes import (
+    ActionBinding,
+    AdvancedActionResponseAdapter,
+    build_action_routes,
+)
 from .assets import static_files
 from .auth_routes import _verify_csrf, build_auth_routes
+from .bulk_admin import build_admin_bulk_action_routes
 from .form_routes import WriteResourceBinding, build_write_routes
 from .lifecycle import LifecycleManager
 from .logging import bind_request_context, configure_logging, reset_request_context
+from .page_admin import (
+    build_admin_page_routes,
+    page_requirement_map,
+    register_public_page,
+    validate_page_runtime,
+)
+from .public_composition import resource_actions, resource_relationships
+from .relationship_routes import build_relationship_routes
 from .resource_routes import ResourceBinding, build_resource_routes, build_templates
 from .security.authentication import (
     LOGIN_PATH,
@@ -141,6 +178,8 @@ class Admin:
         superuser_bypass: bool = True,
         mutation_deadline_seconds: float = 30.0,
         event_bus: EventBus | None = None,
+        operation_idempotency_store: IdempotencyStore | None = None,
+        advanced_action_response_adapter: AdvancedActionResponseAdapter | None = None,
     ) -> None:
         security_config: dict[str, object] = {
             "secret_key": secret_key,
@@ -194,7 +233,10 @@ class Admin:
             debug=debug,
             auth_enabled=auth_backend is not None,
         )
-        self._builder = ApplicationBuilder()
+        self._builder = ApplicationBuilder(admin_id=admin_id)
+        self._operation_idempotency_store = operation_idempotency_store
+        self._advanced_action_response_adapter = advanced_action_response_adapter
+        self._concurrency_providers: dict[str, ConcurrencyVersionProvider] = {}
         self._event_bus = event_bus if event_bus is not None else EventBus()
         self._builder.registry.add_value(EventBus, self._event_bus, scope=ServiceScope.APPLICATION)
         self._builder.registry.add_factory(
@@ -255,6 +297,18 @@ class Admin:
             raise RuntimeError("Cannot install plugins after compilation")
         self._builder.install(plugin)
 
+    def register_page(
+        self,
+        definition: PageDefinition,
+        *,
+        actions: tuple[ActionDefinition, ...] = (),
+    ) -> None:
+        """Register one public custom Page declaration and its PAGE actions."""
+
+        if self.compiled is not None:
+            raise RuntimeError("Cannot register pages after compilation")
+        register_public_page(self._builder, definition, actions=actions)
+
     def register(self, admin_cls: type[ResourceAdmin]) -> None:
         if self.compiled is not None:
             raise RuntimeError("Cannot register resources after compilation")
@@ -280,6 +334,11 @@ class Admin:
                 )
 
         field_policy = _normalize_field_policy(admin_cls)
+        relationships = resource_relationships(admin_cls)
+        actions = resource_actions(
+            admin_cls,
+            existing_action_ids={str(action.action_id) for action in self._builder.actions},
+        )
 
         if issubclass(admin_cls, ModelAdmin):
             claims = [
@@ -327,8 +386,11 @@ class Admin:
             label=admin_cls.label,
             singular_label=admin_cls.singular_label,
             field_policy=field_policy,
+            relationships=relationships,
         )
         self._builder.add_resource(definition, data_source)
+        for action in actions:
+            self._builder.add_action(action)
         self._builder.add_route(
             RouteDefinition(
                 route_name=f"resource:{definition.resource_id}:list",
@@ -356,10 +418,59 @@ class Admin:
         self._resource_services[admin_cls.resource_id] = ResourceService(data_source)
         self._resource_definitions[admin_cls.resource_id] = definition
 
+    def register_concurrency_provider(
+        self, resource_id: str, provider: ConcurrencyVersionProvider
+    ) -> None:
+        """Register the backend-neutral concurrency provider for one resource.
+
+        RECORD actions declaring ``requires_concurrency`` are served through
+        this provider: the provider supplies the record version bound into
+        the signed concurrency token (issued at GET, verified against fresh
+        scoped state at POST). Registration is resource-level, pre-compile,
+        and never guessed from adapters.
+        """
+        if self.compiled is not None:
+            raise RuntimeError("Cannot register concurrency providers after compilation")
+        if resource_id not in self._resource_services:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message=(f'Concurrency provider references unknown resource "{resource_id}".'),
+                status_code=500,
+                details={"resource_id": resource_id, "reason": "unknown_resource"},
+            )
+        if resource_id in self._concurrency_providers:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message=(f'Resource "{resource_id}" already has a concurrency provider.'),
+                status_code=500,
+                details={"resource_id": resource_id, "reason": "duplicate_provider"},
+            )
+        missing_members = tuple(
+            name
+            for name in ("version_for", "predicate_values_for", "next_values_for")
+            if not callable(getattr(provider, name, None))
+        )
+        if missing_members:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message=(
+                    f'Concurrency provider for resource "{resource_id}" does not '
+                    "implement the full ConcurrencyVersionProvider contract "
+                    f"(missing or non-callable: {', '.join(missing_members)})."
+                ),
+                status_code=500,
+                details={
+                    "resource_id": resource_id,
+                    "reason": "invalid_provider_contract",
+                    "members": missing_members,
+                },
+            )
+        self._concurrency_providers[resource_id] = provider
+
     def register_write_resource(self, resource_id: str, binding: WriteResourceBinding) -> None:
         """Register the explicit Plan 04 write policy for an existing resource.
 
-        Read registration never implies writability.  A resource becomes
+        Read registration never implies writability. A resource becomes
         mutable only through this separate, immutable form binding and only
         for an auth-enabled admin.
         """
@@ -456,6 +567,131 @@ class Admin:
             self._compiled_registry = self._builder.registry
         return self.compiled
 
+    def _action_bindings(
+        self,
+        *,
+        templates: Jinja2Templates,
+        codec: IdentityCodec,
+        verify_csrf: Callable[[Request], Awaitable[bool]],
+        issue_submission_token: Callable[[Request], str],
+        verify_submission_token: Callable[[Request], Awaitable[bool]],
+        token_service: TokenService,
+        operation_scope: Callable[[], AbstractAsyncContextManager[ServiceResolver]],
+        unit_of_work_factory: Callable[[], OperationUnitOfWorkFactory | None],
+    ) -> tuple[ActionBinding, ...]:
+        """Materialize the compiled action routes as web bindings.
+
+        Pairs are grouped by declared owner: RECORD/RESOURCE actions use the
+        owning resource's canonical scoped ``ResourceService`` as the record
+        loader, and PAGE actions share one binding. Authorization always
+        evaluates the exact compiler-resolved permission. Requires auth,
+        CSRF/submission plumbing, and the fail-closed capability checks to
+        have run before this is called.
+        """
+        assert self.compiled is not None
+
+        async def authorize_action(
+            request: Request,
+            compiled_action: CompiledActionDefinition,
+            identity: RecordIdentity | None,
+        ) -> OperationAuthorization | None:
+            principal = request.scope.get("state", {}).get("principal")
+            if principal is None or not principal.authenticated:
+                return None
+            if not compiled_action.permission.matches(
+                principal, superuser_bypass=self._superuser_bypass
+            ):
+                return None
+            assert principal.subject_id is not None
+            definition = compiled_action.definition
+            owner_id = (
+                definition.page_id
+                if definition.scope is ActionScope.PAGE
+                else definition.resource_id
+            )
+            assert owner_id is not None
+            return OperationAuthorization.for_requirement(
+                admin_id=self.config.admin_id,
+                resource_id=owner_id,
+                operation=f"action:{definition.action_id}",
+                principal_id=principal.subject_id,
+                requirement=compiled_action.permission,
+                target_identity=identity,
+            )
+
+        idempotency_store = self._operation_idempotency_store
+        bindings: list[ActionBinding] = []
+        for resource_id, service in self._resource_services.items():
+            pairs = tuple(
+                (route, compiled)
+                for route, compiled in self.compiled.action_routes
+                if compiled.definition.scope in (ActionScope.RECORD, ActionScope.RESOURCE)
+                and compiled.definition.resource_id == resource_id
+            )
+            if not pairs:
+                continue
+            provider = self._concurrency_providers.get(resource_id)
+
+            async def load_record(
+                identity: RecordIdentity, service: ResourceService = service
+            ) -> object | None:
+                try:
+                    return await service.detail(identity)
+                except RakitError as exc:
+                    if exc.code is ErrorCode.RESOURCE_NOT_FOUND:
+                        return None
+                    raise
+
+            bindings.append(
+                ActionBinding(
+                    routes=pairs,
+                    templates=templates,
+                    codec=codec,
+                    verify_csrf=verify_csrf,
+                    verify_submission_token=verify_submission_token,
+                    issue_submission_token=issue_submission_token,
+                    authorize_action=authorize_action,
+                    load_record=load_record,
+                    concurrency=(
+                        ConcurrencyTokenService(token_service) if provider is not None else None
+                    ),
+                    concurrency_resource_id=resource_id if provider is not None else None,
+                    record_version=(provider.version_for if provider is not None else None),
+                    token_service=token_service,
+                    idempotency_store=idempotency_store,
+                    deadline_seconds=self._mutation_deadline_seconds,
+                    operation_scope=operation_scope,
+                    unit_of_work_factory=unit_of_work_factory,
+                    advanced_response_adapter=self._advanced_action_response_adapter,
+                    label=self.config.title,
+                )
+            )
+        page_pairs = tuple(
+            (route, compiled)
+            for route, compiled in self.compiled.action_routes
+            if compiled.definition.scope is ActionScope.PAGE
+        )
+        if page_pairs:
+            bindings.append(
+                ActionBinding(
+                    routes=page_pairs,
+                    templates=templates,
+                    codec=codec,
+                    verify_csrf=verify_csrf,
+                    verify_submission_token=verify_submission_token,
+                    issue_submission_token=issue_submission_token,
+                    authorize_action=authorize_action,
+                    token_service=token_service,
+                    idempotency_store=idempotency_store,
+                    deadline_seconds=self._mutation_deadline_seconds,
+                    operation_scope=operation_scope,
+                    unit_of_work_factory=unit_of_work_factory,
+                    advanced_response_adapter=self._advanced_action_response_adapter,
+                    label=self.config.title,
+                )
+            )
+        return tuple(bindings)
+
     async def _open_application_resolver(self) -> None:
         assert self._compiled_registry is not None
         self._application_resolver = self._compiled_registry.application_scope()
@@ -468,6 +704,8 @@ class Admin:
 
     def asgi(self) -> ASGIApp:
         self.compile()
+        assert self.compiled is not None
+        compiled_app = self.compiled
 
         async def home(_request: Request) -> PlainTextResponse:
             return PlainTextResponse(self.config.title)
@@ -519,6 +757,149 @@ class Admin:
             resource_routes.extend(build_resource_routes(binding))
 
         write_routes: list[Route] = []
+        action_routes: list[Route] = []
+        page_routes: list[Route] = []
+        uow_factory_registered = (
+            ServiceKey(OperationUnitOfWorkFactory, None) in self._compiled_registry.providers
+            if self._compiled_registry is not None
+            else False
+        )
+        validate_page_runtime(
+            self.compiled,
+            auth_enabled=self._auth_backend is not None and self._session_store is not None,
+            idempotency_store=self._operation_idempotency_store,
+            uow_factory_registered=uow_factory_registered,
+            debug=self.config.debug,
+        )
+
+        if self.compiled.action_routes:
+            if self._auth_backend is None or self._session_store is None:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID,
+                    message="Compiled actions require configured authentication.",
+                    status_code=500,
+                )
+            if self.config.security.secret_key is None:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID,
+                    message=(
+                        "A security.secret_key is required to serve compiled actions "
+                        "(it derives the CSRF and submission-token signing key)."
+                    ),
+                    status_code=500,
+                )
+            missing_providers = sorted(
+                (
+                    f"{compiled.definition.action_id} (resource {compiled.definition.resource_id})"
+                    for _, compiled in self.compiled.action_routes
+                    if compiled.definition.requires_concurrency
+                    and compiled.definition.resource_id not in self._concurrency_providers
+                )
+            )
+            if missing_providers:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID,
+                    message=(
+                        "Compiled RECORD actions require a registered concurrency "
+                        "provider for their resource: " + ", ".join(missing_providers)
+                    ),
+                    status_code=500,
+                )
+            for _, compiled in self.compiled.action_routes:
+                action = compiled.definition
+                owner = (
+                    action.resource_id if action.scope is not ActionScope.PAGE else action.page_id
+                )
+                capabilities = resolve_operation_executor_capabilities(action.executor)
+                if action.mutating and action.transaction_policy in (
+                    TransactionPolicy.AUTO,
+                    TransactionPolicy.MANUAL,
+                ):
+                    if not capabilities.participates_in_uow:
+                        raise RakitError(
+                            code=ErrorCode.CONFIG_INVALID,
+                            message=(
+                                f'Action "{action.action_id}" ({action.scope.value}, owner '
+                                f'"{owner}") declares {action.transaction_policy.value} '
+                                "transaction policy but its executor does not participate "
+                                "in the operation unit of work."
+                            ),
+                            status_code=500,
+                            details={
+                                "action_id": action.action_id,
+                                "owner": owner,
+                                "transaction_policy": str(action.transaction_policy),
+                                "reason": "executor_not_uow_managed",
+                            },
+                        )
+                    if not uow_factory_registered:
+                        raise RakitError(
+                            code=ErrorCode.CONFIG_INVALID,
+                            message=(
+                                f'Action "{action.action_id}" ({action.scope.value}, owner '
+                                f'"{owner}") requires a registered operation unit-of-work '
+                                "provider (install a persistence plugin such as "
+                                "SQLAlchemyPlugin)."
+                            ),
+                            status_code=500,
+                            details={
+                                "action_id": action.action_id,
+                                "owner": owner,
+                                "transaction_policy": str(action.transaction_policy),
+                                "reason": "operation_uow_not_configured",
+                            },
+                        )
+                if action.requires_concurrency:
+                    if not (
+                        action.mutating and action.transaction_policy is TransactionPolicy.AUTO
+                    ):
+                        raise RakitError(
+                            code=ErrorCode.CONFIG_INVALID,
+                            message=(
+                                f'Action "{action.action_id}" requires strong concurrency, '
+                                "which needs a mutating operation with an automatic "
+                                "transaction policy."
+                            ),
+                            status_code=500,
+                            details={
+                                "action_id": action.action_id,
+                                "owner": owner,
+                                "transaction_policy": str(action.transaction_policy),
+                                "reason": "invalid_concurrency_transaction_policy",
+                            },
+                        )
+                    if not capabilities.atomic_concurrency:
+                        raise RakitError(
+                            code=ErrorCode.CONFIG_INVALID,
+                            message=(
+                                f'Action "{action.action_id}" requires strong concurrency, '
+                                "but its executor does not provide atomic concurrency."
+                            ),
+                            status_code=500,
+                            details={
+                                "action_id": action.action_id,
+                                "owner": owner,
+                                "transaction_policy": str(action.transaction_policy),
+                                "reason": "atomic_concurrency_not_supported",
+                            },
+                        )
+            if self._operation_idempotency_store is None:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID,
+                    message=(
+                        "Compiled actions require an operation idempotency store "
+                        "(Admin(operation_idempotency_store=...))."
+                    ),
+                    status_code=500,
+                )
+            validate_idempotency_store_for_production(
+                self._operation_idempotency_store, debug=self.config.debug
+            )
+
+        exact_requirements = {
+            route.path: compiled.permission for route, compiled in self.compiled.action_routes
+        }
+        exact_requirements.update(page_requirement_map(self.compiled))
         requirement_resolver = build_requirement_resolver(
             admin_id=self.config.admin_id,
             resource_paths={
@@ -526,6 +907,7 @@ class Admin:
                 for resource_id, definition in self._resource_definitions.items()
             },
             writable_resources=frozenset(self._write_resource_bindings),
+            action_requirements=exact_requirements,
         )
         if self._session_store is not None and self.config.security.secret_key is not None:
             write_token_service = TokenService.single_key(
@@ -587,6 +969,118 @@ class Admin:
                     permissions=requirement.permissions,
                 )
 
+            async def authorize_graph_mutation(
+                request: Request,
+                root: MutationAuthorization,
+                parent_identity: RecordIdentity | None,
+                changes: tuple[object, ...],
+            ) -> OperationAuthorizationSet | None:
+                principal = request.scope.get("state", {}).get("principal")
+                if principal is None or not principal.authenticated:
+                    return None
+                capabilities: list[OperationAuthorization] = []
+                relationship_by_id = {
+                    (entry.source_resource_id, str(entry.definition.relationship_id)): entry
+                    for entry in compiled_app.relationships
+                }
+                for raw_change in changes:
+                    if not isinstance(raw_change, RelationshipChangePlan):
+                        return None
+                    entry = relationship_by_id.get((root.resource_id, raw_change.relationship_id))
+                    if entry is None or not entry.mutation_permission.matches(
+                        principal, superuser_bypass=self._superuser_bypass
+                    ):
+                        return None
+                    capabilities.append(
+                        OperationAuthorization.for_requirement(
+                            admin_id=self.config.admin_id,
+                            resource_id=entry.source_resource_id,
+                            operation=raw_change.operation_id,
+                            principal_id=principal.subject_id,
+                            requirement=entry.mutation_permission,
+                            target_identity=parent_identity,
+                        )
+                    )
+                    target_resource_id = str(
+                        entry.definition.association_target_resource_id
+                        or entry.definition.target_resource_id
+                    )
+                    for step in raw_change.steps:
+                        requirement = None
+                        identity = None
+                        operation = None
+                        if isinstance(step, CreateRelated):
+                            requirement, operation = entry.target_create_permission, "target-create"
+                        elif isinstance(step, UpdateRelated):
+                            requirement, identity, operation = (
+                                entry.target_update_permission,
+                                step.identity,
+                                "target-update",
+                            )
+                        elif isinstance(step, DeleteRelated):
+                            requirement, identity, operation = (
+                                entry.target_delete_permission,
+                                step.identity,
+                                "target-delete",
+                            )
+                        if requirement is not None:
+                            if not requirement.matches(
+                                principal, superuser_bypass=self._superuser_bypass
+                            ):
+                                return None
+                            capabilities.append(
+                                OperationAuthorization.for_requirement(
+                                    admin_id=self.config.admin_id,
+                                    resource_id=target_resource_id,
+                                    operation=f"{raw_change.operation_id}:{operation}",
+                                    principal_id=principal.subject_id,
+                                    requirement=requirement,
+                                    target_identity=identity,
+                                )
+                            )
+                return OperationAuthorizationSet(root=root, capabilities=tuple(capabilities))
+
+            async def authorize_relationship_editor(
+                request: Request,
+                relationship_id: str,
+                parent_identity: RecordIdentity | None,
+            ) -> bool:
+                """Authorize relationship helper reads with the exact compiled requirement."""
+
+                principal = request.scope.get("state", {}).get("principal")
+                if principal is None or not principal.authenticated:
+                    return False
+                path = request.url.path.removeprefix(request.scope.get("root_path", ""))
+                resource_id = next(
+                    (
+                        candidate_id
+                        for candidate_path, candidate_id in (
+                            (definition.path, candidate_id)
+                            for candidate_id, definition in self._resource_definitions.items()
+                        )
+                        if path == candidate_path or path.startswith(f"{candidate_path}/")
+                    ),
+                    None,
+                )
+                if resource_id is None:
+                    return False
+                entry = next(
+                    (
+                        candidate
+                        for candidate in compiled_app.relationships
+                        if candidate.source_resource_id == resource_id
+                        and str(candidate.definition.relationship_id) == relationship_id
+                    ),
+                    None,
+                )
+                return bool(
+                    entry is not None
+                    and entry.definition.effective_writable
+                    and entry.mutation_permission.matches(
+                        principal, superuser_bypass=self._superuser_bypass
+                    )
+                )
+
             async def verify_write_csrf(request: Request) -> bool:
                 session_id = request.scope.get("state", {}).get("session_id")
                 return isinstance(session_id, str) and await _verify_csrf(
@@ -623,18 +1117,22 @@ class Admin:
                     "path"
                 ) == request.scope.get("path", "")
 
+            @asynccontextmanager
+            async def operation_scope() -> AsyncIterator[ServiceResolver]:
+                if self._application_resolver is None:
+                    raise RuntimeError("Application services are not available")
+                async with (
+                    self._application_resolver.request_scope() as request_services,
+                    request_services.operation_scope() as operation_services,
+                ):
+                    yield operation_services
+
+            def action_uow_factory() -> OperationUnitOfWorkFactory | None:
+                if self._application_resolver is None:
+                    return None
+                return self._application_resolver.require(OperationUnitOfWorkFactory)
+
             for write_binding in self._write_resource_bindings.values():
-
-                @asynccontextmanager
-                async def operation_scope() -> AsyncIterator[ServiceResolver]:
-                    if self._application_resolver is None:
-                        raise RuntimeError("Application services are not available")
-                    async with (
-                        self._application_resolver.request_scope() as request_services,
-                        request_services.operation_scope() as operation_services,
-                    ):
-                        yield operation_services
-
                 secured_binding = replace(
                     write_binding,
                     authorize=authorize_write,
@@ -642,11 +1140,68 @@ class Admin:
                     verify_submission_token=verify_submission_token,
                     issue_submission_token=issue_submission_token,
                     mutation_authorizer=authorize_mutation,
+                    graph_mutation_authorizer=authorize_graph_mutation,
+                    relationship_editor_authorizer=authorize_relationship_editor,
                     templates=templates,
                     deadline_seconds=self._mutation_deadline_seconds,
                     operation_scope=operation_scope,
                 )
                 write_routes.extend(build_write_routes(secured_binding))
+                if secured_binding.relationship_form is not None:
+                    relationship_routes = build_relationship_routes(
+                        secured_binding, secured_binding.relationship_form
+                    )
+                    write_routes.extend(relationship_routes)
+
+            if self.compiled.compiled_pages:
+                page_routes = build_admin_page_routes(
+                    compiled=self.compiled,
+                    templates=templates,
+                    admin_id=self.config.admin_id,
+                    superuser_bypass=self._superuser_bypass,
+                    verify_csrf=verify_write_csrf,
+                    verify_submission_token=verify_submission_token,
+                    issue_submission_token=issue_submission_token,
+                    idempotency_store=self._operation_idempotency_store,
+                    deadline_seconds=self._mutation_deadline_seconds,
+                    operation_scope=operation_scope,
+                    unit_of_work_factory=action_uow_factory,
+                    label=self.config.title,
+                )
+
+            action_routes = []
+            if self.compiled.action_routes:
+                for action_binding in self._action_bindings(
+                    templates=templates,
+                    codec=IdentityCodec(),
+                    verify_csrf=verify_write_csrf,
+                    issue_submission_token=issue_submission_token,
+                    verify_submission_token=verify_submission_token,
+                    token_service=write_token_service,
+                    operation_scope=operation_scope,
+                    unit_of_work_factory=action_uow_factory,
+                ):
+                    action_routes.extend(build_action_routes(action_binding))
+                assert self._operation_idempotency_store is not None
+                action_routes.extend(
+                    build_admin_bulk_action_routes(
+                        compiled=self.compiled,
+                        resource_services=self._resource_services,
+                        concurrency_providers=self._concurrency_providers,
+                        templates=templates,
+                        verify_csrf=verify_write_csrf,
+                        verify_submission_token=verify_submission_token,
+                        issue_submission_token=issue_submission_token,
+                        token_service=write_token_service,
+                        idempotency_store=self._operation_idempotency_store,
+                        admin_id=self.config.admin_id,
+                        superuser_bypass=self._superuser_bypass,
+                        deadline_seconds=self._mutation_deadline_seconds,
+                        operation_scope=operation_scope,
+                        unit_of_work_factory=action_uow_factory,
+                        label=self.config.title,
+                    )
+                )
 
         app = Starlette(
             debug=self.config.debug,
@@ -660,6 +1215,8 @@ class Admin:
         for route in write_routes:
             app.routes.append(route)
         for route in resource_routes:
+            app.routes.append(route)
+        for route in page_routes:
             app.routes.append(route)
         if self._auth_backend is not None and self._session_store is not None:
             if self.config.security.secret_key is None:
@@ -689,6 +1246,8 @@ class Admin:
             )
             for route in auth_routes:
                 app.routes.append(route)
+        for route in action_routes:
+            app.routes.append(route)
         app.state.rakit = SimpleNamespace(resources=bindings)
 
         # Authentication/authorization wrap the routed app *inside* the
