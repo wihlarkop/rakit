@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pytest
 
@@ -15,15 +15,10 @@ from rakit_server import (
 @dataclass
 class FakeServer:
     name: str = "fake"
-    capabilities: ServerCapabilities = ServerCapabilities()
-    calls: list[tuple[ServerTarget, ServerConfig]] | None = None
-
-    def __post_init__(self) -> None:
-        if self.calls is None:
-            self.calls = []
+    capabilities: ServerCapabilities = field(default_factory=ServerCapabilities)
+    calls: list[tuple[ServerTarget, ServerConfig]] = field(default_factory=list)
 
     def run(self, target: ServerTarget, config: ServerConfig) -> None:
-        assert self.calls is not None
         self.calls.append((target, config))
 
 
@@ -63,7 +58,6 @@ def test_python_run_delegates_to_registered_adapter_with_portable_config() -> No
         registry=registry,
     )
 
-    assert server.calls is not None
     assert len(server.calls) == 1
     target, config = server.calls[0]
     assert target.application is app
