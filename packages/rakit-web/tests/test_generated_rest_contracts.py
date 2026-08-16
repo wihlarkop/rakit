@@ -64,8 +64,7 @@ def test_strict_query_parser_builds_resource_query_from_bracket_filters() -> Non
         _api(),
         POLICY,
         QueryParams(
-            "page=2&per_page=20&sort=-created_at,email&search=example.com"
-            "&filter%5Bstatus%5D=active"
+            "page=2&per_page=20&sort=-created_at,email&search=example.com&filter%5Bstatus%5D=active"
         ),
     )
 

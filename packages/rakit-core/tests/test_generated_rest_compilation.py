@@ -54,13 +54,17 @@ def _resource(api: ResourceApiDefinition) -> ResourceDefinition:
 
 
 def _generated_routes(compiled):
-    return tuple(route for route in compiled.routes if route.route_name.startswith("generated-api:"))
+    return tuple(
+        route for route in compiled.routes if route.route_name.startswith("generated-api:")
+    )
 
 
 def test_read_only_generated_api_compiles_list_and_detail_rest_routes() -> None:
     builder = ApplicationBuilder()
     builder.add_resource(
-        _resource(ResourceApiDefinition(exposure=ApiExposure.READ_ONLY, read_fields=("id", "email"))),
+        _resource(
+            ResourceApiDefinition(exposure=ApiExposure.READ_ONLY, read_fields=("id", "email"))
+        ),
         ReadDataSource(),
     )
 
@@ -107,7 +111,9 @@ def test_crud_generated_api_compiles_post_patch_and_delete_rest_routes() -> None
 
     compiled = compile_application(builder)
 
-    assert [(route.route_name, route.methods, route.path) for route in _generated_routes(compiled)] == [
+    assert [
+        (route.route_name, route.methods, route.path) for route in _generated_routes(compiled)
+    ] == [
         ("generated-api:users:list", ("GET",), "/api/users"),
         ("generated-api:users:detail", ("GET",), "/api/users/{identity}"),
         ("generated-api:users:create", ("POST",), "/api/users"),

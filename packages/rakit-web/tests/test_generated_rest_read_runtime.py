@@ -110,9 +110,7 @@ async def test_generated_rest_list_and_detail_are_json_and_read_field_bounded() 
     }
     assert DATA_SOURCE.last_query.filters[0].field == "status"
     assert detail.status_code == 200
-    assert detail.json() == {
-        "data": {"id": 1, "email": "one@example.com", "status": "active"}
-    }
+    assert detail.json() == {"data": {"id": 1, "email": "one@example.com", "status": "active"}}
 
 
 @pytest.mark.anyio
