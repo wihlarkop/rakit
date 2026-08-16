@@ -39,7 +39,7 @@ from .relationships import CompiledRelationship
 # `rakit_web`'s `AuthorizationMiddleware`, so a resource mounted there
 # would be served to anonymous callers with no permission check at all.
 # Only routes flagged `framework_owned` may live here.
-RESERVED_PATH_PREFIXES = ("/_system", "/auth", "/api")
+RESERVED_PATH_PREFIXES = ("/_system", "/auth")
 # These are static children that only compiled resource definitions claim.
 # They are intentionally not global framework namespaces like `/auth`.
 RESOURCE_ACTION_SEGMENT = "_actions"
