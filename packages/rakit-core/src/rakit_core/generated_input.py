@@ -72,9 +72,9 @@ def _validated_schema_mapping(
 ) -> Mapping[str, object]:
     try:
         if operation is GeneratedCrudOperation.UPDATE_PARTIAL:
-            if not schema_adapter.provider.capabilities.supports(SCHEMA_PARTIAL_UPDATE) or not isinstance(
-                schema_adapter, PartialInputSchemaAdapter
-            ):
+            if not schema_adapter.provider.capabilities.supports(
+                SCHEMA_PARTIAL_UPDATE
+            ) or not isinstance(schema_adapter, PartialInputSchemaAdapter):
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
                     message="Generated PATCH schema requires partial-update support.",
