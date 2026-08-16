@@ -81,9 +81,22 @@ class ResourceApiDefinition:
         return _CRUD_OPERATIONS
 
 
+@dataclass(frozen=True, slots=True)
+class CompiledResourceApi:
+    resource_id: str
+    definition: ResourceApiDefinition
+    operations: tuple[GeneratedCrudOperation, ...]
+    read_fields: tuple[str, ...]
+    create_fields: tuple[str, ...]
+    update_fields: tuple[str, ...]
+    identity_fields: tuple[str, ...]
+    filters: tuple[ApiFilterDefinition, ...]
+
+
 __all__ = [
     "ApiExposure",
     "ApiFilterDefinition",
+    "CompiledResourceApi",
     "GeneratedCrudOperation",
     "ResourceApiDefinition",
 ]
