@@ -187,7 +187,7 @@ async def activity_page(_context):
                 ("08:55", "Export batch completed", "Worker 03"),
                 ("08:31", "Order ORD-1042 submitted for review", "Owen Park"),
             ),
-        }
+        },
     )
 
 
@@ -208,7 +208,7 @@ async def runbook_page(_context):
                     "Confirm account ownership and recent activity before clearing a review hold.",
                 ),
             ),
-        }
+        },
     )
 
 
