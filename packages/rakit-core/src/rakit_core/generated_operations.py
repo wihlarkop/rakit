@@ -22,18 +22,34 @@ class GeneratedCrudRequest:
     query: ResourceQuery | None = None
     identity: RecordIdentity | None = None
     input: GeneratedInput | None = None
+    concurrency_token: str | None = None
 
     def __post_init__(self) -> None:
         if self.operation is GeneratedCrudOperation.LIST:
-            if self.query is None or self.identity is not None or self.input is not None:
+            if (
+                self.query is None
+                or self.identity is not None
+                or self.input is not None
+                or self.concurrency_token is not None
+            ):
                 raise ValueError("A list request requires only a ResourceQuery")
             return
         if self.operation is GeneratedCrudOperation.DETAIL:
-            if self.identity is None or self.query is not None or self.input is not None:
+            if (
+                self.identity is None
+                or self.query is not None
+                or self.input is not None
+                or self.concurrency_token is not None
+            ):
                 raise ValueError("A detail request requires only an identity")
             return
         if self.operation is GeneratedCrudOperation.CREATE:
-            if self.input is None or self.query is not None or self.identity is not None:
+            if (
+                self.input is None
+                or self.query is not None
+                or self.identity is not None
+                or self.concurrency_token is not None
+            ):
                 raise ValueError("A create request requires only generated input")
             return
         if self.operation is GeneratedCrudOperation.UPDATE_PARTIAL:
@@ -60,17 +76,31 @@ class GeneratedCrudRequest:
 
     @classmethod
     def update_partial(
-        cls, identity: RecordIdentity, input: GeneratedInput
+        cls,
+        identity: RecordIdentity,
+        input: GeneratedInput,
+        *,
+        concurrency_token: str | None = None,
     ) -> "GeneratedCrudRequest":
         return cls(
             operation=GeneratedCrudOperation.UPDATE_PARTIAL,
             identity=identity,
             input=input,
+            concurrency_token=concurrency_token,
         )
 
     @classmethod
-    def delete(cls, identity: RecordIdentity) -> "GeneratedCrudRequest":
-        return cls(operation=GeneratedCrudOperation.DELETE, identity=identity)
+    def delete(
+        cls,
+        identity: RecordIdentity,
+        *,
+        concurrency_token: str | None = None,
+    ) -> "GeneratedCrudRequest":
+        return cls(
+            operation=GeneratedCrudOperation.DELETE,
+            identity=identity,
+            concurrency_token=concurrency_token,
+        )
 
 
 class GeneratedResourceExecutor(Protocol):
@@ -117,8 +147,11 @@ def build_generated_operation_plan(
         GeneratedCrudOperation.UPDATE_PARTIAL,
         GeneratedCrudOperation.DELETE,
     }
-    if concurrency_required and request.operation is not GeneratedCrudOperation.UPDATE_PARTIAL:
-        raise ValueError("Generated concurrency may only be required for partial update")
+    if concurrency_required and request.operation not in {
+        GeneratedCrudOperation.UPDATE_PARTIAL,
+        GeneratedCrudOperation.DELETE,
+    }:
+        raise ValueError("Generated concurrency may only be required for update or delete")
 
     return OperationPlan(
         operation_id=f"generated-resource:{api.resource_id}:{request.operation.value}",
