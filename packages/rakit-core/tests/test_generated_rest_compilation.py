@@ -5,6 +5,8 @@ from rakit_core.datasource import DataSourceCapabilities
 from rakit_core.definitions import ResourceDefinition, ResourceFieldPolicy, RouteDefinition
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.generated_api import ApiExposure, ResourceApiDefinition
+from rakit_core.generated_runtime import GeneratedResourceExecutorContext
+from rakit_core.operations import OperationExecutorCapabilities
 from rakit_core.query import PageResult
 
 
@@ -21,6 +23,18 @@ class ReadDataSource:
 
     async def detail(self, identity):
         return None
+
+
+class FakeExecutor:
+    capabilities = OperationExecutorCapabilities(participates_in_uow=True)
+
+    async def execute(self, context, request):
+        return request
+
+
+class FakeExecutorProvider:
+    def build(self, context: GeneratedResourceExecutorContext) -> FakeExecutor:
+        return FakeExecutor()
 
 
 def _resource(api: ResourceApiDefinition) -> ResourceDefinition:
@@ -88,6 +102,7 @@ def test_crud_generated_api_compiles_post_patch_and_delete_rest_routes() -> None
             )
         ),
         WritableDataSource(),
+        generated_executor_provider=FakeExecutorProvider(),
     )
 
     compiled = compile_application(builder)
