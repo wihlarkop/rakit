@@ -92,7 +92,8 @@ async def test_dashboard_honors_semantic_widget_layout_without_inline_styles() -
     assert 'data-rakit-dashboard-widget-size="large"' in response.text
     assert "xl:col-span-9" in response.text
     assert "style=" not in response.text
-    assert 'class="hidden text-xs text-slate-500 [.htmx-request&]:inline"' in response.text
+    assert "hidden text-xs text-slate-500" in response.text
+    assert "[.htmx-request&]:inline" in response.text
     assert 'hx-target="#rakit-dashboard-widget-pending_orders-content"' in response.text
     assert 'hx-select="#rakit-dashboard-widget-pending_orders-content"' in response.text
     assert 'hx-disabled-elt="this"' in response.text

@@ -1003,9 +1003,10 @@ async def test_fastapi_sqlalchemy_example_mount_serves_full_and_htmx_reads() -> 
         search_action = html.unescape(search_action_match.group(1))
         search_response = await client.get(search_action, params={"search": "Ada"})
 
-        sort_href_match = re.search(r'<th[^>]*>\s*<a href="([^"]+)"', full.text)
-        assert sort_href_match is not None
-        sort_href = html.unescape(sort_href_match.group(1))
+        sort_button_match = re.search(r'<button[^>]+name="sort"[^>]+value="([^"]+)"', full.text)
+        assert sort_button_match is not None
+        sort_value = html.unescape(sort_button_match.group(1))
+        sort_href = f"/admin/users?{urlencode({'sort': sort_value})}"
         sort_response = await client.get(sort_href)
 
         detail_path = re.search(r'href="(/admin/users/[^"]+)"', full.text)

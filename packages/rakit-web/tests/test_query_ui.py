@@ -364,14 +364,13 @@ async def test_per_page_over_max_falls_back_to_default(client: httpx.AsyncClient
     assert "Grace" in response.text
 
 
-async def test_sort_header_link_omits_page(client: httpx.AsyncClient) -> None:
+async def test_sort_header_control_omits_page(client: httpx.AsyncClient) -> None:
     response = await client.get("/users", params={"page": "1", "sort": "name"})
-    # Sort-toggle links reset pagination: they never carry a page param forward.
-    assert "sort=-name" in response.text
-    hrefs = [html.unescape(value) for value in re.findall(r'href="([^"]+)"', response.text)]
-    assert all(
-        not any(key == "page" for key, _value in parse_qsl(urlsplit(href).query)) for href in hrefs
-    )
+    sort_url, sort_pairs = _sort_link(response.text, "name")
+
+    assert ("sort", "-name") in sort_pairs
+    assert not any(key == "page" for key, _value in sort_pairs)
+    assert not any(key == "page" for key, _value in parse_qsl(urlsplit(sort_url).query))
 
 
 async def test_sort_and_search_controls_preserve_active_query_standalone(
@@ -479,9 +478,11 @@ async def test_sort_headers_render_only_valid_exact_aria_sort_values(
 
     values = re.findall(r'aria-sort="([^"]+)"', response.text)
     assert set(values) <= {"ascending", "descending", "none", "other"}
-    assert re.search(r'aria-sort="descending"[^>]*>\s*<a[^>]*>name</a>', response.text)
-    assert re.search(r'aria-sort="other"[^>]*>\s*<a[^>]*>email</a>', response.text)
-    assert re.search(r'aria-sort="none"[^>]*>\s*<a[^>]*>id</a>', response.text)
+    assert re.search(
+        r'aria-sort="descending"[^>]*>\s*<button[^>]*>\s*name\s*</button>', response.text
+    )
+    assert re.search(r'aria-sort="other"[^>]*>\s*<button[^>]*>\s*email\s*</button>', response.text)
+    assert re.search(r'aria-sort="none"[^>]*>\s*<button[^>]*>\s*id\s*</button>', response.text)
 
     default_response = await client.get("/users")
     assert set(re.findall(r'aria-sort="([^"]+)"', default_response.text)) == {"none"}
