@@ -9,11 +9,33 @@ import re
 import uuid
 from collections.abc import AsyncIterator, Iterable
 from pathlib import Path, PurePosixPath
+from typing import BinaryIO
 
 from rakit_core.operations import OperationContext
 from rakit_storage import FileAccess, StoredFile, TemporaryUpload
 
 _SAFE_EXTENSION = re.compile(r"^\.[a-z0-9][a-z0-9._+-]{0,31}$")
+
+
+def _open_binary_exclusive(path: Path) -> BinaryIO:
+    return path.open("xb")
+
+
+def _open_binary_read(path: Path) -> BinaryIO:
+    return path.open("rb")
+
+
+def _write_bytes(handle: BinaryIO, chunk: bytes) -> int:
+    return handle.write(chunk)
+
+
+def _read_bytes(handle: BinaryIO, size: int) -> bytes:
+    return handle.read(size)
+
+
+def _flush_and_sync(handle: BinaryIO) -> None:
+    handle.flush()
+    os.fsync(handle.fileno())
 
 
 class LocalStorage:
@@ -133,9 +155,9 @@ class LocalStorage:
         await asyncio.to_thread(final_path.parent.mkdir, parents=True, exist_ok=True)
         digest = hashlib.sha256()
         size = 0
-        handle = None
+        handle: BinaryIO | None = None
         try:
-            handle = await asyncio.to_thread(temp_path.open, "xb")
+            handle = await asyncio.to_thread(_open_binary_exclusive, temp_path)
             async for chunk in upload.stream():
                 self._checkpoint(operation_context)
                 if not isinstance(chunk, bytes):
@@ -146,11 +168,10 @@ class LocalStorage:
                 if max_size is not None and size > max_size:
                     raise ValueError("upload exceeds the configured size limit")
                 digest.update(chunk)
-                await asyncio.to_thread(handle.write, chunk)
+                await asyncio.to_thread(_write_bytes, handle, chunk)
 
             self._checkpoint(operation_context)
-            await asyncio.to_thread(handle.flush)
-            await asyncio.to_thread(os.fsync, handle.fileno())
+            await asyncio.to_thread(_flush_and_sync, handle)
             await asyncio.to_thread(handle.close)
             handle = None
             await asyncio.to_thread(os.replace, temp_path, final_path)
@@ -180,11 +201,11 @@ class LocalStorage:
 
         async def stream() -> AsyncIterator[bytes]:
             self._checkpoint(operation_context)
-            handle = await asyncio.to_thread(path.open, "rb")
+            handle = await asyncio.to_thread(_open_binary_read, path)
             try:
                 while True:
                     self._checkpoint(operation_context)
-                    chunk = await asyncio.to_thread(handle.read, self.chunk_size)
+                    chunk = await asyncio.to_thread(_read_bytes, handle, self.chunk_size)
                     if not chunk:
                         break
                     yield chunk
