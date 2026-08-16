@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 import pytest
 from rakit_core.fields import FileField
 
@@ -35,22 +37,29 @@ def test_file_field_has_private_safe_defaults() -> None:
 
 
 @pytest.mark.parametrize(
-    "overrides",
+    "build",
     (
-        {"storage_id": ""},
-        {"storage_id": "../documents"},
-        {"max_size": 0},
-        {"max_filename_length": 0},
-        {"prefix": "../outside"},
-        {"allowed_extensions": ("pdf",)},
-        {"allowed_extensions": ("../pdf",)},
-        {"allowed_mime_types": ("",)},
-        {"delete_behavior": "sometimes"},
+        lambda: FileField(field_id="attachment", storage_id=""),
+        lambda: FileField(field_id="attachment", storage_id="../documents"),
+        lambda: FileField(field_id="attachment", storage_id="documents", max_size=0),
+        lambda: FileField(
+            field_id="attachment", storage_id="documents", max_filename_length=0
+        ),
+        lambda: FileField(field_id="attachment", storage_id="documents", prefix="../outside"),
+        lambda: FileField(
+            field_id="attachment", storage_id="documents", allowed_extensions=("pdf",)
+        ),
+        lambda: FileField(
+            field_id="attachment", storage_id="documents", allowed_extensions=("../pdf",)
+        ),
+        lambda: FileField(
+            field_id="attachment", storage_id="documents", allowed_mime_types=("",)
+        ),
+        lambda: FileField(
+            field_id="attachment", storage_id="documents", delete_behavior="sometimes"
+        ),
     ),
 )
-def test_file_field_rejects_unsafe_policy(overrides: dict[str, object]) -> None:
-    values: dict[str, object] = {"field_id": "attachment", "storage_id": "documents"}
-    values.update(overrides)
-
+def test_file_field_rejects_unsafe_policy(build: Callable[[], FileField]) -> None:
     with pytest.raises(ValueError):
-        FileField(**values)  # type: ignore[arg-type]
+        build()
