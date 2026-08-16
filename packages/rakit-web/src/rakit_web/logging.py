@@ -16,6 +16,27 @@ from structlog.types import EventDict, Processor
 BRIDGED_LOGGER_NAMESPACES = ("rakit_core", "rakit_web", "rakit_server_uvicorn")
 
 
+class _DynamicStderr:
+    """Proxy writes to whichever ``sys.stderr`` is active at emit time.
+
+    Pytest and other hosts may replace standard streams after Rakit logging
+    has been configured. Holding the original stream object would then leave
+    structlog/stdlib handlers pointing at a closed capture stream.
+    """
+
+    def write(self, message: str) -> int:
+        return sys.stderr.write(message)
+
+    def flush(self) -> None:
+        sys.stderr.flush()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(sys.stderr, name)
+
+
+_DYNAMIC_STDERR = _DynamicStderr()
+
+
 class _RakitBridgeHandler(logging.StreamHandler):
     """Marker subclass so repeated ``configure_logging()`` calls can find and
     replace the handler they previously attached, instead of accumulating
@@ -117,7 +138,7 @@ def configure_logging(*, debug: bool) -> None:
             renderer,
         ],
         wrapper_class=structlog.make_filtering_bound_logger(level),
-        logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
+        logger_factory=structlog.PrintLoggerFactory(file=_DYNAMIC_STDERR),
     )
     _configure_stdlib_bridge(renderer=renderer, level=level)
 
@@ -168,7 +189,7 @@ def _attach_bridge_handler(name: str, *, renderer: Processor, level: int) -> Non
             renderer,
         ],
     )
-    handler = _RakitBridgeHandler(sys.stderr)
+    handler = _RakitBridgeHandler(_DYNAMIC_STDERR)
     handler.setFormatter(formatter)
     handler.setLevel(level)
 
