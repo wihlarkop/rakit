@@ -34,7 +34,7 @@ class UserAdmin(ResourceAdmin):
 
 
 def test_resource_admin_generated_api_policy_is_copied_to_canonical_definition() -> None:
-    admin = Admin(title="Generated API")
+    admin = Admin(title="Generated API", debug=True)
     admin.register(UserAdmin)
 
     definition = admin.builder.resources[0]
