@@ -194,10 +194,7 @@ def validate_generated_input(
                 },
             )
         if operation is GeneratedCrudOperation.UPDATE_PARTIAL:
-            values = {
-                field_name: serialized_mapping[field_name]
-                for field_name in submitted_fields
-            }
+            values = {field_name: serialized_mapping[field_name] for field_name in submitted_fields}
         else:
             values = dict(serialized_mapping)
     else:
