@@ -1,0 +1,60 @@
+name: First Generated REST Compiler Patch
+
+on:
+  push:
+    branches: [feat/first-generated-rest-read]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: "${{ github.event.head_commit.message == 'ci: apply generated REST compiler patch' }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/first-generated-rest-read
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages --dev --locked
+      - name: Patch compiler route graph
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('packages/rakit-core/src/rakit_core/compiler.py')
+          text = path.read_text()
+
+          old = 'from .generated_api import CompiledResourceApi\n'
+          new = 'from .generated_api import CompiledResourceApi, GeneratedCrudOperation\n'
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = 'RESERVED_PATH_PREFIXES = ("/_system", "/auth")\n'
+          new = 'RESERVED_PATH_PREFIXES = ("/_system", "/auth", "/api")\n'
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          marker = '''def _action_route_pairs(\n'''
+          assert marker in text
+          helper = '''def _generated_api_definition_routes(\n    builder: ApplicationBuilder,\n) -> tuple[RouteDefinition, ...]:\n    routes: list[RouteDefinition] = []\n    operation_routes = {\n        GeneratedCrudOperation.LIST: ("list", ("GET",), False),\n        GeneratedCrudOperation.DETAIL: ("detail", ("GET",), True),\n        GeneratedCrudOperation.CREATE: ("create", ("POST",), False),\n        GeneratedCrudOperation.UPDATE_PARTIAL: ("update", ("PATCH",), True),\n        GeneratedCrudOperation.DELETE: ("delete", ("DELETE",), True),\n    }\n    for resource in builder.resources:\n        base_path = f"/api/{resource.resource_id}"\n        for operation in resource.api.operations:\n            route_suffix, methods, needs_identity = operation_routes[operation]\n            routes.append(\n                RouteDefinition(\n                    route_name=f"generated-api:{resource.resource_id}:{route_suffix}",\n                    methods=methods,\n                    path=f"{base_path}/{{identity}}" if needs_identity else base_path,\n                    owner_id=resource.resource_id,\n                    framework_owned=True,\n                )\n            )\n    return tuple(routes)\n\n\n'''
+          text = text.replace(marker, helper + marker, 1)
+
+          old = '''    all_routes = (*application_routes, *_resource_definition_routes(builder))\n'''
+          new = '''    all_routes = (\n        *application_routes,\n        *_resource_definition_routes(builder),\n        *_generated_api_definition_routes(builder),\n    )\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+          uv run ruff format packages/rakit-core/src/rakit_core/compiler.py
+          uv run ruff check packages/rakit-core/src/rakit_core/compiler.py
+      - name: Commit compiler patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/rakit-core/src/rakit_core/compiler.py
+          git commit -m "feat(core): compile generated REST routes"
+          git push origin HEAD:feat/first-generated-rest-read
