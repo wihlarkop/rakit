@@ -1,0 +1,57 @@
+name: Schema Runtime Fixture Maintenance
+
+on:
+  push:
+    branches: [feat/schema-adapter-runtime]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-fixtures:
+    if: ${{ !contains(github.event.head_commit.message, '[fixtures-ci]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: feat/schema-adapter-runtime
+      - name: Add explicit schema adapters to direct PageBinding fixtures
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          for filename in (
+              "packages/rakit-web/tests/test_page_input_guardrails.py",
+              "packages/rakit-web/tests/test_pages.py",
+          ):
+              path = Path(filename)
+              text = path.read_text()
+              if "from rakit_web.schema import PydanticSchemaAdapter\n" not in text:
+                  anchor = "from rakit_web.resource_routes import build_templates\n"
+                  if anchor not in text:
+                      raise SystemExit(f"import anchor missing: {filename}")
+                  text = text.replace(
+                      anchor,
+                      anchor + "from rakit_web.schema import PydanticSchemaAdapter\n",
+                      1,
+                  )
+              if "        schema_adapter=PydanticSchemaAdapter(),\n" not in text:
+                  anchor = "        templates=build_templates(()),\n"
+                  if anchor not in text:
+                      raise SystemExit(f"binding anchor missing: {filename}")
+                  text = text.replace(
+                      anchor,
+                      anchor + "        schema_adapter=PydanticSchemaAdapter(),\n",
+                      1,
+                  )
+              path.write_text(text)
+          PY
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            exit 0
+          fi
+          git add packages/rakit-web/tests/test_page_input_guardrails.py packages/rakit-web/tests/test_pages.py
+          git commit -m "test(web): provide schema adapter fixtures [fixtures-ci]"
+          git push origin HEAD:feat/schema-adapter-runtime
