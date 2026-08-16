@@ -826,7 +826,12 @@ async def _mutation_handler(
         return _unexpected_error_response(request)
 
 
-def build_generated_rest_routes(binding: GeneratedRestBinding) -> tuple[Route, ...]:
+def build_generated_rest_routes(
+    binding: GeneratedRestBinding,
+    *,
+    include_reads: bool = True,
+    include_mutations: bool = True,
+) -> tuple[Route, ...]:
     routes: list[Route] = []
 
     async def list_resource(request: Request) -> JSONResponse:
@@ -893,7 +898,7 @@ def build_generated_rest_routes(binding: GeneratedRestBinding) -> tuple[Route, .
 
     base = f"/api/{binding.api.resource_id}"
     detail = f"{base}/{{identity}}"
-    if GeneratedCrudOperation.LIST in binding.api.operations:
+    if include_reads and GeneratedCrudOperation.LIST in binding.api.operations:
         routes.append(
             Route(
                 base,
@@ -902,7 +907,7 @@ def build_generated_rest_routes(binding: GeneratedRestBinding) -> tuple[Route, .
                 name=f"generated-api:{binding.api.resource_id}:list",
             )
         )
-    if GeneratedCrudOperation.DETAIL in binding.api.operations:
+    if include_reads and GeneratedCrudOperation.DETAIL in binding.api.operations:
         routes.append(
             Route(
                 detail,
@@ -911,7 +916,11 @@ def build_generated_rest_routes(binding: GeneratedRestBinding) -> tuple[Route, .
                 name=f"generated-api:{binding.api.resource_id}:detail",
             )
         )
-    if GeneratedCrudOperation.CREATE in binding.api.operations and binding.generated_executor:
+    if (
+        include_mutations
+        and GeneratedCrudOperation.CREATE in binding.api.operations
+        and binding.generated_executor
+    ):
         routes.append(
             Route(
                 base,
@@ -921,7 +930,8 @@ def build_generated_rest_routes(binding: GeneratedRestBinding) -> tuple[Route, .
             )
         )
     if (
-        GeneratedCrudOperation.UPDATE_PARTIAL in binding.api.operations
+        include_mutations
+        and GeneratedCrudOperation.UPDATE_PARTIAL in binding.api.operations
         and binding.generated_executor
     ):
         routes.append(
@@ -932,7 +942,11 @@ def build_generated_rest_routes(binding: GeneratedRestBinding) -> tuple[Route, .
                 name=f"generated-api:{binding.api.resource_id}:update",
             )
         )
-    if GeneratedCrudOperation.DELETE in binding.api.operations and binding.generated_executor:
+    if (
+        include_mutations
+        and GeneratedCrudOperation.DELETE in binding.api.operations
+        and binding.generated_executor
+    ):
         routes.append(
             Route(
                 detail,
