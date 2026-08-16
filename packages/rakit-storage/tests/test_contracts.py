@@ -66,7 +66,7 @@ def test_stored_file_metadata_is_immutable_and_copied() -> None:
 
     assert file.metadata == {"tenant": "acme", "scan": "pending"}
     with pytest.raises(ValidationError):
-        file.size = 2048
+        setattr(file, "size", 2048)
 
 
 @pytest.mark.parametrize(
@@ -156,4 +156,6 @@ def test_file_storage_is_runtime_checkable_protocol() -> None:
             del file, operation_context
             return FileAccess()
 
-    assert isinstance(MemoryStorage(), FileStorage)
+    storage: FileStorage = MemoryStorage()
+    assert isinstance(storage, FileStorage)
+    assert storage.storage_id == "memory"
