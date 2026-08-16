@@ -1,16 +1,21 @@
-from pydantic import BaseModel
 import pytest
-
+from pydantic import BaseModel
 from rakit_core.capabilities import CapabilityProvider, CapabilitySet
 from rakit_core.compiler import ApplicationBuilder, compile_application
 from rakit_core.datasource import DataSourceCapabilities
 from rakit_core.definitions import ResourceDefinition, ResourceFieldPolicy
 from rakit_core.errors import RakitError
 from rakit_core.fields import FieldDefinition
-from rakit_core.generated_api import ApiExposure, CompiledResourceApi, ResourceApiDefinition
+from rakit_core.generated_api import (
+    ApiExposure,
+    CompiledResourceApi,
+    GeneratedCrudOperation,
+    ResourceApiDefinition,
+)
 from rakit_core.generated_input import validate_generated_input
 from rakit_core.generated_operations import GeneratedCrudRequest
 from rakit_core.generated_runtime import GeneratedResourceExecutorContext
+from rakit_core.identity import RecordIdentity
 from rakit_core.operations import OperationExecutorCapabilities
 from rakit_core.query import PageResult
 from rakit_web.schema import PydanticSchemaAdapter
@@ -52,7 +57,7 @@ def _compiled_api() -> CompiledResourceApi:
 def test_pydantic_partial_schema_preserves_omitted_fields() -> None:
     parsed = validate_generated_input(
         _compiled_api(),
-        operation=_compiled_api().operations[3],
+        operation=GeneratedCrudOperation.UPDATE_PARTIAL,
         submitted={"nickname": "neo"},
         field_definitions=FIELDS,
         schema_adapter=PydanticSchemaAdapter(),
@@ -61,11 +66,10 @@ def test_pydantic_partial_schema_preserves_omitted_fields() -> None:
     assert dict(parsed.values) == {"nickname": "neo"}
     assert parsed.present_fields == frozenset({"nickname"})
     request = GeneratedCrudRequest.update_partial(
-        identity=__import__("rakit_core.identity", fromlist=["RecordIdentity"]).RecordIdentity(
-            values={"id": 1}
-        ),
+        identity=RecordIdentity(values={"id": 1}),
         input=parsed,
     )
+    assert request.input is not None
     assert dict(request.input.values) == {"nickname": "neo"}
 
 
