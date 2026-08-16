@@ -3,7 +3,6 @@ from collections.abc import AsyncIterator
 import pytest
 from pydantic import ValidationError
 from rakit_core.operations import OperationContext
-
 from rakit_storage import (
     DeleteBehavior,
     FileAccess,
@@ -66,7 +65,7 @@ def test_stored_file_metadata_is_immutable_and_copied() -> None:
 
     assert file.metadata == {"tenant": "acme", "scan": "pending"}
     with pytest.raises(ValidationError):
-        setattr(file, "size", 2048)
+        file.__setattr__("size", 2048)
 
 
 @pytest.mark.parametrize(
