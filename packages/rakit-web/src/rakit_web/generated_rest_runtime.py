@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass, field
 
 from rakit_core.auth import Principal
@@ -34,6 +35,7 @@ from .generated_rest import (
 )
 
 _PUBLIC_READ_ACTOR = "rakit:public-read"
+_LOGGER = logging.getLogger(__name__)
 
 
 def _request_id(request: Request) -> str:
@@ -46,6 +48,21 @@ def generated_error_response(request: Request, error: RakitError) -> JSONRespons
         generated_error_payload(error, request_id=_request_id(request)),
         status_code=error.status_code,
         headers={"Cache-Control": "no-store"},
+    )
+
+
+def _unexpected_error_response(request: Request) -> JSONResponse:
+    _LOGGER.exception(
+        "Generated REST request failed unexpectedly",
+        extra={"request_id": _request_id(request)},
+    )
+    return generated_error_response(
+        request,
+        RakitError(
+            code=ErrorCode.INTERNAL_ERROR,
+            message="Internal server error.",
+            status_code=500,
+        ),
     )
 
 
@@ -216,6 +233,8 @@ def build_generated_rest_routes(binding: GeneratedRestBinding) -> tuple[Route, .
             return _list_response(binding, result)
         except RakitError as exc:
             return generated_error_response(request, exc)
+        except Exception:
+            return _unexpected_error_response(request)
 
     async def detail_resource(request: Request) -> JSONResponse:
         try:
@@ -250,6 +269,8 @@ def build_generated_rest_routes(binding: GeneratedRestBinding) -> tuple[Route, .
             return _detail_response(binding, result)
         except RakitError as exc:
             return generated_error_response(request, exc)
+        except Exception:
+            return _unexpected_error_response(request)
 
     if GeneratedCrudOperation.LIST in binding.api.operations:
         routes.append(
