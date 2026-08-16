@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 import structlog
-from pydantic import ValidationError
 from rakit_core.di import ServiceResolver
 from rakit_core.fields import FileField
 from rakit_core.forms import FormIssue, FormSchema
@@ -50,7 +49,7 @@ def stored_file_from_value(value: object) -> StoredFile | None:
         return None
     try:
         return StoredFile.model_validate(dict(value))
-    except ValidationError:
+    except (TypeError, ValueError):
         return None
 
 
@@ -69,6 +68,25 @@ def submission_for_display(submitted: Mapping[str, object]) -> dict[str, object]
         field_id: "" if isinstance(value, UploadFile) else value
         for field_id, value in submitted.items()
     }
+
+
+def canonical_submission_values(submitted: Mapping[str, object]) -> dict[str, object]:
+    """Remove backend-generated object keys from idempotency fingerprints."""
+
+    canonical: dict[str, object] = {}
+    for field_id, value in submitted.items():
+        stored = stored_file_from_value(value)
+        if stored is None:
+            canonical[field_id] = value
+            continue
+        canonical[field_id] = {
+            "storage_id": stored.storage_id,
+            "original_name": stored.original_name,
+            "content_type": stored.content_type,
+            "size": stored.size,
+            "checksum": stored.checksum,
+        }
+    return canonical
 
 
 def _upload_issue(field: FileField, upload: UploadFile) -> FormIssue | None:
@@ -94,7 +112,7 @@ def _upload_issue(field: FileField, upload: UploadFile) -> FormIssue | None:
 
 
 def _temporary_upload(upload: UploadFile) -> TemporaryUpload:
-    async def stream():
+    async def stream() -> AsyncIterator[bytes]:
         while True:
             chunk = await upload.read(64 * 1024)
             if not chunk:
@@ -161,11 +179,9 @@ async def prepare_file_submission(
             )
         except ValueError:
             issues.append(FormIssue(field.field_id, "File exceeds the maximum allowed size."))
-            await raw.close()
             continue
         finally:
-            if not raw.file.closed:
-                await raw.close()
+            await raw.close()
 
         if stored.storage_id != field.storage_id:
             await storage.delete(stored)
@@ -254,6 +270,7 @@ async def cleanup_deleted_record_files(
 __all__ = [
     "FilePreparation",
     "PreparedUpload",
+    "canonical_submission_values",
     "cleanup_deleted_record_files",
     "cleanup_replaced_uploads",
     "compensate_uploads",
