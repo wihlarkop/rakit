@@ -1,0 +1,27 @@
+name: Dashboard pytest diagnostic
+
+on:
+  push:
+    branches:
+      - feat/dashboard-foundation
+
+permissions:
+  contents: read
+
+jobs:
+  pytest-failure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+      - run: uv sync --all-packages --dev --locked
+      - name: Capture first pytest failure
+        shell: bash
+        run: |
+          set +e
+          uv run pytest -x -q --tb=short > /tmp/pytest.txt 2>&1
+          status=$?
+          tail -c 30000 /tmp/pytest.txt > /tmp/pytest-tail.txt
+          encoded=$(base64 -w0 /tmp/pytest-tail.txt)
+          echo "::error title=pytest-first-failure::$encoded"
+          exit $status
