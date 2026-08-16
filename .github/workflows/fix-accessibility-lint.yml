@@ -1,0 +1,29 @@
+name: Fix Accessibility Lint
+
+on:
+  push:
+    branches:
+      - feat/accessibility-foundation
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/accessibility-foundation
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+      - name: Split long regex and format
+        run: python -c "from pathlib import Path; p=Path('packages/rakit-web/tests/test_query_ui.py'); s=p.read_text(); old='        r\u0027<form id=\"(rakit-sort-[^\\\"]+)\" method=\"get\" action=\"([^\\\"]+)\" class=\"hidden\" aria-hidden=\"true\">(.*?)</form>\u0027,\n'; new='        (\n            r\u0027<form id=\"(rakit-sort-[^\\\"]+)\" method=\"get\" action=\"([^\\\"]+)\" \u0027\n            r\u0027class=\"hidden\" aria-hidden=\"true\">(.*?)</form>\u0027\n        ),\n'; assert old in s; p.write_text(s.replace(old,new,1))"
+      - run: uv run ruff format packages/rakit-web/tests/test_query_ui.py
+      - run: uv run ruff check packages/rakit-web/tests/test_query_ui.py
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/rakit-web/tests/test_query_ui.py
+          git rm .github/workflows/fix-accessibility-lint.yml
+          git commit -m "test(web): keep accessible sort helper lint-clean"
+          git push origin HEAD:feat/accessibility-foundation
