@@ -1,7 +1,7 @@
 import importlib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import ClassVar, cast
+from typing import Any, ClassVar, cast
 
 import uvicorn
 from rakit_server import (
@@ -28,6 +28,7 @@ def _import_target_value(spec: str) -> object:
 
 @dataclass(slots=True)
 class UvicornServer:
+    app: object | None = None
     host: str = "127.0.0.1"
     port: int = 8000
     workers: int = 1
@@ -56,9 +57,24 @@ class UvicornServer:
             server_options=self.server_options,
         )
 
+    def _resolve_target(self, target: ServerTarget | object | None) -> ServerTarget:
+        if target is None:
+            if self.app is None:
+                raise ServerConfigurationError(
+                    "UvicornServer.run() requires a target unless app was supplied to the constructor"
+                )
+            source = self.app
+        else:
+            if self.app is not None:
+                raise ServerConfigurationError(
+                    "Uvicorn target cannot be supplied both to the constructor and run()/serve()"
+                )
+            source = target
+        return source if isinstance(source, ServerTarget) else resolve_server_target(source)
+
     @staticmethod
-    def _validate_options(config: ServerConfig) -> dict[str, object]:
-        native = dict(config.server_options)
+    def _validate_options(config: ServerConfig) -> dict[str, Any]:
+        native = cast(dict[str, Any], dict(config.server_options))
         conflicts = sorted(_RESERVED_OPTIONS.intersection(native))
         if conflicts:
             raise ServerConfigurationError(
@@ -71,7 +87,7 @@ class UvicornServer:
 
     @staticmethod
     def _resolve_for_run(
-        target: ServerTarget, config: ServerConfig, native: Mapping[str, object]
+        target: ServerTarget, config: ServerConfig, native: Mapping[str, Any]
     ) -> str | ASGIApplication:
         process_mode = config.reload or config.workers > 1
         factory_mode = native.get("factory") is True
@@ -105,7 +121,7 @@ class UvicornServer:
 
     @staticmethod
     def _resolve_for_async_serve(
-        target: ServerTarget, native: Mapping[str, object]
+        target: ServerTarget, native: Mapping[str, Any]
     ) -> str | ASGIApplication:
         if target.kind is ServerTargetKind.APPLICATION:
             if native.get("factory") is True:
@@ -117,12 +133,16 @@ class UvicornServer:
             return target.import_string
         return load_application(target.import_string)
 
-    def run(self, target: ServerTarget | object, config: ServerConfig | None = None) -> None:
-        resolved = target if isinstance(target, ServerTarget) else resolve_server_target(target)
+    def run(
+        self,
+        target: ServerTarget | object | None = None,
+        config: ServerConfig | None = None,
+    ) -> None:
+        resolved = self._resolve_target(target)
         effective = config or self._default_config()
         native = self._validate_options(effective)
         application = self._resolve_for_run(resolved, effective, native)
-        options: dict[str, object] = {
+        options: dict[str, Any] = {
             "host": effective.host,
             "port": effective.port,
             "workers": effective.workers,
@@ -131,10 +151,14 @@ class UvicornServer:
         }
         if effective.log_level is not None:
             options["log_level"] = effective.log_level
-        uvicorn.run(application, **options)
+        uvicorn.run(cast(Any, application), **options)
 
-    async def serve(self, target: ServerTarget | object, config: ServerConfig | None = None) -> None:
-        resolved = target if isinstance(target, ServerTarget) else resolve_server_target(target)
+    async def serve(
+        self,
+        target: ServerTarget | object | None = None,
+        config: ServerConfig | None = None,
+    ) -> None:
+        resolved = self._resolve_target(target)
         effective = config or self._default_config()
         native = self._validate_options(effective)
         if effective.reload or effective.workers > 1:
@@ -143,14 +167,14 @@ class UvicornServer:
                 "use run() for process supervision."
             )
         application = self._resolve_for_async_serve(resolved, native)
-        options: dict[str, object] = {
+        options: dict[str, Any] = {
             "host": effective.host,
             "port": effective.port,
             **native,
         }
         if effective.log_level is not None:
             options["log_level"] = effective.log_level
-        server = uvicorn.Server(uvicorn.Config(cast(object, application), **options))
+        server = uvicorn.Server(uvicorn.Config(cast(Any, application), **options))
         self._active_server = server
         try:
             await server.serve()
