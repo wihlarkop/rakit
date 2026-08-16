@@ -129,6 +129,55 @@ async def test_generated_rest_invalid_query_uses_json_error_envelope() -> None:
     assert response.headers["cache-control"] == "no-store"
 
 
+class ExplodingDataSource:
+    capabilities = DataSourceCapabilities(read=True)
+    fields = ("id", "name")
+    identity_fields = ("id",)
+
+    async def list(self, query):
+        raise RuntimeError("sensitive backend detail")
+
+    async def count(self, query):
+        return 0
+
+    async def detail(self, identity):
+        raise RuntimeError("sensitive backend detail")
+
+
+class ExplodingAdmin(ResourceAdmin):
+    resource_id = "exploding"
+    path = "/exploding"
+    label = "Exploding"
+    singular_label = "Exploding"
+    list_fields = ("id", "name")
+    detail_fields = ("id", "name")
+    data_source = ExplodingDataSource()
+    api = ResourceApiDefinition(
+        exposure=ApiExposure.READ_ONLY,
+        read_fields=("id", "name"),
+    )
+
+
+@pytest.mark.anyio
+async def test_generated_rest_unexpected_failure_is_safe_json_even_in_debug_mode() -> None:
+    admin = Admin(title="REST failure", debug=True)
+    admin.register(ExplodingAdmin)
+    transport = httpx.ASGITransport(app=admin.asgi(), raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+        response = await client.get("/api/exploding")
+
+    assert response.status_code == 500
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.headers["cache-control"] == "no-store"
+    payload = response.json()
+    assert payload["error"] == {
+        "code": "internal.error",
+        "message": "Internal server error.",
+    }
+    assert payload["request_id"]
+    assert "sensitive backend detail" not in response.text
+
+
 @pytest.mark.anyio
 async def test_generated_rest_routes_work_when_admin_is_mounted() -> None:
     mounted = Starlette(routes=[Mount("/admin", app=_admin().asgi())])
