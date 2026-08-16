@@ -41,7 +41,7 @@ from rakit_core.relationships import (
 )
 from rakit_web.endpoint_admin import Admin
 
-from .server import run
+from ._server import run
 
 __version__ = "0.1.0a1"
 
