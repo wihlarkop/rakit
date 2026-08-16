@@ -1,0 +1,48 @@
+name: Generated CRUD Packaging Fix
+
+on:
+  push:
+    branches: [feat/generated-crud-api-foundation]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: "${{ github.event.head_commit.message == 'ci: fix generated CRUD wheel verification' }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/generated-crud-api-foundation
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages --dev --locked
+      - name: Patch isolated wheel verification
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('tests/examples/test_read_examples.py')
+          text = path.read_text()
+          old = '''    rakit_wheel = next(output.glob("rakit-*.whl"))\n    with zipfile.ZipFile(rakit_wheel) as archive:\n        assert "rakit/py.typed" in archive.namelist()\n\n    auth_sqlalchemy_wheel = next(output.glob("rakit_auth_sqlalchemy-*.whl"))\n'''
+          new = '''    rakit_wheel = next(output.glob("rakit-*.whl"))\n    with zipfile.ZipFile(rakit_wheel) as archive:\n        assert "rakit/py.typed" in archive.namelist()\n\n    rakit_core_wheel = next(output.glob("rakit_core-*.whl"))\n    with zipfile.ZipFile(rakit_core_wheel) as archive:\n        names = archive.namelist()\n        assert "rakit_core/generated_api.py" in names\n        assert "rakit_core/generated_input.py" in names\n        assert "rakit_core/generated_operations.py" in names\n        assert "rakit_core/generated_query.py" in names\n\n    auth_sqlalchemy_wheel = next(output.glob("rakit_auth_sqlalchemy-*.whl"))\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''            "--find-links",\n            str(output),\n            str(rakit_wheel),\n'''
+          new = '''            "--find-links",\n            str(output),\n            *(str(wheel) for wheel in sorted(output.glob("*.whl"))),\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+          path.write_text(text)
+          PY
+          uv run ruff format tests/examples/test_read_examples.py
+          uv run ruff check tests/examples/test_read_examples.py
+          uv run pytest tests/examples/test_read_examples.py::test_all_packages_builds_exactly_the_ten_official_distributions -q
+      - name: Commit packaging verification fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/examples/test_read_examples.py
+          git commit -m "test: verify local built Rakit distributions"
+          git push origin HEAD:feat/generated-crud-api-foundation
