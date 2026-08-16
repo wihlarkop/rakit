@@ -7,7 +7,7 @@ from rakit_core.compiler import CompiledApplication
 from rakit_core.di import ServiceRegistry
 
 from ._optional import optional_import
-from .server import run as run_server
+from ._server import run as run_server
 
 
 class Compilable(Protocol):
