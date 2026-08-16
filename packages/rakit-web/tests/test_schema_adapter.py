@@ -27,8 +27,9 @@ def test_pydantic_adapter_declares_only_proven_schema_capabilities() -> None:
         "schema.field-introspection",
         "schema.input-validation",
         "schema.output-serialization",
+        "schema.partial-update",
     )
-    assert not PYDANTIC_SCHEMA_CAPABILITIES.capabilities.supports("schema.partial-update")
+    assert PYDANTIC_SCHEMA_CAPABILITIES.capabilities.supports("schema.partial-update")
 
 
 def test_pydantic_adapter_validates_introspects_and_serializes() -> None:
