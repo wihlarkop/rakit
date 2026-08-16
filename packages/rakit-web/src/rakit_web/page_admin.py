@@ -13,6 +13,7 @@ from rakit_core.idempotency import IdempotencyStore
 from rakit_core.mutations import OperationAuthorization
 from rakit_core.operations import resolve_operation_executor_capabilities
 from rakit_core.permissions import PermissionRequirement
+from rakit_core.schema import SchemaAdapter
 from rakit_core.transactions import OperationUnitOfWorkFactory, TransactionPolicy
 from starlette.requests import Request
 from starlette.routing import Route
@@ -151,6 +152,7 @@ def build_admin_page_routes(
     *,
     compiled: CompiledApplication,
     templates: Jinja2Templates,
+    schema_adapter: SchemaAdapter,
     admin_id: str,
     superuser_bypass: bool,
     verify_csrf: Callable[[Request], Awaitable[bool]],
@@ -194,6 +196,7 @@ def build_admin_page_routes(
     binding = PageBinding(
         routes=pairs,
         templates=templates,
+        schema_adapter=schema_adapter,
         authorize_page=authorize_page,
         verify_csrf=verify_csrf,
         verify_submission_token=verify_submission_token,

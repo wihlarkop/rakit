@@ -15,6 +15,7 @@ from rakit_core.pages import DomainPageHandler, PageContext, PageRedirect, PageR
 from rakit_core.transactions import TransactionPolicy
 from rakit_web.page_routes import PageBinding, build_page_routes
 from rakit_web.resource_routes import build_templates
+from rakit_web.schema import PydanticSchemaAdapter
 from starlette.applications import Starlette
 from starlette.requests import Request
 
@@ -78,6 +79,7 @@ def _app(definition: PageDefinition, store: _Store | None = None) -> Starlette:
     binding = PageBinding(
         routes=((route, compiled_page),),
         templates=build_templates(()),
+        schema_adapter=PydanticSchemaAdapter(),
         authorize_page=authorize,
         verify_csrf=verify_csrf_like_admin if definition.mutating else None,
         verify_submission_token=verify_submission if definition.mutating else None,

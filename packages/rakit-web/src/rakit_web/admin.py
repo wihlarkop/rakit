@@ -71,7 +71,7 @@ from .page_admin import (
 from .public_composition import resource_actions, resource_relationships
 from .relationship_routes import build_relationship_routes
 from .resource_routes import ResourceBinding, build_resource_routes, build_templates
-from .schema import PYDANTIC_SCHEMA_CAPABILITIES, PydanticSchemaAdapter
+from .schema import PydanticSchemaAdapter
 from .security.authentication import (
     LOGIN_PATH,
     LOGOUT_PATH,
@@ -183,6 +183,7 @@ class Admin:
         event_bus: EventBus | None = None,
         operation_idempotency_store: IdempotencyStore | None = None,
         advanced_action_response_adapter: AdvancedActionResponseAdapter | None = None,
+        schema_adapter: SchemaAdapter | None = None,
     ) -> None:
         security_config: dict[str, object] = {
             "secret_key": secret_key,
@@ -238,10 +239,10 @@ class Admin:
         )
         self._builder = ApplicationBuilder(admin_id=admin_id)
         self._builder.register_capability_provider(STARLETTE_WEB_CAPABILITIES)
-        self._builder.register_capability_provider(PYDANTIC_SCHEMA_CAPABILITIES)
-        schema_adapter: SchemaAdapter = PydanticSchemaAdapter()
+        self._schema_adapter = schema_adapter or PydanticSchemaAdapter()
+        self._builder.register_capability_provider(self._schema_adapter.provider)
         self._builder.registry.add_value(
-            SchemaAdapter, schema_adapter, scope=ServiceScope.APPLICATION
+            SchemaAdapter, self._schema_adapter, scope=ServiceScope.APPLICATION
         )
         self._operation_idempotency_store = operation_idempotency_store
         self._advanced_action_response_adapter = advanced_action_response_adapter
@@ -1166,6 +1167,7 @@ class Admin:
                 page_routes = build_admin_page_routes(
                     compiled=self.compiled,
                     templates=templates,
+                    schema_adapter=self._schema_adapter,
                     admin_id=self.config.admin_id,
                     superuser_bypass=self._superuser_bypass,
                     verify_csrf=verify_write_csrf,
