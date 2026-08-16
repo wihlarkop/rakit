@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from rakit import Admin, ApiExposure, ModelAdmin, ResourceApiDefinition, SecretValue
 from rakit_core.auth import Principal, SessionRecord
+from rakit_core.errors import RakitError
 from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, OperationReceipt
 from rakit_sqlalchemy.plugin import SQLAlchemyPlugin
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -103,21 +104,19 @@ def _admin(*, auth: bool, idempotency: bool) -> Admin:
 def test_generated_crud_runtime_requires_authentication() -> None:
     admin = _admin(auth=False, idempotency=True)
 
-    with pytest.raises(Exception) as captured:
+    with pytest.raises(RakitError) as captured:
         admin.asgi()
 
-    error = captured.value
-    assert getattr(error, "details")["reason"] == "generated_api_auth_required"
+    assert captured.value.details["reason"] == "generated_api_auth_required"
 
 
 def test_generated_crud_runtime_requires_idempotency_store() -> None:
     admin = _admin(auth=True, idempotency=False)
 
-    with pytest.raises(Exception) as captured:
+    with pytest.raises(RakitError) as captured:
         admin.asgi()
 
-    error = captured.value
-    assert getattr(error, "details")["reason"] == "generated_api_idempotency_store_required"
+    assert captured.value.details["reason"] == "generated_api_idempotency_store_required"
 
 
 def test_generated_crud_runtime_materializes_when_dependencies_are_complete() -> None:
