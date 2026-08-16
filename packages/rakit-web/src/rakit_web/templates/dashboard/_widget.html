@@ -1,0 +1,68 @@
+<article
+  id="rakit-dashboard-widget-{{ widget.widget_id }}"
+  class="rakit-panel p-4"
+  data-rakit-dashboard-widget="{{ widget.widget_id }}"
+  {% if widget.definition.layout.min_height %}style="min-height: {{ widget.definition.layout.min_height }}px"{% endif %}
+>
+  {% if widget.is_lazy %}
+  <div
+    role="status"
+    aria-live="polite"
+    hx-get="{{ widget.widget_path }}"
+    hx-trigger="load"
+    hx-target="#rakit-dashboard-widget-{{ widget.widget_id }}"
+    hx-swap="outerHTML"
+  >
+    <h3 class="font-medium text-slate-950">{{ widget.definition.label }}</h3>
+    <p class="mt-2 text-sm leading-6 text-slate-600">Loading…</p>
+  </div>
+  {% else %}
+    {% set result = widget.result %}
+    <header class="mb-3 flex items-start justify-between gap-3">
+      <h3 class="font-medium text-slate-950">{{ result.label }}</h3>
+      <button
+        class="rakit-button-secondary"
+        type="button"
+        hx-get="{{ widget.widget_path }}"
+        hx-target="#rakit-dashboard-widget-{{ widget.widget_id }}"
+        hx-swap="outerHTML"
+        aria-label="Refresh {{ result.label }}"
+      >Refresh</button>
+    </header>
+
+    {% if result.message is defined %}
+      <p class="text-sm leading-6 text-red-900" role="alert">{{ result.message }}</p>
+    {% elif result.template is defined %}
+      {% with payload=result.context, widget_result=result %}{% include result.template %}{% endwith %}
+    {% elif result.value is defined %}
+      <p class="text-2xl font-semibold tracking-tight text-slate-950">{{ result.value }}</p>
+      {% if result.description %}<p class="mt-1 text-sm leading-6 text-slate-600">{{ result.description }}</p>{% endif %}
+    {% elif result.text is defined %}
+      <p class="text-sm leading-6 text-slate-700">{{ result.text }}</p>
+    {% elif result.columns is defined %}
+      {% if result.rows %}
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-sm">
+          <thead><tr>{% for column in result.columns %}<th scope="col" class="px-2 py-2 font-medium text-slate-700">{{ column }}</th>{% endfor %}</tr></thead>
+          <tbody>
+            {% for row in result.rows %}
+            <tr>{% for value in row %}<td class="px-2 py-2 text-slate-700">{{ value }}</td>{% endfor %}</tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}<p class="text-sm leading-6 text-slate-600">{{ result.empty_message }}</p>{% endif %}
+    {% elif result.items is defined %}
+      {% if result.items %}
+      <ul class="space-y-2">
+        {% for item in result.items %}
+        <li class="flex items-center justify-between gap-3 text-sm">
+          {% if item.href %}<a href="{{ item.href }}" class="font-medium">{{ item.label }}</a>{% else %}<span>{{ item.label }}</span>{% endif %}
+          {% if item.value %}<span class="text-slate-600">{{ item.value }}</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}<p class="text-sm leading-6 text-slate-600">{{ result.empty_message }}</p>{% endif %}
+    {% endif %}
+  {% endif %}
+</article>
