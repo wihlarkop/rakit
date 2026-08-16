@@ -2,17 +2,24 @@
 {% block title %}{{ resource.singular_label }}{% endblock %}
 {% block content %}
 <div id="rakit-resource-detail-root">
-  {% include "components/dashboard_navigation.html" %}
-  <header class="mb-6 border-b border-slate-200 pb-4">
+  <nav class="mb-3 flex items-center gap-2 text-sm text-slate-500" aria-label="Breadcrumb">
+    <a href="{{ request.scope.get('root_path', '').rstrip('/') }}/" class="hover:text-slate-900 hover:underline">Dashboard</a>
+    <span aria-hidden="true">/</span>
+    <a href="{{ request.scope.get('root_path', '').rstrip('/') }}{{ resource.path }}" class="hover:text-slate-900 hover:underline">{{ resource.label }}</a>
+    <span aria-hidden="true">/</span>
+    <span aria-current="page" class="text-slate-700">{{ resource.singular_label }}</span>
+  </nav>
+  <header class="mb-6">
     <p class="text-sm font-medium text-slate-500">{{ resource.label }}</p>
     <h1 class="mt-1 text-2xl font-semibold tracking-tight text-slate-950">{{ resource.singular_label }}</h1>
+    <p class="mt-2 text-sm leading-6 text-slate-600">Inspect the fields available for this record.</p>
   </header>
-  <section class="rakit-panel p-4">
+  <section class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
     <dl data-rakit-resource="{{ resource.resource_id }}" class="divide-y divide-slate-100">
       {% for field_name in fields %}
-      <div class="grid gap-2 py-3 md:grid-cols-2">
-        <dt class="text-sm font-medium text-slate-600">{{ field_name }}</dt>
-        <dd class="text-sm text-slate-900">{{ cells[field_name] }}</dd>
+      <div class="grid gap-1 px-4 py-4 sm:grid-cols-3 sm:gap-4 sm:px-5">
+        <dt class="text-sm font-medium text-slate-500">{{ field_name }}</dt>
+        <dd class="text-sm text-slate-900 sm:col-span-2">{{ cells[field_name] }}</dd>
       </div>
       {% endfor %}
     </dl>
