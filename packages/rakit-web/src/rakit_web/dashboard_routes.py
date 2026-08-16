@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import AbstractAsyncContextManager, Callable, Iterable
+from collections.abc import Callable, Iterable
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 
 import anyio
