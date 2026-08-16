@@ -1,0 +1,26 @@
+name: Dashboard lint diagnostic
+
+on:
+  push:
+    branches:
+      - feat/dashboard-foundation
+
+permissions:
+  contents: read
+
+jobs:
+  lint-findings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+      - run: uv sync --all-packages --dev --locked
+      - name: Capture Ruff lint findings
+        shell: bash
+        run: |
+          set +e
+          uv run ruff check . --output-format concise > /tmp/ruff-lint.txt 2>&1
+          status=$?
+          encoded=$(base64 -w0 /tmp/ruff-lint.txt)
+          echo "::error title=ruff-lint-findings::$encoded"
+          exit $status
