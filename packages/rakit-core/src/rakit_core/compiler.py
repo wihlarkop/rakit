@@ -36,6 +36,7 @@ RESOURCE_RELATIONSHIP_SEGMENT = "_relationships"
 OFFICIAL_PACKAGE_NAMES = (
     "rakit",
     "rakit-core",
+    "rakit-server",
     "rakit-web",
     "rakit-sqlalchemy",
     "rakit-auth-sqlalchemy",

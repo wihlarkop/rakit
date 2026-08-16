@@ -172,6 +172,7 @@ def test_package_version_mismatch_propagates(monkeypatch: pytest.MonkeyPatch) ->
     versions = {
         "rakit": "0.1.0a1",
         "rakit-core": "0.2.0a1",
+        "rakit-server": "0.1.0a1",
         "rakit-web": "0.1.0a1",
         "rakit-sqlalchemy": "0.1.0a1",
         "rakit-auth-sqlalchemy": "0.1.0a1",
