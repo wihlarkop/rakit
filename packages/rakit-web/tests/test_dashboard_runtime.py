@@ -171,6 +171,27 @@ async def test_lazy_widget_loads_through_fragment_endpoint() -> None:
     assert 'aria-label="Refresh Pending orders"' in fragment.text
 
 
+def test_dashboard_template_url_is_mount_aware() -> None:
+    request = Request(
+        {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": "/reports",
+            "raw_path": b"/reports",
+            "root_path": "/admin",
+            "query_string": b"",
+            "headers": [],
+            "client": ("127.0.0.1", 1),
+            "server": ("localhost", 80),
+        }
+    )
+    template = build_templates(()).env.from_string('{{ rakit_dashboard_url() }}')
+
+    assert template.render(request=request) == "/admin/"
+
+
 def test_forbidden_launchers_and_widgets_are_hidden() -> None:
     allowed = PermissionRequirement.all_of("operations.dashboard.allowed")
     forbidden = PermissionRequirement.all_of("operations.dashboard.forbidden")
