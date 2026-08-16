@@ -1,6 +1,8 @@
 import pytest
 from pydantic import BaseModel
-from rakit_core.schema import SchemaValidationError
+from rakit_core.di import ServiceKey
+from rakit_core.schema import SchemaAdapter, SchemaValidationError
+from rakit_web.admin import Admin
 from rakit_web.capabilities import STARLETTE_WEB_CAPABILITIES
 from rakit_web.schema import PYDANTIC_SCHEMA_CAPABILITIES, PydanticSchemaAdapter
 
@@ -53,3 +55,13 @@ def test_pydantic_adapter_normalizes_validation_errors() -> None:
 def test_pydantic_adapter_rejects_non_pydantic_schema() -> None:
     with pytest.raises(TypeError, match="BaseModel"):
         PydanticSchemaAdapter().field_names(dict)
+
+
+def test_admin_registers_web_and_schema_capability_providers() -> None:
+    admin = Admin(title="Capability Test", debug=True)
+
+    assert tuple(provider.provider_id for provider in admin.builder.capability_providers) == (
+        "web.starlette",
+        "schema.pydantic",
+    )
+    assert ServiceKey(SchemaAdapter, None) in admin.builder.registry.providers
