@@ -23,7 +23,7 @@ async def test_theme_script_is_local_and_csp_stays_strict() -> None:
     assert match is not None
     assert match.group(1).startswith("/_system/static/")
     csp = response.headers["content-security-policy"]
-    assert "script-src 'self'" in csp
+    assert "default-src 'self'" in csp
     assert "'unsafe-inline'" not in csp
 
 
