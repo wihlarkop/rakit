@@ -7,9 +7,11 @@ from rakit_core.compiler import ApplicationBuilder
 from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.di import ServiceScope
 from rakit_core.errors import ErrorCode, RakitError
+from rakit_core.generated_runtime import ResourceAdapterRuntime
 from rakit_core.identity import RecordIdentity
 from rakit_core.query import Filter, FilterOperator, ResourceQuery, Sort
 from rakit_sqlalchemy.datasource import SQLAlchemyDataSource, _coerce_identity_component
+from rakit_sqlalchemy.generated import SQLAlchemyGeneratedResourceExecutorProvider
 from rakit_sqlalchemy.introspection import inspect_model
 from rakit_sqlalchemy.plugin import SQLAlchemyPlugin
 from sqlalchemy import BigInteger, Boolean, Date, Numeric, String, Uuid
@@ -283,12 +285,17 @@ def test_claim_returns_datasource_for_mapped_model(session_factory) -> None:
     plugin.configure(builder)
 
     claim = builder._adapters["sqlalchemy"]
-    datasource = claim(
+    runtime = claim(
         User,
         ResourceFieldPolicy(list_fields=("id", "name"), detail_fields=("id", "name")),
     )
 
-    assert isinstance(datasource, SQLAlchemyDataSource)
+    assert isinstance(runtime, ResourceAdapterRuntime)
+    assert isinstance(runtime.data_source, SQLAlchemyDataSource)
+    assert isinstance(
+        runtime.generated_executor_provider,
+        SQLAlchemyGeneratedResourceExecutorProvider,
+    )
 
 
 def test_claim_returns_none_for_non_mapped_class(session_factory) -> None:
@@ -341,9 +348,14 @@ def test_claim_accepts_supported_identity_types(
         detail_fields=(identity_field,),
     )
 
-    datasource = plugin._claim(model, policy)
+    runtime = plugin._claim(model, policy)
 
-    assert isinstance(datasource, SQLAlchemyDataSource)
+    assert isinstance(runtime, ResourceAdapterRuntime)
+    assert isinstance(runtime.data_source, SQLAlchemyDataSource)
+    assert isinstance(
+        runtime.generated_executor_provider,
+        SQLAlchemyGeneratedResourceExecutorProvider,
+    )
 
 
 @pytest.mark.parametrize(
