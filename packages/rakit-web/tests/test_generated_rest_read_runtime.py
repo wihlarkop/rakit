@@ -7,7 +7,7 @@ from rakit_core.auth import Principal, SessionRecord
 from rakit_core.datasource import DataSourceCapabilities
 from rakit_core.generated_api import ApiFilterDefinition
 from rakit_core.identity import IdentityCodec, RecordIdentity
-from rakit_core.query import FilterOperator, PageResult
+from rakit_core.query import FilterOperator, PageResult, ResourceQuery
 from rakit_web.security.cookies import SESSION_COOKIE_NAME
 from starlette.applications import Starlette
 from starlette.routing import Mount
@@ -19,7 +19,7 @@ class UsersDataSource:
     identity_fields = ("id",)
 
     def __init__(self) -> None:
-        self.last_query = None
+        self.last_query: ResourceQuery | None = None
         self.records = {
             1: {"id": 1, "email": "one@example.com", "status": "active", "secret": "one"},
             2: {"id": 2, "email": "two@example.com", "status": "pending", "secret": "two"},
@@ -108,6 +108,7 @@ async def test_generated_rest_list_and_detail_are_json_and_read_field_bounded() 
             "total": 2,
         },
     }
+    assert DATA_SOURCE.last_query is not None
     assert DATA_SOURCE.last_query.filters[0].field == "status"
     assert detail.status_code == 200
     assert detail.json() == {"data": {"id": 1, "email": "one@example.com", "status": "active"}}
