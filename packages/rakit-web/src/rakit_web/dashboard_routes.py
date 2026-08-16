@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import AbstractAsyncContextManager, Awaitable, Callable, Iterable
+from collections.abc import AbstractAsyncContextManager, Callable, Iterable
 from dataclasses import dataclass
 
 import anyio
@@ -12,6 +12,11 @@ from rakit_core.auth import Principal
 from rakit_core.dashboard import (
     DashboardDefinition,
     LauncherItem,
+    ListWidgetResult,
+    StatWidgetResult,
+    TableWidgetResult,
+    TemplateWidgetResult,
+    TextWidgetResult,
     WidgetContext,
     WidgetDefinition,
     WidgetErrorResult,
@@ -39,6 +44,14 @@ logger = structlog.get_logger(__name__)
 
 _DASHBOARD_WIDGET_PREFIX = "/_dashboard/widgets"
 _DEFAULT_WIDGET_TIMEOUT_SECONDS = 10.0
+_WIDGET_RESULT_TYPES = (
+    StatWidgetResult,
+    TextWidgetResult,
+    ListWidgetResult,
+    TableWidgetResult,
+    TemplateWidgetResult,
+    WidgetErrorResult,
+)
 
 
 @dataclass(frozen=True)
@@ -56,11 +69,12 @@ class DashboardBinding:
 
     def __post_init__(self) -> None:
         widget_ids = {str(widget.widget_id) for widget in self.widgets}
-        missing = tuple(widget_id for widget_id in self.dashboard.widgets if widget_id not in widget_ids)
+        missing = tuple(
+            widget_id for widget_id in self.dashboard.widgets if widget_id not in widget_ids
+        )
         if missing:
-            raise ValueError(
-                "Dashboard references unregistered widgets: " + ", ".join(str(item) for item in missing)
-            )
+            missing_ids = ", ".join(str(item) for item in missing)
+            raise ValueError(f"Dashboard references unregistered widgets: {missing_ids}")
         if self.default_widget_timeout_seconds <= 0:
             raise ValueError("Dashboard widget timeout must be positive")
 
@@ -89,11 +103,17 @@ def _allowed(
         return True
     return bool(
         principal is not None
-        and requirement.matches(principal, superuser_bypass=binding.superuser_bypass)
+        and requirement.matches(
+            principal,
+            superuser_bypass=binding.superuser_bypass,
+        )
     )
 
 
-def _resource_requirement(binding: DashboardBinding, resource_id: str) -> PermissionRequirement:
+def _resource_requirement(
+    binding: DashboardBinding,
+    resource_id: str,
+) -> PermissionRequirement:
     return PermissionRequirement.all_of(f"{binding.admin_id}.resources.{resource_id}.read")
 
 
@@ -119,15 +139,23 @@ def _automatic_launchers(binding: DashboardBinding) -> tuple[LauncherItem, ...]:
     return (*resource_items, *page_items)
 
 
-def visible_launchers(binding: DashboardBinding, request: Request) -> tuple[LauncherItem, ...]:
+def visible_launchers(
+    binding: DashboardBinding,
+    request: Request,
+) -> tuple[LauncherItem, ...]:
     principal = _principal(request)
     candidates = binding.dashboard.launchers or _automatic_launchers(binding)
     return tuple(
-        launcher for launcher in candidates if _allowed(binding, principal, launcher.permission)
+        launcher
+        for launcher in candidates
+        if _allowed(binding, principal, launcher.permission)
     )
 
 
-def visible_widgets(binding: DashboardBinding, request: Request) -> tuple[WidgetDefinition, ...]:
+def visible_widgets(
+    binding: DashboardBinding,
+    request: Request,
+) -> tuple[WidgetDefinition, ...]:
     principal = _principal(request)
     by_id = binding.widgets_by_id
     selected = (
@@ -136,9 +164,13 @@ def visible_widgets(binding: DashboardBinding, request: Request) -> tuple[Widget
         else binding.widgets
     )
     visible = tuple(
-        widget for widget in selected if _allowed(binding, principal, widget.permission)
+        widget
+        for widget in selected
+        if _allowed(binding, principal, widget.permission)
     )
-    registration_order = {str(widget.widget_id): index for index, widget in enumerate(binding.widgets)}
+    registration_order = {
+        str(widget.widget_id): index for index, widget in enumerate(binding.widgets)
+    }
     return tuple(
         sorted(
             visible,
@@ -173,12 +205,14 @@ async def _execute_widget(
             request_id=str(state.get("request_id", "")),
             operation_id=new_operation_id(),
             principal=principal,
-            principal_id=principal.subject_id if principal is not None else None,
+            principal_id=(principal.subject_id or "") if principal is not None else "",
             session_id=str(state.get("session_id", "")),
             admin_id=binding.admin_id,
             resource_id=f"dashboard:{binding.dashboard.dashboard_id}",
             operation=f"dashboard.widget:{widget.widget_id}",
-            permissions=widget.permission.permissions if widget.permission is not None else (),
+            permissions=(
+                widget.permission.permissions if widget.permission is not None else ()
+            ),
             permission_requirement=widget.permission,
             services=services,
         )
@@ -191,7 +225,7 @@ async def _execute_widget(
             operation_context.checkpoint()
             value = widget.loader(context)
             result = await value if inspect.isawaitable(value) else value
-            if not isinstance(result, WidgetResult.__args__):
+            if not isinstance(result, _WIDGET_RESULT_TYPES):
                 raise TypeError("Dashboard widget loaders must return a WidgetResult")
             return result.model_copy(
                 update={
@@ -232,12 +266,24 @@ async def _load_eager_widgets(
 
     async def load(widget: WidgetDefinition) -> None:
         async with semaphore:
-            results[str(widget.widget_id)] = await _execute_widget(binding, request, widget)
+            results[str(widget.widget_id)] = await _execute_widget(
+                binding,
+                request,
+                widget,
+            )
 
     async with anyio.create_task_group() as group:
         for widget in widgets:
             group.start_soon(load, widget)
     return results
+
+
+def _launcher_view(request: Request, launcher: LauncherItem) -> dict[str, object]:
+    return {
+        "label": launcher.label,
+        "description": launcher.description,
+        "path": mounted_path(request, launcher.path),
+    }
 
 
 def _widget_view(
@@ -257,23 +303,37 @@ def _widget_view(
 def build_dashboard_routes(binding: DashboardBinding) -> list[Route]:
     async def dashboard_home(request: Request) -> Response:
         widgets = visible_widgets(binding, request)
-        eager = tuple(widget for widget in widgets if widget.loading is WidgetLoadingMode.EAGER)
+        eager = tuple(
+            widget for widget in widgets if widget.loading is WidgetLoadingMode.EAGER
+        )
         results = await _load_eager_widgets(binding, request, eager)
         views = tuple(
-            _widget_view(request, widget, results.get(str(widget.widget_id))) for widget in widgets
+            _widget_view(request, widget, results.get(str(widget.widget_id)))
+            for widget in widgets
+        )
+        launchers = tuple(
+            _launcher_view(request, launcher)
+            for launcher in visible_launchers(binding, request)
         )
         return binding.templates.TemplateResponse(
             request,
             "dashboard/index.html",
             {
                 "dashboard": binding.dashboard,
-                "launchers": visible_launchers(binding, request),
+                "launchers": launchers,
                 "widgets": views,
             },
             headers={"Cache-Control": "no-store"},
         )
 
-    routes: list[Route] = [Route("/", dashboard_home, methods=["GET"], name="rakit.dashboard")]
+    routes: list[Route] = [
+        Route(
+            "/",
+            dashboard_home,
+            methods=["GET"],
+            name="rakit.dashboard",
+        )
+    ]
 
     for widget in binding.widgets:
 
