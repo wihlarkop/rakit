@@ -7,6 +7,22 @@ from rakit_core.actions import (
 from rakit_core.admin_types import ModelAdmin, ResourceAdmin
 from rakit_core.bulk import BulkExecutionPolicy, BulkPolicy
 from rakit_core.config import RakitConfig, SecretValue
+from rakit_core.dashboard import (
+    DashboardDefinition,
+    LauncherItem,
+    ListWidgetItem,
+    ListWidgetResult,
+    StatWidgetResult,
+    TableWidgetResult,
+    TemplateWidgetResult,
+    TextWidgetResult,
+    WidgetContext,
+    WidgetDefinition,
+    WidgetErrorResult,
+    WidgetLayout,
+    WidgetLoadingMode,
+    WidgetSize,
+)
 from rakit_core.definitions import PageDefinition
 from rakit_core.endpoints import (
     AdminEndpoint,
@@ -48,7 +64,7 @@ from rakit_core.relationships import (
     RelationshipEditMode,
     RelationshipKind,
 )
-from rakit_web.endpoint_admin import Admin
+from rakit_web.dashboard_admin import Admin
 
 from ._server import run
 
@@ -65,6 +81,7 @@ __all__ = [
     "ApiFilterDefinition",
     "BulkExecutionPolicy",
     "BulkPolicy",
+    "DashboardDefinition",
     "DomainEndpointHandler",
     "DomainPageHandler",
     "EndpointAccessPolicy",
@@ -82,6 +99,9 @@ __all__ = [
     "GeneratedFilterValue",
     "GeneratedInput",
     "GeneratedResourceExecutor",
+    "LauncherItem",
+    "ListWidgetItem",
+    "ListWidgetResult",
     "ModelAdmin",
     "PageContext",
     "PageDefinition",
@@ -100,6 +120,16 @@ __all__ = [
     "ResourceAdmin",
     "ResourceApiDefinition",
     "SecretValue",
+    "StatWidgetResult",
+    "TableWidgetResult",
+    "TemplateWidgetResult",
+    "TextWidgetResult",
+    "WidgetContext",
+    "WidgetDefinition",
+    "WidgetErrorResult",
+    "WidgetLayout",
+    "WidgetLoadingMode",
+    "WidgetSize",
     "__version__",
     "run",
 ]
