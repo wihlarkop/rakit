@@ -393,7 +393,7 @@ def _sort_headers(
     headers: list[dict[str, str]] = []
     for field_name in fields:
         if field_name not in allowed_sort_fields:
-            headers.append({"field": field_name, "url": "", "aria_sort": "none"})
+            headers.append({"field": field_name, "url": "", "sort_value": "", "aria_sort": "none"})
             continue
         # Toggle this column in place without discarding the other explicit
         # user sorts. A newly clicked field is appended to that sequence.
@@ -408,6 +408,7 @@ def _sort_headers(
             {
                 "field": field_name,
                 "url": f"{path}?{urlencode(params)}",
+                "sort_value": next_sort,
                 "aria_sort": aria_sort,
             }
         )
