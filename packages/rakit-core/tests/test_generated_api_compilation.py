@@ -154,7 +154,7 @@ def test_compiled_crud_snapshots_neutral_field_metadata() -> None:
     )
 
 
-def test_custom_input_schema_requires_schema_validation_capability() -> None:
+def test_custom_input_schema_requires_validation_and_serialization_capabilities() -> None:
     class CreateSchema:
         pass
 
@@ -164,12 +164,18 @@ def test_custom_input_schema_requires_schema_validation_capability() -> None:
     with pytest.raises(RakitError) as captured:
         compile_application(builder)
     assert captured.value.details["reason"] == "missing_capabilities"
-    assert captured.value.details["missing"] == ["schema.input-validation"]
+    assert captured.value.details["missing"] == [
+        "schema.input-validation",
+        "schema.output-serialization",
+    ]
 
     satisfied = ApplicationBuilder()
     satisfied.register_capability_provider(_persistence_provider())
     satisfied.register_capability_provider(
-        CapabilityProvider("schema.example", CapabilitySet.of("schema.input-validation"))
+        CapabilityProvider(
+            "schema.example",
+            CapabilitySet.of("schema.input-validation", "schema.output-serialization"),
+        )
     )
     satisfied.add_resource(_resource(_crud_api(create_schema=CreateSchema)), FakeDataSource())
     compiled = compile_application(satisfied)
