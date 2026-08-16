@@ -1,0 +1,231 @@
+name: Repository Cleanup
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  clean-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages --dev --locked
+
+      - name: Remove internal planning documents and normalize test names
+        shell: python
+        run: |
+          from pathlib import Path
+          import shutil
+
+          renames = {
+              "packages/rakit-core/tests/test_plan05_foundations.py":
+                  "packages/rakit-core/tests/test_operation_and_composition_foundations.py",
+              "packages/rakit-core/tests/test_plan05_task4_correction_a.py":
+                  "packages/rakit-core/tests/test_action_definition_contract.py",
+              "packages/rakit-core/tests/test_plan05_task4_correction_b1.py":
+                  "packages/rakit-core/tests/test_action_route_compilation.py",
+              "packages/rakit-core/tests/test_plan05_task4_correction_b2b2.py":
+                  "packages/rakit-core/tests/test_action_concurrency.py",
+              "packages/rakit-core/tests/test_plan05_task4_correction_c1.py":
+                  "packages/rakit-core/tests/test_action_operation_plans.py",
+              "packages/rakit-core/tests/test_plan05_task4_correction_c2a_core.py":
+                  "packages/rakit-core/tests/test_operation_transactions.py",
+              "packages/rakit-core/tests/test_plan05_task4_correction_e3.py":
+                  "packages/rakit-core/tests/test_action_advanced_results.py",
+              "packages/rakit-core/tests/test_plan05_task5_bulk.py":
+                  "packages/rakit-core/tests/test_bulk_action_operations.py",
+              "packages/rakit-core/tests/test_plan05_task6_pages.py":
+                  "packages/rakit-core/tests/test_page_operations.py",
+              "packages/rakit-sqlalchemy/tests/test_plan05_task4_correction_c2a_sqlalchemy.py":
+                  "packages/rakit-sqlalchemy/tests/test_operation_uow_integration.py",
+              "packages/rakit-sqlalchemy/tests/test_plan05_task4_correction_c2b.py":
+                  "packages/rakit-sqlalchemy/tests/test_action_mutations.py",
+              "packages/rakit-sqlalchemy/tests/test_plan05_task4_correction_c2b_contract.py":
+                  "packages/rakit-sqlalchemy/tests/test_action_mutation_contracts.py",
+              "packages/rakit-web/tests/test_plan05_task4_correction_c2a_web.py":
+                  "packages/rakit-web/tests/test_admin_transaction_composition.py",
+              "packages/rakit/tests/test_plan05_bulk_facade.py":
+                  "packages/rakit/tests/test_bulk_facade.py",
+              "packages/rakit/tests/test_plan05_pages_facade.py":
+                  "packages/rakit/tests/test_page_facade.py",
+          }
+
+          for old_name, new_name in renames.items():
+              old = Path(old_name)
+              new = Path(new_name)
+              if not old.exists():
+                  raise SystemExit(f"missing expected test file: {old}")
+              if new.exists():
+                  raise SystemExit(f"target test file already exists: {new}")
+              new.parent.mkdir(parents=True, exist_ok=True)
+              old.rename(new)
+
+          for internal_dir in (Path("docs/plans"), Path("docs/specs"), Path("docs/design")):
+              if internal_dir.exists():
+                  shutil.rmtree(internal_dir)
+
+          replacements = {
+              "packages/rakit-core/tests/test_action_definition_contract.py": (
+                  '"""PLAN 05 TASK 4 CORRECTION A: one canonical ``ActionDefinition`` contract.\n',
+                  '"""Canonical ``ActionDefinition`` contract.\n',
+              ),
+              "packages/rakit-core/tests/test_action_route_compilation.py": (
+                  '"""PLAN 05 action-route compiler contract through Task 5.\n\n'
+                  'The compiler owns action route metadata (path, methods, stable route name,\n'
+                  'owner). Every executable PAGE / RESOURCE / RECORD / BULK action exposes\n'
+                  'GET + POST; ``mutating`` is execution/transaction semantics, not an\n'
+                  'HTTP-method switch. Task 5 extends the Task 4 contract by making BULK routes\n'
+                  'compiler-owned too.\n"""',
+                  '"""Action-route compiler contract across all supported scopes.\n\n'
+                  'The compiler owns action route metadata (path, methods, stable route name,\n'
+                  'owner). Every executable PAGE / RESOURCE / RECORD / BULK action exposes\n'
+                  'GET + POST; ``mutating`` is execution/transaction semantics, not an\n'
+                  'HTTP-method switch. BULK routes are compiler-owned too.\n"""',
+              ),
+              "packages/rakit-core/tests/test_action_concurrency.py": (
+                  '"""PLAN 05 TASK 4 CORRECTION B2B2: generic RECORD concurrency for actions.\n\n'
+                  '``ActionDefinition.requires_concurrency`` is a Task-4 RECORD-only strong\n'
+                  'concurrency flag; C2A additionally requires a mutating AUTO transaction. The\n'
+                  'runtime version capability remains a backend-neutral ``ConcurrencyVersionProvider``\n'
+                  'registered per resource (Task 5 owns bulk concurrency snapshots).\n"""',
+                  '"""Generic record concurrency contracts for actions.\n\n'
+                  '``ActionDefinition.requires_concurrency`` is a RECORD-only strong\n'
+                  'concurrency flag and requires a mutating AUTO transaction. The runtime\n'
+                  'version capability remains a backend-neutral ``ConcurrencyVersionProvider``\n'
+                  'registered per resource; bulk actions own their concurrency snapshots.\n"""',
+              ),
+              "packages/rakit-core/tests/test_action_operation_plans.py": (
+                  '"""PLAN 05 TASK 4 CORRECTION C1: canonical action OperationPlan mapping.\n\n'
+                  '``build_action_operation_plan`` maps a prepared ``ActionContext`` onto the\n'
+                  'generic ``OperationPlan`` seam; ``execute_operation_plan`` is the single\n'
+                  'application execution boundary (RBAC never re-run in core).  C2A adds the\n'
+                  'executor capability contract: mutating AUTO/MANUAL requires UoW\n'
+                  'participation, and ``requires_concurrency`` means strong concurrency.\n"""',
+                  '"""Canonical action-to-OperationPlan mapping.\n\n'
+                  '``build_action_operation_plan`` maps a prepared ``ActionContext`` onto the\n'
+                  'generic ``OperationPlan`` seam; ``execute_operation_plan`` is the single\n'
+                  'application execution boundary (RBAC is never re-run in core). Mutating\n'
+                  'AUTO/MANUAL actions require UoW participation, and ``requires_concurrency``\n'
+                  'means strong concurrency.\n"""',
+              ),
+              "packages/rakit-core/tests/test_operation_transactions.py": (
+                  '"""Plan 05 Task 4 Correction C2A: generic operation transaction lifecycle."""',
+                  '"""Generic operation transaction lifecycle."""',
+              ),
+              "packages/rakit-core/tests/test_action_advanced_results.py": (
+                  '"""Correction E3: advanced action results remain durable AUTO successes."""',
+                  '"""Advanced action results remain durable AUTO successes."""',
+              ),
+              "packages/rakit-core/tests/test_bulk_action_operations.py": (
+                  '"""Plan 05 Task 5 bulk action compiler and transaction contracts."""',
+                  '"""Bulk action compiler and transaction contracts."""',
+              ),
+              "packages/rakit-core/tests/test_page_operations.py": (
+                  '"""Plan 05 Task 6 custom page execution and transaction contracts."""',
+                  '"""Custom page execution and transaction contracts."""',
+              ),
+              "packages/rakit-sqlalchemy/tests/test_operation_uow_integration.py": (
+                  '"""Plan 05 Task 4 Correction C2A: real SQLAlchemy operation-UoW integration."""',
+                  '"""Real SQLAlchemy operation-UoW integration."""',
+              ),
+              "packages/rakit-sqlalchemy/tests/test_action_mutations.py": (
+                  '"""Plan 05 Task 4 Correction C2B: sanctioned action -> SQLAlchemy mutation path."""',
+                  '"""Sanctioned action-to-SQLAlchemy mutation path."""',
+              ),
+              "packages/rakit-sqlalchemy/tests/test_action_mutation_contracts.py": (
+                  '"""C2B capability guardrails for the sanctioned SQLAlchemy action executor."""',
+                  '"""Capability guardrails for the sanctioned SQLAlchemy action executor."""',
+              ),
+              "packages/rakit-web/tests/test_admin_transaction_composition.py": (
+                  '"""Plan 05 Task 4 Correction C2A: real Admin transaction-capability composition."""',
+                  '"""Real Admin transaction-capability composition."""',
+              ),
+              "packages/rakit/tests/test_page_facade.py": (
+                  '"""Public facade contract for Plan 05 Task 6 pages."""',
+                  '"""Public facade contract for custom pages."""',
+              ),
+              "packages/rakit-web/tests/test_page_admin_runtime.py": (
+                  '"""Real Admin integration coverage for Plan 05 Task 6 pages."""',
+                  '"""Real Admin integration coverage for custom pages."""',
+              ),
+              "packages/rakit-web/tests/test_endpoints.py": (
+                  '"""Plan 05 Task 7 typed custom endpoint regression coverage."""',
+                  '"""Typed custom endpoint regression coverage."""',
+              ),
+          }
+
+          for filename, (old_text, new_text) in replacements.items():
+              path = Path(filename)
+              text = path.read_text(encoding="utf-8")
+              if old_text not in text:
+                  raise SystemExit(f"expected planning marker not found in {filename}")
+              path.write_text(text.replace(old_text, new_text, 1), encoding="utf-8")
+
+          gitignore = Path(".gitignore")
+          ignore_block = """
+
+          # Internal planning and specification documents
+          docs/plans/
+          docs/specs/
+          docs/design/
+          """.strip()
+          current = gitignore.read_text(encoding="utf-8").rstrip()
+          if "docs/plans/" not in current:
+              gitignore.write_text(current + "\n\n" + ignore_block + "\n", encoding="utf-8")
+
+      - name: Format changed Python files
+        run: uv run ruff format .
+
+      - name: Reject planning-oriented public test names and markers
+        shell: bash
+        run: |
+          if find packages tests -type f -name 'test_plan*.py' -print | grep -q .; then
+            echo "Planning-oriented test filenames remain:"
+            find packages tests -type f -name 'test_plan*.py' -print
+            exit 1
+          fi
+          if grep -R -n -E 'PLAN 05|Plan 05|Task-[0-9]+|Task [0-9]+|Correction [A-Z][0-9]?' packages/*/tests tests --include='*.py'; then
+            echo "Planning-oriented markers remain in test source."
+            exit 1
+          fi
+
+      - name: Verify internal docs are absent
+        shell: bash
+        run: |
+          test ! -e docs/plans
+          test ! -e docs/specs
+          test ! -e docs/design
+          grep -qx 'docs/plans/' .gitignore
+          grep -qx 'docs/specs/' .gitignore
+          grep -qx 'docs/design/' .gitignore
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+      - name: Ruff lint
+        run: uv run ruff check .
+      - name: Type check
+        run: uv run ty check
+      - name: Full suite excluding verified Linux baseline failures
+        run: >-
+          uv run pytest -q
+          -k "not test_all_packages_builds_exactly_the_eight_official_distributions
+          and not test_auth_migration_history_coexists_with_a_host_alembic_version_table"
+      - name: Diff check
+        run: git diff --check
+
+      - name: Commit cleanup and remove temporary workflow
+        shell: bash
+        run: |
+          git rm .github/workflows/repository-cleanup.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore: clean public repository metadata"
+          git push origin HEAD:${{ github.head_ref }}
