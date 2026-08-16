@@ -3,7 +3,6 @@ from rakit_core.capabilities import CapabilityProvider, CapabilitySet
 from rakit_core.compiler import ApplicationBuilder, compile_application
 from rakit_core.datasource import DataSourceCapabilities
 from rakit_core.definitions import ResourceDefinition, ResourceFieldPolicy
-from rakit_core.errors import RakitError
 from rakit_core.fields import FieldDefinition
 from rakit_core.generated_api import ApiExposure, ResourceApiDefinition
 from rakit_core.generated_runtime import (
@@ -116,18 +115,14 @@ def test_read_only_generated_api_does_not_require_generated_executor_provider() 
     assert compiled.generated_resource_executor_providers == ()
 
 
-def test_crud_generated_api_requires_resource_level_generated_executor_provider() -> None:
+def test_crud_definition_remains_compilable_before_mutation_transport_is_enabled() -> None:
     builder = ApplicationBuilder()
     _register_write_capabilities(builder)
     builder.add_resource(_resource(ApiExposure.CRUD), FakeDataSource())
 
-    with pytest.raises(RakitError) as captured:
-        compile_application(builder)
+    compiled = compile_application(builder)
 
-    assert captured.value.details == {
-        "resource_id": "users",
-        "reason": "generated_api_executor_not_supported",
-    }
+    assert compiled.generated_resource_executor_providers == ()
 
 
 def test_compiled_application_retains_generated_executor_provider() -> None:
