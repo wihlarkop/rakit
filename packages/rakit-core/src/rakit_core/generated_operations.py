@@ -110,7 +110,8 @@ class GeneratedCrudRequest:
 
 
 class GeneratedResourceExecutor(Protocol):
-    capabilities: OperationExecutorCapabilities
+    @property
+    def capabilities(self) -> OperationExecutorCapabilities: ...
 
     async def execute(self, context: OperationContext, request: GeneratedCrudRequest) -> object: ...
 
