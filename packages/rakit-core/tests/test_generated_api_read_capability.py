@@ -22,7 +22,7 @@ class ReadDisabledDataSource:
         return None
 
 
-def test_generated_read_only_api_rejects_resource_without_read_capability() -> None:
+def test_generated_read_only_api_respects_resource_read_capability() -> None:
     builder = ApplicationBuilder()
     builder.add_resource(
         ResourceDefinition(
@@ -47,5 +47,5 @@ def test_generated_read_only_api_rejects_resource_without_read_capability() -> N
 
     assert captured.value.details == {
         "resource_id": "users",
-        "reason": "generated_api_read_not_supported",
+        "reason": "read_not_supported",
     }
