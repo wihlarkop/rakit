@@ -1,0 +1,28 @@
+name: Update Accessibility Compatibility Tests
+
+on:
+  push:
+    branches:
+      - feat/accessibility-foundation
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/accessibility-foundation
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+      - run: python .github/scripts/update_accessibility_compat_tests.py
+      - run: uv run ruff format tests/examples/test_read_examples.py packages/rakit-web/tests/test_dashboard_runtime.py packages/rakit-web/tests/test_query_ui.py packages/rakit-web/tests/test_write_forms.py
+      - run: uv run ruff check tests/examples/test_read_examples.py packages/rakit-web/tests/test_dashboard_runtime.py packages/rakit-web/tests/test_query_ui.py packages/rakit-web/tests/test_write_forms.py
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/examples/test_read_examples.py packages/rakit-web/tests/test_dashboard_runtime.py packages/rakit-web/tests/test_query_ui.py packages/rakit-web/tests/test_write_forms.py
+          git rm .github/scripts/update_accessibility_compat_tests.py .github/workflows/update-accessibility-compat-tests.yml
+          git commit -m "test(web): align compatibility checks with accessible markup"
+          git push origin HEAD:feat/accessibility-foundation
