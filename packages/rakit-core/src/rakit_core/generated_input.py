@@ -3,10 +3,11 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
 
+from .adapter_capabilities import SCHEMA_PARTIAL_UPDATE
 from .errors import ErrorCode, RakitError
 from .fields import FieldDefinition
 from .generated_api import CompiledResourceApi, GeneratedCrudOperation
-from .schema import SchemaAdapter, SchemaValidationError
+from .schema import PartialInputSchemaAdapter, SchemaAdapter, SchemaValidationError
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +61,66 @@ def _value_matches_type(value: object, expected: type[object]) -> bool:
     if expected is float:
         return isinstance(value, int | float) and not isinstance(value, bool)
     return isinstance(value, expected)
+
+
+def _validated_schema_mapping(
+    api: CompiledResourceApi,
+    operation: GeneratedCrudOperation,
+    schema: type[object],
+    values: Mapping[str, object],
+    schema_adapter: SchemaAdapter,
+) -> Mapping[str, object]:
+    try:
+        if operation is GeneratedCrudOperation.UPDATE_PARTIAL:
+            if not schema_adapter.provider.capabilities.supports(
+                SCHEMA_PARTIAL_UPDATE
+            ) or not isinstance(schema_adapter, PartialInputSchemaAdapter):
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID,
+                    message="Generated PATCH schema requires partial-update support.",
+                    status_code=500,
+                    details={
+                        "resource_id": api.resource_id,
+                        "operation": operation.value,
+                        "reason": "generated_api_partial_schema_not_supported",
+                    },
+                )
+            serialized: object = schema_adapter.validate_partial_input(schema, values)
+        else:
+            validated = schema_adapter.validate_input(schema, values)
+            serialized = schema_adapter.serialize_output(schema, validated)
+    except SchemaValidationError as exc:
+        fields = sorted({issue.location[0] for issue in exc.issues if issue.location})
+        raise _input_error(
+            api,
+            operation,
+            "generated_api_schema_validation_failed",
+            fields,
+        ) from exc
+
+    if not isinstance(serialized, Mapping):
+        raise RakitError(
+            code=ErrorCode.CONFIG_INVALID,
+            message="Generated API schema serialization must produce a mapping.",
+            status_code=500,
+            details={
+                "resource_id": api.resource_id,
+                "operation": operation.value,
+                "reason": "generated_api_schema_output_not_mapping",
+            },
+        )
+    if not all(isinstance(key, str) for key in serialized):
+        raise RakitError(
+            code=ErrorCode.CONFIG_INVALID,
+            message="Generated API schema serialization must use string field names.",
+            status_code=500,
+            details={
+                "resource_id": api.resource_id,
+                "operation": operation.value,
+                "reason": "generated_api_schema_output_invalid_keys",
+            },
+        )
+    return cast(Mapping[str, object], serialized)
 
 
 def validate_generated_input(
@@ -133,40 +194,13 @@ def validate_generated_input(
                     "reason": "generated_api_schema_adapter_missing",
                 },
             )
-        try:
-            validated = schema_adapter.validate_input(schema, values)
-            serialized = schema_adapter.serialize_output(schema, validated)
-        except SchemaValidationError as exc:
-            fields = sorted({issue.location[0] for issue in exc.issues if issue.location})
-            raise _input_error(
-                api,
-                operation,
-                "generated_api_schema_validation_failed",
-                fields,
-            ) from exc
-        if not isinstance(serialized, Mapping):
-            raise RakitError(
-                code=ErrorCode.CONFIG_INVALID,
-                message="Generated API schema serialization must produce a mapping.",
-                status_code=500,
-                details={
-                    "resource_id": api.resource_id,
-                    "operation": operation.value,
-                    "reason": "generated_api_schema_output_not_mapping",
-                },
-            )
-        if not all(isinstance(key, str) for key in serialized):
-            raise RakitError(
-                code=ErrorCode.CONFIG_INVALID,
-                message="Generated API schema serialization must use string field names.",
-                status_code=500,
-                details={
-                    "resource_id": api.resource_id,
-                    "operation": operation.value,
-                    "reason": "generated_api_schema_output_invalid_keys",
-                },
-            )
-        serialized_mapping = cast(Mapping[str, object], serialized)
+        serialized_mapping = _validated_schema_mapping(
+            api,
+            operation,
+            schema,
+            values,
+            schema_adapter,
+        )
         widened = set(serialized_mapping).difference(allowed)
         if widened:
             raise RakitError(

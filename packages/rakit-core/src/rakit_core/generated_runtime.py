@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Protocol
 
-from .concurrency import ConcurrencyVersionProvider
+from .concurrency import ConcurrencyTokenService, ConcurrencyVersionProvider
 from .datasource import DataSource
 from .generated_operations import GeneratedResourceExecutor
 
@@ -11,6 +11,7 @@ class GeneratedResourceExecutorContext:
     resource_id: str
     data_source: DataSource
     concurrency_provider: ConcurrencyVersionProvider | None = None
+    concurrency_tokens: ConcurrencyTokenService | None = None
 
 
 class GeneratedResourceExecutorProvider(Protocol):

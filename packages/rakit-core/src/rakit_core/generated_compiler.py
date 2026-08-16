@@ -4,6 +4,7 @@ from .adapter_capabilities import (
     PERSISTENCE_WRITE,
     SCHEMA_INPUT_VALIDATION,
     SCHEMA_OUTPUT_SERIALIZATION,
+    SCHEMA_PARTIAL_UPDATE,
     TRANSACTIONS_ROOT_UOW,
 )
 from .capabilities import CapabilityRequirement
@@ -95,11 +96,15 @@ def compile_generated_resource_apis(
             )
 
         if api.create_schema is not None or api.update_schema is not None:
+            schema_capabilities = [SCHEMA_INPUT_VALIDATION]
+            if api.create_schema is not None:
+                schema_capabilities.append(SCHEMA_OUTPUT_SERIALIZATION)
+            if api.update_schema is not None:
+                schema_capabilities.append(SCHEMA_PARTIAL_UPDATE)
             requirements.append(
                 CapabilityRequirement.of(
                     f"generated-api:{resource.resource_id}:schema-input",
-                    SCHEMA_INPUT_VALIDATION,
-                    SCHEMA_OUTPUT_SERIALIZATION,
+                    *schema_capabilities,
                 )
             )
 

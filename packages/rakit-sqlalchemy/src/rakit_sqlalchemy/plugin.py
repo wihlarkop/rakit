@@ -1,14 +1,15 @@
 from rakit_core.compiler import ApplicationBuilder
-from rakit_core.datasource import DataSource
 from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.di import ServiceScope
 from rakit_core.errors import ErrorCode, RakitError
+from rakit_core.generated_runtime import ResourceAdapterRuntime
 from rakit_core.transactions import OperationUnitOfWorkFactory
 from sqlalchemy.exc import NoInspectionAvailable
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .capabilities import SQLALCHEMY_CAPABILITIES
 from .datasource import SQLAlchemyDataSource
+from .generated import SQLAlchemyGeneratedResourceExecutorProvider
 from .introspection import UnsupportedFieldPolicyError, UnsupportedIdentityError, inspect_model
 from .uow import SQLAlchemyOperationUnitOfWorkFactory
 
@@ -35,7 +36,7 @@ class SQLAlchemyPlugin:
         self,
         model: type[object],
         field_policy: ResourceFieldPolicy,
-    ) -> DataSource | None:
+    ) -> ResourceAdapterRuntime | None:
         try:
             inspect_model(model)
         except NoInspectionAvailable:
@@ -52,7 +53,7 @@ class SQLAlchemyPlugin:
             ) from exc
 
         try:
-            return SQLAlchemyDataSource(
+            data_source = SQLAlchemyDataSource(
                 model=model,
                 session_factory=self._session_factory,
                 field_policy=field_policy,
@@ -68,3 +69,7 @@ class SQLAlchemyPlugin:
                 details={"model": model.__name__, "field": exc.field, "policy": exc.policy},
                 cause=exc,
             ) from exc
+        return ResourceAdapterRuntime(
+            data_source=data_source,
+            generated_executor_provider=SQLAlchemyGeneratedResourceExecutorProvider(model=model),
+        )

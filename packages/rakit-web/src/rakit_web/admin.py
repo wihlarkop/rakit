@@ -25,7 +25,11 @@ from rakit_core.definitions import (
 from rakit_core.di import ServiceKey, ServiceRegistry, ServiceResolver, ServiceScope
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.events import EventBus, EventPublisher
-from rakit_core.generated_runtime import normalize_resource_adapter_runtime
+from rakit_core.generated_api import ApiExposure
+from rakit_core.generated_runtime import (
+    GeneratedResourceExecutorContext,
+    normalize_resource_adapter_runtime,
+)
 from rakit_core.idempotency import IdempotencyStore
 from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_core.mutations import (
@@ -812,6 +816,8 @@ class Admin:
         generated_rest_routes: list[Route] = []
         api_by_resource = {api.resource_id: api for api in self.compiled.compiled_resource_apis}
         for resource_id, api in api_by_resource.items():
+            if api.definition.exposure is ApiExposure.CRUD:
+                continue
             generated_rest_routes.extend(
                 build_generated_rest_routes(
                     GeneratedRestBinding(
@@ -824,7 +830,8 @@ class Admin:
                             self._auth_backend is not None and self._session_store is not None
                         ),
                         superuser_bypass=self._superuser_bypass,
-                    )
+                    ),
+                    include_mutations=False,
                 )
             )
 
@@ -843,6 +850,44 @@ class Admin:
             uow_factory_registered=uow_factory_registered,
             debug=self.config.debug,
         )
+
+        crud_apis = tuple(
+            api
+            for api in self.compiled.compiled_resource_apis
+            if api.definition.exposure is ApiExposure.CRUD
+        )
+        if crud_apis:
+            if self._auth_backend is None or self._session_store is None:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID,
+                    message="Generated CRUD requires configured authentication.",
+                    status_code=500,
+                    details={"reason": "generated_api_auth_required"},
+                )
+            if self.config.security.secret_key is None:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID,
+                    message="Generated CRUD requires a security secret key for CSRF signing.",
+                    status_code=500,
+                    details={"reason": "generated_api_secret_key_required"},
+                )
+            if self._operation_idempotency_store is None:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID,
+                    message="Generated CRUD requires an operation idempotency store.",
+                    status_code=500,
+                    details={"reason": "generated_api_idempotency_store_required"},
+                )
+            validate_idempotency_store_for_production(
+                self._operation_idempotency_store, debug=self.config.debug
+            )
+            if not uow_factory_registered:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID,
+                    message="Generated CRUD requires a registered operation unit of work.",
+                    status_code=500,
+                    details={"reason": "generated_api_uow_required"},
+                )
 
         if self.compiled.action_routes:
             if self._auth_backend is None or self._session_store is None:
@@ -1207,6 +1252,94 @@ class Admin:
                 if self._application_resolver is None:
                     return None
                 return self._application_resolver.require(OperationUnitOfWorkFactory)
+
+            if crud_apis:
+                assert self._operation_idempotency_store is not None
+                executor_providers = dict(self.compiled.generated_resource_executor_providers)
+                concurrency_tokens = ConcurrencyTokenService(write_token_service)
+
+                class _GeneratedUowFactory:
+                    def open(_self, *, policy, event_publisher, operation_context):
+                        if self._application_resolver is None:
+                            raise RuntimeError("Application services are not available")
+                        factory = self._application_resolver.require(OperationUnitOfWorkFactory)
+                        return factory.open(
+                            policy=policy,
+                            event_publisher=event_publisher,
+                            operation_context=operation_context,
+                        )
+
+                generated_uow_factory = _GeneratedUowFactory()
+                for api in crud_apis:
+                    provider = executor_providers.get(api.resource_id)
+                    if provider is None:
+                        raise RakitError(
+                            code=ErrorCode.CONFIG_INVALID,
+                            message="Generated CRUD executor provider is missing.",
+                            status_code=500,
+                            details={
+                                "resource_id": api.resource_id,
+                                "reason": "generated_api_executor_not_supported",
+                            },
+                        )
+                    concurrency_provider = self._concurrency_providers.get(api.resource_id)
+                    executor = provider.build(
+                        GeneratedResourceExecutorContext(
+                            resource_id=api.resource_id,
+                            data_source=self._resource_services[api.resource_id].data_source,
+                            concurrency_provider=concurrency_provider,
+                            concurrency_tokens=(
+                                concurrency_tokens if concurrency_provider is not None else None
+                            ),
+                        )
+                    )
+                    capabilities = resolve_operation_executor_capabilities(executor)
+                    if not capabilities.participates_in_uow:
+                        raise RakitError(
+                            code=ErrorCode.CONFIG_INVALID,
+                            message=(
+                                "Generated CRUD executor must participate in the root unit of work."
+                            ),
+                            status_code=500,
+                            details={
+                                "resource_id": api.resource_id,
+                                "reason": "generated_api_executor_not_uow_managed",
+                            },
+                        )
+                    if concurrency_provider is not None and not capabilities.atomic_concurrency:
+                        raise RakitError(
+                            code=ErrorCode.CONFIG_INVALID,
+                            message="Generated CRUD executor lacks atomic concurrency support.",
+                            status_code=500,
+                            details={
+                                "resource_id": api.resource_id,
+                                "reason": "generated_api_atomic_concurrency_not_supported",
+                            },
+                        )
+                    generated_rest_routes.extend(
+                        build_generated_rest_routes(
+                            GeneratedRestBinding(
+                                api=api,
+                                definition=self._resource_definitions[api.resource_id],
+                                service=self._resource_services[api.resource_id],
+                                schema_adapter=self._schema_adapter,
+                                admin_id=self.config.admin_id,
+                                auth_enabled=True,
+                                superuser_bypass=self._superuser_bypass,
+                                generated_executor=executor,
+                                verify_csrf=verify_write_csrf,
+                                unit_of_work_factory=generated_uow_factory,
+                                idempotency_store=self._operation_idempotency_store,
+                                operation_scope=operation_scope,
+                                concurrency_provider=concurrency_provider,
+                                concurrency_tokens=(
+                                    concurrency_tokens if concurrency_provider is not None else None
+                                ),
+                                mutation_deadline_seconds=self._mutation_deadline_seconds,
+                            ),
+                            include_reads=True,
+                        )
+                    )
 
             for write_binding in self._write_resource_bindings.values():
                 secured_binding = replace(

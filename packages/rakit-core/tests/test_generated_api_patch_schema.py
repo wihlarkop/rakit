@@ -22,6 +22,7 @@ class DefaultExpandingSchemaAdapter:
         CapabilitySet.of(
             "schema.input-validation",
             "schema.output-serialization",
+            "schema.partial-update",
         ),
     )
 
@@ -33,6 +34,13 @@ class DefaultExpandingSchemaAdapter:
 
     def validate_input(self, schema: type[object], values: Mapping[str, object]) -> object:
         return dict(values)
+
+    def validate_partial_input(
+        self,
+        schema: type[object],
+        values: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        return {"email": "schema-default@example.com", **values}
 
     def serialize_output(self, schema: type[object], value: object) -> object:
         assert isinstance(value, dict)

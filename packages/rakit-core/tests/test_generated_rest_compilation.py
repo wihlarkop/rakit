@@ -5,6 +5,8 @@ from rakit_core.datasource import DataSourceCapabilities
 from rakit_core.definitions import ResourceDefinition, ResourceFieldPolicy, RouteDefinition
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.generated_api import ApiExposure, ResourceApiDefinition
+from rakit_core.generated_runtime import GeneratedResourceExecutorContext
+from rakit_core.operations import OperationExecutorCapabilities
 from rakit_core.query import PageResult
 
 
@@ -21,6 +23,18 @@ class ReadDataSource:
 
     async def detail(self, identity):
         return None
+
+
+class FakeExecutor:
+    capabilities = OperationExecutorCapabilities(participates_in_uow=True)
+
+    async def execute(self, context, request):
+        return request
+
+
+class FakeProvider:
+    def build(self, context: GeneratedResourceExecutorContext) -> FakeExecutor:
+        return FakeExecutor()
 
 
 def _resource(api: ResourceApiDefinition) -> ResourceDefinition:
@@ -70,7 +84,7 @@ def test_read_only_generated_api_compiles_list_and_detail_rest_routes() -> None:
     ]
 
 
-def test_crud_exposure_only_projects_rest_operations_implemented_by_read_transport() -> None:
+def test_crud_exposure_projects_read_and_mutation_rest_operations() -> None:
     class WritableDataSource(ReadDataSource):
         capabilities = DataSourceCapabilities(read=True)
         from rakit_core.fields import FieldDefinition
@@ -97,6 +111,7 @@ def test_crud_exposure_only_projects_rest_operations_implemented_by_read_transpo
             )
         ),
         WritableDataSource(),
+        generated_executor_provider=FakeProvider(),
     )
 
     compiled = compile_application(builder)
@@ -106,6 +121,9 @@ def test_crud_exposure_only_projects_rest_operations_implemented_by_read_transpo
     ] == [
         ("generated-api:users:list", ("GET", "HEAD"), "/api/users"),
         ("generated-api:users:detail", ("GET", "HEAD"), "/api/users/{identity}"),
+        ("generated-api:users:create", ("POST",), "/api/users"),
+        ("generated-api:users:update", ("PATCH",), "/api/users/{identity}"),
+        ("generated-api:users:delete", ("DELETE",), "/api/users/{identity}"),
     ]
 
 

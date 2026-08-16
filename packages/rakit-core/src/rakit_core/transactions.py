@@ -23,7 +23,9 @@ class OperationUnitOfWork(Protocol):
     The root operation lifecycle opens one of these for AUTO/MANUAL mutating
     operations, exposes it on ``OperationContext.unit_of_work``, and lets the
     UoW implementation own the durable outcome (commit/rollback and the
-    deferred post-commit event lifecycle).  No persistence type appears here.
+    deferred post-commit event lifecycle).  After a driver commit succeeds,
+    adapters mark ``OperationContext.durable_commit_completed`` before any
+    post-commit callback that may fail.  No persistence type appears here.
     """
 
     policy: TransactionPolicy
