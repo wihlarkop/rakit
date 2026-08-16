@@ -9,6 +9,7 @@ from uuid import UUID
 from rakit_core.datasource import DataSourceCapabilities
 from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.errors import ErrorCode, RakitError
+from rakit_core.fields import FieldDefinition, infer_field_security
 from rakit_core.identity import RecordIdentity
 from rakit_core.query import (
     CountPolicy,
@@ -384,6 +385,28 @@ class SQLAlchemyDataSource:
     @property
     def identity_fields(self) -> tuple[str, ...]:
         return (self._metadata.identity_field,)
+
+    @property
+    def field_definitions(self) -> tuple[FieldDefinition, ...]:
+        search_fields = set(self._field_policy.search_fields)
+        filter_fields = set(self._field_policy.filter_fields)
+        sort_fields = set(self._field_policy.sort_fields)
+        return tuple(
+            infer_field_security(
+                FieldDefinition(
+                    field_id=metadata.attribute_name,
+                    python_type=metadata.python_type,
+                    readable=True,
+                    writable=metadata.writable,
+                    searchable=metadata.attribute_name in search_fields,
+                    filterable=metadata.attribute_name in filter_fields,
+                    sortable=metadata.attribute_name in sort_fields,
+                    required=metadata.required,
+                    nullable=metadata.nullable,
+                )
+            )
+            for metadata in self._metadata.field_metadata
+        )
 
     @property
     def relationship_metadata(self) -> dict[str, RelationshipMetadata]:
