@@ -670,3 +670,98 @@ def test_post_defaults_to_auto_and_get_defaults_to_read_only() -> None:
     assert get_endpoint.transaction_policy is TransactionPolicy.READ_ONLY
     assert post_endpoint.input_source is None
     assert post_endpoint.transaction_policy is TransactionPolicy.AUTO
+
+
+@pytest.mark.anyio
+async def test_form_post_success_uses_explicit_form_source() -> None:
+    from rakit import EndpointInputSource
+
+    store = _MemoryIdempotencyStore()
+    admin, sessions = _private_admin(
+        frozenset({"ops.endpoints.form_change.invoke"}),
+        store=store,
+    )
+
+    @admin.api.post(
+        "/api/form-change",
+        endpoint_id="form_change",
+        input_schema=_ChangeInput,
+        input_source=EndpointInputSource.FORM,
+        output_schema=_ChangeOutput,
+        transaction_policy=TransactionPolicy.DISABLED,
+    )
+    def form_change(context: EndpointContext) -> EndpointResult[dict[str, int]]:
+        assert isinstance(context.values, _ChangeInput)
+        return EndpointResult({"accepted": context.values.value})
+
+    app = admin.asgi()
+    csrf = _csrf_token(admin, sessions.record)
+    async with LifespanDriver(app), _client(app, authenticated=True) as client:
+        client.cookies.set(CSRF_COOKIE_NAME, csrf)
+        response = await client.post(
+            "/api/form-change",
+            data={"value": "11"},
+            headers={"x-csrf-token": csrf, "idempotency-key": "form-success"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"accepted": 11}
+
+
+@pytest.mark.anyio
+async def test_post_auto_rolls_back_when_handler_raises() -> None:
+    factory = _UnitOfWorkFactory()
+    store = _MemoryIdempotencyStore()
+    admin, sessions = _private_admin(
+        frozenset({"ops.endpoints.change.invoke"}),
+        store=store,
+        uow_factory=factory,
+    )
+
+    @admin.api.post(
+        "/api/change",
+        endpoint_id="change",
+        input_schema=_ChangeInput,
+    )
+    def change(_context: EndpointContext) -> EndpointResult[dict[str, bool]]:
+        raise RuntimeError("boom")
+
+    app = admin.asgi()
+    csrf = _csrf_token(admin, sessions.record)
+    async with LifespanDriver(app), _client(app, authenticated=True) as client:
+        client.cookies.set(CSRF_COOKIE_NAME, csrf)
+        with pytest.raises(RuntimeError, match="boom"):
+            await client.post(
+                "/api/change",
+                json={"value": 1},
+                headers={"x-csrf-token": csrf, "idempotency-key": "rollback"},
+            )
+
+    assert factory.commits == 0
+    assert factory.rollbacks == 1
+
+
+@pytest.mark.anyio
+async def test_mounted_admin_endpoint_keeps_root_path_and_exact_permission() -> None:
+    from starlette.applications import Starlette
+    from starlette.routing import Mount
+
+    admin, _sessions = _private_admin(frozenset({"ops.endpoints.private.invoke"}))
+
+    @admin.api.get("/api/private", endpoint_id="private")
+    def private(_context: EndpointContext) -> EndpointResult[dict[str, bool]]:
+        return EndpointResult({"ok": True})
+
+    inner = admin.asgi()
+    outer = Starlette(routes=[Mount("/admin", app=inner)])
+    client = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=outer),
+        base_url="http://localhost",
+    )
+    client.cookies.set(SESSION_COOKIE_NAME, "token", path="/admin")
+
+    async with LifespanDriver(inner), client:
+        response = await client.get("/admin/api/private")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
