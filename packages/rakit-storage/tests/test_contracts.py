@@ -126,15 +126,18 @@ def test_file_storage_is_runtime_checkable_protocol() -> None:
             del upload, prefix, max_size, operation_context
             return _stored_file(storage_id=self.storage_id)
 
-        async def open_stream(
+        def open(
             self,
             file: StoredFile,
             *,
             operation_context: OperationContext | None = None,
         ) -> AsyncIterator[bytes]:
+            async def stream() -> AsyncIterator[bytes]:
+                if False:
+                    yield b""
+
             del file, operation_context
-            if False:
-                yield b""
+            return stream()
 
         async def delete(
             self,
