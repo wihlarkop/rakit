@@ -24,9 +24,10 @@ class ServerTarget:
         if self.kind is ServerTargetKind.IMPORT_STRING:
             if self.import_string is None or self.application is not None:
                 raise ValueError("Import-string targets must contain only import_string")
-        elif self.kind is ServerTargetKind.APPLICATION:
-            if self.application is None or self.import_string is not None:
-                raise ValueError("Application targets must contain only application")
+        elif self.kind is ServerTargetKind.APPLICATION and (
+            self.application is None or self.import_string is not None
+        ):
+            raise ValueError("Application targets must contain only application")
 
 
 def _validate_import_string(spec: str) -> str:
