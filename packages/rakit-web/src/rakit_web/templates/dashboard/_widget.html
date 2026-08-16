@@ -1,9 +1,9 @@
 <article
   id="rakit-dashboard-widget-{{ widget.widget_id }}"
-  class="rakit-panel p-4"
+  class="rakit-panel rakit-dashboard-widget p-4"
   data-rakit-dashboard-widget="{{ widget.widget_id }}"
   data-rakit-dashboard-widget-size="{{ widget.definition.layout.size.value }}"
-  style="{{ widget.layout_style }}"
+  {% if widget.min_height is not none %}data-rakit-dashboard-widget-min-height="{{ widget.min_height }}"{% endif %}
 >
   {% if widget.is_lazy %}
     <header class="mb-3">
@@ -30,7 +30,7 @@
       <div class="flex items-center gap-2">
         <span
           id="rakit-dashboard-widget-{{ widget.widget_id }}-refresh-status"
-          class="htmx-indicator text-sm text-slate-500"
+          class="rakit-dashboard-refresh-indicator text-sm text-slate-500"
           aria-hidden="true"
         >Refreshing…</span>
         <button
