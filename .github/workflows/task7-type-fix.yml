@@ -1,10 +1,36 @@
-name: Task7 Type Fix (retired)
+name: Task7 Test Fix
 
 on:
-  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: write
 
 jobs:
-  retired:
+  fix-once:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Temporary Task 7 typing helper is retired and kept inert until branch cleanup."
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages --dev --locked
+      - run: uv run ruff check --fix packages/rakit-web/tests/test_endpoints.py
+      - run: uv run ruff format packages/rakit-web/tests/test_endpoints.py
+      - run: uv run ruff check packages/rakit-web/tests/test_endpoints.py
+      - run: uv run ty check
+      - run: uv run pytest packages/rakit-web/tests/test_endpoints.py -q
+      - name: Commit fixes when needed
+        shell: bash
+        run: |
+          if git diff --quiet -- packages/rakit-web/tests/test_endpoints.py; then
+            echo "No test lint changes needed."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/rakit-web/tests/test_endpoints.py
+          git commit -m "fix(test): satisfy endpoint test quality gate"
+          git push origin HEAD:${{ github.head_ref }}
