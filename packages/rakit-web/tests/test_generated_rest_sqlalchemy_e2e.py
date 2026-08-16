@@ -10,7 +10,7 @@ from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, Op
 from rakit_sqlalchemy.plugin import SQLAlchemyPlugin
 from rakit_web.security.cookies import CSRF_COOKIE_NAME, SESSION_COOKIE_NAME
 from rakit_web.security.csrf import CsrfService
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from starlette.testclient import TestClient
 
