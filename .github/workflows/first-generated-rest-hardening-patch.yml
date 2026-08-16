@@ -1,0 +1,77 @@
+name: First Generated REST Hardening Patch
+
+on:
+  push:
+    branches: [feat/first-generated-rest-read]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: "${{ github.event.head_commit.message == 'ci: apply generated REST hardening patch' }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/first-generated-rest-read
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages --dev --locked
+      - name: Patch Admin runtime normalization and API HTTP errors
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('packages/rakit-web/src/rakit_web/admin.py')
+          text = path.read_text()
+
+          old = 'from rakit_core.generated_api import CompiledResourceApi\n' if 'from rakit_core.generated_api import CompiledResourceApi\n' in text else None
+          # Admin did not previously import generated runtime directly; insert near identity imports.
+          marker = 'from rakit_core.identity import IdentityCodec, RecordIdentity\n'
+          insert = '''from rakit_core.identity import IdentityCodec, RecordIdentity\nfrom rakit_core.generated_runtime import normalize_resource_adapter_runtime\n'''
+          assert marker in text
+          text = text.replace(marker, insert, 1)
+
+          marker = 'from starlette.requests import Request\n'
+          insert = 'from starlette.exceptions import HTTPException\nfrom starlette.requests import Request\n'
+          assert marker in text
+          text = text.replace(marker, insert, 1)
+
+          old = '''            data_source = claims[0]\n        elif admin_cls.data_source is not None:\n            data_source = admin_cls.data_source\n'''
+          new = '''            adapter_runtime = normalize_resource_adapter_runtime(claims[0])\n        elif admin_cls.data_source is not None:\n            adapter_runtime = normalize_resource_adapter_runtime(admin_cls.data_source)\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''        definition = ResourceDefinition(\n            resource_id=admin_cls.resource_id,\n'''
+          new = '''        data_source = adapter_runtime.data_source\n        definition = ResourceDefinition(\n            resource_id=admin_cls.resource_id,\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''        self._builder.add_resource(definition, data_source)\n'''
+          new = '''        self._builder.add_resource(\n            definition,\n            data_source,\n            generated_executor_provider=adapter_runtime.generated_executor_provider,\n        )\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          marker = '''        async def rakit_error_handler(_request: Request, exc: Exception) -> JSONResponse:\n'''
+          assert marker in text
+          http_handler = '''        async def http_error_handler(request: Request, exc: Exception) -> Response:\n            assert isinstance(exc, HTTPException)\n            relative_path = request.url.path\n            root_path = request.scope.get("root_path", "").rstrip("/")\n            if root_path and relative_path.startswith(root_path):\n                relative_path = relative_path[len(root_path) :] or "/"\n            if relative_path == "/api" or relative_path.startswith("/api/"):\n                request_id = request.scope.get("state", {}).get("request_id", "")\n                code = (\n                    "http.method_not_allowed"\n                    if exc.status_code == 405\n                    else "http.not_found"\n                    if exc.status_code == 404\n                    else "http.error"\n                )\n                headers = {"Cache-Control": "no-store", **(exc.headers or {})}\n                return JSONResponse(\n                    {\n                        "error": {"code": code, "message": str(exc.detail)},\n                        "request_id": request_id if isinstance(request_id, str) else "",\n                    },\n                    status_code=exc.status_code,\n                    headers=headers,\n                )\n            return PlainTextResponse(\n                str(exc.detail),\n                status_code=exc.status_code,\n                headers=exc.headers,\n            )\n\n'''
+          text = text.replace(marker, http_handler + marker, 1)
+
+          old = '''            exception_handlers={RakitError: rakit_error_handler},\n'''
+          new = '''            exception_handlers={\n                RakitError: rakit_error_handler,\n                HTTPException: http_error_handler,\n            },\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+          uv run ruff format packages/rakit-web/src/rakit_web/admin.py
+          uv run ruff check packages/rakit-web/src/rakit_web/admin.py
+      - name: Commit hardening patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/rakit-web/src/rakit_web/admin.py
+          git commit -m "fix(web): harden generated REST runtime integration"
+          git push origin HEAD:feat/first-generated-rest-read
