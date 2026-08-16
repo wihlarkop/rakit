@@ -56,6 +56,16 @@ jobs:
                   raise SystemExit("distribution expectation insertion anchor not found")
               text = text.replace(old, new, 1)
           examples.write_text(text)
+
+          uvicorn_server = Path(
+              "packages/rakit-server-uvicorn/src/rakit_server_uvicorn/server.py"
+          )
+          text = uvicorn_server.read_text()
+          text = text.replace(
+              "UvicornServer.run() requires a target unless app was supplied to the constructor",
+              "UvicornServer.run() requires a target unless constructor app is set",
+          )
+          uvicorn_server.write_text(text)
           PY
       - run: uv lock
       - run: uv sync --all-packages --dev --locked
