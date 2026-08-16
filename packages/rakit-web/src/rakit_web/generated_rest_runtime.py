@@ -639,7 +639,7 @@ def _receipt_payload(response: Response) -> Mapping[str, object]:
     if response.status_code == 204:
         body = None
     elif isinstance(response, JSONResponse):
-        raw_body = response.body.decode("utf-8")
+        raw_body = bytes(response.body).decode("utf-8")
         body = json.loads(raw_body)
     else:
         raise RakitError(
