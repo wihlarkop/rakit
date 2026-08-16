@@ -1,0 +1,27 @@
+{% set provider = request.scope.get('state', {}).get('rakit_navigation_provider') %}
+{% if provider %}
+  {% set navigation = provider(request) %}
+  <nav class="overflow-x-auto border-b border-slate-200 bg-white px-4 py-2 lg:hidden" aria-label="Primary navigation">
+    <div class="flex min-w-max gap-1">
+      <a
+        href="{{ navigation.dashboard.path }}"
+        class="rounded-md px-3 py-2 text-sm font-medium {% if navigation.dashboard.active %}bg-slate-900 text-white{% else %}text-slate-600 hover:bg-slate-100 hover:text-slate-950{% endif %}"
+        {% if navigation.dashboard.active %}aria-current="page"{% endif %}
+      >Dashboard</a>
+      {% for item in navigation.resources %}
+      <a
+        href="{{ item.path }}"
+        class="rounded-md px-3 py-2 text-sm font-medium {% if item.active %}bg-slate-100 text-slate-950{% else %}text-slate-600 hover:bg-slate-100 hover:text-slate-950{% endif %}"
+        {% if item.active %}aria-current="page"{% endif %}
+      >{{ item.label }}</a>
+      {% endfor %}
+      {% for item in navigation.pages %}
+      <a
+        href="{{ item.path }}"
+        class="rounded-md px-3 py-2 text-sm font-medium {% if item.active %}bg-slate-100 text-slate-950{% else %}text-slate-600 hover:bg-slate-100 hover:text-slate-950{% endif %}"
+        {% if item.active %}aria-current="page"{% endif %}
+      >{{ item.label }}</a>
+      {% endfor %}
+    </div>
+  </nav>
+{% endif %}
