@@ -86,16 +86,18 @@ class IdempotencyStore:
 
 
 def _admin(*, auth: bool, idempotency: bool) -> Admin:
-    kwargs = {}
-    if auth:
-        kwargs.update(
-            auth_backend=AuthBackend(),
-            session_store=SessionStore(),
-            secret_key=SecretValue("x" * 32),
-        )
-    if idempotency:
-        kwargs["operation_idempotency_store"] = IdempotencyStore()
-    admin = Admin(title="Generated CRUD", debug=True, **kwargs)
+    auth_backend = AuthBackend() if auth else None
+    session_store = SessionStore() if auth else None
+    secret_key = SecretValue("x" * 32) if auth else None
+    idempotency_store = IdempotencyStore() if idempotency else None
+    admin = Admin(
+        title="Generated CRUD",
+        debug=True,
+        auth_backend=auth_backend,
+        session_store=session_store,
+        secret_key=secret_key,
+        operation_idempotency_store=idempotency_store,
+    )
     admin.install(SQLAlchemyPlugin(session_factory=async_sessionmaker[AsyncSession]()))
     admin.register(UsersAdmin)
     return admin
