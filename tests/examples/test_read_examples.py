@@ -24,6 +24,22 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 repository = Path(__file__).resolve().parents[2]
 
 
+def _venv_python(environment: Path) -> Path:
+    if os.name == "nt":
+        return environment / "Scripts" / "python.exe"
+    return environment / "bin" / "python"
+
+
+def _venv_site_packages(python: Path) -> Path:
+    result = subprocess.run(
+        [str(python), "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return Path(result.stdout.strip())
+
+
 class _RenderedFormParser(HTMLParser):
     """Collect successful controls from the rendered parent form like a browser."""
 
@@ -1098,7 +1114,7 @@ def test_all_packages_builds_exactly_the_eight_official_distributions(
         capture_output=True,
         text=True,
     )
-    installed_python = installed / "Scripts" / "python.exe"
+    installed_python = _venv_python(installed)
     subprocess.run(
         [
             "uv",
@@ -1164,7 +1180,7 @@ def test_auth_migration_history_coexists_with_a_host_alembic_version_table(
         capture_output=True,
         text=True,
     )
-    installed_python = installed / "Scripts" / "python.exe"
+    installed_python = _venv_python(installed)
     subprocess.run(
         [
             "uv",
@@ -1180,7 +1196,7 @@ def test_auth_migration_history_coexists_with_a_host_alembic_version_table(
         capture_output=True,
         text=True,
     )
-    ini_path = installed / "Lib" / "site-packages" / "rakit_auth_sqlalchemy" / "alembic.ini"
+    ini_path = _venv_site_packages(installed_python) / "rakit_auth_sqlalchemy" / "alembic.ini"
     assert ini_path.exists()
 
     # 1. Seed a host alembic_version table with an unrelated revision --
