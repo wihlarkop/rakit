@@ -45,7 +45,9 @@ async def test_root_renders_dashboard_shell() -> None:
     assert response.status_code == 200
     assert "<h1" in response.text
     assert "Operations" in response.text
-    assert "There is nothing available on this dashboard yet." in response.text
+    assert "Registered resources, pages, and widgets will appear here" in response.text
+    assert 'href="#rakit-main-content"' in response.text
+    assert 'aria-label="Primary navigation"' in response.text
 
 
 @pytest.mark.anyio
@@ -83,14 +85,14 @@ async def test_dashboard_honors_semantic_widget_layout_without_inline_styles() -
         response = await client.get("/")
 
     assert response.status_code == 200
-    assert 'class="rakit-dashboard-grid"' in response.text
-    assert 'class="rakit-panel rakit-dashboard-widget p-4"' in response.text
+    assert 'class="grid grid-cols-1 items-start gap-4 md:grid-cols-12"' in response.text
     assert 'data-rakit-dashboard-widget-size="small"' in response.text
+    assert "xl:col-span-3" in response.text
     assert 'data-rakit-dashboard-widget-min-height="120"' in response.text
     assert 'data-rakit-dashboard-widget-size="large"' in response.text
-    assert 'style="flex:' not in response.text
-    assert 'class="rakit-button rakit-button-secondary"' in response.text
-    assert 'class="rakit-dashboard-refresh-indicator text-sm text-slate-500"' in response.text
+    assert "xl:col-span-9" in response.text
+    assert "style=" not in response.text
+    assert 'class="hidden text-xs text-slate-500 [.htmx-request&]:inline"' in response.text
     assert 'hx-target="#rakit-dashboard-widget-pending_orders-content"' in response.text
     assert 'hx-select="#rakit-dashboard-widget-pending_orders-content"' in response.text
     assert 'hx-disabled-elt="this"' in response.text
@@ -168,7 +170,7 @@ async def test_lazy_widget_loads_through_fragment_endpoint() -> None:
 
     assert response.status_code == 200
     assert 'hx-get="/_dashboard/widgets/pending_orders"' in response.text
-    assert "Loading…" in response.text
+    assert "Loading Pending orders" in response.text
     assert fragment.status_code == 200
     assert ">7<" in fragment.text
     assert 'aria-label="Refresh Pending orders"' in fragment.text
