@@ -42,14 +42,38 @@ def test_file_field_rejects_unsafe_policy() -> None:
     with pytest.raises(ValueError):
         FileField(field_id="attachment", storage_id="documents", max_size=0)
     with pytest.raises(ValueError):
-        FileField(field_id="attachment", storage_id="documents", max_filename_length=0)
+        FileField(
+            field_id="attachment",
+            storage_id="documents",
+            max_filename_length=0,
+        )
     with pytest.raises(ValueError):
-        FileField(field_id="attachment", storage_id="documents", prefix="../outside")
+        FileField(
+            field_id="attachment",
+            storage_id="documents",
+            prefix="../outside",
+        )
     with pytest.raises(ValueError):
-        FileField(field_id="attachment", storage_id="documents", allowed_extensions=("pdf",))
+        FileField(
+            field_id="attachment",
+            storage_id="documents",
+            allowed_extensions=("pdf",),
+        )
     with pytest.raises(ValueError):
-        FileField(field_id="attachment", storage_id="documents", allowed_extensions=("../pdf",))
+        FileField(
+            field_id="attachment",
+            storage_id="documents",
+            allowed_extensions=("../pdf",),
+        )
     with pytest.raises(ValueError):
-        FileField(field_id="attachment", storage_id="documents", allowed_mime_types=("",))
+        FileField(
+            field_id="attachment",
+            storage_id="documents",
+            allowed_mime_types=("",),
+        )
     with pytest.raises(ValueError):
-        FileField(field_id="attachment", storage_id="documents", delete_behavior="sometimes")
+        FileField(
+            field_id="attachment",
+            storage_id="documents",
+            delete_behavior="sometimes",
+        )
