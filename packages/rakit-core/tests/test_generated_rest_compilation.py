@@ -60,8 +60,13 @@ def test_read_only_generated_api_compiles_list_and_detail_rest_routes() -> None:
         (route.route_name, route.methods, route.path, route.framework_owned)
         for route in _generated_routes(compiled)
     ] == [
-        ("generated-api:users:list", ("GET",), "/api/users", True),
-        ("generated-api:users:detail", ("GET",), "/api/users/{identity}", True),
+        ("generated-api:users:list", ("GET", "HEAD"), "/api/users", True),
+        (
+            "generated-api:users:detail",
+            ("GET", "HEAD"),
+            "/api/users/{identity}",
+            True,
+        ),
     ]
 
 
@@ -99,8 +104,8 @@ def test_crud_exposure_only_projects_rest_operations_implemented_by_read_transpo
     assert [
         (route.route_name, route.methods, route.path) for route in _generated_routes(compiled)
     ] == [
-        ("generated-api:users:list", ("GET",), "/api/users"),
-        ("generated-api:users:detail", ("GET",), "/api/users/{identity}"),
+        ("generated-api:users:list", ("GET", "HEAD"), "/api/users"),
+        ("generated-api:users:detail", ("GET", "HEAD"), "/api/users/{identity}"),
     ]
 
 

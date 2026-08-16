@@ -283,8 +283,11 @@ def generated_rest_requirement_map(
         read = PermissionRequirement.all_of(f"{admin_id}.resources.{api.resource_id}.read")
         if GeneratedCrudOperation.LIST in api.operations:
             requirements[("GET", base)] = read
+            requirements[("HEAD", base)] = read
         if GeneratedCrudOperation.DETAIL in api.operations:
-            requirements[("GET", f"{base}/{{identity}}")] = read
+            detail_path = f"{base}/{{identity}}"
+            requirements[("GET", detail_path)] = read
+            requirements[("HEAD", detail_path)] = read
     return requirements
 
 

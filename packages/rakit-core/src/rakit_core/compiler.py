@@ -867,8 +867,8 @@ def _generated_api_definition_routes(
 ) -> tuple[RouteDefinition, ...]:
     routes: list[RouteDefinition] = []
     operation_routes = {
-        GeneratedCrudOperation.LIST: ("list", ("GET",), False),
-        GeneratedCrudOperation.DETAIL: ("detail", ("GET",), True),
+        GeneratedCrudOperation.LIST: ("list", ("GET", "HEAD"), False),
+        GeneratedCrudOperation.DETAIL: ("detail", ("GET", "HEAD"), True),
     }
     for resource in builder.resources:
         base_path = f"/api/{resource.resource_id}"
