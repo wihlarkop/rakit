@@ -1,0 +1,81 @@
+name: First Generated REST Runtime Fix
+
+on:
+  push:
+    branches: [feat/first-generated-rest-mutations]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: "${{ github.event.head_commit.message == 'ci: fix generated CRUD read wiring and deadlines' }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/first-generated-rest-mutations
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages --dev --locked
+      - name: Patch runtime wiring
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('packages/rakit-web/src/rakit_web/admin.py')
+          text = path.read_text()
+          old = '''        for resource_id, api in api_by_resource.items():\n            generated_rest_routes.extend(\n'''
+          new = '''        for resource_id, api in api_by_resource.items():\n            if api.definition.exposure is ApiExposure.CRUD:\n                continue\n            generated_rest_routes.extend(\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+          old = '''                            include_reads=False,\n                        )\n                    )\n'''
+          new = '''                            include_reads=True,\n                        )\n                    )\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+          old = '''                                concurrency_tokens=(\n                                    concurrency_tokens if concurrency_provider is not None else None\n                                ),\n'''
+          new = '''                                concurrency_tokens=(\n                                    concurrency_tokens if concurrency_provider is not None else None\n                                ),\n                                mutation_deadline_seconds=self._mutation_deadline_seconds,\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+          path.write_text(text)
+
+          path = Path('packages/rakit-web/src/rakit_web/generated_rest_runtime.py')
+          text = path.read_text()
+          old = '''    CancellationContext,\n    OperationContext,\n'''
+          new = '''    CancellationContext,\n    Deadline,\n    OperationContext,\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+          old = '''    concurrency_provider: ConcurrencyVersionProvider | None = None\n    concurrency_tokens: ConcurrencyTokenService | None = None\n'''
+          new = '''    concurrency_provider: ConcurrencyVersionProvider | None = None\n    concurrency_tokens: ConcurrencyTokenService | None = None\n    mutation_deadline_seconds: float = 30.0\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+          old = '''    authorization: OperationAuthorization,\n    services: ServiceResolver | None,\n) -> OperationContext:\n'''
+          new = '''    authorization: OperationAuthorization,\n    services: ServiceResolver | None,\n    *,\n    deadline: Deadline | None = None,\n) -> OperationContext:\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+          text = text.replace('        deadline=None,\n', '        deadline=deadline,\n', 1)
+          old = '''        context = _operation_context(binding, request, authorization, services)\n'''
+          new = '''        context = _operation_context(\n            binding,\n            request,\n            authorization,\n            services,\n            deadline=Deadline.after(binding.mutation_deadline_seconds),\n        )\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+          path.write_text(text)
+          PY
+          uv run ruff format \
+            packages/rakit-web/src/rakit_web/admin.py \
+            packages/rakit-web/src/rakit_web/generated_rest_runtime.py
+          uv run ruff check \
+            packages/rakit-web/src/rakit_web/admin.py \
+            packages/rakit-web/src/rakit_web/generated_rest_runtime.py
+          uv run pytest \
+            packages/rakit-web/tests/test_generated_rest_sqlalchemy_e2e.py \
+            packages/rakit-web/tests/test_generated_rest_concurrency_runtime.py \
+            packages/rakit-web/tests/test_generated_rest_admin_runtime.py \
+            -q
+      - name: Commit runtime fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/rakit-web/src/rakit_web/admin.py packages/rakit-web/src/rakit_web/generated_rest_runtime.py
+          git commit -m "fix(web): bind generated CRUD reads to mutation runtime"
+          git push origin HEAD:feat/first-generated-rest-mutations
