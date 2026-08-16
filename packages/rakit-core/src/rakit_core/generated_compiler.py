@@ -1,8 +1,12 @@
 from dataclasses import dataclass
 
-from .adapter_capabilities import SCHEMA_INPUT_VALIDATION
+from .adapter_capabilities import (
+    PERSISTENCE_WRITE,
+    SCHEMA_INPUT_VALIDATION,
+    TRANSACTIONS_ROOT_UOW,
+)
 from .capabilities import CapabilityRequirement
-from .datasource import DataSource
+from .datasource import DataSource, resolve_resource_field_definitions
 from .definitions import ResourceDefinition
 from .errors import ErrorCode, RakitError
 from .generated_api import ApiExposure, CompiledResourceApi
@@ -57,16 +61,35 @@ def compile_generated_resource_apis(
                     resource.resource_id, "generated_api_filter_field_not_allowed"
                 )
 
+        field_definitions = ()
         if api.exposure is ApiExposure.CRUD:
-            capabilities = data_source.capabilities
-            if not (capabilities.create and capabilities.update and capabilities.delete):
+            resolved = resolve_resource_field_definitions(data_source)
+            if resolved is None:
                 raise _invalid_generated_api(
-                    resource.resource_id, "generated_api_write_not_supported"
+                    resource.resource_id, "generated_api_field_metadata_not_supported"
                 )
-            if not capabilities.transactions:
+            definitions_by_name = {field.field_id: field for field in resolved}
+            if set(definitions_by_name) != known_fields:
                 raise _invalid_generated_api(
-                    resource.resource_id, "generated_api_transactions_not_supported"
+                    resource.resource_id, "generated_api_field_metadata_mismatch"
                 )
+            non_writable = {
+                name
+                for name in (*api.create_fields, *api.update_fields)
+                if not definitions_by_name[name].writable
+            }
+            if non_writable:
+                raise _invalid_generated_api(
+                    resource.resource_id, "generated_api_non_writable_field"
+                )
+            field_definitions = resolved
+            requirements.append(
+                CapabilityRequirement.of(
+                    f"generated-api:{resource.resource_id}:write",
+                    PERSISTENCE_WRITE,
+                    TRANSACTIONS_ROOT_UOW,
+                )
+            )
 
         if api.create_schema is not None or api.update_schema is not None:
             requirements.append(
@@ -86,6 +109,7 @@ def compile_generated_resource_apis(
                 update_fields=api.update_fields,
                 identity_fields=identity_fields,
                 filters=api.filters,
+                field_definitions=field_definitions,
             )
         )
 
