@@ -1,5 +1,4 @@
 import pytest
-
 from rakit_core.generated_api import (
     ApiExposure,
     ApiFilterDefinition,
@@ -49,8 +48,8 @@ def test_field_policies_are_separate_and_immutable() -> None:
     assert definition.create_fields == ("email",)
     assert definition.update_fields == ("email",)
 
-    with pytest.raises(Exception):
-        definition.read_fields += ("secret",)  # type: ignore[misc]
+    with pytest.raises(AttributeError):
+        definition.read_fields = ("secret",)  # type: ignore[misc]
 
 
 def test_duplicate_field_policy_entries_are_rejected() -> None:

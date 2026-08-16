@@ -99,7 +99,9 @@ def build_generated_operation_plan(
 ) -> OperationPlan[GeneratedCrudRequest, object]:
     if request.operation not in api.operations:
         raise ValueError(
-            f"Generated operation {request.operation.value!r} is not exposed by resource {api.resource_id!r}"
+            "Generated operation "
+            f"{request.operation.value!r} is not exposed by resource "
+            f"{api.resource_id!r}"
         )
 
     expected_operation = _AUTH_OPERATION[request.operation]

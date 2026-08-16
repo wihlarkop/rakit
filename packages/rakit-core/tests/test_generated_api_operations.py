@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 
 import pytest
-
 from rakit_core.fields import FieldDefinition
 from rakit_core.generated_api import (
     ApiExposure,
@@ -17,7 +16,6 @@ from rakit_core.operations import OperationExecutorCapabilities, OperationKind
 from rakit_core.permissions import PermissionRequirement
 from rakit_core.query import ResourceQuery
 from rakit_core.transactions import TransactionPolicy
-
 
 FIELDS = (FieldDefinition("email", str, required=True),)
 

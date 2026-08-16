@@ -1,7 +1,6 @@
 from collections.abc import Mapping
 
 import pytest
-
 from rakit_core.capabilities import CapabilityProvider, CapabilitySet
 from rakit_core.errors import RakitError
 from rakit_core.fields import FieldDefinition
@@ -13,7 +12,6 @@ from rakit_core.generated_api import (
 )
 from rakit_core.generated_input import validate_generated_input
 from rakit_core.schema import SchemaField, SchemaValidationError, SchemaValidationIssue
-
 
 FIELDS = (
     FieldDefinition("id", int, readable=True, writable=False),

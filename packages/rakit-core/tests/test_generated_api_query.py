@@ -1,5 +1,4 @@
 import pytest
-
 from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.errors import RakitError
 from rakit_core.generated_api import (

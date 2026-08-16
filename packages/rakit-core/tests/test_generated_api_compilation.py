@@ -1,5 +1,4 @@
 import pytest
-
 from rakit_core.capabilities import CapabilityProvider, CapabilitySet
 from rakit_core.compiler import ApplicationBuilder, compile_application
 from rakit_core.datasource import DataSourceCapabilities
@@ -8,7 +7,6 @@ from rakit_core.errors import RakitError
 from rakit_core.fields import FieldDefinition
 from rakit_core.generated_api import ApiExposure, GeneratedCrudOperation, ResourceApiDefinition
 from rakit_core.query import PageResult
-
 
 FIELD_DEFINITIONS = (
     FieldDefinition("id", int, readable=True, writable=False),
