@@ -41,6 +41,8 @@ from rakit_core.relationships import (
 )
 from rakit_web.endpoint_admin import Admin
 
+from .server import run
+
 __version__ = "0.1.0a1"
 
 __all__ = [
@@ -82,4 +84,5 @@ __all__ = [
     "ResourceAdmin",
     "SecretValue",
     "__version__",
+    "run",
 ]
