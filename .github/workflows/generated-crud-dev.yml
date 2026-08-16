@@ -19,5 +19,6 @@ jobs:
           packages/rakit-core/tests/test_generated_api_compilation.py
           packages/rakit-core/tests/test_generated_api_input.py
           packages/rakit-core/tests/test_generated_api_query.py
+          packages/rakit-core/tests/test_generated_api_operations.py
           packages/rakit-sqlalchemy/tests/test_generated_field_metadata.py
           -q
