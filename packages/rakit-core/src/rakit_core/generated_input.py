@@ -1,6 +1,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import cast
 
 from .errors import ErrorCode, RakitError
 from .fields import FieldDefinition
@@ -154,7 +155,19 @@ def validate_generated_input(
                     "reason": "generated_api_schema_output_not_mapping",
                 },
             )
-        widened = set(serialized).difference(allowed)
+        if not all(isinstance(key, str) for key in serialized):
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="Generated API schema serialization must use string field names.",
+                status_code=500,
+                details={
+                    "resource_id": api.resource_id,
+                    "operation": operation.value,
+                    "reason": "generated_api_schema_output_invalid_keys",
+                },
+            )
+        serialized_mapping = cast(Mapping[str, object], serialized)
+        widened = set(serialized_mapping).difference(allowed)
         if widened:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
@@ -167,7 +180,7 @@ def validate_generated_input(
                     "fields": sorted(widened),
                 },
             )
-        values = dict(serialized)
+        values = dict(serialized_mapping)
     else:
         invalid_types = [
             field_name
