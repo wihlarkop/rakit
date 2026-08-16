@@ -46,6 +46,7 @@ async def test_theme_control_and_asset_support_light_dark_system() -> None:
         assert css_match is not None
         css = await client.get(css_match.group(1))
 
+    assert 'for="rakit-theme-select"' in response.text
     assert "data-rakit-theme-select" in response.text
     assert '<option value="system">System</option>' in response.text
     assert '<option value="light">Light</option>' in response.text
