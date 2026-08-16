@@ -92,12 +92,14 @@ async def test_custom_endpoint_uses_configured_non_pydantic_schema_adapter() -> 
         )
 
     app = admin.asgi()
-    async with LifespanDriver(app):
-        async with httpx.AsyncClient(
+    async with (
+        LifespanDriver(app),
+        httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
             base_url="https://testserver",
-        ) as client:
-            response = await client.get("/api/plain", params={"name": "rakit", "count": "2"})
+        ) as client,
+    ):
+        response = await client.get("/api/plain", params={"name": "rakit", "count": "2"})
 
     assert response.status_code == 200
     assert response.json() == {"name": "RAKIT", "count": 3}
