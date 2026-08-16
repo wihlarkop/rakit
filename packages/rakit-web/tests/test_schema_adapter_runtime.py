@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import httpx
@@ -41,11 +42,14 @@ class PlainSchemaAdapter:
     def field_names(self, schema: type[object]) -> tuple[str, ...]:
         return tuple(field.name for field in self.fields(schema))
 
-    def validate_input(self, schema: type[object], values: dict[str, object]) -> object:
+    def validate_input(self, schema: type[object], values: Mapping[str, object]) -> object:
         assert schema is PlainSchema
         try:
             name = str(values["name"])
-            count = int(values["count"])
+            raw_count = values["count"]
+            if isinstance(raw_count, bool) or not isinstance(raw_count, str | int):
+                raise TypeError("count must be text or integer")
+            count = int(raw_count)
         except (KeyError, TypeError, ValueError) as exc:
             raise SchemaValidationError(
                 (
