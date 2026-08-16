@@ -3,7 +3,7 @@ import logging
 import sys
 from collections.abc import Mapping
 from contextvars import Token
-from typing import Any
+from typing import Any, TextIO, cast
 
 import structlog
 from rakit_core.errors import ErrorCode, RakitError
@@ -140,7 +140,7 @@ def configure_logging(*, debug: bool) -> None:
             renderer,
         ],
         wrapper_class=structlog.make_filtering_bound_logger(level),
-        logger_factory=structlog.PrintLoggerFactory(file=_DYNAMIC_STDERR),
+        logger_factory=structlog.PrintLoggerFactory(file=cast(TextIO, _DYNAMIC_STDERR)),
     )
     _configure_stdlib_bridge(renderer=renderer, level=level)
 
