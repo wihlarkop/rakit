@@ -1,0 +1,109 @@
+name: Generated REST Durable Outcome Review
+
+on:
+  push:
+    branches: [feat/first-generated-rest-mutations]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: "${{ github.event.head_commit.message == 'ci: verify durable commit idempotency boundary' }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/first-generated-rest-mutations
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages --dev --locked
+      - name: Add durable commit signal and regression coverage
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          # Core exposes one backend-neutral durable outcome signal. Persistence
+          # adapters mark it immediately after the driver commit succeeds and
+          # before any post-commit callback/observer can fail.
+          operations = Path('packages/rakit-core/src/rakit_core/operations.py')
+          text = operations.read_text()
+          old = '''    events: EventPublisher | None = None\n    unit_of_work: OperationUnitOfWork | None = None\n\n    def __post_init__(self) -> None:\n'''
+          new = '''    events: EventPublisher | None = None\n    unit_of_work: OperationUnitOfWork | None = None\n    durable_commit_completed: bool = False\n\n    def __post_init__(self) -> None:\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+          old = '''    def checkpoint(self) -> None:\n        self.cancellation.check(self.deadline)\n'''
+          new = '''    def checkpoint(self) -> None:\n        self.cancellation.check(self.deadline)\n\n    def mark_durable_commit_completed(self) -> None:\n        """Record that the root persistence commit has durably completed.\n\n        Unit-of-work adapters call this immediately after their driver commit\n        succeeds and before running post-commit callbacks.  Request-layer\n        idempotency code can then distinguish a retryable pre-commit failure\n        from an error that happened after the mutation was already durable.\n        """\n        object.__setattr__(self, "durable_commit_completed", True)\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+          operations.write_text(text)
+
+          transactions = Path('packages/rakit-core/src/rakit_core/transactions.py')
+          text = transactions.read_text()
+          old = '''    (required), exposes it on ``OperationContext.unit_of_work``, and lets the\n    UoW implementation own the durable outcome (commit/rollback and the\n    deferred post-commit event lifecycle).  No persistence type appears here.\n'''
+          new = '''    (required), exposes it on ``OperationContext.unit_of_work``, and lets the\n    UoW implementation own the durable outcome (commit/rollback and the\n    deferred post-commit event lifecycle).  After a driver commit succeeds,\n    implementations must mark ``OperationContext.durable_commit_completed``\n    before invoking callbacks that may fail.  No persistence type appears here.\n'''
+          assert old in text
+          transactions.write_text(text.replace(old, new, 1))
+
+          # SQLAlchemy marks the exact durable boundary before callbacks/events.
+          uow = Path('packages/rakit-sqlalchemy/src/rakit_sqlalchemy/uow.py')
+          text = uow.read_text()
+          old = '''        await self._run_callbacks(self._before_commit_callbacks)\n        await self._commit_critical()\n        self._completed = True\n        await self._finish_commit_callbacks()\n'''
+          new = '''        await self._run_callbacks(self._before_commit_callbacks)\n        await self._commit_critical()\n        if self.operation_context is not None:\n            self.operation_context.mark_durable_commit_completed()\n        self._completed = True\n        await self._finish_commit_callbacks()\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+          old = '''                        await self._run_callbacks(self._before_commit_callbacks)\n                        await self._commit_critical()\n                    except BaseException as exc:\n'''
+          new = '''                        await self._run_callbacks(self._before_commit_callbacks)\n                        await self._commit_critical()\n                        if self.operation_context is not None:\n                            self.operation_context.mark_durable_commit_completed()\n                    except BaseException as exc:\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+          uow.write_text(text)
+
+          # Release idempotency only inside the operation seam, where the
+          # durable outcome signal is still available.
+          runtime = Path('packages/rakit-web/src/rakit_web/generated_rest_runtime.py')
+          text = runtime.read_text()
+          old = '''    *,\n    idempotency_fingerprint: str,\n) -> tuple[object, str]:\n'''
+          new = '''    *,\n    idempotency_fingerprint: str,\n    reservation: IdempotencyReservation,\n) -> tuple[object, str]:\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+          old = '''        with activate_operation_context(context):\n            result = await run_operation_plan(\n                plan,\n                context,\n                unit_of_work_factory=binding.unit_of_work_factory,\n            )\n        return result, context.operation_id\n'''
+          new = '''        try:\n            with activate_operation_context(context):\n                result = await run_operation_plan(\n                    plan,\n                    context,\n                    unit_of_work_factory=binding.unit_of_work_factory,\n                )\n        except Exception:\n            if (\n                not context.durable_commit_completed\n                and binding.idempotency_store is not None\n            ):\n                try:\n                    await binding.idempotency_store.release(reservation)\n                except Exception:\n                    _LOGGER.exception(\n                        "Failed to release pre-commit idempotency reservation",\n                        extra={"request_id": context.request_id},\n                    )\n            raise\n        return result, context.operation_id\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+          old = '''        try:\n            result, operation_id = await _run_mutation(\n                binding,\n                request,\n                generated_request,\n                authorization,\n                idempotency_fingerprint=fingerprint,\n            )\n        except (RakitError, Exception):\n            # `release()` is valid only before the root UoW commits.\n            # `_run_mutation()` returning means UoW teardown/commit completed.\n            if binding.idempotency_store is not None:\n                await binding.idempotency_store.release(reservation)\n            raise\n'''
+          new = '''        result, operation_id = await _run_mutation(\n            binding,\n            request,\n            generated_request,\n            authorization,\n            idempotency_fingerprint=fingerprint,\n            reservation=reservation,\n        )\n'''
+          assert old in text
+          runtime.write_text(text.replace(old, new, 1))
+
+          # The web regression simulates a durable commit followed by a failing
+          # post-commit callback. The claim must remain closed to retry.
+          tests = Path('packages/rakit-web/tests/test_generated_rest_mutation_runtime.py')
+          text = tests.read_text()
+          old = 'from rakit_core.transactions import TransactionPolicy\n'
+          new = '''from rakit_core.transactions import (\n    OperationUnitOfWorkFactory as OperationUnitOfWorkFactoryProtocol,\n    TransactionPolicy,\n)\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+          old = '''    csrf_ok: bool = True,\n    principal: Principal | None = None,\n):\n'''
+          new = '''    csrf_ok: bool = True,\n    principal: Principal | None = None,\n    unit_of_work_factory: OperationUnitOfWorkFactoryProtocol | None = None,\n):\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+          old = '''        unit_of_work_factory=UnitOfWorkFactory(),\n'''
+          new = '''        unit_of_work_factory=unit_of_work_factory or UnitOfWorkFactory(),\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+          addition = '''\n\nclass PostCommitFailingUnitOfWork(UnitOfWork):\n    def __init__(self, policy: TransactionPolicy, operation_context) -> None:\n        super().__init__(policy)\n        self.operation_context = operation_context\n\n    async def __aexit__(self, exc_type, exc, tb):\n        if exc_type is None and self.succeeded:\n            self.operation_context.mark_durable_commit_completed()\n            raise RuntimeError("post-commit callback failed")\n        return False\n\n\nclass PostCommitFailingUnitOfWorkFactory:\n    def open(self, *, policy, event_publisher, operation_context) -> AbstractAsyncContextManager:\n        return PostCommitFailingUnitOfWork(policy, operation_context)\n\n\n@pytest.mark.anyio\nasync def test_post_commit_callback_failure_keeps_idempotency_claim_closed() -> None:\n    executor = Executor()\n    store = FailingCompleteIdempotencyStore()\n    transport = httpx.ASGITransport(\n        app=_app(\n            executor,\n            store,\n            unit_of_work_factory=PostCommitFailingUnitOfWorkFactory(),\n        )\n    )\n    headers = {"Idempotency-Key": "post-commit-failure"}\n\n    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:\n        first = await client.post(\n            "/api/users",\n            json={"email": "committed@example.com"},\n            headers=headers,\n        )\n        retry = await client.post(\n            "/api/users",\n            json={"email": "committed@example.com"},\n            headers=headers,\n        )\n\n    assert first.status_code == 500\n    assert retry.status_code == 409\n    assert len(executor.calls) == 1\n    assert store.release_calls == 0\n'''
+          assert 'test_post_commit_callback_failure_keeps_idempotency_claim_closed' not in text
+          tests.write_text(text + addition)
+          PY
+          uv run ruff format packages/rakit-core/src/rakit_core/operations.py packages/rakit-core/src/rakit_core/transactions.py packages/rakit-sqlalchemy/src/rakit_sqlalchemy/uow.py packages/rakit-web/src/rakit_web/generated_rest_runtime.py packages/rakit-web/tests/test_generated_rest_mutation_runtime.py
+          uv run ruff check packages/rakit-core/src/rakit_core/operations.py packages/rakit-core/src/rakit_core/transactions.py packages/rakit-sqlalchemy/src/rakit_sqlalchemy/uow.py packages/rakit-web/src/rakit_web/generated_rest_runtime.py packages/rakit-web/tests/test_generated_rest_mutation_runtime.py
+          uv run ty check
+          uv run pytest packages/rakit-web/tests/test_generated_rest_mutation_runtime.py packages/rakit-sqlalchemy/tests/test_operation_uow.py -q
+      - name: Commit durable outcome hardening
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/rakit-core/src/rakit_core/operations.py packages/rakit-core/src/rakit_core/transactions.py packages/rakit-sqlalchemy/src/rakit_sqlalchemy/uow.py packages/rakit-web/src/rakit_web/generated_rest_runtime.py packages/rakit-web/tests/test_generated_rest_mutation_runtime.py
+          git commit -m "fix: track durable commit before idempotency release"
+          git push origin HEAD:feat/first-generated-rest-mutations
