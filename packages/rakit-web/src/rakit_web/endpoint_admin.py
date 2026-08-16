@@ -158,7 +158,10 @@ def validate_endpoint_runtime(
                     "Task 7 endpoint runtime supports static paths only."
                 ),
                 status_code=500,
-                details={"endpoint_id": str(endpoint.endpoint_id), "reason": "path_parameters_not_supported"},
+                details={
+                    "endpoint_id": str(endpoint.endpoint_id),
+                    "reason": "path_parameters_not_supported",
+                },
             )
         if len(endpoint.methods) != 1:
             raise RakitError(
@@ -180,7 +183,10 @@ def validate_endpoint_runtime(
                 code=ErrorCode.CONFIG_INVALID,
                 message="Typed endpoint input requires one explicit input source.",
                 status_code=500,
-                details={"endpoint_id": str(endpoint.endpoint_id), "reason": "input_source_missing"},
+                details={
+                    "endpoint_id": str(endpoint.endpoint_id),
+                    "reason": "input_source_missing",
+                },
             )
         if method is EndpointMethod.GET:
             if endpoint.mutating or endpoint.transaction_policy is not TransactionPolicy.READ_ONLY:
@@ -188,14 +194,20 @@ def validate_endpoint_runtime(
                     code=ErrorCode.CONFIG_INVALID,
                     message="GET endpoints must be read-only.",
                     status_code=500,
-                    details={"endpoint_id": str(endpoint.endpoint_id), "reason": "get_not_read_only"},
+                    details={
+                        "endpoint_id": str(endpoint.endpoint_id),
+                        "reason": "get_not_read_only",
+                    },
                 )
             if endpoint.input_source not in (None, EndpointInputSource.QUERY):
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
                     message="Task 7 GET endpoints accept QUERY input only.",
                     status_code=500,
-                    details={"endpoint_id": str(endpoint.endpoint_id), "reason": "get_input_source"},
+                    details={
+                        "endpoint_id": str(endpoint.endpoint_id),
+                        "reason": "get_input_source",
+                    },
                 )
         else:
             post_endpoints.append(compiled_endpoint)
@@ -204,28 +216,44 @@ def validate_endpoint_runtime(
                     code=ErrorCode.CONFIG_INVALID,
                     message="POST endpoints must be mutating and transactional.",
                     status_code=500,
-                    details={"endpoint_id": str(endpoint.endpoint_id), "reason": "post_not_mutating"},
+                    details={
+                        "endpoint_id": str(endpoint.endpoint_id),
+                        "reason": "post_not_mutating",
+                    },
                 )
             if endpoint.access_policy is EndpointAccessPolicy.PUBLIC:
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
                     message="Public POST endpoints are intentionally deferred beyond Task 7.",
                     status_code=500,
-                    details={"endpoint_id": str(endpoint.endpoint_id), "reason": "public_post_not_supported"},
+                    details={
+                        "endpoint_id": str(endpoint.endpoint_id),
+                        "reason": "public_post_not_supported",
+                    },
                 )
-            if endpoint.input_source not in (None, EndpointInputSource.JSON, EndpointInputSource.FORM):
+            if endpoint.input_source not in (
+                None,
+                EndpointInputSource.JSON,
+                EndpointInputSource.FORM,
+            ):
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
                     message="Task 7 POST endpoints accept JSON or FORM input only.",
                     status_code=500,
-                    details={"endpoint_id": str(endpoint.endpoint_id), "reason": "post_input_source"},
+                    details={
+                        "endpoint_id": str(endpoint.endpoint_id),
+                        "reason": "post_input_source",
+                    },
                 )
             if endpoint.response_kind is not EndpointResponseKind.JSON:
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
                     message="Task 7 POST endpoint responses must be replayable JSON.",
                     status_code=500,
-                    details={"endpoint_id": str(endpoint.endpoint_id), "reason": "post_response_kind"},
+                    details={
+                        "endpoint_id": str(endpoint.endpoint_id),
+                        "reason": "post_response_kind",
+                    },
                 )
             capabilities = resolve_operation_executor_capabilities(endpoint.handler)
             if endpoint.transaction_policy in (TransactionPolicy.AUTO, TransactionPolicy.MANUAL):
@@ -238,7 +266,10 @@ def validate_endpoint_runtime(
                             "handler does not participate in the operation unit of work."
                         ),
                         status_code=500,
-                        details={"endpoint_id": str(endpoint.endpoint_id), "reason": "handler_not_uow_managed"},
+                        details={
+                            "endpoint_id": str(endpoint.endpoint_id),
+                            "reason": "handler_not_uow_managed",
+                        },
                     )
                 if not uow_factory_registered:
                     raise RakitError(
@@ -248,22 +279,34 @@ def validate_endpoint_runtime(
                             "unit-of-work provider."
                         ),
                         status_code=500,
-                        details={"endpoint_id": str(endpoint.endpoint_id), "reason": "operation_uow_not_configured"},
+                        details={
+                            "endpoint_id": str(endpoint.endpoint_id),
+                            "reason": "operation_uow_not_configured",
+                        },
                     )
         if endpoint.response_kind is EndpointResponseKind.ADVANCED:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message="Advanced raw response adapters are deferred beyond Task 7.",
                 status_code=500,
-                details={"endpoint_id": str(endpoint.endpoint_id), "reason": "advanced_response_deferred"},
+                details={
+                    "endpoint_id": str(endpoint.endpoint_id),
+                    "reason": "advanced_response_deferred",
+                },
             )
         if endpoint.response_kind in (EndpointResponseKind.FILE, EndpointResponseKind.STREAM):
-            if method is not EndpointMethod.GET or endpoint.transaction_policy is not TransactionPolicy.READ_ONLY:
+            if (
+                method is not EndpointMethod.GET
+                or endpoint.transaction_policy is not TransactionPolicy.READ_ONLY
+            ):
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
                     message="File and stream endpoints must be read-only GET operations.",
                     status_code=500,
-                    details={"endpoint_id": str(endpoint.endpoint_id), "reason": "streaming_transaction_boundary"},
+                    details={
+                        "endpoint_id": str(endpoint.endpoint_id),
+                        "reason": "streaming_transaction_boundary",
+                    },
                 )
 
     private_endpoints = [
@@ -370,7 +413,9 @@ class Admin(_BaseAdmin):
             return self._application_resolver.require(OperationUnitOfWorkFactory)
 
         verify_csrf: Callable[[Request], Awaitable[bool]] | None = None
-        if any(EndpointMethod.POST in item.definition.methods for item in compiled.compiled_endpoints):
+        if any(
+            EndpointMethod.POST in item.definition.methods for item in compiled.compiled_endpoints
+        ):
             if (
                 self.config.security.secret_key is None
                 or self._auth_backend is None
@@ -423,7 +468,9 @@ class Admin(_BaseAdmin):
             content_security_policy_enabled=self.config.security.content_security_policy_enabled,
         )
         endpoint_app = RequestContextMiddleware(endpoint_app, admin_id=self.config.admin_id)
-        endpoint_paths = frozenset(str(item.definition.path) for item in compiled.compiled_endpoints)
+        endpoint_paths = frozenset(
+            str(item.definition.path) for item in compiled.compiled_endpoints
+        )
         return _EndpointDispatchMiddleware(base_app, endpoint_app, endpoint_paths)
 
 

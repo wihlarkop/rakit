@@ -156,17 +156,29 @@ class AdminEndpoint:
                 if self.method is EndpointMethod.GET
                 else TransactionPolicy.AUTO,
             )
-        if self.method is EndpointMethod.GET and self.transaction_policy is not TransactionPolicy.READ_ONLY:
+        if (
+            self.method is EndpointMethod.GET
+            and self.transaction_policy is not TransactionPolicy.READ_ONLY
+        ):
             raise ValueError("GET endpoints must use TransactionPolicy.READ_ONLY")
-        if self.method is EndpointMethod.POST and self.transaction_policy is TransactionPolicy.READ_ONLY:
+        if (
+            self.method is EndpointMethod.POST
+            and self.transaction_policy is TransactionPolicy.READ_ONLY
+        ):
             raise ValueError("POST endpoints cannot use TransactionPolicy.READ_ONLY")
         if self.access_policy is EndpointAccessPolicy.PUBLIC and self.method is EndpointMethod.POST:
             raise ValueError("Public POST endpoints are not supported in Task 7")
-        if self.response_kind is not EndpointResponseKind.JSON and not self.allow_response_escape_hatch:
+        if (
+            self.response_kind is not EndpointResponseKind.JSON
+            and not self.allow_response_escape_hatch
+        ):
             raise ValueError("Non-JSON endpoint responses require explicit escape hatch opt-in")
         if self.response_kind is not EndpointResponseKind.JSON and self.output_schema is not None:
             raise ValueError("Non-JSON endpoint responses cannot declare a JSON output schema")
-        if self.method is EndpointMethod.POST and self.response_kind is not EndpointResponseKind.JSON:
+        if (
+            self.method is EndpointMethod.POST
+            and self.response_kind is not EndpointResponseKind.JSON
+        ):
             raise ValueError("Task 7 POST endpoints must return JSON")
 
 

@@ -77,7 +77,9 @@ class EndpointBinding:
             if route.path != endpoint.path:
                 raise ValueError("Compiled endpoint route path must match EndpointDefinition.path")
             if route.methods != tuple(method.value for method in endpoint.methods):
-                raise ValueError("Compiled endpoint route methods must match EndpointDefinition.methods")
+                raise ValueError(
+                    "Compiled endpoint route methods must match EndpointDefinition.methods"
+                )
             if EndpointMethod.POST in endpoint.methods and (
                 self.verify_csrf is None or self.idempotency_store is None
             ):
@@ -254,7 +256,9 @@ async def _submitted_input(
     if request.method == "POST":
         body = await request.body()
         if body.strip() not in (b"", b"{}"):
-            return {}, [_issue("__root__", "unexpected_input", "Endpoint does not accept body input")]
+            return {}, [
+                _issue("__root__", "unexpected_input", "Endpoint does not accept body input")
+            ]
     return {}, []
 
 
@@ -286,7 +290,9 @@ def _endpoint_access(
         )
         principal_id = (
             principal.subject_id
-            if principal is not None and principal.authenticated and principal.subject_id is not None
+            if principal is not None
+            and principal.authenticated
+            and principal.subject_id is not None
             else "anonymous"
         )
         return (
@@ -358,7 +364,10 @@ class _ValidatedEndpointHandler:
                     code=ErrorCode.CONFIG_INVALID,
                     message="JSON endpoint handler returned an incompatible result type.",
                     status_code=500,
-                    details={"endpoint_id": str(endpoint.endpoint_id), "reason": "result_kind_mismatch"},
+                    details={
+                        "endpoint_id": str(endpoint.endpoint_id),
+                        "reason": "result_kind_mismatch",
+                    },
                 )
             payload: object = result.payload
             if endpoint.output_schema is not None:
@@ -372,7 +381,9 @@ class _ValidatedEndpointHandler:
                         details={"issues": _pydantic_issues(exc)},
                     ) from exc
             return EndpointResult(payload=payload, status_code=result.status_code)
-        if endpoint.response_kind is EndpointResponseKind.FILE and isinstance(result, EndpointFileResult):
+        if endpoint.response_kind is EndpointResponseKind.FILE and isinstance(
+            result, EndpointFileResult
+        ):
             return result
         if endpoint.response_kind is EndpointResponseKind.STREAM and isinstance(
             result, EndpointStreamResult
@@ -442,7 +453,11 @@ def _completed_response(receipt: OperationReceipt | None) -> JSONResponse:
             409,
         )
     status_code = receipt.payload.get("status_code")
-    if not isinstance(status_code, int) or not 200 <= status_code < 300 or "payload" not in receipt.payload:
+    if (
+        not isinstance(status_code, int)
+        or not 200 <= status_code < 300
+        or "payload" not in receipt.payload
+    ):
         return _error_response(
             ErrorCode.RESOURCE_CONFLICT,
             "Endpoint submission already completed, but its response cannot be replayed.",
@@ -571,10 +586,14 @@ def build_endpoint_routes(binding: EndpointBinding) -> list[Route]:
 
             submitted, parse_issues = await _submitted_input(request, compiled_endpoint)
             if parse_issues:
-                status_code = 400 if any(
-                    issue["code"] in {"invalid_json", "content_type", "invalid_form"}
-                    for issue in parse_issues
-                ) else 422
+                status_code = (
+                    400
+                    if any(
+                        issue["code"] in {"invalid_json", "content_type", "invalid_form"}
+                        for issue in parse_issues
+                    )
+                    else 422
+                )
                 return _validation_response(
                     "Endpoint input validation failed.",
                     issues=parse_issues,
