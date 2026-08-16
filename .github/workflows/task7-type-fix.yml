@@ -17,6 +17,26 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --all-packages --dev --locked
+      - name: Narrow typed endpoint test values
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("packages/rakit-web/tests/test_endpoints.py")
+          text = path.read_text(encoding="utf-8")
+          text = text.replace(
+              "        assert context.values is not None\n        seen.append((operation.operation, operation.services is not None))\n        verbose = context.values.verbose\n",
+              "        assert isinstance(context.values, _StatusInput)\n        seen.append((operation.operation, operation.services is not None))\n        verbose = context.values.verbose\n",
+          )
+          text = text.replace(
+              "        assert context.values is not None\n        return EndpointResult({\"accepted\": context.values.value})\n",
+              "        assert isinstance(context.values, _ChangeInput)\n        return EndpointResult({\"accepted\": context.values.value})\n",
+          )
+          text = text.replace(
+              "        assert context.values is not None\n        return EndpointResult({\"accepted\": context.values.value}, status_code=201)\n",
+              "        assert isinstance(context.values, _ChangeInput)\n        return EndpointResult({\"accepted\": context.values.value}, status_code=201)\n",
+          )
+          path.write_text(text, encoding="utf-8")
       - run: uv run ruff check --fix packages/rakit-web/tests/test_endpoints.py
       - run: uv run ruff format packages/rakit-web/tests/test_endpoints.py
       - run: uv run ruff check packages/rakit-web/tests/test_endpoints.py
@@ -26,7 +46,7 @@ jobs:
         shell: bash
         run: |
           if git diff --quiet -- packages/rakit-web/tests/test_endpoints.py; then
-            echo "No test lint changes needed."
+            echo "No test changes needed."
             exit 0
           fi
           git config user.name "github-actions[bot]"
