@@ -3,6 +3,7 @@ from contextlib import AbstractAsyncContextManager
 import httpx
 import pytest
 from rakit_core.auth import Principal
+from rakit_core.datasource import DataSourceCapabilities
 from rakit_core.definitions import ResourceDefinition, ResourceFieldPolicy
 from rakit_core.fields import FieldDefinition
 from rakit_core.generated_api import ApiExposure, CompiledResourceApi, ResourceApiDefinition
@@ -28,7 +29,7 @@ FIELDS = (
 
 
 class DataSource:
-    capabilities = type("Capabilities", (), {"read": True})()
+    capabilities = DataSourceCapabilities(read=True)
     fields = ("id", "email")
     identity_fields = ("id",)
 
@@ -51,6 +52,7 @@ class Executor:
     async def execute(self, context, request: GeneratedCrudRequest):
         self.calls.append(request)
         if request.operation.value == "create":
+            assert request.input is not None
             return GeneratedMutationResult(
                 RecordIdentity(values={"id": 7}),
                 {"id": 7, "email": request.input.values["email"]},
