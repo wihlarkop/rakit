@@ -177,9 +177,7 @@ class Admin(_EndpointAdmin):
             admin_id=self.config.admin_id,
         )
 
-        paths = frozenset(
-            {"/", *(widget_path(widget_id) for widget_id in self._dashboard_widgets)}
-        )
+        paths = frozenset({"/", *(widget_path(widget_id) for widget_id in self._dashboard_widgets)})
         return _DashboardDispatchMiddleware(base_app, dashboard_app, paths)
 
 
