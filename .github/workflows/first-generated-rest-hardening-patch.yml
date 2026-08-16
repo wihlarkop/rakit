@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   patch:
-    if: "${{ github.event.head_commit.message == 'ci: apply generated REST hardening patch' }}"
+    if: "${{ github.event.head_commit.message == 'ci: rerun generated REST hardening patch' }}"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -27,8 +27,6 @@ jobs:
           path = Path('packages/rakit-web/src/rakit_web/admin.py')
           text = path.read_text()
 
-          old = 'from rakit_core.generated_api import CompiledResourceApi\n' if 'from rakit_core.generated_api import CompiledResourceApi\n' in text else None
-          # Admin did not previously import generated runtime directly; insert near identity imports.
           marker = 'from rakit_core.identity import IdentityCodec, RecordIdentity\n'
           insert = '''from rakit_core.identity import IdentityCodec, RecordIdentity\nfrom rakit_core.generated_runtime import normalize_resource_adapter_runtime\n'''
           assert marker in text
@@ -36,6 +34,11 @@ jobs:
 
           marker = 'from starlette.requests import Request\n'
           insert = 'from starlette.exceptions import HTTPException\nfrom starlette.requests import Request\n'
+          assert marker in text
+          text = text.replace(marker, insert, 1)
+
+          marker = 'from starlette.responses import JSONResponse, PlainTextResponse\n'
+          insert = 'from starlette.responses import JSONResponse, PlainTextResponse, Response\n'
           assert marker in text
           text = text.replace(marker, insert, 1)
 
@@ -66,6 +69,7 @@ jobs:
 
           path.write_text(text)
           PY
+          uv run ruff check --fix packages/rakit-web/src/rakit_web/admin.py
           uv run ruff format packages/rakit-web/src/rakit_web/admin.py
           uv run ruff check packages/rakit-web/src/rakit_web/admin.py
       - name: Commit hardening patch
