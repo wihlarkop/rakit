@@ -1,0 +1,61 @@
+name: Task7 Type Fix
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  fix-once:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages --dev --locked
+      - name: Apply scoped typing fixes
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("packages/rakit-web/src/rakit_web/endpoint_admin.py")
+          text = path.read_text(encoding="utf-8")
+          text = text.replace("from typing import Any\n", "from typing import Any, cast\n\nfrom pydantic import BaseModel\n")
+          text = text.replace(
+              "    EndpointAccessPolicy,\n",
+              "    EndpointAccessPolicy,\n    EndpointContext,\n    EndpointExecutionResult,\n",
+          )
+          text = text.replace("input_schema: type | None = None", "input_schema: type[BaseModel] | None = None")
+          text = text.replace("output_schema: type | None = None", "output_schema: type[BaseModel] | None = None")
+          text = text.replace("endpoint_id=endpoint_id or handler.__name__", "endpoint_id=endpoint_id or _endpoint_handler_name(handler)")
+          marker = "\n\nclass EndpointApi:\n"
+          helper = '''\n\ndef _endpoint_handler_name(handler: Callable[..., object]) -> str:\n    name = getattr(handler, "__name__", None)\n    if not isinstance(name, str) or not name:\n        raise TypeError("Endpoint decorator handlers must have a stable function name")\n    return name\n\n\nclass EndpointApi:\n'''
+          text = text.replace(marker, helper)
+          old = '''def _definition_from_public(endpoint: AdminEndpoint) -> EndpointDefinition:\n    method = endpoint.method\n    handler: object\n'''
+          new = '''def _definition_from_public(endpoint: AdminEndpoint) -> EndpointDefinition:\n    method = endpoint.method\n    typed_handler = cast(\n        "Callable[[EndpointContext], EndpointExecutionResult[Any] | Awaitable[EndpointExecutionResult[Any]]]",\n        endpoint.handler,\n    )\n    handler: object\n'''
+          text = text.replace(old, new)
+          text = text.replace("else EndpointMutationHandler(endpoint.handler)", "else EndpointMutationHandler(typed_handler)")
+          text = text.replace("else DomainEndpointHandler(endpoint.handler)", "else DomainEndpointHandler(typed_handler)")
+          old_init = '''    def __init__(self, *args: Any, **kwargs: Any) -> None:\n        super().__init__(*args, **kwargs)\n        self.api = EndpointApi(self)\n\n'''
+          new_api = '''    @property\n    def api(self) -> EndpointApi:\n        return EndpointApi(self)\n\n'''
+          text = text.replace(old_init, new_api)
+          path.write_text(text, encoding="utf-8")
+      - run: uv run ruff format packages/rakit-web/src/rakit_web/endpoint_admin.py
+      - run: uv run ruff check packages/rakit-web/src/rakit_web/endpoint_admin.py
+      - run: uv run ty check
+      - name: Commit fixes when needed
+        shell: bash
+        run: |
+          if git diff --quiet -- packages/rakit-web/src/rakit_web/endpoint_admin.py; then
+            echo "No typing changes needed."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/rakit-web/src/rakit_web/endpoint_admin.py
+          git commit -m "fix(web): preserve typed endpoint facade"
+          git push origin HEAD:${{ github.head_ref }}
