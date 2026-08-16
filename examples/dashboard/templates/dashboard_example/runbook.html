@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Runbook · {{ binding_label }}{% endblock %}
+{% block content %}
+<div id="rakit-page-root">
+  {% include "components/dashboard_navigation.html" %}
+  <header class="mb-6 border-b border-slate-200 pb-4">
+    <p class="text-sm font-medium text-slate-500">Operations</p>
+    <h1 class="mt-1 text-2xl font-semibold tracking-tight text-slate-950">Operations runbook</h1>
+    <p class="mt-2 text-sm leading-6 text-slate-600">Reference guidance can live inside the same admin surface without becoming a resource model.</p>
+  </header>
+
+  <div class="space-y-4">
+    {% for title, description in payload.sections %}
+    <section class="rakit-panel p-4">
+      <h2 class="font-medium text-slate-950">{{ title }}</h2>
+      <p class="mt-2 text-sm leading-6 text-slate-600">{{ description }}</p>
+    </section>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}
