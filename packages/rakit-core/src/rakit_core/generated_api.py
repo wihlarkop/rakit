@@ -64,6 +64,7 @@ class ResourceApiDefinition:
     filters: tuple[ApiFilterDefinition, ...] = ()
     create_schema: type[object] | None = None
     update_schema: type[object] | None = None
+    output_schema: type[object] | None = None
 
     def __post_init__(self) -> None:
         _validate_unique_strings("read_fields", self.read_fields)

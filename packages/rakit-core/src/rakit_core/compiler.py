@@ -24,8 +24,9 @@ from .definitions import (
 )
 from .di import ServiceRegistry, _RegistrySnapshot
 from .errors import ErrorCode, RakitError
-from .generated_api import CompiledResourceApi
+from .generated_api import CompiledResourceApi, GeneratedCrudOperation
 from .generated_compiler import compile_generated_resource_apis
+from .generated_runtime import GeneratedResourceExecutorProvider, ResourceAdapterRuntime
 from .permissions import PermissionRequirement
 from .relationships import CompiledRelationship
 
@@ -61,7 +62,9 @@ class Plugin(Protocol):
     def configure(self, builder: "ApplicationBuilder") -> None: ...
 
 
-type AdapterClaim = Callable[[type, ResourceFieldPolicy], DataSource | None]
+type AdapterClaim = Callable[
+    [type, ResourceFieldPolicy], DataSource | ResourceAdapterRuntime | None
+]
 
 
 def _is_path_parameter(segment: str) -> bool:
@@ -175,6 +178,9 @@ class ApplicationBuilder:
     _plugin_conflicts: dict[str, tuple[str, ...]] = field(default_factory=dict)
     _adapters: dict[str, AdapterClaim] = field(default_factory=dict)
     _resource_data_sources: dict[str, DataSource] = field(default_factory=dict)
+    _resource_generated_executor_providers: dict[str, GeneratedResourceExecutorProvider] = field(
+        default_factory=dict
+    )
     _capability_providers: dict[str, CapabilityProvider] = field(default_factory=dict)
     _capability_requirements: dict[str, CapabilityRequirement] = field(default_factory=dict)
     _compiled: bool = field(default=False, init=False)
@@ -216,6 +222,12 @@ class ApplicationBuilder:
     def capability_requirements(self) -> tuple[CapabilityRequirement, ...]:
         return tuple(self._capability_requirements.values())
 
+    @property
+    def generated_resource_executor_providers(
+        self,
+    ) -> tuple[tuple[str, GeneratedResourceExecutorProvider], ...]:
+        return tuple(self._resource_generated_executor_providers.items())
+
     def _check_not_compiled(self) -> None:
         if self._compiled:
             raise RakitError(
@@ -232,7 +244,13 @@ class ApplicationBuilder:
         self._check_not_compiled()
         self._routes.append(route)
 
-    def add_resource(self, definition: ResourceDefinition, data_source: DataSource) -> None:
+    def add_resource(
+        self,
+        definition: ResourceDefinition,
+        data_source: DataSource,
+        *,
+        generated_executor_provider: GeneratedResourceExecutorProvider | None = None,
+    ) -> None:
         self._check_not_compiled()
         if any(existing.resource_id == definition.resource_id for existing in self._resources):
             raise RakitError(
@@ -243,6 +261,10 @@ class ApplicationBuilder:
             )
         self._resources.append(definition)
         self._resource_data_sources[definition.resource_id] = data_source
+        if generated_executor_provider is not None:
+            self._resource_generated_executor_providers[definition.resource_id] = (
+                generated_executor_provider
+            )
 
     def add_page(self, definition: PageDefinition) -> None:
         self._check_not_compiled()
@@ -385,6 +407,7 @@ class _InstallSnapshot:
     plugin_conflicts: dict[str, tuple[str, ...]]
     adapters: dict[str, AdapterClaim]
     resource_data_sources: dict[str, DataSource]
+    resource_generated_executor_providers: dict[str, GeneratedResourceExecutorProvider]
     capability_providers: dict[str, CapabilityProvider]
     capability_requirements: dict[str, CapabilityRequirement]
     compiled: bool
@@ -402,6 +425,9 @@ class _InstallSnapshot:
             plugin_conflicts=dict(builder._plugin_conflicts),
             adapters=dict(builder._adapters),
             resource_data_sources=dict(builder._resource_data_sources),
+            resource_generated_executor_providers=dict(
+                builder._resource_generated_executor_providers
+            ),
             capability_providers=dict(builder._capability_providers),
             capability_requirements=dict(builder._capability_requirements),
             compiled=builder._compiled,
@@ -421,6 +447,10 @@ class _InstallSnapshot:
         builder._adapters.update(self.adapters)
         builder._resource_data_sources.clear()
         builder._resource_data_sources.update(self.resource_data_sources)
+        builder._resource_generated_executor_providers.clear()
+        builder._resource_generated_executor_providers.update(
+            self.resource_generated_executor_providers
+        )
         builder._capability_providers.clear()
         builder._capability_providers.update(self.capability_providers)
         builder._capability_requirements.clear()
@@ -443,6 +473,9 @@ class CompiledApplication:
     compiled_endpoints: tuple[CompiledEndpointDefinition, ...] = ()
     action_routes: tuple[tuple[RouteDefinition, CompiledActionDefinition], ...] = ()
     compiled_resource_apis: tuple[CompiledResourceApi, ...] = ()
+    generated_resource_executor_providers: tuple[
+        tuple[str, GeneratedResourceExecutorProvider], ...
+    ] = ()
     capability_providers: tuple[CapabilityProvider, ...] = ()
     capability_requirements: tuple[CapabilityRequirement, ...] = ()
     capability_reports: tuple[CapabilityReport, ...] = ()
@@ -829,6 +862,33 @@ def _resource_definition_routes(builder: ApplicationBuilder) -> tuple[RouteDefin
     return tuple(routes)
 
 
+def _generated_api_definition_routes(
+    builder: ApplicationBuilder,
+) -> tuple[RouteDefinition, ...]:
+    routes: list[RouteDefinition] = []
+    operation_routes = {
+        GeneratedCrudOperation.LIST: ("list", ("GET", "HEAD"), False),
+        GeneratedCrudOperation.DETAIL: ("detail", ("GET", "HEAD"), True),
+    }
+    for resource in builder.resources:
+        base_path = f"/api/{resource.resource_id}"
+        for operation in resource.api.operations:
+            route_contract = operation_routes.get(operation)
+            if route_contract is None:
+                continue
+            route_suffix, methods, needs_identity = route_contract
+            routes.append(
+                RouteDefinition(
+                    route_name=f"generated-api:{resource.resource_id}:{route_suffix}",
+                    methods=methods,
+                    path=f"{base_path}/{{identity}}" if needs_identity else base_path,
+                    owner_id=resource.resource_id,
+                    framework_owned=True,
+                )
+            )
+    return tuple(routes)
+
+
 def _action_route_pairs(
     routes: tuple[RouteDefinition, ...],
     compiled_actions: tuple[CompiledActionDefinition, ...],
@@ -877,7 +937,11 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
     seen: dict[str, list[tuple[str, str, str]]] = {}
     seen_route_names: dict[str, RouteDefinition] = {}
     application_routes = (*builder.routes, *_application_definition_routes(builder))
-    all_routes = (*application_routes, *_resource_definition_routes(builder))
+    all_routes = (
+        *application_routes,
+        *_resource_definition_routes(builder),
+        *_generated_api_definition_routes(builder),
+    )
     for route in all_routes:
         if not route.framework_owned and any(
             route.path == prefix or route.path.startswith(f"{prefix}/")
@@ -941,7 +1005,6 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
         require_capabilities(requirement, builder.capability_providers)
         for requirement in capability_requirements
     )
-
     builder._mark_compiled()
     return CompiledApplication(
         all_routes,
@@ -956,6 +1019,7 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
         compiled_endpoints,
         _action_route_pairs(all_routes, compiled_actions),
         compiled_resource_apis=generated_api.resources,
+        generated_resource_executor_providers=(builder.generated_resource_executor_providers),
         capability_providers=builder.capability_providers,
         capability_requirements=capability_requirements,
         capability_reports=capability_reports,

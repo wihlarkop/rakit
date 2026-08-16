@@ -20,7 +20,7 @@ from urllib.parse import unquote
 from rakit_core.auth import ANONYMOUS_PRINCIPAL, AuthBackend, Principal, SessionStore
 from rakit_core.permissions import PermissionRequirement
 from starlette.requests import Request
-from starlette.responses import PlainTextResponse, RedirectResponse
+from starlette.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .._paths import mounted_path
@@ -173,6 +173,24 @@ class PrincipalMiddleware:
         await self.app(scope, receive, send_clearing_session_cookie)
 
 
+def _is_generated_api_path(path: str) -> bool:
+    return path == "/api" or path.startswith("/api/")
+
+
+def _api_auth_response(
+    request: Request, *, status_code: int, code: str, message: str
+) -> JSONResponse:
+    request_id = request.scope.get("state", {}).get("request_id", "")
+    return JSONResponse(
+        {
+            "error": {"code": code, "message": message},
+            "request_id": request_id if isinstance(request_id, str) else "",
+        },
+        status_code=status_code,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 class AuthorizationMiddleware:
     """Gates each request against an explicit permission requirement.
 
@@ -198,7 +216,9 @@ class AuthorizationMiddleware:
             return
 
         request = Request(scope, receive=receive)
-        requirement = self._requirement_for(admin_relative_path(request), request.method)
+        relative_path = admin_relative_path(request)
+        requirement = self._requirement_for(relative_path, request.method)
+        api_request = _is_generated_api_path(relative_path)
         if requirement is None:
             await self.app(scope, receive, send)
             return
@@ -206,11 +226,15 @@ class AuthorizationMiddleware:
         principal = scope.get("state", {}).get("principal", ANONYMOUS_PRINCIPAL)
 
         if not principal.authenticated:
-            # An unauthenticated *browser* request is redirected to login
-            # rather than 403'd, so a user landing on any admin URL gets a
-            # usable login page. The target is always this admin's own
-            # mounted login path -- never an attacker-supplied value -- so
-            # it can't be turned into an open redirect.
+            if api_request:
+                await _api_auth_response(
+                    request,
+                    status_code=401,
+                    code="auth.unauthenticated",
+                    message="Authentication is required.",
+                )(scope, receive, send)
+                return
+            # Browser requests retain the existing login redirect behavior.
             await RedirectResponse(
                 url=mounted_path(request, LOGIN_PATH),
                 status_code=303,
@@ -219,6 +243,14 @@ class AuthorizationMiddleware:
             return
 
         if not requirement.matches(principal, superuser_bypass=self._superuser_bypass):
+            if api_request:
+                await _api_auth_response(
+                    request,
+                    status_code=403,
+                    code="auth.forbidden",
+                    message="Permission denied.",
+                )(scope, receive, send)
+                return
             await PlainTextResponse(
                 "Forbidden", status_code=403, headers={"Cache-Control": "no-store"}
             )(scope, receive, send)
@@ -233,6 +265,7 @@ def build_requirement_resolver(
     resource_paths: dict[str, str],
     writable_resources: frozenset[str] = frozenset(),
     action_requirements: Mapping[str, PermissionRequirement] | None = None,
+    generated_api_requirements: Mapping[tuple[str, str], PermissionRequirement] | None = None,
 ) -> Callable[..., PermissionRequirement | None]:
     """Map a request path to the permission it requires.
 
@@ -266,6 +299,11 @@ def build_requirement_resolver(
         for pattern, requirement in (action_requirements or {}).items()
     ]
     action_patterns.sort(key=lambda item: len(item[0]), reverse=True)
+    generated_api_patterns = [
+        (method, pattern.strip("/").split("/"), requirement)
+        for (method, pattern), requirement in (generated_api_requirements or {}).items()
+    ]
+    generated_api_patterns.sort(key=lambda item: len(item[1]), reverse=True)
 
     # Longest prefix first: with nested resource paths (`/orders` and
     # `/orders/lines`), the most specific match must win. Returning
@@ -280,6 +318,16 @@ def build_requirement_resolver(
         if is_public_path(path):
             return None
         segments = path.strip("/").split("/")
+        for expected_method, pattern_segments, requirement in generated_api_patterns:
+            if (
+                expected_method == method
+                and len(pattern_segments) == len(segments)
+                and all(
+                    pattern_segment == segment or pattern_segment == "{identity}"
+                    for pattern_segment, segment in zip(pattern_segments, segments, strict=True)
+                )
+            ):
+                return requirement
         for pattern_segments, requirement in action_patterns:
             if len(pattern_segments) == len(segments) and all(
                 pattern_segment == segment or pattern_segment == "{identity}"

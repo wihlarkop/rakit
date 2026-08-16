@@ -25,6 +25,7 @@ from rakit_core.definitions import (
 from rakit_core.di import ServiceKey, ServiceRegistry, ServiceResolver, ServiceScope
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.events import EventBus, EventPublisher
+from rakit_core.generated_runtime import normalize_resource_adapter_runtime
 from rakit_core.idempotency import IdempotencyStore
 from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_core.mutations import (
@@ -44,8 +45,9 @@ from rakit_core.resources import ResourceService
 from rakit_core.schema import SchemaAdapter
 from rakit_core.transactions import OperationUnitOfWorkFactory, TransactionPolicy
 from starlette.applications import Starlette
+from starlette.exceptions import HTTPException
 from starlette.requests import Request
-from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.responses import JSONResponse, PlainTextResponse, Response
 from starlette.routing import Mount, Route
 from starlette.templating import Jinja2Templates
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -60,6 +62,11 @@ from .auth_routes import _verify_csrf, build_auth_routes
 from .bulk_admin import build_admin_bulk_action_routes
 from .capabilities import STARLETTE_WEB_CAPABILITIES
 from .form_routes import WriteResourceBinding, build_write_routes
+from .generated_rest_runtime import (
+    GeneratedRestBinding,
+    build_generated_rest_routes,
+    generated_rest_requirement_map,
+)
 from .lifecycle import LifecycleManager
 from .logging import bind_request_context, configure_logging, reset_request_context
 from .page_admin import (
@@ -376,9 +383,9 @@ class Admin:
                     status_code=500,
                     details={"admin_class": admin_cls.__name__, "claim_count": len(claims)},
                 )
-            data_source = claims[0]
+            adapter_runtime = normalize_resource_adapter_runtime(claims[0])
         elif admin_cls.data_source is not None:
-            data_source = admin_cls.data_source
+            adapter_runtime = normalize_resource_adapter_runtime(admin_cls.data_source)
         else:
             raise RakitError(
                 code=ErrorCode.CONFIG_RESOURCE_MISSING_DATA_SOURCE,
@@ -390,6 +397,7 @@ class Admin:
                 details={"admin_class": admin_cls.__name__},
             )
 
+        data_source = adapter_runtime.data_source
         definition = ResourceDefinition(
             resource_id=admin_cls.resource_id,
             path=admin_cls.path,
@@ -399,7 +407,11 @@ class Admin:
             relationships=relationships,
             api=admin_cls.api,
         )
-        self._builder.add_resource(definition, data_source)
+        self._builder.add_resource(
+            definition,
+            data_source,
+            generated_executor_provider=adapter_runtime.generated_executor_provider,
+        )
         for action in actions:
             self._builder.add_action(action)
         self._builder.add_route(
@@ -731,6 +743,36 @@ class Admin:
                 return JSONResponse({"status": "ready"})
             return JSONResponse({"status": "not_ready"}, status_code=503)
 
+        async def http_error_handler(request: Request, exc: Exception) -> Response:
+            assert isinstance(exc, HTTPException)
+            relative_path = request.url.path
+            root_path = request.scope.get("root_path", "").rstrip("/")
+            if root_path and relative_path.startswith(root_path):
+                relative_path = relative_path[len(root_path) :] or "/"
+            if relative_path == "/api" or relative_path.startswith("/api/"):
+                request_id = request.scope.get("state", {}).get("request_id", "")
+                code = (
+                    "http.method_not_allowed"
+                    if exc.status_code == 405
+                    else "http.not_found"
+                    if exc.status_code == 404
+                    else "http.error"
+                )
+                headers = {"Cache-Control": "no-store", **(exc.headers or {})}
+                return JSONResponse(
+                    {
+                        "error": {"code": code, "message": str(exc.detail)},
+                        "request_id": request_id if isinstance(request_id, str) else "",
+                    },
+                    status_code=exc.status_code,
+                    headers=headers,
+                )
+            return PlainTextResponse(
+                str(exc.detail),
+                status_code=exc.status_code,
+                headers=exc.headers,
+            )
+
         async def rakit_error_handler(_request: Request, exc: Exception) -> JSONResponse:
             # Minimal error-to-HTTP translation: a RakitError already carries the
             # HTTP status it intends (e.g. RESOURCE_NOT_FOUND -> 404), so honour it
@@ -766,6 +808,25 @@ class Admin:
             )
             bindings[resource_id] = binding
             resource_routes.extend(build_resource_routes(binding))
+
+        generated_rest_routes: list[Route] = []
+        api_by_resource = {api.resource_id: api for api in self.compiled.compiled_resource_apis}
+        for resource_id, api in api_by_resource.items():
+            generated_rest_routes.extend(
+                build_generated_rest_routes(
+                    GeneratedRestBinding(
+                        api=api,
+                        definition=self._resource_definitions[resource_id],
+                        service=self._resource_services[resource_id],
+                        schema_adapter=self._schema_adapter,
+                        admin_id=self.config.admin_id,
+                        auth_enabled=(
+                            self._auth_backend is not None and self._session_store is not None
+                        ),
+                        superuser_bypass=self._superuser_bypass,
+                    )
+                )
+            )
 
         write_routes: list[Route] = []
         action_routes: list[Route] = []
@@ -919,6 +980,10 @@ class Admin:
             },
             writable_resources=frozenset(self._write_resource_bindings),
             action_requirements=exact_requirements,
+            generated_api_requirements=generated_rest_requirement_map(
+                self.compiled.compiled_resource_apis,
+                admin_id=self.config.admin_id,
+            ),
         )
         if self._session_store is not None and self.config.security.secret_key is not None:
             write_token_service = TokenService.single_key(
@@ -1219,7 +1284,10 @@ class Admin:
             debug=self.config.debug,
             routes=[Route("/", home)],
             lifespan=lifespan,
-            exception_handlers={RakitError: rakit_error_handler},
+            exception_handlers={
+                RakitError: rakit_error_handler,
+                HTTPException: http_error_handler,
+            },
         )
         app.routes.append(Route("/_system/health", health))
         app.routes.append(Route("/_system/ready", ready))
@@ -1227,6 +1295,8 @@ class Admin:
         for route in write_routes:
             app.routes.append(route)
         for route in resource_routes:
+            app.routes.append(route)
+        for route in generated_rest_routes:
             app.routes.append(route)
         for route in page_routes:
             app.routes.append(route)

@@ -103,6 +103,14 @@ def compile_generated_resource_apis(
                 )
             )
 
+        if api.output_schema is not None:
+            requirements.append(
+                CapabilityRequirement.of(
+                    f"generated-api:{resource.resource_id}:schema-output",
+                    SCHEMA_OUTPUT_SERIALIZATION,
+                )
+            )
+
         compiled.append(
             CompiledResourceApi(
                 resource_id=resource.resource_id,
@@ -123,4 +131,7 @@ def compile_generated_resource_apis(
     )
 
 
-__all__ = ["GeneratedApiCompilation", "compile_generated_resource_apis"]
+__all__ = [
+    "GeneratedApiCompilation",
+    "compile_generated_resource_apis",
+]
