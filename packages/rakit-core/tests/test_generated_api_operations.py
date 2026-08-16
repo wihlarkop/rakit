@@ -89,7 +89,10 @@ def test_list_and_detail_build_read_only_resource_plans() -> None:
 
 def test_create_partial_update_and_delete_use_auto_transaction() -> None:
     executor = FakeExecutor()
-    created = GeneratedInput(values={"email": "a@example.com"}, present_fields={"email"})
+    created = GeneratedInput(
+        values={"email": "a@example.com"},
+        present_fields=frozenset({"email"}),
+    )
     create_plan = build_generated_operation_plan(
         _api(),
         GeneratedCrudRequest.create(created),
@@ -143,7 +146,10 @@ def test_builder_rejects_operation_not_exposed_by_resource() -> None:
         build_generated_operation_plan(
             api,
             GeneratedCrudRequest.create(
-                GeneratedInput(values={"email": "x"}, present_fields={"email"})
+                GeneratedInput(
+                    values={"email": "x"},
+                    present_fields=frozenset({"email"}),
+                )
             ),
             _authorization("create"),
             FakeExecutor(),
