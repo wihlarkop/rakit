@@ -9,6 +9,7 @@ from rakit import (
     StatWidgetResult,
     WidgetContext,
     WidgetDefinition,
+    WidgetLayout,
     WidgetLoadingMode,
 )
 from rakit_core.auth import Principal
@@ -45,6 +46,52 @@ async def test_root_renders_dashboard_shell() -> None:
     assert "<h1" in response.text
     assert "Operations" in response.text
     assert "There is nothing available on this dashboard yet." in response.text
+
+
+@pytest.mark.anyio
+async def test_dashboard_honors_semantic_widget_layout_and_stable_refresh_target() -> None:
+    admin = _admin()
+
+    async def pending(_context: WidgetContext) -> StatWidgetResult:
+        return StatWidgetResult(label="ignored", value=12)
+
+    admin.register_widget(
+        WidgetDefinition(
+            widget_id="pending_orders",
+            label="Pending orders",
+            loader=pending,
+            layout=WidgetLayout(size="small", min_height=120),
+        )
+    )
+    admin.register_widget(
+        WidgetDefinition(
+            widget_id="revenue",
+            label="Revenue",
+            loader=pending,
+            layout=WidgetLayout(size="large"),
+        )
+    )
+    app = admin.asgi()
+
+    async with (
+        LifespanDriver(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://localhost",
+        ) as client,
+    ):
+        response = await client.get("/")
+
+    assert response.status_code == 200
+    assert 'data-rakit-dashboard-widget-size="small"' in response.text
+    assert 'style="flex: 1 1 14rem; max-width: 24rem; min-height: 120px"' in response.text
+    assert 'data-rakit-dashboard-widget-size="large"' in response.text
+    assert 'style="flex: 2 1 36rem; min-width: 0"' in response.text
+    assert 'class="rakit-button rakit-button-secondary"' in response.text
+    assert 'hx-target="#rakit-dashboard-widget-pending_orders-content"' in response.text
+    assert 'hx-select="#rakit-dashboard-widget-pending_orders-content"' in response.text
+    assert 'hx-disabled-elt="this"' in response.text
+    assert 'aria-live="polite"' in response.text
 
 
 @pytest.mark.anyio
