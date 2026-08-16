@@ -7,10 +7,7 @@
 .rakit-dashboard-widget {
   grid-column: span 12 / span 12;
   min-width: 0;
-}
-
-.rakit-dashboard-widget[data-rakit-dashboard-widget-min-height="120"] {
-  min-height: 120px;
+  min-height: attr(data-rakit-dashboard-widget-min-height px, auto);
 }
 
 .rakit-dashboard-refresh-indicator {
