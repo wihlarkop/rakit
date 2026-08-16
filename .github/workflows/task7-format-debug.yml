@@ -1,0 +1,15 @@
+name: Task7 Format Debug
+
+on:
+  pull_request:
+
+jobs:
+  format-diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages --dev --locked
+      - run: uv run ruff format --diff packages/rakit-core/src/rakit_core/endpoints.py packages/rakit-web/src/rakit_web/endpoint_admin.py packages/rakit-web/src/rakit_web/endpoint_routes.py || true
