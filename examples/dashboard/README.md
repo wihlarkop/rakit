@@ -4,9 +4,10 @@ This example presents the dashboard as a small, runnable operations admin rather
 
 It demonstrates:
 
-- automatic Quick Access launchers from registered resources;
-- Orders, Customers, Activity, and Runbook read-only resource pages;
-- resource list/detail navigation back to the dashboard;
+- a persistent responsive admin shell inspired by mature admin interfaces;
+- automatic Quick access launchers from registered resources;
+- Orders, Customers, Recent operational activity, and Operations runbook list/detail pages;
+- search, sorting, pagination, and active navigation state;
 - stat, text, list, and table widgets;
 - semantic small, medium, and large widget layouts;
 - eager and lazy widget loading;
@@ -18,4 +19,6 @@ Run it from the repository root:
 uv run rakit run examples.dashboard.main:admin
 ```
 
-Then open the printed local URL. The example intentionally uses `debug=True` and no authentication, so it is suitable only for local development.
+Then open the printed local URL and move between the dashboard and resource pages using the built-in admin navigation.
+
+The example intentionally uses `debug=True`, in-memory data, and no authentication, so it is suitable only for local development.
