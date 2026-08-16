@@ -53,5 +53,5 @@ def test_public_run_gives_install_hint_for_known_optional_adapter(
 
     monkeypatch.setattr("rakit._server._run_server", missing)
 
-    with pytest.raises(ServerAdapterNotFoundError, match=r'rakit\[granian\]'):
+    with pytest.raises(ServerAdapterNotFoundError, match=r"rakit\[granian\]"):
         rakit.run("sample:admin", server="granian")

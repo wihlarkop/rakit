@@ -61,7 +61,7 @@ class UvicornServer:
         if target is None:
             if self.app is None:
                 raise ServerConfigurationError(
-                    "UvicornServer.run() requires a target unless app was supplied to the constructor"
+                    "UvicornServer.run() requires a target unless constructor app is set"
                 )
             source = self.app
         else:
@@ -78,11 +78,12 @@ class UvicornServer:
         conflicts = sorted(_RESERVED_OPTIONS.intersection(native))
         if conflicts:
             raise ServerConfigurationError(
-                "Uvicorn server_options cannot override portable option(s): "
-                + ", ".join(conflicts)
+                "Uvicorn server_options cannot override portable option(s): " + ", ".join(conflicts)
             )
         if config.reload and config.workers > 1:
-            raise ServerConfigurationError("Uvicorn reload and multiple workers are mutually exclusive")
+            raise ServerConfigurationError(
+                "Uvicorn reload and multiple workers are mutually exclusive"
+            )
         return native
 
     @staticmethod
@@ -96,7 +97,7 @@ class UvicornServer:
             if process_mode or factory_mode:
                 raise ServerConfigurationError(
                     "Uvicorn reload, multiple workers, and factory mode require an import-string "
-                    "target; use rakit.run(\"module:app\", ...) instead of an application object."
+                    'target; use rakit.run("module:app", ...) instead of an application object.'
                 )
             assert target.application is not None
             return target.application
@@ -125,7 +126,9 @@ class UvicornServer:
     ) -> str | ASGIApplication:
         if target.kind is ServerTargetKind.APPLICATION:
             if native.get("factory") is True:
-                raise ServerConfigurationError("Uvicorn factory mode requires an import-string target")
+                raise ServerConfigurationError(
+                    "Uvicorn factory mode requires an import-string target"
+                )
             assert target.application is not None
             return target.application
         assert target.import_string is not None

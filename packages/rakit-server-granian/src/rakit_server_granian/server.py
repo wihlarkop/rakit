@@ -67,8 +67,7 @@ class GranianServer:
         conflicts = sorted(_RESERVED_OPTIONS.intersection(native))
         if conflicts:
             raise ServerConfigurationError(
-                "Granian server_options cannot override portable option(s): "
-                + ", ".join(conflicts)
+                "Granian server_options cannot override portable option(s): " + ", ".join(conflicts)
             )
         if sys.platform == "win32" and config.workers > 1:
             raise ServerConfigurationError(
@@ -89,8 +88,8 @@ class GranianServer:
         if resolved.kind is not ServerTargetKind.IMPORT_STRING or resolved.import_string is None:
             raise ServerConfigurationError(
                 "Granian's standard process server requires an import-string target. "
-                "Use GranianServer().run(\"module:admin\") or "
-                "rakit.run(\"module:admin\", server=\"granian\")."
+                'Use GranianServer().run("module:admin") or '
+                'rakit.run("module:admin", server="granian").'
             )
 
         options: dict[str, Any] = {
