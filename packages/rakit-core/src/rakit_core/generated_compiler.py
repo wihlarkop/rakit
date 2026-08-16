@@ -11,6 +11,7 @@ from .datasource import DataSource, resolve_resource_field_definitions
 from .definitions import ResourceDefinition
 from .errors import ErrorCode, RakitError
 from .generated_api import ApiExposure, CompiledResourceApi
+from .generated_runtime import GeneratedResourceExecutorProvider
 
 
 def _invalid_generated_api(resource_id: str, reason: str) -> RakitError:
@@ -131,4 +132,22 @@ def compile_generated_resource_apis(
     )
 
 
-__all__ = ["GeneratedApiCompilation", "compile_generated_resource_apis"]
+def validate_generated_resource_runtime_support(
+    resources: tuple[CompiledResourceApi, ...],
+    executor_providers: dict[str, GeneratedResourceExecutorProvider],
+) -> None:
+    for resource in resources:
+        if (
+            resource.definition.exposure is ApiExposure.CRUD
+            and resource.resource_id not in executor_providers
+        ):
+            raise _invalid_generated_api(
+                resource.resource_id, "generated_api_executor_not_supported"
+            )
+
+
+__all__ = [
+    "GeneratedApiCompilation",
+    "compile_generated_resource_apis",
+    "validate_generated_resource_runtime_support",
+]
