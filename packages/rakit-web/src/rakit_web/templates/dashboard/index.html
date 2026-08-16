@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ dashboard.title }}{% endblock %}
+{% block content %}
+<div id="rakit-dashboard-root">
+  <header class="mb-8">
+    <p class="text-sm font-medium text-slate-500">Dashboard</p>
+    <div class="mt-1 flex flex-wrap items-end justify-between gap-4">
+      <div>
+        <h1 class="text-2xl font-semibold tracking-tight text-slate-950">{{ dashboard.title }}</h1>
+        <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Monitor current activity, review what needs attention, and move quickly into the areas available to you.</p>
+      </div>
+    </div>
+  </header>
+
+  {% if launchers %}
+  <section aria-labelledby="rakit-dashboard-launchers-title" class="mb-8">
+    <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+      <h2 id="rakit-dashboard-launchers-title" class="text-sm font-semibold uppercase tracking-wide text-slate-500">Quick access</h2>
+      <p class="text-xs text-slate-400">{{ launchers | length }} available</p>
+    </div>
+    <ul class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      {% for launcher in launchers %}
+      <li>
+        <a class="group flex h-full items-center justify-between gap-4 rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600" href="{{ launcher.path }}">
+          <span class="min-w-0">
+            <span class="block truncate text-sm font-semibold text-slate-950">{{ launcher.label }}</span>
+            {% if launcher.description %}<span class="mt-1 block text-sm leading-5 text-slate-500">{{ launcher.description }}</span>{% endif %}
+          </span>
+          <span aria-hidden="true" class="shrink-0 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-700">→</span>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {% if widgets %}
+  <section aria-labelledby="rakit-dashboard-widgets-title">
+    <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+      <h2 id="rakit-dashboard-widgets-title" class="text-sm font-semibold uppercase tracking-wide text-slate-500">Overview</h2>
+      <p class="text-xs text-slate-400">Widgets refresh independently</p>
+    </div>
+    <div class="grid grid-cols-1 items-start gap-4 md:grid-cols-12">
+      {% for widget in widgets %}
+        {% include "dashboard/_widget.html" %}
+      {% endfor %}
+    </div>
+  </section>
+  {% elif not launchers %}
+  <section class="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center" aria-labelledby="rakit-dashboard-empty-title">
+    <h2 id="rakit-dashboard-empty-title" class="text-sm font-semibold text-slate-950">Nothing to show yet</h2>
+    <p class="mx-auto mt-1 max-w-lg text-sm leading-6 text-slate-500">Registered resources, pages, and widgets will appear here when they are available to the current user.</p>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

@@ -2,6 +2,7 @@
 {% block title %}{{ page.label }} · {{ binding_label }}{% endblock %}
 {% block content %}
 <div id="rakit-page-root">
+  {% include "components/dashboard_navigation.html" %}
   <header class="mb-6 flex flex-wrap items-end justify-between gap-3 border-b border-slate-200 pb-4">
     <div>
       <p class="text-sm font-medium text-slate-500">{{ binding_label }}</p>

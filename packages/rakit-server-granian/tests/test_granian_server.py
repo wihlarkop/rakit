@@ -1,3 +1,4 @@
+import sys
 from typing import Any
 
 import pytest
@@ -20,6 +21,10 @@ def test_package_root_exports_granian_server() -> None:
     assert GranianServer.capabilities.async_serve is False
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Granian multi-worker mode is not supported on Windows",
+)
 def test_run_maps_portable_config_and_uses_rakit_worker_loader(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

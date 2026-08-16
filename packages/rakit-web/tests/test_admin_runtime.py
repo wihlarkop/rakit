@@ -22,7 +22,8 @@ async def test_admin_root_responds() -> None:
     ) as client:
         response = await client.get("/")
     assert response.status_code == 200
-    assert response.text == "Operations"
+    assert "<h1" in response.text
+    assert "Operations" in response.text
 
 
 @pytest.mark.anyio
@@ -132,7 +133,9 @@ class _ProbePlugin:
 
     def configure(self, builder: ApplicationBuilder) -> None:
         builder.registry.add_factory(
-            _ProbeService, lambda _: _ProbeService(), scope=ServiceScope.APPLICATION
+            _ProbeService,
+            lambda _: _ProbeService(),
+            scope=ServiceScope.APPLICATION,
         )
 
 
