@@ -64,7 +64,7 @@ async def test_unsupported_generated_api_method_returns_json_405() -> None:
 
     assert response.status_code == 405
     assert response.headers["content-type"].startswith("application/json")
-    assert response.headers["allow"] == "GET, HEAD"
+    assert {item.strip() for item in response.headers["allow"].split(",")} == {"GET", "HEAD"}
     assert response.json()["error"] == {
         "code": "http.method_not_allowed",
         "message": "Method Not Allowed",
