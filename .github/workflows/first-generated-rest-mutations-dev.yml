@@ -5,7 +5,7 @@ on:
     branches: [feat/first-generated-rest-mutations]
 
 jobs:
-  focused:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -13,14 +13,23 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --all-packages --dev --locked
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run ty check
       - run: >-
           uv run pytest
+          packages/rakit-core/tests/test_generated_api_compilation.py
+          packages/rakit-core/tests/test_generated_api_operations.py
           packages/rakit-core/tests/test_generated_rest_mutation_compilation.py
           packages/rakit-core/tests/test_generated_rest_concurrency_contract.py
+          packages/rakit-web/tests/test_generated_rest_read_runtime.py
           packages/rakit-web/tests/test_generated_rest_mutation_runtime.py
           packages/rakit-web/tests/test_generated_rest_concurrency_runtime.py
           packages/rakit-web/tests/test_generated_rest_admin_runtime.py
           packages/rakit-web/tests/test_generated_rest_sqlalchemy_e2e.py
+          packages/rakit-web/tests/test_auth_enforcement.py
+          packages/rakit-web/tests/test_admin_runtime.py
           packages/rakit-sqlalchemy/tests/test_generated_resource_executor.py
           packages/rakit-sqlalchemy/tests/test_generated_resource_plugin.py
           -q
+      - run: uv run pytest
