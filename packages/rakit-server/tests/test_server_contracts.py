@@ -1,3 +1,5 @@
+from typing import cast
+
 import pytest
 
 from rakit_server import ServerCapabilities, ServerConfig
@@ -22,8 +24,9 @@ def test_server_config_normalizes_portable_options_and_freezes_native_options() 
     assert config.log_level == "debug"
     assert dict(config.server_options) == {"backlog": 2048}
 
+    runtime_mapping = cast(dict[str, object], config.server_options)
     with pytest.raises(TypeError):
-        config.server_options["backlog"] = 512  # type: ignore[index]
+        runtime_mapping["backlog"] = 512
 
 
 def test_server_config_rejects_invalid_port_workers_and_native_option_names() -> None:
