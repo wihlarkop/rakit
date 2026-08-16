@@ -34,6 +34,16 @@ jobs:
               text = text.replace(old, new, 1)
               compiler.write_text(text)
 
+          compiler_tests = Path("packages/rakit-core/tests/test_compiler.py")
+          text = compiler_tests.read_text()
+          old = '        "rakit-core": "0.2.0a1",\n        "rakit-web": "0.1.0a1",\n'
+          new = '        "rakit-core": "0.2.0a1",\n        "rakit-server": "0.1.0a1",\n        "rakit-web": "0.1.0a1",\n'
+          if '        "rakit-server": "0.1.0a1",\n' not in text:
+              if old not in text:
+                  raise SystemExit("version fixture insertion anchor not found")
+              text = text.replace(old, new, 1)
+              compiler_tests.write_text(text)
+
           examples = Path("tests/examples/test_read_examples.py")
           text = examples.read_text()
           text = text.replace(
@@ -48,6 +58,11 @@ jobs:
                   raise SystemExit("distribution expectation insertion anchor not found")
               text = text.replace(old, new, 1)
           examples.write_text(text)
+
+          target_tests = Path("packages/rakit-server/tests/test_server_targets.py")
+          text = target_tests.read_text()
+          text = text.replace('match="asgi\\(\\)"', 'match=r"asgi\\(\\)"')
+          target_tests.write_text(text)
           PY
       - run: uv lock
       - run: uv sync --all-packages --dev --locked
