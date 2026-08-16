@@ -24,6 +24,8 @@ from .definitions import (
 )
 from .di import ServiceRegistry, _RegistrySnapshot
 from .errors import ErrorCode, RakitError
+from .generated_api import CompiledResourceApi
+from .generated_compiler import compile_generated_resource_apis
 from .permissions import PermissionRequirement
 from .relationships import CompiledRelationship
 
@@ -440,6 +442,7 @@ class CompiledApplication:
     compiled_actions: tuple[CompiledActionDefinition, ...] = ()
     compiled_endpoints: tuple[CompiledEndpointDefinition, ...] = ()
     action_routes: tuple[tuple[RouteDefinition, CompiledActionDefinition], ...] = ()
+    compiled_resource_apis: tuple[CompiledResourceApi, ...] = ()
     capability_providers: tuple[CapabilityProvider, ...] = ()
     capability_requirements: tuple[CapabilityRequirement, ...] = ()
     capability_reports: tuple[CapabilityReport, ...] = ()
@@ -927,9 +930,16 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
                 (route.path, route.route_name, route.owner_id)
             )
 
+    generated_api = compile_generated_resource_apis(
+        builder.resources, builder._resource_data_sources
+    )
+    capability_requirements = (
+        *builder.capability_requirements,
+        *generated_api.requirements,
+    )
     capability_reports = tuple(
         require_capabilities(requirement, builder.capability_providers)
-        for requirement in builder.capability_requirements
+        for requirement in capability_requirements
     )
 
     builder._mark_compiled()
@@ -945,7 +955,8 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
         compiled_actions,
         compiled_endpoints,
         _action_route_pairs(all_routes, compiled_actions),
+        compiled_resource_apis=generated_api.resources,
         capability_providers=builder.capability_providers,
-        capability_requirements=builder.capability_requirements,
+        capability_requirements=capability_requirements,
         capability_reports=capability_reports,
     )
