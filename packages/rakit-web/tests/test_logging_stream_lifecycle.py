@@ -3,7 +3,6 @@ import logging
 import sys
 
 import structlog
-
 from rakit_web.logging import configure_logging
 
 
