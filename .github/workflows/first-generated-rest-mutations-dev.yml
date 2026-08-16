@@ -17,4 +17,5 @@ jobs:
           uv run pytest
           packages/rakit-core/tests/test_generated_rest_mutation_compilation.py
           packages/rakit-core/tests/test_generated_rest_concurrency_contract.py
+          packages/rakit-web/tests/test_generated_rest_mutation_runtime.py
           -q
