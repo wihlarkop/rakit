@@ -294,20 +294,19 @@ def validate_endpoint_runtime(
                     "reason": "advanced_response_deferred",
                 },
             )
-        if endpoint.response_kind in (EndpointResponseKind.FILE, EndpointResponseKind.STREAM):
-            if (
-                method is not EndpointMethod.GET
-                or endpoint.transaction_policy is not TransactionPolicy.READ_ONLY
-            ):
-                raise RakitError(
-                    code=ErrorCode.CONFIG_INVALID,
-                    message="File and stream endpoints must be read-only GET operations.",
-                    status_code=500,
-                    details={
-                        "endpoint_id": str(endpoint.endpoint_id),
-                        "reason": "streaming_transaction_boundary",
-                    },
-                )
+        if endpoint.response_kind in (EndpointResponseKind.FILE, EndpointResponseKind.STREAM) and (
+            method is not EndpointMethod.GET
+            or endpoint.transaction_policy is not TransactionPolicy.READ_ONLY
+        ):
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="File and stream endpoints must be read-only GET operations.",
+                status_code=500,
+                details={
+                    "endpoint_id": str(endpoint.endpoint_id),
+                    "reason": "streaming_transaction_boundary",
+                },
+            )
 
     private_endpoints = [
         item
@@ -423,7 +422,9 @@ class Admin(_BaseAdmin):
             ):
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
-                    message="POST custom endpoints require session authentication and a secret key.",
+                    message=(
+                        "POST custom endpoints require session authentication and a secret key."
+                    ),
                     status_code=500,
                 )
             token_service = TokenService.single_key(
