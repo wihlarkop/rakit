@@ -62,7 +62,7 @@
           <th scope="col" class="w-12 px-4 py-3"><span class="sr-only">Select</span></th>
           {% endif %}
           {% for header in sort_headers %}
-          <th scope="col" class="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 [&>a]:inline-flex [&>a]:items-center [&>a]:gap-1 [&>a:hover]:text-slate-900 [&>a:hover]:underline" aria-sort="{{ header.aria_sort }}">
+          <th scope="col" class="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500" aria-sort="{{ header.aria_sort }}">
             {% if header.url %}
             <a href="{{ header.url }}">{{ header.field }}</a>
             {% else %}
