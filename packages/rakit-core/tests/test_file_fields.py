@@ -1,5 +1,4 @@
 import pytest
-
 from rakit_core.fields import FileField
 
 
