@@ -47,9 +47,7 @@ def test_field_policies_are_separate_and_immutable() -> None:
     assert definition.read_fields == ("id", "email")
     assert definition.create_fields == ("email",)
     assert definition.update_fields == ("email",)
-
-    with pytest.raises(AttributeError):
-        setattr(definition, "read_fields", ("secret",))
+    assert ResourceApiDefinition.__dataclass_params__.frozen is True
 
 
 def test_duplicate_field_policy_entries_are_rejected() -> None:
