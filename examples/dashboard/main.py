@@ -282,8 +282,17 @@ async def recent_orders(_context):
         label="Recent orders",
         columns=("Order", "Customer", "Status", "Total"),
         rows=tuple(
-            (order["id"], order["customer"], order["status"], order["total"]) for order in _ORDERS
+            (order["id"], order["customer"], order["status"], order["total"])
+            for order in _ORDERS
         ),
+    )
+
+
+async def customer_reviews(_context):
+    return StatWidgetResult(
+        label="Customer reviews",
+        value=1,
+        description="Account requiring manual review.",
     )
 
 
@@ -309,7 +318,7 @@ admin.register_widget(
         widget_id="queues",
         label="Queues",
         loader=queues,
-        layout=WidgetLayout(size="medium", priority=30),
+        layout=WidgetLayout(size="small", priority=30),
     )
 )
 admin.register_widget(
@@ -320,10 +329,24 @@ admin.register_widget(
         layout=WidgetLayout(size="large", priority=40),
     )
 )
+admin.register_widget(
+    WidgetDefinition(
+        widget_id="customer_reviews",
+        label="Customer reviews",
+        loader=customer_reviews,
+        layout=WidgetLayout(size="small", priority=50),
+    )
+)
 admin.register_dashboard(
     DashboardDefinition(
         dashboard_id="main",
         title="Operations dashboard",
-        widgets=("pending_orders", "operations_note", "queues", "recent_orders"),
+        widgets=(
+            "pending_orders",
+            "operations_note",
+            "queues",
+            "recent_orders",
+            "customer_reviews",
+        ),
     )
 )
