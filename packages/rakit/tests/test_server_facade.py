@@ -15,7 +15,7 @@ def test_public_run_delegates_to_neutral_server_runtime(monkeypatch: pytest.Monk
     def fake_run(target: object, **kwargs: Any) -> None:
         calls.append((target, kwargs))
 
-    monkeypatch.setattr("rakit.server._run_server", fake_run)
+    monkeypatch.setattr("rakit._server._run_server", fake_run)
 
     rakit.run(
         app,
@@ -51,7 +51,7 @@ def test_public_run_gives_install_hint_for_known_optional_adapter(
         del args, kwargs
         raise ServerAdapterNotFoundError('Server adapter "granian" is not installed or registered')
 
-    monkeypatch.setattr("rakit.server._run_server", missing)
+    monkeypatch.setattr("rakit._server._run_server", missing)
 
     with pytest.raises(ServerAdapterNotFoundError, match=r'rakit\[granian\]'):
         rakit.run("sample:admin", server="granian")
