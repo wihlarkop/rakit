@@ -1,0 +1,69 @@
+name: First Generated REST Concurrency Patch
+
+on:
+  push:
+    branches: [feat/first-generated-rest-mutations]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: "${{ github.event.head_commit.message == 'ci: apply generated REST concurrency patch' }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/first-generated-rest-mutations
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages --dev --locked
+      - name: Patch ETag and If-Match transport
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('packages/rakit-web/src/rakit_web/generated_rest_runtime.py')
+          text = path.read_text()
+
+          old = '''def _detail_response(binding: GeneratedRestBinding, result: object) -> JSONResponse:\n    return JSONResponse(\n        {\n            "data": serialize_generated_record(\n                binding.api,\n                result,\n                schema_adapter=binding.schema_adapter,\n            )\n        },\n        headers={"Cache-Control": "no-store"},\n    )\n\n\ndef _decode_identity'''
+          new = '''def _etag_headers(\n    binding: GeneratedRestBinding,\n    identity: RecordIdentity,\n    record: object,\n) -> dict[str, str]:\n    provider = binding.concurrency_provider\n    tokens = binding.concurrency_tokens\n    if provider is None and tokens is None:\n        return {}\n    if provider is None or tokens is None:\n        raise RakitError(\n            code=ErrorCode.CONFIG_INVALID,\n            message="Generated CRUD concurrency runtime is incomplete.",\n            status_code=500,\n            details={\n                "resource_id": binding.api.resource_id,\n                "reason": "generated_api_concurrency_runtime_incomplete",\n            },\n        )\n    token = tokens.issue(\n        binding.api.resource_id,\n        identity,\n        provider.version_for(record),\n        base_snapshot=provider.predicate_values_for(record),\n    )\n    return {"ETag": f'"{token}"'}\n\n\ndef _detail_response(\n    binding: GeneratedRestBinding,\n    identity: RecordIdentity,\n    result: object,\n) -> JSONResponse:\n    headers = {"Cache-Control": "no-store"}\n    headers.update(_etag_headers(binding, identity, result))\n    return JSONResponse(\n        {\n            "data": serialize_generated_record(\n                binding.api,\n                result,\n                schema_adapter=binding.schema_adapter,\n            )\n        },\n        headers=headers,\n    )\n\n\ndef _decode_identity'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          marker = '''async def _verify_mutation_csrf(binding: GeneratedRestBinding, request: Request) -> None:\n'''
+          helper = '''def _if_match_token(binding: GeneratedRestBinding, request: Request) -> str | None:\n    if binding.concurrency_provider is None:\n        return None\n    if binding.concurrency_tokens is None:\n        raise RakitError(\n            code=ErrorCode.CONFIG_INVALID,\n            message="Generated CRUD concurrency token service is missing.",\n            status_code=500,\n            details={\n                "resource_id": binding.api.resource_id,\n                "reason": "generated_api_concurrency_runtime_incomplete",\n            },\n        )\n    raw = request.headers.get("if-match")\n    if raw is None:\n        raise RakitError(\n            code=ErrorCode.VALIDATION_FAILED,\n            message="If-Match is required for this resource.",\n            status_code=428,\n            details={\n                "resource_id": binding.api.resource_id,\n                "reason": "generated_api_if_match_required",\n            },\n        )\n    value = raw.strip()\n    if (\n        not value\n        or value.startswith("W/")\n        or "," in value\n        or len(value) < 3\n        or value[0] != '"'\n        or value[-1] != '"'\n        or '"' in value[1:-1]\n    ):\n        raise RakitError(\n            code=ErrorCode.VALIDATION_FAILED,\n            message="If-Match must contain exactly one strong ETag.",\n            status_code=400,\n            details={\n                "resource_id": binding.api.resource_id,\n                "reason": "generated_api_if_match_invalid",\n            },\n        )\n    token = value[1:-1]\n    if not token:\n        raise RakitError(\n            code=ErrorCode.VALIDATION_FAILED,\n            message="If-Match must contain exactly one strong ETag.",\n            status_code=400,\n            details={\n                "resource_id": binding.api.resource_id,\n                "reason": "generated_api_if_match_invalid",\n            },\n        )\n    return token\n\n\n'''
+          assert marker in text
+          text = text.replace(marker, helper + marker, 1)
+
+          old = '''    headers = {"Cache-Control": "no-store"}\n    status_code = 200\n    if operation is GeneratedCrudOperation.CREATE:\n'''
+          new = '''    headers = {"Cache-Control": "no-store"}\n    headers.update(_etag_headers(binding, result.identity, result.record))\n    status_code = 200\n    if operation is GeneratedCrudOperation.CREATE:\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''            generated_request = GeneratedCrudRequest.update_partial(\n                identity,\n                generated_input,\n                concurrency_token=None,\n            )\n'''
+          new = '''            generated_request = GeneratedCrudRequest.update_partial(\n                identity,\n                generated_input,\n                concurrency_token=_if_match_token(binding, request),\n            )\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''            generated_request = GeneratedCrudRequest.delete(identity, concurrency_token=None)\n'''
+          new = '''            generated_request = GeneratedCrudRequest.delete(\n                identity,\n                concurrency_token=_if_match_token(binding, request),\n            )\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''            return _detail_response(binding, result)\n'''
+          new = '''            return _detail_response(binding, identity, result)\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+          uv run ruff format packages/rakit-web/src/rakit_web/generated_rest_runtime.py
+          uv run ruff check packages/rakit-web/src/rakit_web/generated_rest_runtime.py
+      - name: Commit concurrency patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/rakit-web/src/rakit_web/generated_rest_runtime.py
+          git commit -m "feat(web): add generated REST ETag preconditions"
+          git push origin HEAD:feat/first-generated-rest-mutations
