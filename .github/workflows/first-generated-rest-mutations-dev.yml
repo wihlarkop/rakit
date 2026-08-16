@@ -18,5 +18,7 @@ jobs:
           packages/rakit-core/tests/test_generated_rest_mutation_compilation.py
           packages/rakit-core/tests/test_generated_rest_concurrency_contract.py
           packages/rakit-web/tests/test_generated_rest_mutation_runtime.py
+          packages/rakit-web/tests/test_generated_rest_concurrency_runtime.py
           packages/rakit-sqlalchemy/tests/test_generated_resource_executor.py
+          packages/rakit-sqlalchemy/tests/test_generated_resource_plugin.py
           -q
