@@ -1,5 +1,3 @@
-from dataclasses import dataclass
-
 import pytest
 
 from rakit_core.capabilities import (
@@ -84,9 +82,8 @@ def test_duplicate_capability_requirement_id_is_rejected() -> None:
 
 
 def test_plugin_failure_rolls_back_capability_provider_registration() -> None:
-    @dataclass(frozen=True)
     class BrokenPlugin:
-        plugin_id: str = "broken"
+        plugin_id = "broken"
 
         def configure(self, builder: ApplicationBuilder) -> None:
             builder.register_capability_provider(_provider("broken.provider", "example.capability"))
