@@ -1,0 +1,62 @@
+name: First Generated REST Typing Fix
+
+on:
+  push:
+    branches: [feat/first-generated-rest-mutations]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: "${{ github.event.head_commit.message == 'ci: apply final generated REST typing fix' }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/first-generated-rest-mutations
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages --dev --locked
+      - name: Narrow replay response body bytes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('packages/rakit-web/src/rakit_web/generated_rest_runtime.py')
+          text = path.read_text()
+          old = '        raw_body = response.body.decode("utf-8")\n'
+          new = '        raw_body = bytes(response.body).decode("utf-8")\n'
+          assert old in text
+          path.write_text(text.replace(old, new, 1))
+          PY
+          uv run ruff format \
+            packages/rakit-core/src/rakit_core/generated_operations.py \
+            packages/rakit-core/tests/test_generated_rest_concurrency_contract.py \
+            packages/rakit-sqlalchemy/src/rakit_sqlalchemy/generated.py \
+            packages/rakit-web/src/rakit_web/generated_rest_runtime.py \
+            packages/rakit-web/tests/test_generated_rest_admin_runtime.py \
+            packages/rakit-web/tests/test_generated_rest_concurrency_runtime.py \
+            packages/rakit-web/tests/test_generated_rest_mutation_runtime.py
+          uv run ruff check \
+            packages/rakit-core/src/rakit_core/generated_operations.py \
+            packages/rakit-core/tests/test_generated_rest_concurrency_contract.py \
+            packages/rakit-sqlalchemy/src/rakit_sqlalchemy/generated.py \
+            packages/rakit-web/src/rakit_web/generated_rest_runtime.py \
+            packages/rakit-web/tests/test_generated_rest_admin_runtime.py \
+            packages/rakit-web/tests/test_generated_rest_concurrency_runtime.py \
+            packages/rakit-web/tests/test_generated_rest_mutation_runtime.py
+      - name: Commit typing fixes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            packages/rakit-core/src/rakit_core/generated_operations.py \
+            packages/rakit-core/tests/test_generated_rest_concurrency_contract.py \
+            packages/rakit-sqlalchemy/src/rakit_sqlalchemy/generated.py \
+            packages/rakit-web/src/rakit_web/generated_rest_runtime.py \
+            packages/rakit-web/tests/test_generated_rest_admin_runtime.py \
+            packages/rakit-web/tests/test_generated_rest_concurrency_runtime.py \
+            packages/rakit-web/tests/test_generated_rest_mutation_runtime.py
+          git commit -m "refactor: tighten generated REST mutation typing"
+          git push origin HEAD:feat/first-generated-rest-mutations
