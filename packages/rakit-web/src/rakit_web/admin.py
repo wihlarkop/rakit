@@ -41,6 +41,7 @@ from rakit_core.relationship_mutations import (
     UpdateRelated,
 )
 from rakit_core.resources import ResourceService
+from rakit_core.schema import SchemaAdapter
 from rakit_core.transactions import OperationUnitOfWorkFactory, TransactionPolicy
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -57,6 +58,7 @@ from .action_routes import (
 from .assets import static_files
 from .auth_routes import _verify_csrf, build_auth_routes
 from .bulk_admin import build_admin_bulk_action_routes
+from .capabilities import STARLETTE_WEB_CAPABILITIES
 from .form_routes import WriteResourceBinding, build_write_routes
 from .lifecycle import LifecycleManager
 from .logging import bind_request_context, configure_logging, reset_request_context
@@ -69,6 +71,7 @@ from .page_admin import (
 from .public_composition import resource_actions, resource_relationships
 from .relationship_routes import build_relationship_routes
 from .resource_routes import ResourceBinding, build_resource_routes, build_templates
+from .schema import PYDANTIC_SCHEMA_CAPABILITIES, PydanticSchemaAdapter
 from .security.authentication import (
     LOGIN_PATH,
     LOGOUT_PATH,
@@ -234,6 +237,12 @@ class Admin:
             auth_enabled=auth_backend is not None,
         )
         self._builder = ApplicationBuilder(admin_id=admin_id)
+        self._builder.register_capability_provider(STARLETTE_WEB_CAPABILITIES)
+        self._builder.register_capability_provider(PYDANTIC_SCHEMA_CAPABILITIES)
+        schema_adapter: SchemaAdapter = PydanticSchemaAdapter()
+        self._builder.registry.add_value(
+            SchemaAdapter, schema_adapter, scope=ServiceScope.APPLICATION
+        )
         self._operation_idempotency_store = operation_idempotency_store
         self._advanced_action_response_adapter = advanced_action_response_adapter
         self._concurrency_providers: dict[str, ConcurrencyVersionProvider] = {}

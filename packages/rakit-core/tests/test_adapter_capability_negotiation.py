@@ -1,5 +1,4 @@
 import pytest
-
 from rakit_core.capabilities import (
     CapabilityProvider,
     CapabilityRequirement,
@@ -25,9 +24,9 @@ def test_compilation_records_satisfied_capability_requirements() -> None:
     assert tuple(provider.provider_id for provider in compiled.capability_providers) == (
         "schema.example",
     )
-    assert tuple(requirement.requirement_id for requirement in compiled.capability_requirements) == (
-        "generated-api.input",
-    )
+    assert tuple(
+        requirement.requirement_id for requirement in compiled.capability_requirements
+    ) == ("generated-api.input",)
     assert len(compiled.capability_reports) == 1
     assert compiled.capability_reports[0].satisfied is True
 

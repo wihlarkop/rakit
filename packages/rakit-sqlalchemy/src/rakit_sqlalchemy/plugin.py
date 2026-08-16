@@ -7,6 +7,7 @@ from rakit_core.transactions import OperationUnitOfWorkFactory
 from sqlalchemy.exc import NoInspectionAvailable
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from .capabilities import SQLALCHEMY_CAPABILITIES
 from .datasource import SQLAlchemyDataSource
 from .introspection import UnsupportedFieldPolicyError, UnsupportedIdentityError, inspect_model
 from .uow import SQLAlchemyOperationUnitOfWorkFactory
@@ -19,6 +20,7 @@ class SQLAlchemyPlugin:
         self._session_factory = session_factory
 
     def configure(self, builder: ApplicationBuilder) -> None:
+        builder.register_capability_provider(SQLALCHEMY_CAPABILITIES)
         builder.registry.add_value(
             async_sessionmaker, self._session_factory, scope=ServiceScope.APPLICATION
         )

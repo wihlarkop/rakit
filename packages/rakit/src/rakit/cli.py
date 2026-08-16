@@ -5,6 +5,7 @@ from typing import Any, Protocol, cast
 import click
 from rakit_core.compiler import CompiledApplication
 from rakit_core.di import ServiceRegistry
+from rakit_core.errors import RakitError
 
 from ._optional import optional_import
 from ._server import run as run_server
@@ -66,13 +67,54 @@ def cli() -> None:
     pass
 
 
+def _capability_diagnostics(compiled: CompiledApplication) -> None:
+    providers = sorted(compiled.capability_providers, key=lambda item: item.provider_id)
+    if providers:
+        click.echo("Capability providers:")
+        for provider in providers:
+            names = ", ".join(provider.capabilities.names) or "none"
+            click.echo(f"  {provider.provider_id}: {names}")
+    else:
+        click.echo("Capability providers: none")
+
+    reports = {report.requirement.requirement_id: report for report in compiled.capability_reports}
+    requirements = sorted(compiled.capability_requirements, key=lambda item: item.requirement_id)
+    if requirements:
+        click.echo("Capability requirements:")
+        for requirement in requirements:
+            report = reports.get(requirement.requirement_id)
+            status = "satisfied" if report is not None and report.satisfied else "missing"
+            click.echo(f"  {requirement.requirement_id}: {status}")
+    else:
+        click.echo("Capability requirements: none")
+
+
 @cli.command()
 @click.argument("target")
 def check(target: str) -> None:
-    compiled = load_object(target).compile()
+    try:
+        compiled = load_object(target).compile()
+    except RakitError as exc:
+        if exc.details.get("reason") != "missing_capabilities":
+            raise
+        click.echo("Rakit configuration is invalid.")
+        click.echo(f"Capability requirement: {exc.details.get('requirement', 'unknown')}")
+        click.echo(
+            "Missing capabilities: "
+            + ", ".join(str(item) for item in exc.details.get("missing", []))
+        )
+        click.echo(
+            "Available capabilities: "
+            + ", ".join(str(item) for item in exc.details.get("available", []))
+        )
+        click.echo(
+            "Providers: " + ", ".join(str(item) for item in exc.details.get("providers", []))
+        )
+        raise click.ClickException("Required adapter capabilities are not available.") from None
     click.echo("Rakit configuration is valid.")
     click.echo(f"Routes: {len(compiled.routes)}")
     click.echo(f"Plugins: {len(compiled.plugins)}")
+    _capability_diagnostics(compiled)
 
 
 @cli.command()

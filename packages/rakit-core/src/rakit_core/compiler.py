@@ -4,6 +4,12 @@ from typing import Protocol
 
 from .actions import ActionDefinition, ActionScope
 from .bulk import BulkExecutionPolicy
+from .capabilities import (
+    CapabilityProvider,
+    CapabilityReport,
+    CapabilityRequirement,
+    require_capabilities,
+)
 from .compatibility import validate_official_package_versions
 from .datasource import DataSource
 from .definitions import (
@@ -167,6 +173,8 @@ class ApplicationBuilder:
     _plugin_conflicts: dict[str, tuple[str, ...]] = field(default_factory=dict)
     _adapters: dict[str, AdapterClaim] = field(default_factory=dict)
     _resource_data_sources: dict[str, DataSource] = field(default_factory=dict)
+    _capability_providers: dict[str, CapabilityProvider] = field(default_factory=dict)
+    _capability_requirements: dict[str, CapabilityRequirement] = field(default_factory=dict)
     _compiled: bool = field(default=False, init=False)
     _install_depth: int = field(default=0, init=False)
 
@@ -197,6 +205,14 @@ class ApplicationBuilder:
     @property
     def registry(self) -> ServiceRegistry:
         return self._registry
+
+    @property
+    def capability_providers(self) -> tuple[CapabilityProvider, ...]:
+        return tuple(self._capability_providers.values())
+
+    @property
+    def capability_requirements(self) -> tuple[CapabilityRequirement, ...]:
+        return tuple(self._capability_requirements.values())
 
     def _check_not_compiled(self) -> None:
         if self._compiled:
@@ -254,6 +270,36 @@ class ApplicationBuilder:
                 details={"adapter": name},
             )
         self._adapters[name] = claim
+
+    def register_capability_provider(self, provider: CapabilityProvider) -> None:
+        self._check_not_compiled()
+        if provider.provider_id in self._capability_providers:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message=f'Capability provider "{provider.provider_id}" is already registered.',
+                status_code=500,
+                details={
+                    "provider": provider.provider_id,
+                    "reason": "duplicate_capability_provider",
+                },
+            )
+        self._capability_providers[provider.provider_id] = provider
+
+    def require_capabilities(self, requirement: CapabilityRequirement) -> None:
+        self._check_not_compiled()
+        if requirement.requirement_id in self._capability_requirements:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message=(
+                    f'Capability requirement "{requirement.requirement_id}" is already registered.'
+                ),
+                status_code=500,
+                details={
+                    "requirement": requirement.requirement_id,
+                    "reason": "duplicate_capability_requirement",
+                },
+            )
+        self._capability_requirements[requirement.requirement_id] = requirement
 
     def install(self, plugin: Plugin) -> None:
         self._check_not_compiled()
@@ -337,6 +383,8 @@ class _InstallSnapshot:
     plugin_conflicts: dict[str, tuple[str, ...]]
     adapters: dict[str, AdapterClaim]
     resource_data_sources: dict[str, DataSource]
+    capability_providers: dict[str, CapabilityProvider]
+    capability_requirements: dict[str, CapabilityRequirement]
     compiled: bool
     registry: _RegistrySnapshot
 
@@ -352,6 +400,8 @@ class _InstallSnapshot:
             plugin_conflicts=dict(builder._plugin_conflicts),
             adapters=dict(builder._adapters),
             resource_data_sources=dict(builder._resource_data_sources),
+            capability_providers=dict(builder._capability_providers),
+            capability_requirements=dict(builder._capability_requirements),
             compiled=builder._compiled,
             registry=builder.registry._snapshot(),
         )
@@ -369,6 +419,10 @@ class _InstallSnapshot:
         builder._adapters.update(self.adapters)
         builder._resource_data_sources.clear()
         builder._resource_data_sources.update(self.resource_data_sources)
+        builder._capability_providers.clear()
+        builder._capability_providers.update(self.capability_providers)
+        builder._capability_requirements.clear()
+        builder._capability_requirements.update(self.capability_requirements)
         builder._compiled = self.compiled
         builder.registry._restore(self.registry)
 
@@ -386,6 +440,9 @@ class CompiledApplication:
     compiled_actions: tuple[CompiledActionDefinition, ...] = ()
     compiled_endpoints: tuple[CompiledEndpointDefinition, ...] = ()
     action_routes: tuple[tuple[RouteDefinition, CompiledActionDefinition], ...] = ()
+    capability_providers: tuple[CapabilityProvider, ...] = ()
+    capability_requirements: tuple[CapabilityRequirement, ...] = ()
+    capability_reports: tuple[CapabilityReport, ...] = ()
 
 
 def _invalid_datasource(resource_id: str, reason: str) -> RakitError:
@@ -870,6 +927,11 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
                 (route.path, route.route_name, route.owner_id)
             )
 
+    capability_reports = tuple(
+        require_capabilities(requirement, builder.capability_providers)
+        for requirement in builder.capability_requirements
+    )
+
     builder._mark_compiled()
     return CompiledApplication(
         all_routes,
@@ -883,4 +945,7 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
         compiled_actions,
         compiled_endpoints,
         _action_route_pairs(all_routes, compiled_actions),
+        capability_providers=builder.capability_providers,
+        capability_requirements=builder.capability_requirements,
+        capability_reports=capability_reports,
     )
