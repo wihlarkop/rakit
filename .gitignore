@@ -65,6 +65,7 @@ MANIFEST
 # Test, lint, typing, and coverage caches
 # -----------------------------------------------------------------------------
 .pytest_cache/
+.pytest-tmp/
 .ruff_cache/
 .mypy_cache/
 .pyright/
