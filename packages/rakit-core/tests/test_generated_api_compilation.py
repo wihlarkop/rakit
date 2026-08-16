@@ -5,13 +5,23 @@ from rakit_core.compiler import ApplicationBuilder, compile_application
 from rakit_core.datasource import DataSourceCapabilities
 from rakit_core.definitions import ResourceDefinition, ResourceFieldPolicy
 from rakit_core.errors import RakitError
+from rakit_core.fields import FieldDefinition
 from rakit_core.generated_api import ApiExposure, GeneratedCrudOperation, ResourceApiDefinition
 from rakit_core.query import PageResult
+
+
+FIELD_DEFINITIONS = (
+    FieldDefinition("id", int, readable=True, writable=False),
+    FieldDefinition("email", str, required=True, nullable=False),
+    FieldDefinition("status", str, required=False, nullable=False),
+    FieldDefinition("created_at", str, readable=True, writable=False),
+)
 
 
 class FakeDataSource:
     fields = ("id", "email", "status", "created_at")
     identity_fields = ("id",)
+    field_definitions = FIELD_DEFINITIONS
 
     def __init__(self, capabilities: DataSourceCapabilities) -> None:
         self.capabilities = capabilities
@@ -24,6 +34,10 @@ class FakeDataSource:
 
     async def detail(self, identity):
         return None
+
+
+class MetadataLessDataSource(FakeDataSource):
+    field_definitions = None
 
 
 def _resource(api: ResourceApiDefinition) -> ResourceDefinition:
@@ -52,7 +66,7 @@ def test_none_exposure_compiles_no_generated_api_projection() -> None:
     assert compiled.compiled_resource_apis == ()
 
 
-def test_read_only_projection_compiles_without_write_capabilities() -> None:
+def test_read_only_projection_compiles_without_write_capabilities_or_field_metadata() -> None:
     builder = ApplicationBuilder()
     builder.add_resource(
         _resource(
@@ -61,7 +75,7 @@ def test_read_only_projection_compiles_without_write_capabilities() -> None:
                 read_fields=("id", "email", "status"),
             )
         ),
-        FakeDataSource(DataSourceCapabilities(read=True)),
+        MetadataLessDataSource(DataSourceCapabilities(read=True)),
     )
 
     compiled = compile_application(builder)
@@ -75,6 +89,7 @@ def test_read_only_projection_compiles_without_write_capabilities() -> None:
     assert api.read_fields == ("id", "email", "status")
     assert api.create_fields == ()
     assert api.update_fields == ()
+    assert api.field_definitions == ()
 
 
 def test_crud_projection_requires_create_update_delete_and_transactions() -> None:
@@ -97,6 +112,37 @@ def test_crud_projection_requires_create_update_delete_and_transactions() -> Non
     assert captured.value.details == {
         "resource_id": "users",
         "reason": "generated_api_transactions_not_supported",
+    }
+
+
+def test_crud_projection_requires_neutral_field_metadata() -> None:
+    builder = ApplicationBuilder()
+    builder.add_resource(
+        _resource(
+            ResourceApiDefinition(
+                exposure=ApiExposure.CRUD,
+                read_fields=("id", "email"),
+                create_fields=("email",),
+                update_fields=("email", "status"),
+            )
+        ),
+        MetadataLessDataSource(
+            DataSourceCapabilities(
+                read=True,
+                create=True,
+                update=True,
+                delete=True,
+                transactions=True,
+            )
+        ),
+    )
+
+    with pytest.raises(RakitError) as captured:
+        compile_application(builder)
+
+    assert captured.value.details == {
+        "resource_id": "users",
+        "reason": "generated_api_field_metadata_not_supported",
     }
 
 
@@ -140,6 +186,33 @@ def test_crud_projection_rejects_identity_and_unknown_mutation_fields() -> None:
     with pytest.raises(RakitError) as unknown_error:
         compile_application(unknown_builder)
     assert unknown_error.value.details["reason"] == "generated_api_unknown_field"
+
+
+def test_compiled_crud_snapshots_neutral_field_metadata() -> None:
+    builder = ApplicationBuilder()
+    builder.add_resource(
+        _resource(
+            ResourceApiDefinition(
+                exposure=ApiExposure.CRUD,
+                read_fields=("id", "email"),
+                create_fields=("email",),
+                update_fields=("email", "status"),
+            )
+        ),
+        FakeDataSource(
+            DataSourceCapabilities(
+                read=True,
+                create=True,
+                update=True,
+                delete=True,
+                transactions=True,
+            )
+        ),
+    )
+
+    compiled = compile_application(builder)
+
+    assert compiled.compiled_resource_apis[0].field_definitions == FIELD_DEFINITIONS
 
 
 def test_custom_input_schema_requires_schema_validation_capability() -> None:
