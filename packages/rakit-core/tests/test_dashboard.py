@@ -1,5 +1,5 @@
-import pytest
 from pydantic import ValidationError
+import pytest
 
 from rakit_core.dashboard import (
     DashboardDefinition,
