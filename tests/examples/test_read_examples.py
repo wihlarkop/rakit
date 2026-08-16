@@ -1099,6 +1099,14 @@ def test_all_packages_builds_exactly_the_ten_official_distributions(
     with zipfile.ZipFile(rakit_wheel) as archive:
         assert "rakit/py.typed" in archive.namelist()
 
+    rakit_core_wheel = next(output.glob("rakit_core-*.whl"))
+    with zipfile.ZipFile(rakit_core_wheel) as archive:
+        names = archive.namelist()
+        assert "rakit_core/generated_api.py" in names
+        assert "rakit_core/generated_input.py" in names
+        assert "rakit_core/generated_operations.py" in names
+        assert "rakit_core/generated_query.py" in names
+
     auth_sqlalchemy_wheel = next(output.glob("rakit_auth_sqlalchemy-*.whl"))
     with zipfile.ZipFile(auth_sqlalchemy_wheel) as archive:
         names = archive.namelist()
@@ -1126,7 +1134,7 @@ def test_all_packages_builds_exactly_the_ten_official_distributions(
             str(installed_python),
             "--find-links",
             str(output),
-            str(rakit_wheel),
+            *(str(wheel) for wheel in sorted(output.glob("*.whl"))),
         ],
         check=True,
         capture_output=True,
