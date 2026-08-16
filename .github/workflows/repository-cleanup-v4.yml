@@ -25,7 +25,7 @@ jobs:
           uv run python .github/fix_remaining_plan_markers.py
 
       - name: Format changed Python files
-        run: uv run ruff format .
+        run: uv run ruff format packages tests
 
       - name: Verify internal planning docs are absent
         shell: bash
@@ -55,6 +55,14 @@ jobs:
             exit 1
           fi
 
+      - name: Remove temporary cleanup scripts before quality gates
+        shell: bash
+        run: |
+          rm -f \
+            .github/cleanup_public_repo.py \
+            .github/fix_cleanup_gitignore.py \
+            .github/fix_remaining_plan_markers.py
+
       - name: Ruff format check
         run: uv run ruff format --check .
       - name: Ruff lint
@@ -69,17 +77,14 @@ jobs:
       - name: Diff check
         run: git diff --check
 
-      - name: Commit cleanup and remove temporary helpers
+      - name: Commit cleanup and remove temporary workflows
         shell: bash
         run: |
           git rm -f \
             .github/workflows/repository-cleanup.yml \
             .github/workflows/repository-cleanup-v2.yml \
             .github/workflows/repository-cleanup-v3.yml \
-            .github/workflows/repository-cleanup-v4.yml \
-            .github/cleanup_public_repo.py \
-            .github/fix_cleanup_gitignore.py \
-            .github/fix_remaining_plan_markers.py
+            .github/workflows/repository-cleanup-v4.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
