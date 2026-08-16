@@ -48,9 +48,11 @@ class Executor:
 
     def __init__(self) -> None:
         self.calls: list[GeneratedCrudRequest] = []
+        self.operation_ids: list[str] = []
 
     async def execute(self, context, request: GeneratedCrudRequest):
         self.calls.append(request)
+        self.operation_ids.append(context.operation_id)
         if request.operation.value == "create":
             assert request.input is not None
             return GeneratedMutationResult(
@@ -99,6 +101,7 @@ class MemoryIdempotencyStore:
     def __init__(self) -> None:
         self._next = 1
         self._entries: dict[str, tuple[str, IdempotencyReservation]] = {}
+        self.completed_receipts: list[OperationReceipt] = []
 
     async def begin(self, token_hash: str, *, fingerprint: str) -> IdempotencyReservation:
         existing = self._entries.get(token_hash)
@@ -124,6 +127,7 @@ class MemoryIdempotencyStore:
         return reservation
 
     async def complete(self, reservation, receipt: OperationReceipt) -> None:
+        self.completed_receipts.append(receipt)
         for key, (fingerprint, existing) in tuple(self._entries.items()):
             if existing.reservation_id == reservation.reservation_id:
                 self._entries[key] = (
@@ -180,9 +184,9 @@ def _definition() -> ResourceDefinition:
     )
 
 
-def _principal(*permissions: str) -> Principal:
+def _principal(*permissions: str, subject_id: str = "user-1") -> Principal:
     return Principal(
-        subject_id="user-1",
+        subject_id=subject_id,
         authenticated=True,
         permissions=frozenset(permissions),
     )
@@ -232,6 +236,16 @@ def _app(
     return StateMiddleware(app)
 
 
+def _all_permissions_principal(subject_id: str) -> Principal:
+    return _principal(
+        "admin.resources.users.read",
+        "admin.resources.users.create",
+        "admin.resources.users.update",
+        "admin.resources.users.delete",
+        subject_id=subject_id,
+    )
+
+
 @pytest.mark.anyio
 async def test_create_returns_201_location_and_replays_same_idempotency_key() -> None:
     executor = Executor()
@@ -250,6 +264,7 @@ async def test_create_returns_201_location_and_replays_same_idempotency_key() ->
     assert replay.json() == first.json()
     assert replay.headers["location"] == first.headers["location"]
     assert len(executor.calls) == 1
+    assert store.completed_receipts[0].operation_id == executor.operation_ids[0]
 
 
 @pytest.mark.anyio
@@ -267,6 +282,28 @@ async def test_same_idempotency_key_with_different_payload_returns_409() -> None
     assert conflict.status_code == 409
     assert conflict.json()["error"]["code"] == "resource.conflict"
     assert len(executor.calls) == 1
+
+
+@pytest.mark.anyio
+async def test_idempotency_key_is_isolated_between_authenticated_principals() -> None:
+    executor = Executor()
+    store = MemoryIdempotencyStore()
+    headers = {"Idempotency-Key": "shared-key"}
+    first_transport = httpx.ASGITransport(
+        app=_app(executor, store, principal=_all_permissions_principal("user-a"))
+    )
+    second_transport = httpx.ASGITransport(
+        app=_app(executor, store, principal=_all_permissions_principal("user-b"))
+    )
+
+    async with httpx.AsyncClient(transport=first_transport, base_url="http://localhost") as client:
+        first = await client.post("/api/users", json={"email": "same@example.com"}, headers=headers)
+    async with httpx.AsyncClient(transport=second_transport, base_url="http://localhost") as client:
+        second = await client.post("/api/users", json={"email": "same@example.com"}, headers=headers)
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert len(executor.calls) == 2
 
 
 @pytest.mark.anyio
@@ -290,6 +327,25 @@ async def test_patch_and_delete_use_exact_permissions_and_status_contract() -> N
     assert patched.json() == {"data": {"id": 7, "email": "next@example.com"}}
     assert deleted.status_code == 204
     assert deleted.content == b""
+
+
+@pytest.mark.anyio
+async def test_empty_patch_is_rejected_before_executor_runs() -> None:
+    executor = Executor()
+    store = MemoryIdempotencyStore()
+    transport = httpx.ASGITransport(app=_app(executor, store))
+    identity = IdentityCodec().encode(RecordIdentity(values={"id": 7}))
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+        response = await client.patch(
+            f"/api/users/{identity}",
+            json={},
+            headers={"Idempotency-Key": "patch-empty"},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["details"]["reason"] == "generated_api_patch_empty"
+    assert executor.calls == []
 
 
 @pytest.mark.anyio
