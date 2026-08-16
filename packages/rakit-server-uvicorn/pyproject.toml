@@ -7,14 +7,15 @@ name = "rakit-server-uvicorn"
 version = "0.1.0a1"
 requires-python = ">=3.12"
 dependencies = [
-    "rakit-web==0.1.0a1",
-    "rakit-core==0.1.0a1",
+    "rakit-server==0.1.0a1",
     "uvicorn>=0.51.0",
 ]
 
+[project.entry-points."rakit.servers"]
+uvicorn = "rakit_server_uvicorn:UvicornServer"
+
 [tool.uv.sources]
-rakit-web = { workspace = true }
-rakit-core = { workspace = true }
+rakit-server = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/rakit_server_uvicorn"]
