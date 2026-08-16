@@ -19,7 +19,9 @@ jobs:
       - run: uv sync --all-packages --dev --locked
 
       - name: Apply public repository cleanup
-        run: uv run python .github/cleanup_public_repo.py
+        run: |
+          uv run python .github/cleanup_public_repo.py
+          uv run python .github/fix_cleanup_gitignore.py
 
       - name: Format changed Python files
         run: uv run ruff format .
@@ -74,7 +76,8 @@ jobs:
             .github/workflows/repository-cleanup-v2.yml \
             .github/workflows/repository-cleanup-v3.yml \
             .github/workflows/repository-cleanup-v4.yml \
-            .github/cleanup_public_repo.py
+            .github/cleanup_public_repo.py \
+            .github/fix_cleanup_gitignore.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
