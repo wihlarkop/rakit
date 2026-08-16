@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   patch:
-    if: "${{ github.event.head_commit.message == 'ci: retry post-commit idempotency hardening' }}"
+    if: "${{ github.event.head_commit.message == 'ci: structurally harden post-commit idempotency' }}"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -26,24 +26,16 @@ jobs:
 
           runtime = Path('packages/rakit-web/src/rakit_web/generated_rest_runtime.py')
           text = runtime.read_text()
-          old = '''    reservation: IdempotencyReservation | None = None\n    try:\n'''
-          new = '''    reservation: IdempotencyReservation | None = None\n    releasable_reservation: IdempotencyReservation | None = None\n    try:\n'''
-          assert old in text
-          text = text.replace(old, new, 1)
-
-          old = '''        reservation, replay = await _claim_mutation(\n            binding,\n            key,\n            fingerprint,\n            principal_id=authorization.principal_id,\n            operation=operation,\n        )\n        if replay is not None:\n            return replay\n        result, operation_id = await _run_mutation(\n'''
-          new = '''        reservation, replay = await _claim_mutation(\n            binding,\n            key,\n            fingerprint,\n            principal_id=authorization.principal_id,\n            operation=operation,\n        )\n        if replay is not None:\n            return replay\n        releasable_reservation = reservation\n        result, operation_id = await _run_mutation(\n'''
-          assert old in text
-          text = text.replace(old, new, 1)
 
           old = '''        result, operation_id = await _run_mutation(\n            binding,\n            request,\n            generated_request,\n            authorization,\n            idempotency_fingerprint=fingerprint,\n        )\n        response = _mutation_response(binding, request, operation, result)\n'''
-          new = '''        result, operation_id = await _run_mutation(\n            binding,\n            request,\n            generated_request,\n            authorization,\n            idempotency_fingerprint=fingerprint,\n        )\n        # `IdempotencyStore.release()` is only valid before commit. Once the\n        # canonical operation returns, the root UoW has committed, so a later\n        # response/receipt failure must keep the durable claim closed to retry.\n        releasable_reservation = None\n        response = _mutation_response(binding, request, operation, result)\n'''
+          new = '''        try:\n            result, operation_id = await _run_mutation(\n                binding,\n                request,\n                generated_request,\n                authorization,\n                idempotency_fingerprint=fingerprint,\n            )\n        except (RakitError, Exception):\n            # `release()` is valid only before the root UoW commits.\n            # `_run_mutation()` returning means UoW teardown/commit completed.\n            if binding.idempotency_store is not None:\n                await binding.idempotency_store.release(reservation)\n            raise\n        response = _mutation_response(binding, request, operation, result)\n'''
           assert old in text
           text = text.replace(old, new, 1)
 
           old = '''    except RakitError as exc:\n        if reservation is not None and binding.idempotency_store is not None:\n            await binding.idempotency_store.release(reservation)\n        return generated_error_response(request, exc)\n    except Exception:\n        if reservation is not None and binding.idempotency_store is not None:\n            await binding.idempotency_store.release(reservation)\n        return _unexpected_error_response(request)\n'''
-          new = '''    except RakitError as exc:\n        if releasable_reservation is not None and binding.idempotency_store is not None:\n            await binding.idempotency_store.release(releasable_reservation)\n        return generated_error_response(request, exc)\n    except Exception:\n        if releasable_reservation is not None and binding.idempotency_store is not None:\n            await binding.idempotency_store.release(releasable_reservation)\n        return _unexpected_error_response(request)\n'''
+          new = '''    except RakitError as exc:\n        return generated_error_response(request, exc)\n    except Exception:\n        return _unexpected_error_response(request)\n'''
           assert old in text
+          text = text.replace(old, new, 1)
           runtime.write_text(text)
 
           tests = Path('packages/rakit-web/tests/test_generated_rest_mutation_runtime.py')
