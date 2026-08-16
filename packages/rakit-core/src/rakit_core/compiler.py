@@ -42,6 +42,7 @@ OFFICIAL_PACKAGE_NAMES = (
     "rakit-auth-sqlalchemy",
     "rakit-storage",
     "rakit-storage-local",
+    "rakit-server-granian",
     "rakit-server-uvicorn",
 )
 

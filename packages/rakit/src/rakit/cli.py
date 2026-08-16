@@ -7,6 +7,7 @@ from rakit_core.compiler import CompiledApplication
 from rakit_core.di import ServiceRegistry
 
 from ._optional import optional_import
+from ._server import run as run_server
 
 
 class Compilable(Protocol):
@@ -79,6 +80,35 @@ def check(target: str) -> None:
 def routes(target: str) -> None:
     for route in load_object(target).compile().routes:
         click.echo(f"{','.join(route.methods):8} {route.path:30} {route.route_name}")
+
+
+@cli.command("run")
+@click.argument("target")
+@click.option("--server", "server_name", default="uvicorn", show_default=True)
+@click.option("--host", default="127.0.0.1", show_default=True)
+@click.option("--port", type=click.IntRange(1, 65535), default=8000, show_default=True)
+@click.option("--workers", type=click.IntRange(min=1), default=1, show_default=True)
+@click.option("--reload", is_flag=True, default=False)
+@click.option("--log-level", default=None)
+def run_command(
+    target: str,
+    server_name: str,
+    host: str,
+    port: int,
+    workers: int,
+    reload: bool,
+    log_level: str | None,
+) -> None:
+    """Serve TARGET through an installed Rakit server adapter."""
+    run_server(
+        target,
+        server=server_name,
+        host=host,
+        port=port,
+        workers=workers,
+        reload=reload,
+        log_level=log_level,
+    )
 
 
 @cli.command()

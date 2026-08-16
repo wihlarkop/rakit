@@ -9,7 +9,13 @@ from .errors import (
 )
 from .registry import SERVER_ENTRY_POINT_GROUP, ServerRegistry
 from .runtime import run
-from .targets import ASGIApplication, ServerTarget, ServerTargetKind, resolve_server_target
+from .targets import (
+    ASGIApplication,
+    ServerTarget,
+    ServerTargetKind,
+    load_application,
+    resolve_server_target,
+)
 
 __version__ = "0.1.0a1"
 
@@ -28,6 +34,7 @@ __all__ = [
     "ServerTarget",
     "ServerTargetKind",
     "__version__",
+    "load_application",
     "resolve_server_target",
     "run",
 ]

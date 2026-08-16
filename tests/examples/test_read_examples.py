@@ -1064,7 +1064,7 @@ def test_cli_check_and_routes_accept_both_examples() -> None:
         assert ":detail" in routes.stdout
 
 
-def test_all_packages_builds_exactly_the_nine_official_distributions(
+def test_all_packages_builds_exactly_the_ten_official_distributions(
     tmp_path: Path,
 ) -> None:
     output = tmp_path / "all-distributions"
@@ -1081,6 +1081,7 @@ def test_all_packages_builds_exactly_the_nine_official_distributions(
         "rakit_auth_sqlalchemy",
         "rakit_core",
         "rakit_server",
+        "rakit_server_granian",
         "rakit_server_uvicorn",
         "rakit_sqlalchemy",
         "rakit_storage",

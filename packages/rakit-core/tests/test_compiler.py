@@ -178,6 +178,7 @@ def test_package_version_mismatch_propagates(monkeypatch: pytest.MonkeyPatch) ->
         "rakit-auth-sqlalchemy": "0.1.0a1",
         "rakit-storage": "0.1.0a1",
         "rakit-storage-local": "0.1.0a1",
+        "rakit-server-granian": "0.1.0a1",
         "rakit-server-uvicorn": "0.1.0a1",
     }
     monkeypatch.setattr(

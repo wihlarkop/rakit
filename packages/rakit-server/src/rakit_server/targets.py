@@ -1,3 +1,4 @@
+import importlib
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, cast
@@ -72,3 +73,20 @@ def resolve_server_target(target: object) -> ServerTarget:
         "Server target must be a module:attribute import string, an object exposing asgi(), "
         "or a raw ASGI callable"
     )
+
+
+def load_application(spec: str) -> ASGIApplication:
+    """Import a target and resolve it to an ASGI callable inside the active process."""
+    validated = _validate_import_string(spec)
+    module_name, attribute = validated.split(":", 1)
+    try:
+        value = getattr(importlib.import_module(module_name), attribute)
+    except (ImportError, AttributeError) as exc:
+        raise InvalidServerTargetError(f'Unable to import server target "{validated}"') from exc
+
+    resolved = resolve_server_target(value)
+    if resolved.kind is not ServerTargetKind.APPLICATION or resolved.application is None:
+        raise InvalidServerTargetError(
+            f'Imported server target "{validated}" did not resolve to an ASGI callable'
+        )
+    return resolved.application

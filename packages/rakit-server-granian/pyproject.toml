@@ -3,19 +3,19 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "rakit-server-uvicorn"
+name = "rakit-server-granian"
 version = "0.1.0a1"
 requires-python = ">=3.12"
 dependencies = [
+    "granian[reload]>=2.7.5",
     "rakit-server==0.1.0a1",
-    "uvicorn>=0.51.0",
 ]
 
 [project.entry-points."rakit.servers"]
-uvicorn = "rakit_server_uvicorn:UvicornServer"
+granian = "rakit_server_granian:GranianServer"
 
 [tool.uv.sources]
 rakit-server = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/rakit_server_uvicorn"]
+packages = ["src/rakit_server_granian"]
