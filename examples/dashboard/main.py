@@ -1,15 +1,11 @@
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from rakit import (
     Admin,
     DashboardDefinition,
-    DomainPageHandler,
     ListWidgetItem,
     ListWidgetResult,
-    PageDefinition,
-    PageResult,
     ResourceAdmin,
     StatWidgetResult,
     TableWidgetResult,
@@ -70,6 +66,51 @@ _CUSTOMERS: tuple[dict[str, object], ...] = (
         "name": "Juniper Works",
         "plan": "Team",
         "status": "Review",
+    },
+)
+
+_ACTIVITY: tuple[dict[str, object], ...] = (
+    {
+        "id": "EVT-401",
+        "time": "09:42",
+        "event": "Order ORD-1041 approved",
+        "actor": "Maya Chen",
+    },
+    {
+        "id": "EVT-400",
+        "time": "09:18",
+        "event": "Customer CUS-204 moved to review",
+        "actor": "System",
+    },
+    {
+        "id": "EVT-399",
+        "time": "08:55",
+        "event": "Export batch completed",
+        "actor": "Worker 03",
+    },
+    {
+        "id": "EVT-398",
+        "time": "08:31",
+        "event": "Order ORD-1042 submitted for review",
+        "actor": "Owen Park",
+    },
+)
+
+_RUNBOOK: tuple[dict[str, object], ...] = (
+    {
+        "id": "RUN-01",
+        "topic": "Order review",
+        "guidance": "Review payment state before approving or escalating a pending order.",
+    },
+    {
+        "id": "RUN-02",
+        "topic": "Export queue",
+        "guidance": "Check failed exports before retrying and escalate repeated failures.",
+    },
+    {
+        "id": "RUN-03",
+        "topic": "Customer review",
+        "guidance": "Confirm account ownership and recent activity before clearing a review hold.",
     },
 )
 
@@ -178,65 +219,36 @@ class CustomersAdmin(ResourceAdmin):
     sort_fields = ("id", "name", "plan", "status")
 
 
-async def activity_page(_context):
-    return PageResult(
-        payload={
-            "events": (
-                ("09:42", "Order ORD-1041 approved", "Maya Chen"),
-                ("09:18", "Customer CUS-204 moved to review", "System"),
-                ("08:55", "Export batch completed", "Worker 03"),
-                ("08:31", "Order ORD-1042 submitted for review", "Owen Park"),
-            ),
-        },
-    )
+class ActivityAdmin(ResourceAdmin):
+    resource_id = "activity"
+    path = "/activity"
+    label = "Recent operational activity"
+    singular_label = "Activity event"
+    data_source = _MemoryDataSource(_ACTIVITY, ("id", "time", "event", "actor"))
+    list_fields = ("time", "event", "actor")
+    detail_fields = ("id", "time", "event", "actor")
+    filter_fields = ("actor",)
+    search_fields = ("event", "actor")
+    sort_fields = ("time", "actor")
 
 
-async def runbook_page(_context):
-    return PageResult(
-        payload={
-            "sections": (
-                (
-                    "Order review",
-                    "Review pending orders, verify payment state, then approve or escalate.",
-                ),
-                (
-                    "Export queue",
-                    "Check failed exports before retrying. Repeated failures should be escalated.",
-                ),
-                (
-                    "Customer review",
-                    "Confirm account ownership and recent activity before clearing a review hold.",
-                ),
-            ),
-        },
-    )
+class RunbookAdmin(ResourceAdmin):
+    resource_id = "runbook"
+    path = "/runbook"
+    label = "Operations runbook"
+    singular_label = "Runbook entry"
+    data_source = _MemoryDataSource(_RUNBOOK, ("id", "topic", "guidance"))
+    list_fields = ("topic", "guidance")
+    detail_fields = ("id", "topic", "guidance")
+    search_fields = ("topic", "guidance")
+    sort_fields = ("topic",)
 
 
-admin = Admin(
-    title="Operations",
-    debug=True,
-    template_dirs=(Path(__file__).parent / "templates",),
-)
+admin = Admin(title="Operations", debug=True)
 admin.register(OrdersAdmin)
 admin.register(CustomersAdmin)
-admin.register_page(
-    PageDefinition(
-        page_id="activity",
-        path="/activity",
-        label="Activity",
-        handler=DomainPageHandler(activity_page),
-        template="dashboard_example/activity.html",
-    )
-)
-admin.register_page(
-    PageDefinition(
-        page_id="runbook",
-        path="/runbook",
-        label="Runbook",
-        handler=DomainPageHandler(runbook_page),
-        template="dashboard_example/runbook.html",
-    )
-)
+admin.register(ActivityAdmin)
+admin.register(RunbookAdmin)
 
 
 async def pending_orders(_context):
