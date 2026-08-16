@@ -60,6 +60,11 @@ from .auth_routes import _verify_csrf, build_auth_routes
 from .bulk_admin import build_admin_bulk_action_routes
 from .capabilities import STARLETTE_WEB_CAPABILITIES
 from .form_routes import WriteResourceBinding, build_write_routes
+from .generated_rest_runtime import (
+    GeneratedRestBinding,
+    build_generated_rest_routes,
+    generated_rest_requirement_map,
+)
 from .lifecycle import LifecycleManager
 from .logging import bind_request_context, configure_logging, reset_request_context
 from .page_admin import (
@@ -767,6 +772,25 @@ class Admin:
             bindings[resource_id] = binding
             resource_routes.extend(build_resource_routes(binding))
 
+        generated_rest_routes: list[Route] = []
+        api_by_resource = {api.resource_id: api for api in self.compiled.compiled_resource_apis}
+        for resource_id, api in api_by_resource.items():
+            generated_rest_routes.extend(
+                build_generated_rest_routes(
+                    GeneratedRestBinding(
+                        api=api,
+                        definition=self._resource_definitions[resource_id],
+                        service=self._resource_services[resource_id],
+                        schema_adapter=self._schema_adapter,
+                        admin_id=self.config.admin_id,
+                        auth_enabled=(
+                            self._auth_backend is not None and self._session_store is not None
+                        ),
+                        superuser_bypass=self._superuser_bypass,
+                    )
+                )
+            )
+
         write_routes: list[Route] = []
         action_routes: list[Route] = []
         page_routes: list[Route] = []
@@ -919,6 +943,10 @@ class Admin:
             },
             writable_resources=frozenset(self._write_resource_bindings),
             action_requirements=exact_requirements,
+            generated_api_requirements=generated_rest_requirement_map(
+                self.compiled.compiled_resource_apis,
+                admin_id=self.config.admin_id,
+            ),
         )
         if self._session_store is not None and self.config.security.secret_key is not None:
             write_token_service = TokenService.single_key(
@@ -1227,6 +1255,8 @@ class Admin:
         for route in write_routes:
             app.routes.append(route)
         for route in resource_routes:
+            app.routes.append(route)
+        for route in generated_rest_routes:
             app.routes.append(route)
         for route in page_routes:
             app.routes.append(route)
