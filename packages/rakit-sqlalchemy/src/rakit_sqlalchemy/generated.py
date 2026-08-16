@@ -1,6 +1,6 @@
 from dataclasses import dataclass
-from typing import cast
 
+from rakit_core.concurrency import ConcurrencyTokenService, ConcurrencyVersionProvider
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.generated_api import GeneratedCrudOperation
 from rakit_core.generated_operations import (
@@ -12,6 +12,7 @@ from rakit_core.generated_runtime import (
     GeneratedResourceExecutorContext,
     GeneratedResourceExecutorProvider,
 )
+from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import ResourceCreated, ResourceDeleted, ResourceUpdated
 from rakit_core.operations import OperationContext, OperationExecutorCapabilities
 from sqlalchemy import delete as sa_delete
@@ -87,8 +88,8 @@ class SQLAlchemyGeneratedResourceExecutor:
     resource_id: str
     model: type[object]
     data_source: SQLAlchemyDataSource
-    concurrency_provider: object | None = None
-    concurrency_tokens: object | None = None
+    concurrency_provider: ConcurrencyVersionProvider | None = None
+    concurrency_tokens: ConcurrencyTokenService | None = None
 
     capabilities = OperationExecutorCapabilities(
         participates_in_uow=True,
@@ -144,7 +145,7 @@ class SQLAlchemyGeneratedResourceExecutor:
             context.events.publish(ResourceCreated(identity))
         return GeneratedMutationResult(identity=identity, record=record)
 
-    def _scoped_identity_subquery(self, identity):
+    def _scoped_identity_subquery(self, identity: RecordIdentity):
         identity_field = self.data_source.identity_fields[0]
         identity_column = getattr(self.model, identity_field)
         return (
@@ -154,7 +155,11 @@ class SQLAlchemyGeneratedResourceExecutor:
             .scalar_subquery()
         )
 
-    def _concurrency_values(self, current: object, request: GeneratedCrudRequest):
+    def _concurrency_values(
+        self,
+        current: object,
+        request: GeneratedCrudRequest,
+    ) -> tuple[dict[str, object], dict[str, object]]:
         provider = self.concurrency_provider
         tokens = self.concurrency_tokens
         if provider is None and tokens is None:
@@ -165,26 +170,23 @@ class SQLAlchemyGeneratedResourceExecutor:
                 "generated_api_sqlalchemy_concurrency_incomplete",
                 "Generated CRUD concurrency runtime is incomplete.",
             )
+        if request.identity is None:
+            raise _config_error(
+                self.resource_id,
+                "generated_api_sqlalchemy_concurrency_identity_required",
+                "Generated CRUD concurrency requires a record identity.",
+            )
         token = request.concurrency_token
         if token is None:
             raise _conflict(self.resource_id)
-        provider = cast("object", provider)
-        tokens = cast("object", tokens)
-        verify = getattr(tokens, "verify", None)
-        predicate_values_for = getattr(provider, "predicate_values_for", None)
-        next_values_for = getattr(provider, "next_values_for", None)
-        version_for = getattr(provider, "version_for", None)
-        if not all(
-            callable(item) for item in (verify, predicate_values_for, next_values_for, version_for)
-        ):
-            raise _config_error(
-                self.resource_id,
-                "generated_api_sqlalchemy_concurrency_invalid",
-                "Generated CRUD concurrency provider is invalid.",
-            )
-        verify(token, self.resource_id, request.identity, version_for(current))
-        predicate_values = dict(predicate_values_for(current))
-        next_values = dict(next_values_for(current))
+        tokens.verify(
+            token,
+            self.resource_id,
+            request.identity,
+            provider.version_for(current),
+        )
+        predicate_values = dict(provider.predicate_values_for(current))
+        next_values = dict(provider.next_values_for(current))
         return predicate_values, next_values
 
     async def _update(
@@ -225,7 +227,7 @@ class SQLAlchemyGeneratedResourceExecutor:
             .execution_options(synchronize_session=False)
         )
         result = await session.execute(statement)
-        if result.rowcount != 1:
+        if getattr(result, "rowcount", None) != 1:
             raise _conflict(self.resource_id)
         await session.refresh(current)
         if context.events is not None:
@@ -263,7 +265,7 @@ class SQLAlchemyGeneratedResourceExecutor:
             sa_delete(self.model).where(*predicates).execution_options(synchronize_session=False)
         )
         result = await session.execute(statement)
-        if result.rowcount != 1:
+        if getattr(result, "rowcount", None) != 1:
             raise _conflict(self.resource_id)
         if context.events is not None:
             context.events.publish(ResourceDeleted(request.identity))
