@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from .adapter_capabilities import SCHEMA_INPUT_VALIDATION
-from .capabilities import CapabilityProvider, CapabilityReport, CapabilityRequirement, require_capabilities
+from .capabilities import CapabilityRequirement
 from .datasource import DataSource
 from .definitions import ResourceDefinition
 from .errors import ErrorCode, RakitError
@@ -21,17 +21,14 @@ def _invalid_generated_api(resource_id: str, reason: str) -> RakitError:
 class GeneratedApiCompilation:
     resources: tuple[CompiledResourceApi, ...]
     requirements: tuple[CapabilityRequirement, ...]
-    reports: tuple[CapabilityReport, ...]
 
 
 def compile_generated_resource_apis(
     resources: tuple[ResourceDefinition, ...],
     data_sources: dict[str, DataSource],
-    providers: tuple[CapabilityProvider, ...],
 ) -> GeneratedApiCompilation:
     compiled: list[CompiledResourceApi] = []
     requirements: list[CapabilityRequirement] = []
-    reports: list[CapabilityReport] = []
 
     for resource in resources:
         api = resource.api
@@ -72,12 +69,12 @@ def compile_generated_resource_apis(
                 )
 
         if api.create_schema is not None or api.update_schema is not None:
-            requirement = CapabilityRequirement.of(
-                f"generated-api:{resource.resource_id}:schema-input",
-                SCHEMA_INPUT_VALIDATION,
+            requirements.append(
+                CapabilityRequirement.of(
+                    f"generated-api:{resource.resource_id}:schema-input",
+                    SCHEMA_INPUT_VALIDATION,
+                )
             )
-            requirements.append(requirement)
-            reports.append(require_capabilities(requirement, providers))
 
         compiled.append(
             CompiledResourceApi(
@@ -95,7 +92,6 @@ def compile_generated_resource_apis(
     return GeneratedApiCompilation(
         resources=tuple(compiled),
         requirements=tuple(requirements),
-        reports=tuple(reports),
     )
 
 
