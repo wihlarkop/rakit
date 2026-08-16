@@ -397,6 +397,7 @@ class Admin:
             singular_label=admin_cls.singular_label,
             field_policy=field_policy,
             relationships=relationships,
+            api=admin_cls.api,
         )
         self._builder.add_resource(definition, data_source)
         for action in actions:

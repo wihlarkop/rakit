@@ -23,6 +23,15 @@ from rakit_core.endpoints import (
     EndpointStreamResult,
 )
 from rakit_core.errors import RakitError
+from rakit_core.generated_api import (
+    ApiExposure,
+    ApiFilterDefinition,
+    GeneratedCrudOperation,
+    ResourceApiDefinition,
+)
+from rakit_core.generated_input import GeneratedInput
+from rakit_core.generated_operations import GeneratedCrudRequest, GeneratedResourceExecutor
+from rakit_core.generated_query import GeneratedFilterValue
 from rakit_core.pages import (
     DomainPageHandler,
     PageContext,
@@ -52,6 +61,8 @@ __all__ = [
     "ActionSuccess",
     "Admin",
     "AdminEndpoint",
+    "ApiExposure",
+    "ApiFilterDefinition",
     "BulkExecutionPolicy",
     "BulkPolicy",
     "DomainEndpointHandler",
@@ -66,6 +77,11 @@ __all__ = [
     "EndpointResponseKind",
     "EndpointResult",
     "EndpointStreamResult",
+    "GeneratedCrudOperation",
+    "GeneratedCrudRequest",
+    "GeneratedFilterValue",
+    "GeneratedInput",
+    "GeneratedResourceExecutor",
     "ModelAdmin",
     "PageContext",
     "PageDefinition",
@@ -82,6 +98,7 @@ __all__ = [
     "RelationshipEditMode",
     "RelationshipKind",
     "ResourceAdmin",
+    "ResourceApiDefinition",
     "SecretValue",
     "__version__",
     "run",

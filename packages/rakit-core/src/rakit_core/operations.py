@@ -68,6 +68,7 @@ class OperationKind(StrEnum):
     ENDPOINT = "endpoint"
     PAGE = "page"
     RELATIONSHIP = "relationship"
+    RESOURCE = "resource"
 
 
 @dataclass(frozen=True)

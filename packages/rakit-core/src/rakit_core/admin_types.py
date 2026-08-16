@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING
 
 from .datasource import DataSource
+from .generated_api import ResourceApiDefinition
 
 if TYPE_CHECKING:
     from .actions import ActionDefinition
@@ -11,9 +12,10 @@ class ResourceAdmin:
     """Declaration-style base class for registering a resource with `Admin`.
 
     Subclasses set class attributes only -- instances are never constructed.
-    Relationships and resource-owned actions declared here are copied into the
-    canonical core definitions during ``Admin.register``; the compiler remains
-    the single authority for ownership, permissions, routes, and collisions.
+    Relationships, actions, and generated API policy declared here are copied
+    into canonical core definitions during ``Admin.register``; the compiler
+    remains the single authority for ownership, permissions, compatibility,
+    and collisions.
     """
 
     resource_id: str
@@ -27,6 +29,7 @@ class ResourceAdmin:
     sort_fields: tuple[str, ...] = ()
     relationships: tuple["RelationshipDefinition", ...] = ()
     actions: tuple["ActionDefinition", ...] = ()
+    api: ResourceApiDefinition = ResourceApiDefinition()
     data_source: "DataSource | None" = None
 
 
