@@ -180,7 +180,26 @@ def validate_generated_input(
                     "fields": sorted(widened),
                 },
             )
-        values = dict(serialized_mapping)
+        dropped = submitted_fields.difference(serialized_mapping)
+        if dropped:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="Generated API schema dropped submitted input fields.",
+                status_code=500,
+                details={
+                    "resource_id": api.resource_id,
+                    "operation": operation.value,
+                    "reason": "generated_api_schema_dropped_input_fields",
+                    "fields": sorted(dropped),
+                },
+            )
+        if operation is GeneratedCrudOperation.UPDATE_PARTIAL:
+            values = {
+                field_name: serialized_mapping[field_name]
+                for field_name in submitted_fields
+            }
+        else:
+            values = dict(serialized_mapping)
     else:
         invalid_types = [
             field_name
