@@ -1,0 +1,86 @@
+name: First Generated REST Final Review Fix
+
+on:
+  push:
+    branches: [feat/first-generated-rest-mutations]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: "${{ github.event.head_commit.message == 'ci: finalize generated REST review fixes' }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/first-generated-rest-mutations
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages --dev --locked
+      - name: Apply mount-aware Location once
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('packages/rakit-web/src/rakit_web/generated_rest_runtime.py')
+          text = path.read_text()
+          if 'from ._paths import mounted_path\n' not in text:
+              marker = '''from .generated_rest import (\n'''
+              assert marker in text
+              text = text.replace(marker, 'from ._paths import mounted_path\n' + marker, 1)
+
+              old = '''def _mutation_response(\n    binding: GeneratedRestBinding,\n    operation: GeneratedCrudOperation,\n    result: object,\n) -> Response:\n'''
+              new = '''def _mutation_response(\n    binding: GeneratedRestBinding,\n    request: Request,\n    operation: GeneratedCrudOperation,\n    result: object,\n) -> Response:\n'''
+              assert old in text
+              text = text.replace(old, new, 1)
+
+              old = '''        headers["Location"] = (\n            f"/api/{binding.api.resource_id}/{binding.codec.encode(result.identity)}"\n        )\n'''
+              new = '''        headers["Location"] = mounted_path(\n            request,\n            f"/api/{binding.api.resource_id}/{binding.codec.encode(result.identity)}",\n        )\n'''
+              assert old in text
+              text = text.replace(old, new, 1)
+
+              old = '''        response = _mutation_response(binding, operation, result)\n'''
+              new = '''        response = _mutation_response(binding, request, operation, result)\n'''
+              assert old in text
+              text = text.replace(old, new, 1)
+          path.write_text(text)
+          PY
+      - run: >-
+          uv run ruff format
+          packages/rakit-core/src/rakit_core/schema.py
+          packages/rakit-core/src/rakit_core/generated_compiler.py
+          packages/rakit-core/src/rakit_core/generated_input.py
+          packages/rakit-web/src/rakit_web/schema.py
+          packages/rakit-web/src/rakit_web/generated_rest_runtime.py
+          packages/rakit-web/tests/test_generated_rest_partial_schema.py
+          packages/rakit-web/tests/test_generated_rest_mount_mutation.py
+      - run: >-
+          uv run ruff check
+          packages/rakit-core/src/rakit_core/schema.py
+          packages/rakit-core/src/rakit_core/generated_compiler.py
+          packages/rakit-core/src/rakit_core/generated_input.py
+          packages/rakit-web/src/rakit_web/schema.py
+          packages/rakit-web/src/rakit_web/generated_rest_runtime.py
+          packages/rakit-web/tests/test_generated_rest_partial_schema.py
+          packages/rakit-web/tests/test_generated_rest_mount_mutation.py
+      - run: >-
+          uv run pytest
+          packages/rakit-web/tests/test_generated_rest_partial_schema.py
+          packages/rakit-web/tests/test_generated_rest_mount_mutation.py
+          packages/rakit-core/tests/test_generated_api_compilation.py
+          -q
+      - name: Commit final review fixes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            packages/rakit-core/src/rakit_core/schema.py \
+            packages/rakit-core/src/rakit_core/generated_compiler.py \
+            packages/rakit-core/src/rakit_core/generated_input.py \
+            packages/rakit-web/src/rakit_web/schema.py \
+            packages/rakit-web/src/rakit_web/generated_rest_runtime.py \
+            packages/rakit-web/tests/test_generated_rest_partial_schema.py \
+            packages/rakit-web/tests/test_generated_rest_mount_mutation.py
+          git commit -m "fix: finalize generated REST PATCH and mount contracts"
+          git push origin HEAD:feat/first-generated-rest-mutations
