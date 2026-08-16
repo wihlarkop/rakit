@@ -86,7 +86,9 @@ class UnitOfWork:
 
 
 class UnitOfWorkFactory:
-    def open(self, *, policy: TransactionPolicy, event_publisher, operation_context) -> AbstractAsyncContextManager:
+    def open(
+        self, *, policy: TransactionPolicy, event_publisher, operation_context
+    ) -> AbstractAsyncContextManager:
         return UnitOfWork()
 
 
@@ -225,7 +227,10 @@ async def test_detail_returns_strong_etag_and_patch_requires_matching_header_sha
     assert weak.status_code == 400
     assert weak.json()["error"]["details"]["reason"] == "generated_api_if_match_invalid"
     assert updated.status_code == 200
-    assert updated.headers["etag"].startswith('"') and updated.headers["etag"] != detail.headers["etag"]
+    assert (
+        updated.headers["etag"].startswith('"')
+        and updated.headers["etag"] != detail.headers["etag"]
+    )
     assert executor.requests[-1].concurrency_token == detail.headers["etag"][1:-1]
 
 

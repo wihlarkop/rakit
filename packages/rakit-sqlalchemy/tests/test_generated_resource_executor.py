@@ -89,7 +89,9 @@ def _api(data_source: SQLAlchemyDataSource) -> CompiledResourceApi:
     )
 
 
-def _authorization(operation: str, identity: RecordIdentity | None = None) -> OperationAuthorization:
+def _authorization(
+    operation: str, identity: RecordIdentity | None = None
+) -> OperationAuthorization:
     requirement = PermissionRequirement.all_of(f"admin.resources.users.{operation}")
     return OperationAuthorization.for_requirement(
         admin_id="admin",

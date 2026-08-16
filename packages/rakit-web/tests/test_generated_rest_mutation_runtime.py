@@ -311,7 +311,9 @@ async def test_mutations_require_csrf_and_idempotency_key() -> None:
     async with httpx.AsyncClient(transport=key_transport, base_url="http://localhost") as client:
         missing_key = await client.post("/api/users", json={"email": "new@example.com"})
     assert missing_key.status_code == 400
-    assert missing_key.json()["error"]["details"]["reason"] == "generated_api_idempotency_key_required"
+    assert (
+        missing_key.json()["error"]["details"]["reason"] == "generated_api_idempotency_key_required"
+    )
 
 
 @pytest.mark.anyio

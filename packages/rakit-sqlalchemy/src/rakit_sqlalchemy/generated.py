@@ -174,7 +174,9 @@ class SQLAlchemyGeneratedResourceExecutor:
         predicate_values_for = getattr(provider, "predicate_values_for", None)
         next_values_for = getattr(provider, "next_values_for", None)
         version_for = getattr(provider, "version_for", None)
-        if not all(callable(item) for item in (verify, predicate_values_for, next_values_for, version_for)):
+        if not all(
+            callable(item) for item in (verify, predicate_values_for, next_values_for, version_for)
+        ):
             raise _config_error(
                 self.resource_id,
                 "generated_api_sqlalchemy_concurrency_invalid",
@@ -213,7 +215,9 @@ class SQLAlchemyGeneratedResourceExecutor:
 
         identity_column = getattr(self.model, self.data_source.identity_fields[0])
         predicates = [identity_column.in_(self._scoped_identity_subquery(request.identity))]
-        predicates.extend(getattr(self.model, key) == value for key, value in predicate_values.items())
+        predicates.extend(
+            getattr(self.model, key) == value for key, value in predicate_values.items()
+        )
         statement = (
             sa_update(self.model)
             .where(*predicates)
@@ -252,11 +256,11 @@ class SQLAlchemyGeneratedResourceExecutor:
 
         identity_column = getattr(self.model, self.data_source.identity_fields[0])
         predicates = [identity_column.in_(self._scoped_identity_subquery(request.identity))]
-        predicates.extend(getattr(self.model, key) == value for key, value in predicate_values.items())
+        predicates.extend(
+            getattr(self.model, key) == value for key, value in predicate_values.items()
+        )
         statement = (
-            sa_delete(self.model)
-            .where(*predicates)
-            .execution_options(synchronize_session=False)
+            sa_delete(self.model).where(*predicates).execution_options(synchronize_session=False)
         )
         result = await session.execute(statement)
         if result.rowcount != 1:

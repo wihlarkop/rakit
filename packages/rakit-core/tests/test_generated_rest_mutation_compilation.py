@@ -92,7 +92,9 @@ def test_crud_with_generated_executor_projects_mutation_routes() -> None:
 
     compiled = compile_application(builder)
 
-    assert [(route.route_name, route.methods, route.path) for route in _generated_routes(compiled)] == [
+    assert [
+        (route.route_name, route.methods, route.path) for route in _generated_routes(compiled)
+    ] == [
         ("generated-api:users:list", ("GET", "HEAD"), "/api/users"),
         ("generated-api:users:detail", ("GET", "HEAD"), "/api/users/{identity}"),
         ("generated-api:users:create", ("POST",), "/api/users"),
