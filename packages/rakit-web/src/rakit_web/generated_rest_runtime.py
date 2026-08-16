@@ -285,18 +285,6 @@ def generated_rest_requirement_map(
             requirements[("GET", base)] = read
         if GeneratedCrudOperation.DETAIL in api.operations:
             requirements[("GET", f"{base}/{{identity}}")] = read
-        if GeneratedCrudOperation.CREATE in api.operations:
-            requirements[("POST", base)] = PermissionRequirement.all_of(
-                f"{admin_id}.resources.{api.resource_id}.create"
-            )
-        if GeneratedCrudOperation.UPDATE_PARTIAL in api.operations:
-            requirements[("PATCH", f"{base}/{{identity}}")] = PermissionRequirement.all_of(
-                f"{admin_id}.resources.{api.resource_id}.update"
-            )
-        if GeneratedCrudOperation.DELETE in api.operations:
-            requirements[("DELETE", f"{base}/{{identity}}")] = PermissionRequirement.all_of(
-                f"{admin_id}.resources.{api.resource_id}.delete"
-            )
     return requirements
 
 

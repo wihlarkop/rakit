@@ -25,10 +25,7 @@ from .definitions import (
 from .di import ServiceRegistry, _RegistrySnapshot
 from .errors import ErrorCode, RakitError
 from .generated_api import CompiledResourceApi, GeneratedCrudOperation
-from .generated_compiler import (
-    compile_generated_resource_apis,
-    validate_generated_resource_runtime_support,
-)
+from .generated_compiler import compile_generated_resource_apis
 from .generated_runtime import GeneratedResourceExecutorProvider, ResourceAdapterRuntime
 from .permissions import PermissionRequirement
 from .relationships import CompiledRelationship
@@ -872,14 +869,14 @@ def _generated_api_definition_routes(
     operation_routes = {
         GeneratedCrudOperation.LIST: ("list", ("GET",), False),
         GeneratedCrudOperation.DETAIL: ("detail", ("GET",), True),
-        GeneratedCrudOperation.CREATE: ("create", ("POST",), False),
-        GeneratedCrudOperation.UPDATE_PARTIAL: ("update", ("PATCH",), True),
-        GeneratedCrudOperation.DELETE: ("delete", ("DELETE",), True),
     }
     for resource in builder.resources:
         base_path = f"/api/{resource.resource_id}"
         for operation in resource.api.operations:
-            route_suffix, methods, needs_identity = operation_routes[operation]
+            route_contract = operation_routes.get(operation)
+            if route_contract is None:
+                continue
+            route_suffix, methods, needs_identity = route_contract
             routes.append(
                 RouteDefinition(
                     route_name=f"generated-api:{resource.resource_id}:{route_suffix}",
@@ -1008,10 +1005,6 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
         require_capabilities(requirement, builder.capability_providers)
         for requirement in capability_requirements
     )
-    validate_generated_resource_runtime_support(
-        generated_api.resources, builder._resource_generated_executor_providers
-    )
-
     builder._mark_compiled()
     return CompiledApplication(
         all_routes,
