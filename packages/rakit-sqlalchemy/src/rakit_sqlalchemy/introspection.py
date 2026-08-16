@@ -32,6 +32,10 @@ class FieldMetadata:
     attribute_name: str
     database_name: str
     column_type: TypeEngine[Any]
+    python_type: type[object]
+    nullable: bool
+    required: bool
+    writable: bool
 
 
 @dataclass(frozen=True)
@@ -99,6 +103,14 @@ def _validate_identity_type(type_: TypeEngine[Any]) -> None:
         raise UnsupportedIdentityError("unsupported_type")
 
 
+def _python_type(type_: TypeEngine[Any]) -> type[object]:
+    try:
+        value = type_.python_type
+    except NotImplementedError:
+        return object
+    return value if isinstance(value, type) else object
+
+
 def inspect_model(model: type[object]) -> ModelMetadata:
     mapper = inspect(model)
     # `inspect()` raises on failure by default (raiseerr=True), but its return
@@ -112,14 +124,27 @@ def inspect_model(model: type[object]) -> ModelMetadata:
     _validate_identity_type(identity_column.type)
     identity_field = mapper.get_property_by_column(identity_column).key
 
-    field_metadata = tuple(
-        FieldMetadata(
-            attribute_name=property_.key,
-            database_name=property_.columns[0].name,
-            column_type=property_.columns[0].type,
+    metadata: list[FieldMetadata] = []
+    for property_ in mapper.column_attrs:
+        column = property_.columns[0]
+        writable = not column.primary_key and column.computed is None
+        has_default = (
+            column.default is not None
+            or column.server_default is not None
+            or column.identity is not None
         )
-        for property_ in mapper.column_attrs
-    )
+        metadata.append(
+            FieldMetadata(
+                attribute_name=property_.key,
+                database_name=column.name,
+                column_type=column.type,
+                python_type=_python_type(column.type),
+                nullable=bool(column.nullable),
+                required=writable and not column.nullable and not has_default,
+                writable=writable,
+            )
+        )
+    field_metadata = tuple(metadata)
     return ModelMetadata(
         identity_field=identity_field,
         fields=tuple(field.attribute_name for field in field_metadata),
