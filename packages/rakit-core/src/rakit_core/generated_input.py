@@ -37,9 +37,7 @@ def _input_error(
     )
 
 
-def _allowed_fields(
-    api: CompiledResourceApi, operation: GeneratedCrudOperation
-) -> tuple[str, ...]:
+def _allowed_fields(api: CompiledResourceApi, operation: GeneratedCrudOperation) -> tuple[str, ...]:
     if operation is GeneratedCrudOperation.CREATE:
         return api.create_fields
     if operation is GeneratedCrudOperation.UPDATE_PARTIAL:

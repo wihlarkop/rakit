@@ -49,7 +49,9 @@ def compile_generated_resource_apis(
             if not set(policy_fields) <= known_fields:
                 raise _invalid_generated_api(resource.resource_id, "generated_api_unknown_field")
 
-        if identity_set.intersection(api.create_fields) or identity_set.intersection(api.update_fields):
+        if identity_set.intersection(api.create_fields) or identity_set.intersection(
+            api.update_fields
+        ):
             raise _invalid_generated_api(
                 resource.resource_id, "generated_api_identity_field_writable"
             )

@@ -76,9 +76,7 @@ class GeneratedCrudRequest:
 class GeneratedResourceExecutor(Protocol):
     capabilities: OperationExecutorCapabilities
 
-    async def execute(
-        self, context: OperationContext, request: GeneratedCrudRequest
-    ) -> object: ...
+    async def execute(self, context: OperationContext, request: GeneratedCrudRequest) -> object: ...
 
 
 _AUTH_OPERATION = {

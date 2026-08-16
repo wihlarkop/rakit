@@ -42,7 +42,9 @@ def _api() -> CompiledResourceApi:
     )
 
 
-def _authorization(operation: str, identity: RecordIdentity | None = None) -> OperationAuthorization:
+def _authorization(
+    operation: str, identity: RecordIdentity | None = None
+) -> OperationAuthorization:
     requirement = PermissionRequirement.all_of(f"resources.users.{operation}")
     return OperationAuthorization.for_requirement(
         admin_id="admin",
