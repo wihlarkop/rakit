@@ -4,6 +4,8 @@ import httpx
 import pytest
 from rakit import Admin
 
+# These contracts intentionally precede the 10C theme implementation.
+
 
 @pytest.mark.anyio
 async def test_theme_script_is_local_and_csp_stays_strict() -> None:
