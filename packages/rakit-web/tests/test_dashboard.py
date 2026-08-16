@@ -7,12 +7,17 @@ from rakit import (
     LauncherItem,
     SecretValue,
     StatWidgetResult,
+    WidgetContext,
     WidgetDefinition,
     WidgetLoadingMode,
 )
 from rakit_core.auth import Principal
 from rakit_core.permissions import PermissionRequirement
-from rakit_web.dashboard_routes import DashboardBinding, visible_launchers, visible_widgets
+from rakit_web.dashboard_routes import (
+    DashboardBinding,
+    visible_launchers,
+    visible_widgets,
+)
 from rakit_web.resource_routes import build_templates
 from starlette.requests import Request
 
@@ -46,17 +51,25 @@ async def test_root_renders_dashboard_shell() -> None:
 async def test_widget_failure_is_isolated() -> None:
     admin = _admin()
 
-    async def pending(_context):
+    async def pending(_context: WidgetContext) -> StatWidgetResult:
         return StatWidgetResult(label="ignored", value=12)
 
-    async def broken(_context):
+    async def broken(_context: WidgetContext) -> StatWidgetResult:
         raise RuntimeError("database unavailable")
 
     admin.register_widget(
-        WidgetDefinition(widget_id="pending_orders", label="Pending orders", loader=pending)
+        WidgetDefinition(
+            widget_id="pending_orders",
+            label="Pending orders",
+            loader=pending,
+        )
     )
     admin.register_widget(
-        WidgetDefinition(widget_id="revenue", label="Revenue", loader=broken)
+        WidgetDefinition(
+            widget_id="revenue",
+            label="Revenue",
+            loader=broken,
+        )
     )
     app = admin.asgi()
 
@@ -80,7 +93,7 @@ async def test_widget_failure_is_isolated() -> None:
 async def test_lazy_widget_loads_through_fragment_endpoint() -> None:
     admin = _admin()
 
-    async def pending(_context):
+    async def pending(_context: WidgetContext) -> StatWidgetResult:
         return StatWidgetResult(label="ignored", value=7)
 
     admin.register_widget(
@@ -134,7 +147,7 @@ def test_forbidden_launchers_and_widgets_are_hidden() -> None:
         ),
     )
 
-    def result(_context):
+    def result(_context: WidgetContext) -> StatWidgetResult:
         return StatWidgetResult(label="ignored", value=1)
 
     binding = DashboardBinding(
