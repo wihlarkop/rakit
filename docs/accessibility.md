@@ -11,7 +11,8 @@ The repository tests cover important framework-owned contracts including:
 - a skip link and main/navigation landmarks;
 - one page-level heading on representative built-in screens;
 - explicit form labels, descriptions, errors, and error-summary focus targets;
-- semantic sortable table headers and contextual selection labels;
+- semantic sortable table headers with keyboard-native GET controls that preserve active query state while resetting pagination;
+- contextual selection labels for record checkboxes;
 - polite live announcements and HTMX focus management hooks;
 - dialog opener focus restoration while relying on the native modal dialog for trapping focus;
 - persisted `light`, `dark`, and `system` preferences;
