@@ -8,6 +8,7 @@ version = "0.1.0a1"
 requires-python = ">=3.12"
 dependencies = [
     "rakit-core==0.1.0a1",
+    "rakit-storage==0.1.0a1",
     "starlette>=1.3.1",
     "structlog>=26.1.0",
     "jinja2>=3.1",
@@ -19,6 +20,7 @@ dev = ["aiosqlite>=0.20", "rakit-sqlalchemy"]
 
 [tool.uv.sources]
 rakit-core = { workspace = true }
+rakit-storage = { workspace = true }
 rakit-sqlalchemy = { workspace = true }
 
 [tool.hatch.build.targets.wheel]

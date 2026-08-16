@@ -11,7 +11,11 @@
         {% set descriptions = [] %}
         {% if field.description %}{% set _ = descriptions.append(field.description_id) %}{% endif %}
         {% if field.issues %}{% set _ = descriptions.append(field.error_id) %}{% endif %}
+        {% if field.is_file %}
+        <input class="rakit-input" type="file" id="{{ field.id }}" name="{{ field.name }}"{% if field.accept %} accept="{{ field.accept }}"{% endif %}{% if field.required %} required{% endif %}{% if descriptions %} aria-describedby="{{ descriptions | join(' ') }}"{% endif %}{% if field.issues %} aria-invalid="true"{% endif %} />
+        {% else %}
         <input class="rakit-input" id="{{ field.id }}" name="{{ field.name }}" value="{{ field.value }}"{% if descriptions %} aria-describedby="{{ descriptions | join(' ') }}"{% endif %}{% if field.issues %} aria-invalid="true"{% endif %} />
+        {% endif %}
         {% if field.description %}<p id="{{ field.description_id }}" class="text-sm text-slate-500">{{ field.description }}</p>{% endif %}
         {% if field.issues %}<div id="{{ field.error_id }}" class="rakit-error" role="alert">{% for issue in field.issues %}<p>{{ issue.message }}</p>{% endfor %}</div>{% endif %}
       </div>
@@ -48,7 +52,7 @@
   <ul>{% for issue in summary_issues %}<li>{% if issue.anchor %}<a href="#{{ issue.anchor }}">{{ issue.label }}: {{ issue.message }}</a>{% else %}{{ issue.message }}{% endif %}</li>{% endfor %}</ul>
 </div>
 {% endif %}
-<form class="space-y-5" method="post" action="{{ action_url }}" novalidate{% if first_invalid_id %} data-rakit-first-invalid="{{ first_invalid_id }}"{% endif %}>
+<form class="space-y-5" method="post" action="{{ action_url }}"{% if has_file_fields %} enctype="multipart/form-data"{% endif %} novalidate{% if first_invalid_id %} data-rakit-first-invalid="{{ first_invalid_id }}"{% endif %}>
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
   <input type="hidden" name="submission_token" value="{{ submission_token }}" />
   {% if concurrency_token %}<input type="hidden" name="concurrency_token" value="{{ concurrency_token }}" />{% endif %}

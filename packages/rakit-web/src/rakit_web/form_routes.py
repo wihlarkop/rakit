@@ -18,6 +18,7 @@ from typing import Protocol, cast
 from rakit_core.di import ServiceResolver
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.events import EventPublisher
+from rakit_core.fields import FileField
 from rakit_core.forms import (
     CollapsibleGroup,
     Column,
@@ -49,6 +50,7 @@ from rakit_core.operations import (
     new_operation_id,
     run_with_deadline,
 )
+from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
@@ -56,6 +58,16 @@ from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 
 from ._paths import mounted_path
+from .file_uploads import (
+    FilePreparation,
+    canonical_submission_values,
+    compensate_uploads,
+    file_accept,
+    file_fields,
+    has_file_fields,
+    prepare_file_submission,
+    submission_for_display,
+)
 from .relationship_routes import (
     RelationshipFormBinding,
     build_relationship_changes,
@@ -206,9 +218,10 @@ class WriteResourceBinding:
 async def _parse_form(
     request: Request, binding: WriteResourceBinding
 ) -> tuple[dict[str, object], dict[str, str]] | None:
+    file_ids = {field.field_id for field in file_fields(binding.form_schema)}
     try:
         form = await request.form(
-            max_files=0,
+            max_files=len(file_ids),
             max_fields=len(binding.form_schema.fields)
             + (1_000 if binding.relationship_form else 4),
         )
@@ -220,12 +233,21 @@ async def _parse_form(
         return None
     reserved = {"csrf_token", "submission_token", "concurrency_token", "delete_token"}
     values: dict[str, object] = {}
+    tokens: dict[str, str] = {}
     for name, value in items:
-        if name not in reserved:
+        if name in reserved:
             if not isinstance(value, str):
                 return None
+            tokens[name] = value
+            continue
+        if isinstance(value, UploadFile):
+            if name not in file_ids:
+                return None
             values[name] = value
-    tokens = {name: value for name, value in items if name in reserved and isinstance(value, str)}
+            continue
+        if not isinstance(value, str):
+            return None
+        values[name] = value
     try:
         split_relationship_submission(binding.relationship_form, values)
     except ValueError:
@@ -359,6 +381,9 @@ async def _form_response(
             "error_id": f"{_field_dom_id(binding, field.field_id)}-error",
             "value": (submitted or {}).get(field.field_id, ""),
             "issues": issue_map.get(field.field_id, ()),
+            "is_file": isinstance(field, FileField),
+            "accept": file_accept(field) if isinstance(field, FileField) else "",
+            "required": field.required,
         }
         for field in binding.form_schema.fields
         if field.writable and field.readable and not field.sensitive
@@ -409,6 +434,7 @@ async def _form_response(
             "csrf_token": request.cookies.get(CSRF_COOKIE_NAME, ""),
             "submission_token": binding.issue_submission_token(request),
             "concurrency_token": concurrency_token,
+            "has_file_fields": has_file_fields(binding.form_schema),
             "codec": binding.relationship_form.codec
             if binding.relationship_form
             else binding.codec,
@@ -564,7 +590,7 @@ async def _claim_submission(
         "operation": operation,
         "path": binding.path,
         "identity": dict(identity.values) if identity is not None else None,
-        "values": dict(sorted(submitted.items())),
+        "values": dict(sorted(canonical_submission_values(submitted).items())),
     }
     fingerprint = hashlib.sha256(
         json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
@@ -595,6 +621,45 @@ async def _authorization(
     return await binding.mutation_authorizer(request, operation, identity)
 
 
+@asynccontextmanager
+async def _file_services(binding: WriteResourceBinding) -> AsyncIterator[ServiceResolver]:
+    if binding.operation_scope is None:
+        raise RakitError(
+            code=ErrorCode.CONFIG_INVALID,
+            message="File fields require an operation service scope.",
+            status_code=500,
+        )
+    async with binding.operation_scope() as services:
+        yield services
+
+
+async def _prepare_bound_files(
+    binding: WriteResourceBinding,
+    submitted: Mapping[str, object],
+    *,
+    previous_record: object | None = None,
+) -> FilePreparation:
+    if not has_file_fields(binding.form_schema):
+        return FilePreparation(values=dict(submitted), uploads=(), issues=())
+    async with _file_services(binding) as services:
+        return await prepare_file_submission(
+            binding.form_schema,
+            submitted,
+            services=services,
+            previous_record=previous_record,
+        )
+
+
+async def _compensate_bound_files(
+    binding: WriteResourceBinding,
+    preparation: FilePreparation,
+) -> None:
+    if not preparation.uploads:
+        return
+    async with _file_services(binding) as services:
+        await compensate_uploads(preparation.uploads, services=services)
+
+
 def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
     async def create_get(request: Request) -> Response:
         if not await binding.authorize(request):
@@ -617,11 +682,26 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
         if parsed is None:
             return _error(400, "Invalid form")
         submitted, tokens = parsed
+        display_submitted = submission_for_display(submitted)
+        preparation = FilePreparation(values=dict(submitted), uploads=(), issues=())
+        reservation: IdempotencyReservation | None = None
         try:
             scalar_submitted, _ = split_relationship_submission(
                 binding.relationship_form, submitted
             )
-            state = binding.form_schema.parse(scalar_submitted)
+            preparation = await _prepare_bound_files(binding, scalar_submitted)
+            if preparation.issues:
+                await _compensate_bound_files(binding, preparation)
+                return await _form_response(
+                    binding,
+                    request,
+                    title=f"New {binding.label}",
+                    action_path=binding.create_path,
+                    submitted=display_submitted,
+                    issues=preparation.issues,
+                    status_code=422,
+                )
+            state = binding.form_schema.parse(preparation.values)
             normalized = dict(state.normalized)
             changes = (
                 await build_relationship_changes(
@@ -657,6 +737,7 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                     binding, request, submitted=normalized, tokens=tokens, operation="create"
                 )
                 if replay is not None:
+                    await _compensate_bound_files(binding, preparation)
                     return replay
                 await _execute_with_deadline(
                     binding,
@@ -675,21 +756,19 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                         ),
                     )
         except FormValidationError as exc:
+            await _compensate_bound_files(binding, preparation)
             return await _form_response(
                 binding,
                 request,
                 title=f"New {binding.label}",
                 action_path=binding.create_path,
-                submitted=submitted,
+                submitted=display_submitted,
                 issues=exc.state.issues,
                 status_code=422,
             )
         except RakitError as exc:
-            if (
-                "reservation" in locals()
-                and reservation is not None
-                and binding.idempotency_store is not None
-            ):
+            await _compensate_bound_files(binding, preparation)
+            if reservation is not None and binding.idempotency_store is not None:
                 await binding.idempotency_store.release(reservation)
             if binding.relationship_form is not None:
                 return await _form_response(
@@ -697,7 +776,7 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                     request,
                     title=f"New {binding.label}",
                     action_path=binding.create_path,
-                    submitted=submitted,
+                    submitted=display_submitted,
                     issues=()
                     if _relationship_error_issues(exc)
                     else (FormIssue(None, exc.message),),
@@ -706,11 +785,8 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                 )
             return _error(exc.status_code, "Invalid form")
         except ValueError:
-            if (
-                "reservation" in locals()
-                and reservation is not None
-                and binding.idempotency_store is not None
-            ):
+            await _compensate_bound_files(binding, preparation)
+            if reservation is not None and binding.idempotency_store is not None:
                 await binding.idempotency_store.release(reservation)
             return _error(400, "Invalid form")
         return mutation_success(
