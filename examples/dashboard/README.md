@@ -5,6 +5,7 @@ This example presents the dashboard as a small, runnable operations admin rather
 It demonstrates:
 
 - a persistent responsive admin shell inspired by mature admin interfaces;
+- Tailwind utility-first presentation shared by the shell, dashboard, and resource pages;
 - automatic Quick access launchers from registered resources;
 - Orders, Customers, Recent operational activity, and Operations runbook list/detail pages;
 - search, sorting, pagination, and active navigation state;
