@@ -1,0 +1,30 @@
+name: First Generated REST Lint Fix
+
+on:
+  push:
+    branches: [feat/first-generated-rest-read]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: "${{ github.event.head_commit.message == 'ci: fix generated REST contract imports' }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/first-generated-rest-read
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages --dev --locked
+      - run: uv run ruff check --fix packages/rakit-web/tests/test_generated_rest_contracts.py
+      - run: uv run ruff format packages/rakit-web/tests/test_generated_rest_contracts.py
+      - name: Commit lint fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/rakit-web/tests/test_generated_rest_contracts.py
+          git commit -m "style: organize generated REST contract imports"
+          git push origin HEAD:feat/first-generated-rest-read
