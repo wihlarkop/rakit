@@ -32,6 +32,7 @@ from rakit_core.identity import IdentityCodec, RecordIdentity, canonical_identit
 from rakit_core.mutations import OperationAuthorization
 from rakit_core.operations import (
     CancellationContext,
+    Deadline,
     OperationContext,
     OperationExecutorCapabilities,
     activate_operation_context,
@@ -105,6 +106,7 @@ class GeneratedRestBinding:
     operation_scope: Callable[[], AbstractAsyncContextManager[ServiceResolver]] | None = None
     concurrency_provider: ConcurrencyVersionProvider | None = None
     concurrency_tokens: ConcurrencyTokenService | None = None
+    mutation_deadline_seconds: float = 30.0
 
 
 class GeneratedReadExecutor:
@@ -238,11 +240,13 @@ def _operation_context(
     request: Request,
     authorization: OperationAuthorization,
     services: ServiceResolver | None,
+    *,
+    deadline: Deadline | None = None,
 ) -> OperationContext:
     state = request.scope.get("state", {})
     session_id = state.get("session_id", "")
     return OperationContext(
-        deadline=None,
+        deadline=deadline,
         cancellation=CancellationContext(),
         request_id=_request_id(request),
         operation_id=new_operation_id(),
@@ -305,7 +309,13 @@ async def _run_mutation(
         idempotency_fingerprint=idempotency_fingerprint,
     )
     async with _operation_services(binding) as services:
-        context = _operation_context(binding, request, authorization, services)
+        context = _operation_context(
+            binding,
+            request,
+            authorization,
+            services,
+            deadline=Deadline.after(binding.mutation_deadline_seconds),
+        )
         with activate_operation_context(context):
             return await run_operation_plan(
                 plan,

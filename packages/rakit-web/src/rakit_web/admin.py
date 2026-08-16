@@ -816,6 +816,8 @@ class Admin:
         generated_rest_routes: list[Route] = []
         api_by_resource = {api.resource_id: api for api in self.compiled.compiled_resource_apis}
         for resource_id, api in api_by_resource.items():
+            if api.definition.exposure is ApiExposure.CRUD:
+                continue
             generated_rest_routes.extend(
                 build_generated_rest_routes(
                     GeneratedRestBinding(
@@ -1333,8 +1335,9 @@ class Admin:
                                 concurrency_tokens=(
                                     concurrency_tokens if concurrency_provider is not None else None
                                 ),
+                                mutation_deadline_seconds=self._mutation_deadline_seconds,
                             ),
-                            include_reads=False,
+                            include_reads=True,
                         )
                     )
 
