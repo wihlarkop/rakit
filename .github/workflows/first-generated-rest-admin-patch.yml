@@ -1,0 +1,101 @@
+name: First Generated REST Admin Patch
+
+on:
+  push:
+    branches: [feat/first-generated-rest-mutations]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: "${{ github.event.head_commit.message == 'ci: apply generated CRUD Admin runtime patch' }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/first-generated-rest-mutations
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages --dev --locked
+      - name: Patch generated CRUD runtime wiring
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          runtime = Path('packages/rakit-web/src/rakit_web/generated_rest_runtime.py')
+          text = runtime.read_text()
+          old = '''def build_generated_rest_routes(binding: GeneratedRestBinding) -> tuple[Route, ...]:\n    routes: list[Route] = []\n'''
+          new = '''def build_generated_rest_routes(\n    binding: GeneratedRestBinding,\n    *,\n    include_reads: bool = True,\n    include_mutations: bool = True,\n) -> tuple[Route, ...]:\n    routes: list[Route] = []\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+          text = text.replace(
+              '    if GeneratedCrudOperation.LIST in binding.api.operations:\n',
+              '    if include_reads and GeneratedCrudOperation.LIST in binding.api.operations:\n',
+              1,
+          )
+          text = text.replace(
+              '    if GeneratedCrudOperation.DETAIL in binding.api.operations:\n',
+              '    if include_reads and GeneratedCrudOperation.DETAIL in binding.api.operations:\n',
+              1,
+          )
+          text = text.replace(
+              '    if GeneratedCrudOperation.CREATE in binding.api.operations and binding.generated_executor:\n',
+              '    if (\n        include_mutations\n        and GeneratedCrudOperation.CREATE in binding.api.operations\n        and binding.generated_executor\n    ):\n',
+              1,
+          )
+          text = text.replace(
+              '''    if (\n        GeneratedCrudOperation.UPDATE_PARTIAL in binding.api.operations\n        and binding.generated_executor\n    ):\n''',
+              '''    if (\n        include_mutations\n        and GeneratedCrudOperation.UPDATE_PARTIAL in binding.api.operations\n        and binding.generated_executor\n    ):\n''',
+              1,
+          )
+          text = text.replace(
+              '    if GeneratedCrudOperation.DELETE in binding.api.operations and binding.generated_executor:\n',
+              '    if (\n        include_mutations\n        and GeneratedCrudOperation.DELETE in binding.api.operations\n        and binding.generated_executor\n    ):\n',
+              1,
+          )
+          runtime.write_text(text)
+
+          path = Path('packages/rakit-web/src/rakit_web/admin.py')
+          text = path.read_text()
+          text = text.replace(
+              'from rakit_core.events import EventBus, EventPublisher\n',
+              'from rakit_core.events import EventBus, EventPublisher\nfrom rakit_core.generated_api import ApiExposure\n',
+              1,
+          )
+          text = text.replace(
+              'from rakit_core.generated_runtime import normalize_resource_adapter_runtime\n',
+              '''from rakit_core.generated_runtime import (\n    GeneratedResourceExecutorContext,\n    normalize_resource_adapter_runtime,\n)\n''',
+              1,
+          )
+
+          old = '''                        superuser_bypass=self._superuser_bypass,\n                    )\n                )\n            )\n\n        write_routes: list[Route] = []\n'''
+          new = '''                        superuser_bypass=self._superuser_bypass,\n                    ),\n                    include_mutations=False,\n                )\n            )\n\n        write_routes: list[Route] = []\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          marker = '''        validate_page_runtime(\n            self.compiled,\n            auth_enabled=self._auth_backend is not None and self._session_store is not None,\n            idempotency_store=self._operation_idempotency_store,\n            uow_factory_registered=uow_factory_registered,\n            debug=self.config.debug,\n        )\n\n'''
+          assert marker in text
+          validation = '''        crud_apis = tuple(\n            api\n            for api in self.compiled.compiled_resource_apis\n            if api.definition.exposure is ApiExposure.CRUD\n        )\n        if crud_apis:\n            if self._auth_backend is None or self._session_store is None:\n                raise RakitError(\n                    code=ErrorCode.CONFIG_INVALID,\n                    message="Generated CRUD requires configured authentication.",\n                    status_code=500,\n                    details={"reason": "generated_api_auth_required"},\n                )\n            if self.config.security.secret_key is None:\n                raise RakitError(\n                    code=ErrorCode.CONFIG_INVALID,\n                    message="Generated CRUD requires a security secret key for CSRF signing.",\n                    status_code=500,\n                    details={"reason": "generated_api_secret_key_required"},\n                )\n            if self._operation_idempotency_store is None:\n                raise RakitError(\n                    code=ErrorCode.CONFIG_INVALID,\n                    message="Generated CRUD requires an operation idempotency store.",\n                    status_code=500,\n                    details={"reason": "generated_api_idempotency_store_required"},\n                )\n            validate_idempotency_store_for_production(\n                self._operation_idempotency_store, debug=self.config.debug\n            )\n            if not uow_factory_registered:\n                raise RakitError(\n                    code=ErrorCode.CONFIG_INVALID,\n                    message="Generated CRUD requires a registered operation unit of work.",\n                    status_code=500,\n                    details={"reason": "generated_api_uow_required"},\n                )\n\n'''
+          text = text.replace(marker, marker + validation, 1)
+
+          marker = '''            def action_uow_factory() -> OperationUnitOfWorkFactory | None:\n                if self._application_resolver is None:\n                    return None\n                return self._application_resolver.require(OperationUnitOfWorkFactory)\n\n'''
+          assert marker in text
+          wiring = '''            if crud_apis:\n                assert self._operation_idempotency_store is not None\n                executor_providers = dict(self.compiled.generated_resource_executor_providers)\n                concurrency_tokens = ConcurrencyTokenService(write_token_service)\n                uow_factory = self._compiled_registry.application_scope().require(\n                    OperationUnitOfWorkFactory\n                ) if False else None\n                # The factory is application-scoped; resolve it lazily at request time\n                # through the same resolver path used by actions/pages.  A concrete\n                # factory object is still required by GeneratedRestBinding, so use a\n                # small delegating adapter that resolves from the active application scope.\n                class _GeneratedUowFactory:\n                    def open(_self, *, policy, event_publisher, operation_context):\n                        if self._application_resolver is None:\n                            raise RuntimeError("Application services are not available")\n                        factory = self._application_resolver.require(OperationUnitOfWorkFactory)\n                        return factory.open(\n                            policy=policy,\n                            event_publisher=event_publisher,\n                            operation_context=operation_context,\n                        )\n\n                generated_uow_factory = _GeneratedUowFactory()\n                for api in crud_apis:\n                    provider = executor_providers.get(api.resource_id)\n                    if provider is None:\n                        raise RakitError(\n                            code=ErrorCode.CONFIG_INVALID,\n                            message="Generated CRUD executor provider is missing.",\n                            status_code=500,\n                            details={\n                                "resource_id": api.resource_id,\n                                "reason": "generated_api_executor_not_supported",\n                            },\n                        )\n                    concurrency_provider = self._concurrency_providers.get(api.resource_id)\n                    executor = provider.build(\n                        GeneratedResourceExecutorContext(\n                            resource_id=api.resource_id,\n                            data_source=self._resource_services[api.resource_id].data_source,\n                            concurrency_provider=concurrency_provider,\n                            concurrency_tokens=(\n                                concurrency_tokens if concurrency_provider is not None else None\n                            ),\n                        )\n                    )\n                    capabilities = resolve_operation_executor_capabilities(executor)\n                    if not capabilities.participates_in_uow:\n                        raise RakitError(\n                            code=ErrorCode.CONFIG_INVALID,\n                            message="Generated CRUD executor must participate in the root unit of work.",\n                            status_code=500,\n                            details={\n                                "resource_id": api.resource_id,\n                                "reason": "generated_api_executor_not_uow_managed",\n                            },\n                        )\n                    if concurrency_provider is not None and not capabilities.atomic_concurrency:\n                        raise RakitError(\n                            code=ErrorCode.CONFIG_INVALID,\n                            message="Generated CRUD executor lacks atomic concurrency support.",\n                            status_code=500,\n                            details={\n                                "resource_id": api.resource_id,\n                                "reason": "generated_api_atomic_concurrency_not_supported",\n                            },\n                        )\n                    generated_rest_routes.extend(\n                        build_generated_rest_routes(\n                            GeneratedRestBinding(\n                                api=api,\n                                definition=self._resource_definitions[api.resource_id],\n                                service=self._resource_services[api.resource_id],\n                                schema_adapter=self._schema_adapter,\n                                admin_id=self.config.admin_id,\n                                auth_enabled=True,\n                                superuser_bypass=self._superuser_bypass,\n                                generated_executor=executor,\n                                verify_csrf=verify_write_csrf,\n                                unit_of_work_factory=generated_uow_factory,\n                                idempotency_store=self._operation_idempotency_store,\n                                operation_scope=operation_scope,\n                                concurrency_provider=concurrency_provider,\n                                concurrency_tokens=(\n                                    concurrency_tokens if concurrency_provider is not None else None\n                                ),\n                            ),\n                            include_reads=False,\n                        )\n                    )\n\n'''
+          text = text.replace(marker, marker + wiring, 1)
+          path.write_text(text)
+          PY
+          uv run ruff format \
+            packages/rakit-web/src/rakit_web/generated_rest_runtime.py \
+            packages/rakit-web/src/rakit_web/admin.py
+          uv run ruff check \
+            packages/rakit-web/src/rakit_web/generated_rest_runtime.py \
+            packages/rakit-web/src/rakit_web/admin.py
+      - name: Commit Admin runtime patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/rakit-web/src/rakit_web/generated_rest_runtime.py packages/rakit-web/src/rakit_web/admin.py
+          git commit -m "feat(web): wire generated CRUD runtime through Admin"
+          git push origin HEAD:feat/first-generated-rest-mutations
