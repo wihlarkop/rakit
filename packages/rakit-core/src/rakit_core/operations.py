@@ -341,6 +341,7 @@ class OperationContext:
     services: ServiceResolver | None = None
     events: EventPublisher | None = None
     unit_of_work: OperationUnitOfWork | None = None
+    durable_commit_completed: bool = False
 
     def __post_init__(self) -> None:
         if self.principal is not None and not self.principal_id:
@@ -348,6 +349,14 @@ class OperationContext:
 
     def checkpoint(self) -> None:
         self.cancellation.check(self.deadline)
+
+    def mark_durable_commit_completed(self) -> None:
+        """Record that the root persistence commit has durably completed.
+
+        Unit-of-work adapters call this immediately after their driver commit
+        succeeds and before post-commit callbacks that may fail.
+        """
+        object.__setattr__(self, "durable_commit_completed", True)
 
 
 _current_operation_context: ContextVar[OperationContext | None] = ContextVar(

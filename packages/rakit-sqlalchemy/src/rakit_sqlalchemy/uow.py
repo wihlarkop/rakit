@@ -163,6 +163,8 @@ class SQLAlchemyUnitOfWork:
             raise RuntimeError("Explicit commit is only available with manual transaction policy")
         await self._run_callbacks(self._before_commit_callbacks)
         await self._commit_critical()
+        if self.operation_context is not None:
+            self.operation_context.mark_durable_commit_completed()
         self._completed = True
         await self._finish_commit_callbacks()
 
@@ -285,6 +287,8 @@ class SQLAlchemyUnitOfWork:
                             self.operation_context.checkpoint()
                         await self._run_callbacks(self._before_commit_callbacks)
                         await self._commit_critical()
+                        if self.operation_context is not None:
+                            self.operation_context.mark_durable_commit_completed()
                     except BaseException as exc:
                         # A deadline or driver failure before the durable outcome
                         # is known must leave the session in a safe rolled-back

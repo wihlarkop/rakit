@@ -284,6 +284,7 @@ async def _run_mutation(
     authorization: OperationAuthorization,
     *,
     idempotency_fingerprint: str,
+    reservation: IdempotencyReservation,
 ) -> tuple[object, str]:
     executor = binding.generated_executor
     if executor is None or binding.unit_of_work_factory is None:
@@ -317,12 +318,23 @@ async def _run_mutation(
             services,
             deadline=Deadline.after(binding.mutation_deadline_seconds),
         )
-        with activate_operation_context(context):
-            result = await run_operation_plan(
-                plan,
-                context,
-                unit_of_work_factory=binding.unit_of_work_factory,
-            )
+        try:
+            with activate_operation_context(context):
+                result = await run_operation_plan(
+                    plan,
+                    context,
+                    unit_of_work_factory=binding.unit_of_work_factory,
+                )
+        except Exception:
+            if not context.durable_commit_completed and binding.idempotency_store is not None:
+                try:
+                    await binding.idempotency_store.release(reservation)
+                except Exception:
+                    _LOGGER.exception(
+                        "Failed to release pre-commit idempotency reservation",
+                        extra={"request_id": context.request_id},
+                    )
+            raise
         return result, context.operation_id
 
 
@@ -850,20 +862,14 @@ async def _mutation_handler(
         )
         if replay is not None:
             return replay
-        try:
-            result, operation_id = await _run_mutation(
-                binding,
-                request,
-                generated_request,
-                authorization,
-                idempotency_fingerprint=fingerprint,
-            )
-        except (RakitError, Exception):
-            # `release()` is valid only before the root UoW commits.
-            # `_run_mutation()` returning means UoW teardown/commit completed.
-            if binding.idempotency_store is not None:
-                await binding.idempotency_store.release(reservation)
-            raise
+        result, operation_id = await _run_mutation(
+            binding,
+            request,
+            generated_request,
+            authorization,
+            idempotency_fingerprint=fingerprint,
+            reservation=reservation,
+        )
         response = _mutation_response(binding, request, operation, result)
         await _complete_mutation(
             binding,

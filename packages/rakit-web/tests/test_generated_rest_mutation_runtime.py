@@ -14,10 +14,15 @@ from rakit_core.idempotency import (
     OperationReceipt,
 )
 from rakit_core.identity import IdentityCodec, RecordIdentity
-from rakit_core.operations import OperationExecutorCapabilities
+from rakit_core.operations import OperationContext, OperationExecutorCapabilities
 from rakit_core.query import PageResult
 from rakit_core.resources import ResourceService
-from rakit_core.transactions import TransactionPolicy
+from rakit_core.transactions import (
+    OperationUnitOfWorkFactory as OperationUnitOfWorkFactoryProtocol,
+)
+from rakit_core.transactions import (
+    TransactionPolicy,
+)
 from rakit_web.generated_rest_runtime import GeneratedRestBinding, build_generated_rest_routes
 from rakit_web.schema import PydanticSchemaAdapter
 from starlette.applications import Starlette
@@ -198,6 +203,7 @@ def _app(
     *,
     csrf_ok: bool = True,
     principal: Principal | None = None,
+    unit_of_work_factory: OperationUnitOfWorkFactoryProtocol | None = None,
 ):
     async def verify_csrf(request) -> bool:
         return csrf_ok
@@ -211,7 +217,7 @@ def _app(
         auth_enabled=True,
         generated_executor=executor,
         verify_csrf=verify_csrf,
-        unit_of_work_factory=UnitOfWorkFactory(),
+        unit_of_work_factory=unit_of_work_factory or UnitOfWorkFactory(),
         idempotency_store=store,
     )
     app = Starlette(routes=list(build_generated_rest_routes(binding)))
@@ -433,6 +439,56 @@ async def test_post_commit_receipt_failure_does_not_release_idempotency_claim() 
     store = FailingCompleteIdempotencyStore()
     transport = httpx.ASGITransport(app=_app(executor, store))
     headers = {"Idempotency-Key": "commit-safe"}
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+        first = await client.post(
+            "/api/users",
+            json={"email": "committed@example.com"},
+            headers=headers,
+        )
+        retry = await client.post(
+            "/api/users",
+            json={"email": "committed@example.com"},
+            headers=headers,
+        )
+
+    assert first.status_code == 500
+    assert retry.status_code == 409
+    assert len(executor.calls) == 1
+    assert store.release_calls == 0
+
+
+class PostCommitFailingUnitOfWork(UnitOfWork):
+    def __init__(self, policy: TransactionPolicy, operation_context: OperationContext) -> None:
+        super().__init__(policy)
+        self.operation_context = operation_context
+
+    async def __aexit__(self, exc_type, exc, tb):
+        if exc_type is None and self.succeeded:
+            self.operation_context.mark_durable_commit_completed()
+            raise RuntimeError("post-commit callback failed")
+        return False
+
+
+class PostCommitFailingUnitOfWorkFactory:
+    def open(
+        self, *, policy, event_publisher, operation_context
+    ) -> AbstractAsyncContextManager[UnitOfWork]:
+        return PostCommitFailingUnitOfWork(policy, operation_context)
+
+
+@pytest.mark.anyio
+async def test_post_commit_callback_failure_keeps_idempotency_claim_closed() -> None:
+    executor = Executor()
+    store = FailingCompleteIdempotencyStore()
+    transport = httpx.ASGITransport(
+        app=_app(
+            executor,
+            store,
+            unit_of_work_factory=PostCommitFailingUnitOfWorkFactory(),
+        )
+    )
+    headers = {"Idempotency-Key": "post-commit-failure"}
 
     async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
         first = await client.post(
