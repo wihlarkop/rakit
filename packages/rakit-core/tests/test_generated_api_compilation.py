@@ -85,7 +85,11 @@ def test_none_exposure_compiles_no_generated_api_projection() -> None:
 def test_read_only_projection_compiles_without_write_capabilities_or_field_metadata() -> None:
     builder = ApplicationBuilder()
     builder.add_resource(
-        _resource(ResourceApiDefinition(exposure=ApiExposure.READ_ONLY, read_fields=("id", "email", "status"))),
+        _resource(
+            ResourceApiDefinition(
+                exposure=ApiExposure.READ_ONLY, read_fields=("id", "email", "status")
+            )
+        ),
         MetadataLessDataSource(),
     )
     compiled = compile_application(builder)
