@@ -1,0 +1,94 @@
+name: First Generated Runtime Patch
+
+on:
+  push:
+    branches: [feat/first-generated-rest-read]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: "${{ github.event.head_commit.message == 'ci: apply generated runtime compiler patch' }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/first-generated-rest-read
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages --dev --locked
+      - name: Patch runtime provider state
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('packages/rakit-core/src/rakit_core/compiler.py')
+          text = path.read_text()
+
+          old = 'from .generated_compiler import compile_generated_resource_apis\n'
+          new = '''from .generated_compiler import (\n    compile_generated_resource_apis,\n    validate_generated_resource_runtime_support,\n)\nfrom .generated_runtime import GeneratedResourceExecutorProvider, ResourceAdapterRuntime\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = 'type AdapterClaim = Callable[[type, ResourceFieldPolicy], DataSource | None]\n'
+          new = '''type AdapterClaim = Callable[\n    [type, ResourceFieldPolicy], DataSource | ResourceAdapterRuntime | None\n]\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '    _resource_data_sources: dict[str, DataSource] = field(default_factory=dict)\n'
+          new = '''    _resource_data_sources: dict[str, DataSource] = field(default_factory=dict)\n    _resource_generated_executor_providers: dict[\n        str, GeneratedResourceExecutorProvider\n    ] = field(default_factory=dict)\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''    @property\n    def capability_requirements(self) -> tuple[CapabilityRequirement, ...]:\n        return tuple(self._capability_requirements.values())\n\n'''
+          new = '''    @property\n    def capability_requirements(self) -> tuple[CapabilityRequirement, ...]:\n        return tuple(self._capability_requirements.values())\n\n    @property\n    def generated_resource_executor_providers(\n        self,\n    ) -> tuple[tuple[str, GeneratedResourceExecutorProvider], ...]:\n        return tuple(self._resource_generated_executor_providers.items())\n\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''    def add_resource(self, definition: ResourceDefinition, data_source: DataSource) -> None:\n        self._check_not_compiled()\n        if any(existing.resource_id == definition.resource_id for existing in self._resources):\n            raise RakitError(\n                code=ErrorCode.CONFIG_DUPLICATE_RESOURCE,\n                message=f'Resource "{definition.resource_id}" is already registered.',\n                status_code=500,\n                details={"resource_id": definition.resource_id},\n            )\n        self._resources.append(definition)\n        self._resource_data_sources[definition.resource_id] = data_source\n'''
+          new = '''    def add_resource(\n        self,\n        definition: ResourceDefinition,\n        data_source: DataSource,\n        *,\n        generated_executor_provider: GeneratedResourceExecutorProvider | None = None,\n    ) -> None:\n        self._check_not_compiled()\n        if any(existing.resource_id == definition.resource_id for existing in self._resources):\n            raise RakitError(\n                code=ErrorCode.CONFIG_DUPLICATE_RESOURCE,\n                message=f'Resource "{definition.resource_id}" is already registered.',\n                status_code=500,\n                details={"resource_id": definition.resource_id},\n            )\n        self._resources.append(definition)\n        self._resource_data_sources[definition.resource_id] = data_source\n        if generated_executor_provider is not None:\n            self._resource_generated_executor_providers[definition.resource_id] = (\n                generated_executor_provider\n            )\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '    resource_data_sources: dict[str, DataSource]\n    capability_providers: dict[str, CapabilityProvider]\n'
+          new = '''    resource_data_sources: dict[str, DataSource]\n    resource_generated_executor_providers: dict[str, GeneratedResourceExecutorProvider]\n    capability_providers: dict[str, CapabilityProvider]\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''            resource_data_sources=dict(builder._resource_data_sources),\n            capability_providers=dict(builder._capability_providers),\n'''
+          new = '''            resource_data_sources=dict(builder._resource_data_sources),\n            resource_generated_executor_providers=dict(\n                builder._resource_generated_executor_providers\n            ),\n            capability_providers=dict(builder._capability_providers),\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''        builder._resource_data_sources.clear()\n        builder._resource_data_sources.update(self.resource_data_sources)\n        builder._capability_providers.clear()\n'''
+          new = '''        builder._resource_data_sources.clear()\n        builder._resource_data_sources.update(self.resource_data_sources)\n        builder._resource_generated_executor_providers.clear()\n        builder._resource_generated_executor_providers.update(\n            self.resource_generated_executor_providers\n        )\n        builder._capability_providers.clear()\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '    compiled_resource_apis: tuple[CompiledResourceApi, ...] = ()\n    capability_providers: tuple[CapabilityProvider, ...] = ()\n'
+          new = '''    compiled_resource_apis: tuple[CompiledResourceApi, ...] = ()\n    generated_resource_executor_providers: tuple[\n        tuple[str, GeneratedResourceExecutorProvider], ...\n    ] = ()\n    capability_providers: tuple[CapabilityProvider, ...] = ()\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''    capability_reports = tuple(\n        require_capabilities(requirement, builder.capability_providers)\n        for requirement in capability_requirements\n    )\n\n    builder._mark_compiled()\n'''
+          new = '''    capability_reports = tuple(\n        require_capabilities(requirement, builder.capability_providers)\n        for requirement in capability_requirements\n    )\n    validate_generated_resource_runtime_support(\n        generated_api.resources, builder._resource_generated_executor_providers\n    )\n\n    builder._mark_compiled()\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''        compiled_resource_apis=generated_api.resources,\n        capability_providers=builder.capability_providers,\n'''
+          new = '''        compiled_resource_apis=generated_api.resources,\n        generated_resource_executor_providers=(\n            builder.generated_resource_executor_providers\n        ),\n        capability_providers=builder.capability_providers,\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+          uv run ruff format packages/rakit-core/src/rakit_core/compiler.py
+          uv run ruff check packages/rakit-core/src/rakit_core/compiler.py
+      - name: Commit runtime patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/rakit-core/src/rakit_core/compiler.py
+          git commit -m "feat(core): retain generated resource runtime providers"
+          git push origin HEAD:feat/first-generated-rest-read
