@@ -22,7 +22,6 @@ from rakit_web.generated_rest import (
 )
 from starlette.datastructures import QueryParams
 
-
 POLICY = ResourceFieldPolicy(
     list_fields=("id", "email"),
     detail_fields=("id", "email", "status", "created_at"),
