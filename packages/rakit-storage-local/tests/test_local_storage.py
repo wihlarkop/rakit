@@ -2,8 +2,8 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
-
 from rakit_storage import StoredFile, TemporaryUpload
+
 from rakit_storage_local import LocalStorage
 
 
