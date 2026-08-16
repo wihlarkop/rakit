@@ -283,7 +283,7 @@ async def _run_mutation(
     authorization: OperationAuthorization,
     *,
     idempotency_fingerprint: str,
-) -> object:
+) -> tuple[object, str]:
     executor = binding.generated_executor
     if executor is None or binding.unit_of_work_factory is None:
         raise RakitError(
@@ -317,11 +317,12 @@ async def _run_mutation(
             deadline=Deadline.after(binding.mutation_deadline_seconds),
         )
         with activate_operation_context(context):
-            return await run_operation_plan(
+            result = await run_operation_plan(
                 plan,
                 context,
                 unit_of_work_factory=binding.unit_of_work_factory,
             )
+        return result, context.operation_id
 
 
 def _list_response(binding: GeneratedRestBinding, result: object) -> JSONResponse:
@@ -604,6 +605,9 @@ async def _claim_mutation(
     binding: GeneratedRestBinding,
     key: str,
     fingerprint: str,
+    *,
+    principal_id: str,
+    operation: GeneratedCrudOperation,
 ) -> tuple[IdempotencyReservation, Response | None]:
     store = binding.idempotency_store
     if store is None:
@@ -613,8 +617,17 @@ async def _claim_mutation(
             status_code=500,
         )
     try:
+        token_scope = "\0".join(
+            (
+                binding.admin_id,
+                principal_id,
+                binding.api.resource_id,
+                operation.value,
+                key,
+            )
+        )
         reservation = await store.begin(
-            hashlib.sha256(key.encode()).hexdigest(),
+            hashlib.sha256(token_scope.encode()).hexdigest(),
             fingerprint=fingerprint,
         )
     except ValueError as exc:
@@ -690,12 +703,14 @@ async def _complete_mutation(
     binding: GeneratedRestBinding,
     reservation: IdempotencyReservation,
     response: Response,
+    *,
+    operation_id: str,
 ) -> None:
     assert binding.idempotency_store is not None
     await binding.idempotency_store.complete(
         reservation,
         OperationReceipt(
-            operation_id=new_operation_id(),
+            operation_id=operation_id,
             status="succeeded",
             result_kind="generated-rest",
             payload=_receipt_payload(response),
@@ -793,6 +808,16 @@ async def _mutation_handler(
                 binding.api.field_definitions,
                 schema_adapter=binding.schema_adapter,
             )
+            if not generated_input.present_fields:
+                raise RakitError(
+                    code=ErrorCode.VALIDATION_FAILED,
+                    message="Generated PATCH requires at least one field.",
+                    status_code=422,
+                    details={
+                        "resource_id": binding.api.resource_id,
+                        "reason": "generated_api_patch_empty",
+                    },
+                )
             generated_request = GeneratedCrudRequest.update_partial(
                 identity,
                 generated_input,
@@ -813,10 +838,16 @@ async def _mutation_handler(
             )
 
         fingerprint = _mutation_fingerprint(binding, generated_request)
-        reservation, replay = await _claim_mutation(binding, key, fingerprint)
+        reservation, replay = await _claim_mutation(
+            binding,
+            key,
+            fingerprint,
+            principal_id=authorization.principal_id,
+            operation=operation,
+        )
         if replay is not None:
             return replay
-        result = await _run_mutation(
+        result, operation_id = await _run_mutation(
             binding,
             request,
             generated_request,
@@ -824,7 +855,12 @@ async def _mutation_handler(
             idempotency_fingerprint=fingerprint,
         )
         response = _mutation_response(binding, operation, result)
-        await _complete_mutation(binding, reservation, response)
+        await _complete_mutation(
+            binding,
+            reservation,
+            response,
+            operation_id=operation_id,
+        )
         return response
     except RakitError as exc:
         if reservation is not None and binding.idempotency_store is not None:
