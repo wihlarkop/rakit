@@ -1,4 +1,4 @@
-"""SQLAlchemy mapper inspection for Plan 05 relationship metadata."""
+"""SQLAlchemy mapper inspection for relationship metadata."""
 
 from typing import Any
 

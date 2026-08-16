@@ -1,4 +1,4 @@
-"""Synchronous web runtime for Plan 05 Task 5 BULK actions.
+"""Synchronous web runtime for BULK actions.
 
 Selection and input are canonicalized before idempotency reservation. Completed
 receipts replay immediately after that stable fingerprint check; fresh record

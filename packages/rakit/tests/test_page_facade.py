@@ -1,4 +1,4 @@
-"""Public facade contract for Plan 05 Task 6 pages."""
+"""Public facade contract for custom pages."""
 
 from rakit import (
     DomainPageHandler,

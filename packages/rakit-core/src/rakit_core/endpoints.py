@@ -1,6 +1,6 @@
 """Backend-neutral typed custom endpoint primitives.
 
-Task 7 keeps endpoint declarations and execution semantic: core knows about
+Endpoint declarations and execution remain semantic: core knows about
 methods, input sources, access policy, transaction ownership and structured
 results, while a web adapter owns HTTP parsing and concrete responses.
 """
@@ -93,7 +93,7 @@ class EndpointStreamResult:
     """Explicit stream response.
 
     The web adapter may iterate this only after endpoint operation execution has
-    returned. Task 7 restricts streaming endpoints to read-only GET operations,
+    returned. Streaming endpoints are restricted to read-only GET operations,
     so no Rakit-owned write transaction can remain open while bytes are sent.
     """
 
@@ -119,7 +119,7 @@ class AdminEndpoint:
     """Public endpoint declaration used by ``Admin.register_endpoint``.
 
     GET defaults to QUERY + READ_ONLY. POST defaults to JSON + AUTO. Public
-    mutation endpoints are intentionally deferred in Task 7 because anonymous
+    public mutation endpoints are intentionally unsupported because anonymous
     idempotency ownership needs a separately designed client identity model.
     """
 
@@ -167,7 +167,7 @@ class AdminEndpoint:
         ):
             raise ValueError("POST endpoints cannot use TransactionPolicy.READ_ONLY")
         if self.access_policy is EndpointAccessPolicy.PUBLIC and self.method is EndpointMethod.POST:
-            raise ValueError("Public POST endpoints are not supported in Task 7")
+            raise ValueError("Public POST endpoints are not supported")
         if (
             self.response_kind is not EndpointResponseKind.JSON
             and not self.allow_response_escape_hatch
@@ -179,7 +179,7 @@ class AdminEndpoint:
             self.method is EndpointMethod.POST
             and self.response_kind is not EndpointResponseKind.JSON
         ):
-            raise ValueError("Task 7 POST endpoints must return JSON")
+            raise ValueError("POST endpoints must return JSON")
 
 
 @dataclass(frozen=True)

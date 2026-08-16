@@ -1,4 +1,4 @@
-"""Plan 05 Task 4 Correction C2A: generic operation transaction lifecycle."""
+"""Generic operation transaction lifecycle."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Operation-plan builders for synchronous Plan 05 bulk actions."""
+"""Operation-plan builders for synchronous bulk actions."""
 
 from collections.abc import Awaitable
 from typing import Any, cast

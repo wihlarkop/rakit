@@ -1,4 +1,4 @@
-"""Plan 05 Task 6 web runtime regression coverage."""
+"""Custom page web runtime regression coverage."""
 
 from collections.abc import Awaitable, Callable
 

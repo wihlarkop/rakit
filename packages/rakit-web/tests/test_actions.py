@@ -1,4 +1,4 @@
-"""Plan 05 Task 4 unified actions: web translation and security contract tests."""
+"""Unified action web translation and security contract tests."""
 
 import hashlib
 import re
@@ -1255,7 +1255,7 @@ async def test_bulk_scope_is_definition_only_and_binding_fails_closed(
     async def async_true(_request: object) -> bool:
         return True
 
-    with pytest.raises(ValueError, match="Task 5"):
+    with pytest.raises(ValueError, match="bulk action binding"):
         ActionBinding(
             routes=(
                 (

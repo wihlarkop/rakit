@@ -1,4 +1,4 @@
-"""Plan 05 Task 4: real SQLAlchemy-backed record action through real HTTP."""
+"""Real SQLAlchemy-backed record action through real HTTP."""
 
 import re
 from urllib.parse import urlencode

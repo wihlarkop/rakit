@@ -1,4 +1,4 @@
-"""Public composition and Admin integration for Plan 05 Task 7 endpoints."""
+"""Public composition and Admin integration for custom endpoints."""
 
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -158,7 +158,7 @@ def validate_endpoint_runtime(
     uow_factory_registered: bool,
     debug: bool,
 ) -> None:
-    """Fail closed for endpoint combinations Task 7 cannot safely guarantee."""
+    """Fail closed for endpoint combinations the runtime cannot safely guarantee."""
 
     if not compiled.compiled_endpoints:
         return
@@ -171,7 +171,7 @@ def validate_endpoint_runtime(
                 code=ErrorCode.CONFIG_INVALID,
                 message=(
                     f'Endpoint "{endpoint.endpoint_id}" uses a parameterized path, but '
-                    "Task 7 endpoint runtime supports static paths only."
+                    "Custom endpoint runtime supports static paths only."
                 ),
                 status_code=500,
                 details={
@@ -182,7 +182,7 @@ def validate_endpoint_runtime(
         if len(endpoint.methods) != 1:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
-                message="Task 7 endpoints must declare exactly one HTTP method.",
+                message="Custom endpoints must declare exactly one HTTP method.",
                 status_code=500,
                 details={"endpoint_id": str(endpoint.endpoint_id), "reason": "one_method_required"},
             )
@@ -218,7 +218,7 @@ def validate_endpoint_runtime(
             if endpoint.input_source not in (None, EndpointInputSource.QUERY):
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
-                    message="Task 7 GET endpoints accept QUERY input only.",
+                    message="GET endpoints accept QUERY input only.",
                     status_code=500,
                     details={
                         "endpoint_id": str(endpoint.endpoint_id),
@@ -240,7 +240,7 @@ def validate_endpoint_runtime(
             if endpoint.access_policy is EndpointAccessPolicy.PUBLIC:
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
-                    message="Public POST endpoints are intentionally deferred beyond Task 7.",
+                    message="Public POST endpoints are not supported by the current runtime.",
                     status_code=500,
                     details={
                         "endpoint_id": str(endpoint.endpoint_id),
@@ -254,7 +254,7 @@ def validate_endpoint_runtime(
             ):
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
-                    message="Task 7 POST endpoints accept JSON or FORM input only.",
+                    message="POST endpoints accept JSON or FORM input only.",
                     status_code=500,
                     details={
                         "endpoint_id": str(endpoint.endpoint_id),
@@ -264,7 +264,7 @@ def validate_endpoint_runtime(
             if endpoint.response_kind is not EndpointResponseKind.JSON:
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
-                    message="Task 7 POST endpoint responses must be replayable JSON.",
+                    message="POST endpoint responses must be replayable JSON.",
                     status_code=500,
                     details={
                         "endpoint_id": str(endpoint.endpoint_id),
@@ -303,7 +303,7 @@ def validate_endpoint_runtime(
         if endpoint.response_kind is EndpointResponseKind.ADVANCED:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
-                message="Advanced raw response adapters are deferred beyond Task 7.",
+                message="Advanced raw response adapters are not supported.",
                 status_code=500,
                 details={
                     "endpoint_id": str(endpoint.endpoint_id),
@@ -370,7 +370,7 @@ class _EndpointDispatchMiddleware:
 class Admin(_BaseAdmin):
     """Endpoint-enabled public Admin facade.
 
-    The base Starlette admin remains unchanged; Task 7 adds an exact-path API
+    The base Starlette admin remains unchanged; custom endpoints add an exact-path API
     dispatch layer so API authentication failures stay JSON instead of
     inheriting browser redirect/plain-text behavior.
     """

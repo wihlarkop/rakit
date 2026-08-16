@@ -1,4 +1,4 @@
-"""Plan 05 Task 6 custom page execution and transaction contracts."""
+"""Custom page execution and transaction contracts."""
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager

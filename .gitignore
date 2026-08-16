@@ -5,9 +5,11 @@
 # -----------------------------------------------------------------------------
 # Maintainer-only working documents
 # -----------------------------------------------------------------------------
-# Public documentation such as docs/roadmap.md and docs/design/ remains tracked.
+# Public documentation such as docs/roadmap.md remains tracked.
 # Implementation plans, private notes, and unfinished drafts stay local.
 docs/plans/
+docs/design/
+docs/specs/
 docs/drafts/
 docs/private/
 docs/notes/

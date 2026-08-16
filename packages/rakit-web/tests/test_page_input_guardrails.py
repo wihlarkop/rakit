@@ -1,4 +1,4 @@
-"""Task 6 trust-boundary regression tests for custom Page input."""
+"""Trust-boundary regression tests for custom page input."""
 
 import httpx
 import pytest

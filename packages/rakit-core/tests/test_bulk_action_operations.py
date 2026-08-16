@@ -1,4 +1,4 @@
-"""Plan 05 Task 5 bulk action compiler and transaction contracts."""
+"""Bulk action compiler and transaction contracts."""
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager

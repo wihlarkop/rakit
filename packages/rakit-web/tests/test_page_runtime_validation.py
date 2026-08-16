@@ -1,4 +1,4 @@
-"""Task 6 runtime-only Page capability validation."""
+"""Runtime-only custom page capability validation."""
 
 import pytest
 from rakit_core.compiler import ApplicationBuilder, compile_application

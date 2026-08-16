@@ -1,4 +1,4 @@
-"""Plan 05 Task 7 typed custom endpoint regression coverage."""
+"""Typed custom endpoint regression coverage."""
 
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta

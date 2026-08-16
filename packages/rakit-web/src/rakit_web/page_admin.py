@@ -1,4 +1,4 @@
-"""Admin composition helpers for compiled Plan 05 custom pages."""
+"""Admin composition helpers for compiled custom pages."""
 
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager
@@ -88,7 +88,7 @@ def validate_page_runtime(
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message=(
-                    f'Page "{page.page_id}" uses a parameterized path, but Task 6 '
+                    f'Page "{page.page_id}" uses a parameterized path, but the '
                     "custom-page runtime supports static paths only."
                 ),
                 status_code=500,

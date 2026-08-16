@@ -1,4 +1,4 @@
-"""Compatibility imports for the canonical Task 5 bulk route runtime."""
+"""Compatibility imports for the canonical bulk route runtime."""
 
 from rakit_core.idempotency import OperationReceipt
 from starlette.requests import Request

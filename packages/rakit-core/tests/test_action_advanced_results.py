@@ -1,4 +1,4 @@
-"""Correction E3: advanced action results remain durable AUTO successes."""
+"""Advanced action results remain durable AUTO successes."""
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager

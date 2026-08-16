@@ -1,4 +1,4 @@
-"""Public Admin composition contract for Plan 05 Task 6 pages."""
+"""Public Admin composition contract for custom pages."""
 
 import pytest
 from rakit_core.actions import (

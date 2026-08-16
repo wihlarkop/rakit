@@ -1,4 +1,4 @@
-"""Plan 05 Task 4 Correction C2B: sanctioned action -> SQLAlchemy mutation path."""
+"""Sanctioned action-to-SQLAlchemy mutation path."""
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass

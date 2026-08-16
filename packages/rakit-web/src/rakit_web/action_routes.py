@@ -1,4 +1,4 @@
-"""Web translation of unified Plan 05 Task 4 actions.
+"""Web translation of unified actions.
 
 GET resolves the action, authorizes invocation, scoped-loads the record for
 RECORD actions, evaluates availability, and renders the appropriate form,
@@ -133,9 +133,7 @@ class ActionBinding:
         for route, compiled_action in self.routes:
             action = compiled_action.definition
             if action.scope is ActionScope.BULK:
-                raise ValueError(
-                    "BULK actions cannot be bound to routes until Task 5 selection exists"
-                )
+                raise ValueError("BULK actions require a bulk action binding")
             if route.methods != ("GET", "POST"):
                 raise ValueError(f"Action route {route.route_name!r} must declare GET and POST")
             if action.scope is ActionScope.RECORD:

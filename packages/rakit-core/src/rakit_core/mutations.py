@@ -119,7 +119,7 @@ class OperationAuthorizationSet:
 
 
 # Kept as an alias: existing CRUD signatures and public imports retain their
-# identity while Plan 05 can use the capability for a non-CRUD operation.
+# identity while non-CRUD operations can use the capability.
 MutationAuthorization = OperationAuthorization
 
 

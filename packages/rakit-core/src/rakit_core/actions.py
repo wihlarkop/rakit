@@ -1,4 +1,4 @@
-"""Unified, backend-neutral action definitions and execution for Plan 05 Task 4.
+"""Unified, backend-neutral action definitions and execution.
 
 An action is a named, permission-bound, typed operation attached to one
 ``ActionScope``.  Availability answers "should this action be presented and
@@ -277,7 +277,7 @@ class ActionDefinition(BaseModel):
             if self.scope is not ActionScope.RECORD:
                 raise ValueError(
                     f"Action {self.action_id!r} concurrency is only valid for RECORD scope "
-                    "(Task 5 owns bulk concurrency snapshots)"
+                    "(bulk actions own their own concurrency snapshots)"
                 )
             if not self.mutating or self.transaction_policy is not TransactionPolicy.AUTO:
                 raise ValueError(

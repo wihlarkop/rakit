@@ -1,4 +1,4 @@
-"""Real Admin integration coverage for Plan 05 Task 6 pages."""
+"""Real Admin integration coverage for custom pages."""
 
 from datetime import UTC, datetime, timedelta
 

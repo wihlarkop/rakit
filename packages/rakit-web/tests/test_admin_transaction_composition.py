@@ -1,4 +1,4 @@
-"""Plan 05 Task 4 Correction C2A: real Admin transaction-capability composition."""
+"""Real Admin transaction-capability composition."""
 
 from __future__ import annotations
 

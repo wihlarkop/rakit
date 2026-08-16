@@ -1,4 +1,4 @@
-"""Sanctioned SQLAlchemy mutation executors for Task 4 Correction C2B.
+"""Sanctioned SQLAlchemy mutation executors for action operations.
 
 The ordinary :class:`~rakit_core.actions.PreparedMutationExecutor` can only
 promise participation in a Rakit-owned unit of work. This module contains the

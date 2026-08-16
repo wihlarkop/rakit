@@ -1,4 +1,4 @@
-"""Starlette runtime for compiler-owned Plan 05 Task 7 custom endpoints."""
+"""Starlette runtime for compiler-owned custom endpoints."""
 
 import hashlib
 import json

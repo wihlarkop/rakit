@@ -103,7 +103,7 @@ def _path_prefixes_overlap(
 
 
 def _uses_resource_reserved_subpath(path: str, resources: tuple[ResourceDefinition, ...]) -> bool:
-    """Keep Plan 05 resource child namespaces out of application route ownership.
+    """Keep resource child namespaces out of application route ownership.
 
     `_actions` and `_relationships` are meaningful only below a compiled
     resource's collection/record route shapes.  They are not global framework

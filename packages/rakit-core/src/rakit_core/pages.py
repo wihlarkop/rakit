@@ -1,4 +1,4 @@
-"""Backend-neutral custom page execution primitives for Plan 05 Task 6.
+"""Backend-neutral custom page execution primitives.
 
 Pages are permission-bound application operations. Core owns their typed
 results and operation plan; web adapters own HTTP parsing and template
@@ -154,7 +154,7 @@ def build_page_operation_plan(
     *,
     idempotency_fingerprint: str | None = None,
 ) -> OperationPlan[PageContext, PageExecutionResult[Any]]:
-    """Map a prepared page request to the canonical Plan 05 operation seam."""
+    """Map a prepared page request to the canonical operation seam."""
 
     definition = context.definition
     handler = definition.handler

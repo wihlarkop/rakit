@@ -1,10 +1,10 @@
-"""PLAN 05 TASK 4 CORRECTION C1: canonical action OperationPlan mapping.
+"""Canonical action-to-OperationPlan mapping.
 
 ``build_action_operation_plan`` maps a prepared ``ActionContext`` onto the
 generic ``OperationPlan`` seam; ``execute_operation_plan`` is the single
-application execution boundary (RBAC never re-run in core).  C2A adds the
-executor capability contract: mutating AUTO/MANUAL requires UoW
-participation, and ``requires_concurrency`` means strong concurrency.
+application execution boundary (RBAC is never re-run in core). Mutating
+AUTO/MANUAL actions require UoW participation, and ``requires_concurrency``
+means strong concurrency.
 """
 
 from typing import Any

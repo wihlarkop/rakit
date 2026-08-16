@@ -23,7 +23,7 @@ from rakit_core.permissions import PermissionRequirement
 
 
 class RelationshipMutationKind(StrEnum):
-    """Semantic operations supported by the Plan 05 relationship executor."""
+    """Semantic operations supported by the relationship executor."""
 
     SET = "set"
     CLEAR = "clear"

@@ -117,7 +117,7 @@ def _default_result_is_success(result: object) -> bool:
 
 @dataclass(frozen=True)
 class OperationPlan[TInput, TResult]:
-    """Immutable, backend-neutral execution seam for Plan 05 operations.
+    """Immutable, backend-neutral execution seam for operations.
 
     It deliberately carries policy and a typed executor but does not own a
     concrete unit of work.  ``executor_capabilities`` records what the

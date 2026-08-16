@@ -1,4 +1,4 @@
-"""PLAN 05 TASK 4 CORRECTION A: one canonical ``ActionDefinition`` contract.
+"""Canonical ``ActionDefinition`` contract.
 
 Every supported import path -- ``rakit_core.actions``, the compatibility
 re-export ``rakit_core.definitions``, and the public ``rakit`` facade --

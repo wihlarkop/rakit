@@ -1,9 +1,9 @@
-"""PLAN 05 TASK 4 CORRECTION B2B2: generic RECORD concurrency for actions.
+"""Generic record concurrency contracts for actions.
 
-``ActionDefinition.requires_concurrency`` is a Task-4 RECORD-only strong
-concurrency flag; C2A additionally requires a mutating AUTO transaction. The
-runtime version capability remains a backend-neutral ``ConcurrencyVersionProvider``
-registered per resource (Task 5 owns bulk concurrency snapshots).
+``ActionDefinition.requires_concurrency`` is a RECORD-only strong
+concurrency flag and requires a mutating AUTO transaction. The runtime
+version capability remains a backend-neutral ``ConcurrencyVersionProvider``
+registered per resource; bulk actions own their concurrency snapshots.
 """
 
 from datetime import timedelta

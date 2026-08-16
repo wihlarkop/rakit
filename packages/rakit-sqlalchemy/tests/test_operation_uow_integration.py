@@ -1,4 +1,4 @@
-"""Plan 05 Task 4 Correction C2A: real SQLAlchemy operation-UoW integration."""
+"""Real SQLAlchemy operation-UoW integration."""
 
 from __future__ import annotations
 

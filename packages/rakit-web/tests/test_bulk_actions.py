@@ -1,4 +1,4 @@
-"""Task 5 synchronous bulk action web lifecycle regressions."""
+"""Synchronous bulk action web lifecycle regressions."""
 
 import hashlib
 import re

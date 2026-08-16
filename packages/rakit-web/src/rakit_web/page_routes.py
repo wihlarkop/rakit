@@ -1,4 +1,4 @@
-"""Web runtime for compiled Plan 05 Task 6 custom pages."""
+"""Web runtime for compiled custom pages."""
 
 import hashlib
 import json

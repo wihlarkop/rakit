@@ -1,10 +1,9 @@
-"""PLAN 05 action-route compiler contract through Task 5.
+"""Action-route compiler contract across all supported scopes.
 
 The compiler owns action route metadata (path, methods, stable route name,
 owner). Every executable PAGE / RESOURCE / RECORD / BULK action exposes
 GET + POST; ``mutating`` is execution/transaction semantics, not an
-HTTP-method switch. Task 5 extends the Task 4 contract by making BULK routes
-compiler-owned too.
+HTTP-method switch. BULK routes are compiler-owned too.
 """
 
 from rakit_core.actions import (

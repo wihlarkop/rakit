@@ -1,4 +1,4 @@
-"""C2B capability guardrails for the sanctioned SQLAlchemy action executor."""
+"""Capability guardrails for the sanctioned SQLAlchemy action executor."""
 
 import pytest
 from rakit.sqlalchemy import SQLAlchemyActionUpdateExecutor as PublicActionUpdateExecutor

@@ -1,4 +1,4 @@
-"""Real ASGI + SQLAlchemy + file-backed SQLite integration fixture for Plan 05 Phase 3B.
+"""Real ASGI + SQLAlchemy + file-backed SQLite integration fixture.
 
 Every HTTP request in this suite goes through the real Rakit web routes into the
 real SQLAlchemy mutation services and a real file-backed database.  Only the
