@@ -11,6 +11,7 @@ members = [
     "rakit",
     "rakit-auth-sqlalchemy",
     "rakit-core",
+    "rakit-server",
     "rakit-server-uvicorn",
     "rakit-sqlalchemy",
     "rakit-storage",
@@ -751,6 +752,17 @@ requires-dist = [
     { name = "cryptography", specifier = ">=43" },
     { name = "pydantic", specifier = ">=2.11,<3" },
 ]
+
+[[package]]
+name = "rakit-server"
+version = "0.1.0a1"
+source = { editable = "packages/rakit-server" }
+dependencies = [
+    { name = "rakit-core" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "rakit-core", editable = "packages/rakit-core" }]
 
 [[package]]
 name = "rakit-server-uvicorn"

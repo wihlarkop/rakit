@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 
 import pytest
-
 from rakit_server import (
     ServerAdapterNotFoundError,
     ServerCapabilities,

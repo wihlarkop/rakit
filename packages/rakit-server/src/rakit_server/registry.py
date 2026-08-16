@@ -51,7 +51,11 @@ class ServerRegistry:
         adapter_name = getattr(adapter, "name", None)
         capabilities = getattr(adapter, "capabilities", None)
         run = getattr(adapter, "run", None)
-        if adapter_name != name or not isinstance(capabilities, ServerCapabilities) or not callable(run):
+        if (
+            adapter_name != name
+            or not isinstance(capabilities, ServerCapabilities)
+            or not callable(run)
+        ):
             raise ServerConfigurationError(
                 f'Server adapter factory for "{name}" returned an invalid adapter'
             )

@@ -1,5 +1,4 @@
 import pytest
-
 from rakit_server import ServerTargetKind, resolve_server_target
 from rakit_server.errors import InvalidServerTargetError
 
@@ -57,5 +56,5 @@ class BrokenAdminLike:
 
 
 def test_admin_like_target_requires_asgi_to_return_callable() -> None:
-    with pytest.raises(InvalidServerTargetError, match="asgi\(\)"):
+    with pytest.raises(InvalidServerTargetError, match=r"asgi\(\)"):
         resolve_server_target(BrokenAdminLike())

@@ -14,9 +14,9 @@ from .targets import ASGIApplication, ServerTarget, ServerTargetKind, resolve_se
 __version__ = "0.1.0a1"
 
 __all__ = [
+    "SERVER_ENTRY_POINT_GROUP",
     "ASGIApplication",
     "InvalidServerTargetError",
-    "SERVER_ENTRY_POINT_GROUP",
     "ServerAdapter",
     "ServerAdapterConflictError",
     "ServerAdapterNotFoundError",

@@ -1,5 +1,4 @@
 import pytest
-
 from rakit_core.capabilities import (
     Capability,
     CapabilityProvider,

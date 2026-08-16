@@ -1,7 +1,6 @@
 from typing import cast
 
 import pytest
-
 from rakit_server import ServerCapabilities, ServerConfig
 
 
