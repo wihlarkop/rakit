@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
+from typing import cast
 from uuid import UUID
 
 from rakit_core.definitions import ResourceFieldPolicy
@@ -143,9 +144,10 @@ def validate_generated_rest_payload(
 
 def _record_field(record: object, field_name: str) -> object:
     if isinstance(record, Mapping):
-        if field_name not in record:
+        record_mapping = cast(Mapping[str, object], record)
+        if field_name not in record_mapping:
             raise KeyError(field_name)
-        return record[field_name]
+        return record_mapping[field_name]
     if not hasattr(record, field_name):
         raise KeyError(field_name)
     return getattr(record, field_name)
@@ -234,9 +236,10 @@ def serialize_generated_record(
                     "fields": sorted(widened),
                 },
             )
-        safe = _json_safe(api, serialized_mapping)
-        assert isinstance(safe, dict)
-        return safe
+        return {
+            key: _json_safe(api, value)
+            for key, value in serialized_mapping.items()
+        }
 
     projected: dict[str, object] = {}
     try:
@@ -253,9 +256,7 @@ def serialize_generated_record(
                 "field": str(exc.args[0]),
             },
         ) from exc
-    safe = _json_safe(api, projected)
-    assert isinstance(safe, dict)
-    return safe
+    return {key: _json_safe(api, value) for key, value in projected.items()}
 
 
 def generated_error_payload(error: RakitError, *, request_id: str) -> dict[str, object]:
