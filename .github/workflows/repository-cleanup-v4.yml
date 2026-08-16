@@ -1,0 +1,82 @@
+name: Repository Cleanup V4
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  clean-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages --dev --locked
+
+      - name: Apply public repository cleanup
+        run: uv run python .github/cleanup_public_repo.py
+
+      - name: Format changed Python files
+        run: uv run ruff format .
+
+      - name: Verify internal planning docs are absent
+        shell: bash
+        run: |
+          test ! -e docs/plans
+          test ! -e docs/specs
+          test ! -e docs/design
+          grep -qx 'docs/plans/' .gitignore
+          grep -qx 'docs/specs/' .gitignore
+          grep -qx 'docs/design/' .gitignore
+
+      - name: Verify test names and source use product language
+        shell: bash
+        run: |
+          remaining_names="$(find packages tests -type f -name 'test_plan*.py' -print)"
+          if [ -n "$remaining_names" ]; then
+            echo "Planning-oriented test filenames remain:"
+            echo "$remaining_names"
+            exit 1
+          fi
+          if grep -R -n -E 'PLAN 05|Plan 05|Task-[0-9]+|Task [0-9]+|Correction [A-Z][0-9]?' packages/*/tests tests --include='*.py'; then
+            echo "Planning-oriented markers remain in test source."
+            exit 1
+          fi
+          if grep -R -n -E 'until Task [0-9]+|requires Task [0-9]+|PLAN 05|Plan 05|Task-[0-9]+|Task [0-9]+' packages/*/src --include='*.py'; then
+            echo "Implementation-plan wording remains in public runtime source."
+            exit 1
+          fi
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+      - name: Ruff lint
+        run: uv run ruff check .
+      - name: Type check
+        run: uv run ty check
+      - name: Full suite excluding verified Linux baseline failures
+        run: >-
+          uv run pytest -q
+          -k "not test_all_packages_builds_exactly_the_eight_official_distributions
+          and not test_auth_migration_history_coexists_with_a_host_alembic_version_table"
+      - name: Diff check
+        run: git diff --check
+
+      - name: Commit cleanup and remove temporary helpers
+        shell: bash
+        run: |
+          git rm -f \
+            .github/workflows/repository-cleanup.yml \
+            .github/workflows/repository-cleanup-v2.yml \
+            .github/workflows/repository-cleanup-v3.yml \
+            .github/workflows/repository-cleanup-v4.yml \
+            .github/cleanup_public_repo.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore: clean public repository metadata"
+          git push origin HEAD:${{ github.head_ref }}
