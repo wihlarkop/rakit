@@ -152,8 +152,8 @@ def test_plugin_rollback_restores_generated_executor_provider_state() -> None:
     class BrokenPlugin:
         plugin_id = "broken-runtime"
 
-        def configure(self, target: ApplicationBuilder) -> None:
-            target.add_resource(
+        def configure(self, builder: ApplicationBuilder) -> None:
+            builder.add_resource(
                 _resource(ApiExposure.READ_ONLY),
                 FakeDataSource(),
                 generated_executor_provider=provider,
