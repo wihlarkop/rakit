@@ -236,10 +236,7 @@ def serialize_generated_record(
                     "fields": sorted(widened),
                 },
             )
-        return {
-            key: _json_safe(api, value)
-            for key, value in serialized_mapping.items()
-        }
+        return {key: _json_safe(api, value) for key, value in serialized_mapping.items()}
 
     projected: dict[str, object] = {}
     try:
