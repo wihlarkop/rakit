@@ -270,8 +270,7 @@ async def recent_orders(_context):
         label="Recent orders",
         columns=("Order", "Customer", "Status", "Total"),
         rows=tuple(
-            (order["id"], order["customer"], order["status"], order["total"])
-            for order in _ORDERS
+            (order["id"], order["customer"], order["status"], order["total"]) for order in _ORDERS
         ),
     )
 
