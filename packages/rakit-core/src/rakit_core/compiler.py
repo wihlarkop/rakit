@@ -24,7 +24,7 @@ from .definitions import (
 )
 from .di import ServiceRegistry, _RegistrySnapshot
 from .errors import ErrorCode, RakitError
-from .generated_api import CompiledResourceApi, GeneratedCrudOperation
+from .generated_api import ApiExposure, CompiledResourceApi, GeneratedCrudOperation
 from .generated_compiler import compile_generated_resource_apis
 from .generated_runtime import GeneratedResourceExecutorProvider, ResourceAdapterRuntime
 from .permissions import PermissionRequirement
@@ -869,6 +869,9 @@ def _generated_api_definition_routes(
     operation_routes = {
         GeneratedCrudOperation.LIST: ("list", ("GET", "HEAD"), False),
         GeneratedCrudOperation.DETAIL: ("detail", ("GET", "HEAD"), True),
+        GeneratedCrudOperation.CREATE: ("create", ("POST",), False),
+        GeneratedCrudOperation.UPDATE_PARTIAL: ("update", ("PATCH",), True),
+        GeneratedCrudOperation.DELETE: ("delete", ("DELETE",), True),
     }
     for resource in builder.resources:
         base_path = f"/api/{resource.resource_id}"
@@ -1005,6 +1008,24 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
         require_capabilities(requirement, builder.capability_providers)
         for requirement in capability_requirements
     )
+    generated_executor_providers = dict(builder.generated_resource_executor_providers)
+    for api in generated_api.resources:
+        if (
+            api.definition.exposure is ApiExposure.CRUD
+            and api.resource_id not in generated_executor_providers
+        ):
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+                message=(
+                    f'Resource "{api.resource_id}" exposes generated CRUD but its adapter '
+                    "does not provide a generated resource executor."
+                ),
+                status_code=500,
+                details={
+                    "resource_id": api.resource_id,
+                    "reason": "generated_api_executor_not_supported",
+                },
+            )
     builder._mark_compiled()
     return CompiledApplication(
         all_routes,
