@@ -412,3 +412,41 @@ async def test_mutation_rejects_non_json_and_malformed_or_non_object_json() -> N
     assert unsupported.status_code == 415
     assert malformed.status_code == 400
     assert non_object.status_code == 400
+
+
+class FailingCompleteIdempotencyStore(MemoryIdempotencyStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.release_calls = 0
+
+    async def complete(self, reservation, receipt: OperationReceipt) -> None:
+        raise RuntimeError("receipt store unavailable")
+
+    async def release(self, reservation) -> None:
+        self.release_calls += 1
+        await super().release(reservation)
+
+
+@pytest.mark.anyio
+async def test_post_commit_receipt_failure_does_not_release_idempotency_claim() -> None:
+    executor = Executor()
+    store = FailingCompleteIdempotencyStore()
+    transport = httpx.ASGITransport(app=_app(executor, store))
+    headers = {"Idempotency-Key": "commit-safe"}
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+        first = await client.post(
+            "/api/users",
+            json={"email": "committed@example.com"},
+            headers=headers,
+        )
+        retry = await client.post(
+            "/api/users",
+            json={"email": "committed@example.com"},
+            headers=headers,
+        )
+
+    assert first.status_code == 500
+    assert retry.status_code == 409
+    assert len(executor.calls) == 1
+    assert store.release_calls == 0

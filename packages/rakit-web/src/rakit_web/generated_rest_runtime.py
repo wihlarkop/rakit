@@ -850,13 +850,20 @@ async def _mutation_handler(
         )
         if replay is not None:
             return replay
-        result, operation_id = await _run_mutation(
-            binding,
-            request,
-            generated_request,
-            authorization,
-            idempotency_fingerprint=fingerprint,
-        )
+        try:
+            result, operation_id = await _run_mutation(
+                binding,
+                request,
+                generated_request,
+                authorization,
+                idempotency_fingerprint=fingerprint,
+            )
+        except (RakitError, Exception):
+            # `release()` is valid only before the root UoW commits.
+            # `_run_mutation()` returning means UoW teardown/commit completed.
+            if binding.idempotency_store is not None:
+                await binding.idempotency_store.release(reservation)
+            raise
         response = _mutation_response(binding, request, operation, result)
         await _complete_mutation(
             binding,
@@ -866,12 +873,8 @@ async def _mutation_handler(
         )
         return response
     except RakitError as exc:
-        if reservation is not None and binding.idempotency_store is not None:
-            await binding.idempotency_store.release(reservation)
         return generated_error_response(request, exc)
     except Exception:
-        if reservation is not None and binding.idempotency_store is not None:
-            await binding.idempotency_store.release(reservation)
         return _unexpected_error_response(request)
 
 
