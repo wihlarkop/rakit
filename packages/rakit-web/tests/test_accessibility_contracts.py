@@ -45,10 +45,10 @@ async def test_dashboard_has_skip_link_landmarks_one_h1_and_live_announcer() -> 
     assert response.status_code == 200
     assert '<a\n      href="#rakit-main-content"' in response.text
     assert '<main id="rakit-main-content"' in response.text
-    assert '<nav ' in response.text
+    assert "<nav " in response.text
     assert document.h1_count == 1
     assert _duplicate_ids(response.text) == set()
-    assert '<title>Operations dashboard' in response.text
+    assert "<title>Operations dashboard" in response.text
     assert 'id="rakit-announcer"' in response.text
     assert 'role="status"' in response.text
     assert 'aria-live="polite"' in response.text
@@ -98,7 +98,7 @@ async def test_sortable_table_uses_button_and_aria_sort() -> None:
         flags=re.DOTALL,
     )
     assert header is not None
-    assert '<button' in header.group(1)
+    assert "<button" in header.group(1)
     assert 'name="sort"' in header.group(1)
     assert 'aria-label="Sort by id' in header.group(1)
 
@@ -110,4 +110,4 @@ def test_progressive_enhancement_asset_declares_focus_restoration_and_htmx_focus
 
     assert "data-rakit-focus-target" in script
     assert "rakitReturnFocus" in script
-    assert 'htmx:afterSwap' in script
+    assert "htmx:afterSwap" in script

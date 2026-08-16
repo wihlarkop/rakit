@@ -38,16 +38,18 @@ async def test_theme_control_and_asset_support_light_dark_system() -> None:
         match = re.search(r'<script src="([^"]*theme\.[a-f0-9]{8}\.js)"', response.text)
         assert match is not None
         script = await client.get(match.group(1))
-        css_match = re.search(r'<link rel="stylesheet" href="([^"]*rakit\.[a-f0-9]{8}\.css)"', response.text)
+        css_match = re.search(
+            r'<link rel="stylesheet" href="([^"]*rakit\.[a-f0-9]{8}\.css)"', response.text
+        )
         assert css_match is not None
         css = await client.get(css_match.group(1))
 
-    assert 'data-rakit-theme-select' in response.text
+    assert "data-rakit-theme-select" in response.text
     assert '<option value="system">System</option>' in response.text
     assert '<option value="light">Light</option>' in response.text
     assert '<option value="dark">Dark</option>' in response.text
     assert script.status_code == 200
-    assert 'localStorage' in script.text
+    assert "localStorage" in script.text
     assert 'matchMedia("(prefers-color-scheme: dark)")' in script.text
     assert 'new Set(["light", "dark", "system"])' in script.text
     assert css.status_code == 200
