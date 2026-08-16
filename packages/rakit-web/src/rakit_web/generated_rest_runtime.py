@@ -343,7 +343,41 @@ def _list_response(binding: GeneratedRestBinding, result: object) -> JSONRespons
     )
 
 
-def _detail_response(binding: GeneratedRestBinding, result: object) -> JSONResponse:
+def _etag_headers(
+    binding: GeneratedRestBinding,
+    identity: RecordIdentity,
+    record: object,
+) -> dict[str, str]:
+    provider = binding.concurrency_provider
+    tokens = binding.concurrency_tokens
+    if provider is None and tokens is None:
+        return {}
+    if provider is None or tokens is None:
+        raise RakitError(
+            code=ErrorCode.CONFIG_INVALID,
+            message="Generated CRUD concurrency runtime is incomplete.",
+            status_code=500,
+            details={
+                "resource_id": binding.api.resource_id,
+                "reason": "generated_api_concurrency_runtime_incomplete",
+            },
+        )
+    token = tokens.issue(
+        binding.api.resource_id,
+        identity,
+        provider.version_for(record),
+        base_snapshot=provider.predicate_values_for(record),
+    )
+    return {"ETag": f'"{token}"'}
+
+
+def _detail_response(
+    binding: GeneratedRestBinding,
+    identity: RecordIdentity,
+    result: object,
+) -> JSONResponse:
+    headers = {"Cache-Control": "no-store"}
+    headers.update(_etag_headers(binding, identity, result))
     return JSONResponse(
         {
             "data": serialize_generated_record(
@@ -352,7 +386,7 @@ def _detail_response(binding: GeneratedRestBinding, result: object) -> JSONRespo
                 schema_adapter=binding.schema_adapter,
             )
         },
-        headers={"Cache-Control": "no-store"},
+        headers=headers,
     )
 
 
@@ -374,6 +408,63 @@ def _decode_identity(binding: GeneratedRestBinding, request: Request) -> RecordI
             status_code=400,
             details={"reason": "generated_api_identity_invalid"},
         ) from exc
+
+
+def _if_match_token(binding: GeneratedRestBinding, request: Request) -> str | None:
+    if binding.concurrency_provider is None:
+        return None
+    if binding.concurrency_tokens is None:
+        raise RakitError(
+            code=ErrorCode.CONFIG_INVALID,
+            message="Generated CRUD concurrency token service is missing.",
+            status_code=500,
+            details={
+                "resource_id": binding.api.resource_id,
+                "reason": "generated_api_concurrency_runtime_incomplete",
+            },
+        )
+    raw = request.headers.get("if-match")
+    if raw is None:
+        raise RakitError(
+            code=ErrorCode.VALIDATION_FAILED,
+            message="If-Match is required for this resource.",
+            status_code=428,
+            details={
+                "resource_id": binding.api.resource_id,
+                "reason": "generated_api_if_match_required",
+            },
+        )
+    value = raw.strip()
+    if (
+        not value
+        or value.startswith("W/")
+        or "," in value
+        or len(value) < 3
+        or value[0] != '"'
+        or value[-1] != '"'
+        or '"' in value[1:-1]
+    ):
+        raise RakitError(
+            code=ErrorCode.VALIDATION_FAILED,
+            message="If-Match must contain exactly one strong ETag.",
+            status_code=400,
+            details={
+                "resource_id": binding.api.resource_id,
+                "reason": "generated_api_if_match_invalid",
+            },
+        )
+    token = value[1:-1]
+    if not token:
+        raise RakitError(
+            code=ErrorCode.VALIDATION_FAILED,
+            message="If-Match must contain exactly one strong ETag.",
+            status_code=400,
+            details={
+                "resource_id": binding.api.resource_id,
+                "reason": "generated_api_if_match_invalid",
+            },
+        )
+    return token
 
 
 async def _verify_mutation_csrf(binding: GeneratedRestBinding, request: Request) -> None:
@@ -635,6 +726,7 @@ def _mutation_response(
         )
     }
     headers = {"Cache-Control": "no-store"}
+    headers.update(_etag_headers(binding, result.identity, result.record))
     status_code = 200
     if operation is GeneratedCrudOperation.CREATE:
         status_code = 201
@@ -694,7 +786,7 @@ async def _mutation_handler(
             generated_request = GeneratedCrudRequest.update_partial(
                 identity,
                 generated_input,
-                concurrency_token=None,
+                concurrency_token=_if_match_token(binding, request),
             )
         else:
             assert identity is not None
@@ -705,7 +797,10 @@ async def _mutation_handler(
                     status_code=400,
                     details={"reason": "generated_api_delete_body_not_allowed"},
                 )
-            generated_request = GeneratedCrudRequest.delete(identity, concurrency_token=None)
+            generated_request = GeneratedCrudRequest.delete(
+                identity,
+                concurrency_token=_if_match_token(binding, request),
+            )
 
         fingerprint = _mutation_fingerprint(binding, generated_request)
         reservation, replay = await _claim_mutation(binding, key, fingerprint)
@@ -769,7 +864,7 @@ def build_generated_rest_routes(binding: GeneratedRestBinding) -> tuple[Route, .
                 GeneratedCrudRequest.detail(identity),
                 authorization,
             )
-            return _detail_response(binding, result)
+            return _detail_response(binding, identity, result)
         except RakitError as exc:
             return generated_error_response(request, exc)
         except Exception:
