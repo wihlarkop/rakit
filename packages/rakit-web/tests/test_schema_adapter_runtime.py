@@ -100,7 +100,7 @@ async def test_custom_endpoint_uses_configured_non_pydantic_schema_adapter() -> 
         LifespanDriver(app),
         httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
-            base_url="https://testserver",
+            base_url="https://localhost",
         ) as client,
     ):
         response = await client.get("/api/plain", params={"name": "rakit", "count": "2"})
