@@ -19,6 +19,7 @@ from rakit_core.permissions import PermissionRequirement
 from rakit_core.transactions import TransactionPolicy
 from rakit_web.page_routes import PageBinding, build_page_routes
 from rakit_web.resource_routes import build_templates
+from rakit_web.schema import PydanticSchemaAdapter
 from starlette.applications import Starlette
 from starlette.requests import Request
 
@@ -121,6 +122,7 @@ def _app(
     binding = PageBinding(
         routes=((route, compiled),),
         templates=build_templates(()),
+        schema_adapter=PydanticSchemaAdapter(),
         authorize_page=authorize,
         verify_csrf=verify_csrf,
         verify_submission_token=verify_submission,
