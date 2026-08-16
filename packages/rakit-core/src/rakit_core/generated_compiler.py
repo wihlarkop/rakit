@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from .adapter_capabilities import (
     PERSISTENCE_WRITE,
     SCHEMA_INPUT_VALIDATION,
+    SCHEMA_OUTPUT_SERIALIZATION,
     TRANSACTIONS_ROOT_UOW,
 )
 from .capabilities import CapabilityRequirement
@@ -98,6 +99,7 @@ def compile_generated_resource_apis(
                 CapabilityRequirement.of(
                     f"generated-api:{resource.resource_id}:schema-input",
                     SCHEMA_INPUT_VALIDATION,
+                    SCHEMA_OUTPUT_SERIALIZATION,
                 )
             )
 
