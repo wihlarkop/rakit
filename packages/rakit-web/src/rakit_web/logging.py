@@ -1,3 +1,4 @@
+import io
 import logging
 import sys
 from collections.abc import Mapping
@@ -16,7 +17,7 @@ from structlog.types import EventDict, Processor
 BRIDGED_LOGGER_NAMESPACES = ("rakit_core", "rakit_web", "rakit_server_uvicorn")
 
 
-class _DynamicStderr:
+class _DynamicStderr(io.TextIOBase):
     """Proxy writes to whichever ``sys.stderr`` is active at emit time.
 
     Pytest and other hosts may replace standard streams after Rakit logging
@@ -40,7 +41,8 @@ _DYNAMIC_STDERR = _DynamicStderr()
 class _RakitBridgeHandler(logging.StreamHandler):
     """Marker subclass so repeated ``configure_logging()`` calls can find and
     replace the handler they previously attached, instead of accumulating
-    duplicate handlers on the same logger."""
+    duplicate handlers on the same logger.
+    """
 
 
 SENSITIVE_KEYS = {
