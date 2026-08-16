@@ -7,7 +7,7 @@ from rakit_core.adapter_capabilities import (
     SCHEMA_OUTPUT_SERIALIZATION,
 )
 from rakit_core.capabilities import CapabilityProvider, CapabilitySet
-from rakit_core.schema import SchemaValidationError, SchemaValidationIssue
+from rakit_core.schema import SchemaField, SchemaValidationError, SchemaValidationIssue
 
 PYDANTIC_SCHEMA_CAPABILITIES = CapabilityProvider(
     provider_id="schema.pydantic",
@@ -28,9 +28,19 @@ class PydanticSchemaAdapter:
             raise TypeError("PydanticSchemaAdapter requires a pydantic BaseModel schema")
         return schema
 
-    def field_names(self, schema: type[object]) -> tuple[str, ...]:
+    def fields(self, schema: type[object]) -> tuple[SchemaField, ...]:
         model = self._model_type(schema)
-        return tuple(model.model_fields)
+        return tuple(
+            SchemaField(
+                name=name,
+                title=field.title,
+                description=field.description,
+            )
+            for name, field in model.model_fields.items()
+        )
+
+    def field_names(self, schema: type[object]) -> tuple[str, ...]:
+        return tuple(field.name for field in self.fields(schema))
 
     def validate_input(
         self,

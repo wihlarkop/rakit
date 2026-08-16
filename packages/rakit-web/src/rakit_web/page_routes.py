@@ -9,7 +9,6 @@ from html import escape
 from typing import Any
 
 import anyio
-from pydantic import BaseModel, ValidationError
 from rakit_core.auth import Principal
 from rakit_core.definitions import CompiledPageDefinition, RouteDefinition
 from rakit_core.di import ServiceResolver
@@ -40,6 +39,7 @@ from rakit_core.pages import (
     PageResult,
     build_page_operation_plan,
 )
+from rakit_core.schema import SchemaAdapter, SchemaValidationError
 from rakit_core.transactions import OperationUnitOfWorkFactory, TransactionPolicy
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response
@@ -59,6 +59,7 @@ class PageBinding:
 
     routes: tuple[tuple[RouteDefinition, CompiledPageDefinition], ...]
     templates: Jinja2Templates
+    schema_adapter: SchemaAdapter
     authorize_page: Callable[
         [Request, CompiledPageDefinition], Awaitable[OperationAuthorization | None]
     ]
@@ -111,41 +112,40 @@ def _principal(request: Request) -> Principal | None:
 
 
 def _field_views(
-    schema: type[BaseModel] | None,
+    schema_adapter: SchemaAdapter,
+    schema: type[object] | None,
     submitted: Mapping[str, object],
     issues: Mapping[str, tuple[str, ...]],
 ) -> tuple[dict[str, object], ...]:
     if schema is None:
         return ()
-    views: list[dict[str, object]] = []
-    for name, field in schema.model_fields.items():
-        views.append(
-            {
-                "id": f"rakit-page-{name}",
-                "name": name,
-                "label": field.title or name.replace("_", " ").title(),
-                "description": field.description,
-                "value": submitted.get(name, ""),
-                "issues": issues.get(name, ()),
-            }
-        )
-    return tuple(views)
+    return tuple(
+        {
+            "id": f"rakit-page-{field.name}",
+            "name": field.name,
+            "label": field.title or field.name.replace("_", " ").title(),
+            "description": field.description,
+            "value": submitted.get(field.name, ""),
+            "issues": issues.get(field.name, ()),
+        }
+        for field in schema_adapter.fields(schema)
+    )
 
 
-def _validation_issues(exc: ValidationError) -> dict[str, tuple[str, ...]]:
+def _validation_issues(exc: SchemaValidationError) -> dict[str, tuple[str, ...]]:
     issues: dict[str, tuple[str, ...]] = {}
-    for error in exc.errors(include_url=False, include_context=False, include_input=False):
-        location = error.get("loc", ())
-        field = str(location[0]) if location else "__root__"
-        message = str(error.get("msg", "Invalid value"))
-        issues[field] = (*issues.get(field, ()), message)
+    for issue in exc.issues:
+        field = issue.location[0] if issue.location else "__root__"
+        issues[field] = (*issues.get(field, ()), issue.message)
     return issues
 
 
 def _unknown_input_issues(
-    schema: type[BaseModel] | None, submitted: Mapping[str, object]
+    schema_adapter: SchemaAdapter,
+    schema: type[object] | None,
+    submitted: Mapping[str, object],
 ) -> dict[str, tuple[str, ...]]:
-    known = set(schema.model_fields) if schema is not None else set()
+    known = set(schema_adapter.field_names(schema)) if schema is not None else set()
     return {name: ("Unknown page input field",) for name in submitted if name not in known}
 
 
@@ -169,7 +169,9 @@ def _template_args(
         "message": message
         if message is not None
         else (result.message if result is not None else None),
-        "fields": _field_views(page.input_schema, safe_submitted, safe_issues),
+        "fields": _field_views(
+            binding.schema_adapter, page.input_schema, safe_submitted, safe_issues
+        ),
         "issues": safe_issues,
         "form_action": mounted_path(request, page.path),
         "csrf_token": request.cookies.get(CSRF_COOKIE_NAME, ""),
@@ -342,11 +344,13 @@ async def _run_page_operation(
 
 
 def _model_values(
-    schema: type[BaseModel] | None, submitted: Mapping[str, object]
-) -> BaseModel | None:
+    schema_adapter: SchemaAdapter,
+    schema: type[object] | None,
+    submitted: Mapping[str, object],
+) -> object | None:
     if schema is None:
         return None
-    return schema.model_validate(dict(submitted))
+    return schema_adapter.validate_input(schema, submitted)
 
 
 def _query_input(request: Request) -> tuple[dict[str, object], dict[str, tuple[str, ...]]]:
@@ -426,7 +430,9 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
                     issues=pre_issues,
                     status_code=422,
                 )
-            unknown_issues = _unknown_input_issues(page.input_schema, submitted)
+            unknown_issues = _unknown_input_issues(
+                binding.schema_adapter, page.input_schema, submitted
+            )
             if unknown_issues:
                 return _render_page(
                     binding,
@@ -437,8 +443,8 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
                     status_code=422,
                 )
             try:
-                values = _model_values(page.input_schema, submitted)
-            except ValidationError as exc:
+                values = _model_values(binding.schema_adapter, page.input_schema, submitted)
+            except SchemaValidationError as exc:
                 return _render_page(
                     binding,
                     request,
@@ -489,7 +495,9 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
                     issues=pre_issues,
                     status_code=422,
                 )
-            unknown_issues = _unknown_input_issues(page.input_schema, submitted)
+            unknown_issues = _unknown_input_issues(
+                binding.schema_adapter, page.input_schema, submitted
+            )
             if unknown_issues:
                 return _render_page(
                     binding,
@@ -500,8 +508,8 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
                     status_code=422,
                 )
             try:
-                values = _model_values(page.input_schema, submitted)
-            except ValidationError as exc:
+                values = _model_values(binding.schema_adapter, page.input_schema, submitted)
+            except SchemaValidationError as exc:
                 return _render_page(
                     binding,
                     request,

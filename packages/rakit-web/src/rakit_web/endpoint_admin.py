@@ -4,7 +4,6 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any, cast
 
-from pydantic import BaseModel
 from rakit_core.compiler import CompiledApplication
 from rakit_core.crypto import TokenService
 from rakit_core.definitions import EndpointDefinition
@@ -61,9 +60,9 @@ class EndpointApi:
         path: str,
         *,
         endpoint_id: str | None = None,
-        input_schema: type[BaseModel] | None = None,
+        input_schema: type[object] | None = None,
         input_source: EndpointInputSource | None = None,
-        output_schema: type[BaseModel] | None = None,
+        output_schema: type[object] | None = None,
         access_policy: EndpointAccessPolicy = EndpointAccessPolicy.PRIVATE,
         response_kind: EndpointResponseKind = EndpointResponseKind.JSON,
         allow_response_escape_hatch: bool = False,
@@ -92,9 +91,9 @@ class EndpointApi:
         path: str,
         *,
         endpoint_id: str | None = None,
-        input_schema: type[BaseModel] | None = None,
+        input_schema: type[object] | None = None,
         input_source: EndpointInputSource | None = None,
-        output_schema: type[BaseModel] | None = None,
+        output_schema: type[object] | None = None,
         access_policy: EndpointAccessPolicy = EndpointAccessPolicy.PRIVATE,
         transaction_policy: TransactionPolicy = TransactionPolicy.AUTO,
     ) -> Callable[[Callable[..., object]], Callable[..., object]]:
@@ -462,6 +461,7 @@ class Admin(_BaseAdmin):
 
         binding = EndpointBinding(
             routes=pairs,
+            schema_adapter=self._schema_adapter,
             admin_id=self.config.admin_id,
             superuser_bypass=self._superuser_bypass,
             verify_csrf=verify_csrf,

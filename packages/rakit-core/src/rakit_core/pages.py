@@ -12,8 +12,6 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
-from pydantic import BaseModel
-
 from rakit_core.actions import ActionRedirect
 from rakit_core.auth import Principal
 from rakit_core.definitions import PageDefinition
@@ -77,7 +75,7 @@ class PageContext:
     """Prepared page input and trusted authorization passed to application code."""
 
     definition: PageDefinition
-    values: BaseModel | None = None
+    values: object | None = None
     authorization: OperationAuthorization | None = None
     principal: Principal | None = None
 

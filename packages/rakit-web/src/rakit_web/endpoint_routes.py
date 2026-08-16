@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from typing import Any
 
 import anyio
-from pydantic import BaseModel, ValidationError
 from rakit_core.auth import Principal
 from rakit_core.definitions import CompiledEndpointDefinition, RouteDefinition
 from rakit_core.di import ServiceResolver
@@ -46,6 +45,7 @@ from rakit_core.operations import (
     run_with_deadline,
 )
 from rakit_core.permissions import PermissionRequirement
+from rakit_core.schema import SchemaAdapter, SchemaValidationError
 from rakit_core.transactions import OperationUnitOfWorkFactory, TransactionPolicy
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
@@ -65,6 +65,7 @@ class EndpointBinding:
     routes: tuple[tuple[RouteDefinition, CompiledEndpointDefinition], ...]
     admin_id: str
     superuser_bypass: bool
+    schema_adapter: SchemaAdapter
     verify_csrf: Callable[[Request], Awaitable[bool]] | None = None
     idempotency_store: IdempotencyStore | None = None
     deadline_seconds: float | None = None
@@ -125,24 +126,23 @@ def _issue(location: str, code: str, message: str) -> dict[str, object]:
     return {"location": [location], "code": code, "message": message}
 
 
-def _pydantic_issues(exc: ValidationError) -> list[dict[str, object]]:
-    issues: list[dict[str, object]] = []
-    for error in exc.errors(include_url=False, include_context=False, include_input=False):
-        location = [str(part) for part in error.get("loc", ())]
-        issues.append(
-            {
-                "location": location,
-                "code": str(error.get("type", "invalid")),
-                "message": str(error.get("msg", "Invalid value")),
-            }
-        )
-    return issues
+def _schema_issues(exc: SchemaValidationError) -> list[dict[str, object]]:
+    return [
+        {
+            "location": list(issue.location),
+            "code": issue.code,
+            "message": issue.message,
+        }
+        for issue in exc.issues
+    ]
 
 
 def _unknown_issues(
-    schema: type[BaseModel] | None, submitted: Mapping[str, object]
+    schema_adapter: SchemaAdapter,
+    schema: type[object] | None,
+    submitted: Mapping[str, object],
 ) -> list[dict[str, object]]:
-    known = set(schema.model_fields) if schema is not None else set()
+    known = set(schema_adapter.field_names(schema)) if schema is not None else set()
     return [
         _issue(name, "unknown_field", "Unknown endpoint input field")
         for name in submitted
@@ -151,18 +151,19 @@ def _unknown_issues(
 
 
 def _validate_values(
-    schema: type[BaseModel] | None,
+    schema_adapter: SchemaAdapter,
+    schema: type[object] | None,
     submitted: Mapping[str, object],
-) -> tuple[BaseModel | None, list[dict[str, object]]]:
-    unknown = _unknown_issues(schema, submitted)
+) -> tuple[object | None, list[dict[str, object]]]:
+    unknown = _unknown_issues(schema_adapter, schema, submitted)
     if unknown:
         return None, unknown
     if schema is None:
         return None, []
     try:
-        return schema.model_validate(dict(submitted)), []
-    except ValidationError as exc:
-        return None, _pydantic_issues(exc)
+        return schema_adapter.validate_input(schema, submitted), []
+    except SchemaValidationError as exc:
+        return None, _schema_issues(exc)
 
 
 def _query_input(request: Request) -> tuple[dict[str, object], list[dict[str, object]]]:
@@ -343,8 +344,9 @@ def _endpoint_access(
 class _ValidatedEndpointHandler:
     """Validate semantic result/output while still inside the operation/UoW."""
 
-    def __init__(self, compiled: CompiledEndpointDefinition) -> None:
+    def __init__(self, compiled: CompiledEndpointDefinition, schema_adapter: SchemaAdapter) -> None:
         self.compiled = compiled
+        self.schema_adapter = schema_adapter
         handler = compiled.definition.handler
         if handler is None or not callable(handler):
             raise ValueError("Compiled endpoint requires a callable handler")
@@ -372,13 +374,13 @@ class _ValidatedEndpointHandler:
             payload: object = result.payload
             if endpoint.output_schema is not None:
                 try:
-                    payload = endpoint.output_schema.model_validate(payload).model_dump(mode="json")
-                except ValidationError as exc:
+                    payload = self.schema_adapter.serialize_output(endpoint.output_schema, payload)
+                except SchemaValidationError as exc:
                     raise RakitError(
                         code=ErrorCode.VALIDATION_FAILED,
                         message="Endpoint output validation failed.",
                         status_code=500,
-                        details={"issues": _pydantic_issues(exc)},
+                        details={"issues": _schema_issues(exc)},
                     ) from exc
             return EndpointResult(payload=payload, status_code=result.status_code)
         if endpoint.response_kind is EndpointResponseKind.FILE and isinstance(
@@ -397,8 +399,17 @@ class _ValidatedEndpointHandler:
         )
 
 
-def _endpoint_fingerprint(endpoint_id: str, values: BaseModel | None) -> str:
-    input_value: object = values.model_dump(mode="json") if values is not None else {}
+def _endpoint_fingerprint(
+    endpoint_id: str,
+    schema_adapter: SchemaAdapter,
+    schema: type[object] | None,
+    values: object | None,
+) -> str:
+    input_value: object = (
+        schema_adapter.serialize_output(schema, values)
+        if schema is not None and values is not None
+        else {}
+    )
     encoded = json.dumps(
         {"endpoint_id": endpoint_id, "input": input_value},
         sort_keys=True,
@@ -599,7 +610,9 @@ def build_endpoint_routes(binding: EndpointBinding) -> list[Route]:
                     issues=parse_issues,
                     status_code=status_code,
                 )
-            values, validation_issues = _validate_values(endpoint.input_schema, submitted)
+            values, validation_issues = _validate_values(
+                binding.schema_adapter, endpoint.input_schema, submitted
+            )
             if validation_issues:
                 return _validation_response(
                     "Endpoint input validation failed.",
@@ -612,7 +625,7 @@ def build_endpoint_routes(binding: EndpointBinding) -> list[Route]:
                 authorization=authorization,
                 principal=_principal(request),
             )
-            handler = _ValidatedEndpointHandler(compiled_endpoint)
+            handler = _ValidatedEndpointHandler(compiled_endpoint, binding.schema_adapter)
             fingerprint: str | None = None
             reservation: IdempotencyReservation | None = None
 
@@ -624,7 +637,12 @@ def build_endpoint_routes(binding: EndpointBinding) -> list[Route]:
                 if token_error is not None:
                     return token_error
                 assert token_hash is not None
-                fingerprint = _endpoint_fingerprint(str(endpoint.endpoint_id), values)
+                fingerprint = _endpoint_fingerprint(
+                    str(endpoint.endpoint_id),
+                    binding.schema_adapter,
+                    endpoint.input_schema,
+                    values,
+                )
                 try:
                     reservation = await binding.idempotency_store.begin(
                         token_hash,

@@ -11,8 +11,6 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, cast
 
-from pydantic import BaseModel
-
 from .auth import Principal
 from .mutations import OperationAuthorization
 from .operations import (
@@ -127,9 +125,9 @@ class AdminEndpoint:
     path: str
     method: EndpointMethod
     handler: Callable[..., object]
-    input_schema: type[BaseModel] | None = None
+    input_schema: type[object] | None = None
     input_source: EndpointInputSource | None = None
-    output_schema: type[BaseModel] | None = None
+    output_schema: type[object] | None = None
     access_policy: EndpointAccessPolicy = EndpointAccessPolicy.PRIVATE
     response_kind: EndpointResponseKind = EndpointResponseKind.JSON
     allow_response_escape_hatch: bool = False
@@ -187,7 +185,7 @@ class EndpointContext:
     """Prepared endpoint input and trusted request access passed to application code."""
 
     endpoint_id: str
-    values: BaseModel | None = None
+    values: object | None = None
     authorization: OperationAuthorization | None = None
     principal: Principal | None = None
 

@@ -6,6 +6,13 @@ from .capabilities import CapabilityProvider
 
 
 @dataclass(frozen=True, slots=True)
+class SchemaField:
+    name: str
+    title: str | None = None
+    description: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SchemaValidationIssue:
     location: tuple[str, ...]
     code: str
@@ -30,6 +37,8 @@ class SchemaAdapter(Protocol):
 
     provider: CapabilityProvider
 
+    def fields(self, schema: type[object]) -> tuple[SchemaField, ...]: ...
+
     def field_names(self, schema: type[object]) -> tuple[str, ...]: ...
 
     def validate_input(
@@ -43,6 +52,7 @@ class SchemaAdapter(Protocol):
 
 __all__ = [
     "SchemaAdapter",
+    "SchemaField",
     "SchemaValidationError",
     "SchemaValidationIssue",
 ]

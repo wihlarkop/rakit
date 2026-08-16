@@ -53,7 +53,7 @@ class PageDefinition(BaseModel):
     path: AbsolutePath
     label: str
     permission: PermissionRequirement | None = None
-    input_schema: type[BaseModel] | None = None
+    input_schema: type[object] | None = None
     handler: Callable[..., object] | None = None
     template: str = "pages/page.html"
     mutating: bool = False
@@ -78,9 +78,9 @@ class EndpointDefinition(BaseModel):
     path: AbsolutePath
     methods: tuple[EndpointMethod, ...]
     permission: PermissionRequirement | None = None
-    input_schema: type[BaseModel] | None = None
+    input_schema: type[object] | None = None
     input_source: EndpointInputSource | None = None
-    output_schema: type[BaseModel] | None = None
+    output_schema: type[object] | None = None
     access_policy: EndpointAccessPolicy = EndpointAccessPolicy.PRIVATE
     response_kind: EndpointResponseKind = EndpointResponseKind.JSON
     allow_response_escape_hatch: bool = False
