@@ -49,7 +49,7 @@ async def test_root_renders_dashboard_shell() -> None:
 
 
 @pytest.mark.anyio
-async def test_dashboard_honors_semantic_widget_layout_and_stable_refresh_target() -> None:
+async def test_dashboard_honors_semantic_widget_layout_without_inline_styles() -> None:
     admin = _admin()
 
     async def pending(_context: WidgetContext) -> StatWidgetResult:
@@ -83,11 +83,14 @@ async def test_dashboard_honors_semantic_widget_layout_and_stable_refresh_target
         response = await client.get("/")
 
     assert response.status_code == 200
+    assert 'class="rakit-dashboard-grid"' in response.text
+    assert 'class="rakit-panel rakit-dashboard-widget p-4"' in response.text
     assert 'data-rakit-dashboard-widget-size="small"' in response.text
-    assert 'style="flex: 1 1 14rem; max-width: 24rem; min-height: 120px"' in response.text
+    assert 'data-rakit-dashboard-widget-min-height="120"' in response.text
     assert 'data-rakit-dashboard-widget-size="large"' in response.text
-    assert 'style="flex: 2 1 36rem; min-width: 0"' in response.text
+    assert 'style="flex:' not in response.text
     assert 'class="rakit-button rakit-button-secondary"' in response.text
+    assert 'class="rakit-dashboard-refresh-indicator text-sm text-slate-500"' in response.text
     assert 'hx-target="#rakit-dashboard-widget-pending_orders-content"' in response.text
     assert 'hx-select="#rakit-dashboard-widget-pending_orders-content"' in response.text
     assert 'hx-disabled-elt="this"' in response.text
