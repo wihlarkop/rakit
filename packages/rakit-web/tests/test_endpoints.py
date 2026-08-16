@@ -2,7 +2,6 @@
 
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 import httpx
 import pytest
@@ -14,7 +13,6 @@ from rakit import (
     EndpointAccessPolicy,
     EndpointContext,
     EndpointFileResult,
-    EndpointInputSource,
     EndpointMethod,
     EndpointResponseKind,
     EndpointResult,
@@ -24,7 +22,7 @@ from rakit import (
 from rakit_core.auth import Principal, SessionRecord
 from rakit_core.crypto import TokenService
 from rakit_core.di import ServiceScope
-from rakit_core.errors import ErrorCode, RakitError
+from rakit_core.errors import ErrorCode
 from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, OperationReceipt
 from rakit_core.operations import current_operation_context
 from rakit_core.transactions import OperationUnitOfWorkFactory, TransactionPolicy
@@ -262,7 +260,7 @@ async def test_public_typed_get_query_success_and_operation_context() -> None:
     async def status(context: EndpointContext) -> EndpointResult[dict[str, bool]]:
         operation = current_operation_context()
         assert operation is not None
-        assert context.values is not None
+        assert isinstance(context.values, _StatusInput)
         seen.append((operation.operation, operation.services is not None))
         verbose = context.values.verbose
         return EndpointResult({"ok": True, "verbose": verbose})
@@ -404,7 +402,7 @@ async def test_post_json_input_guardrails(
         transaction_policy=TransactionPolicy.DISABLED,
     )
     def change(context: EndpointContext) -> EndpointResult[dict[str, int]]:
-        assert context.values is not None
+        assert isinstance(context.values, _ChangeInput)
         return EndpointResult({"accepted": context.values.value})
 
     app = admin.asgi()
@@ -490,7 +488,7 @@ async def test_post_idempotency_replays_same_input_and_rejects_fingerprint_misma
     def change(context: EndpointContext) -> EndpointResult[dict[str, int]]:
         nonlocal calls
         calls += 1
-        assert context.values is not None
+        assert isinstance(context.values, _ChangeInput)
         return EndpointResult({"accepted": context.values.value}, status_code=201)
 
     app = admin.asgi()
@@ -530,7 +528,7 @@ async def test_post_auto_uses_root_uow_and_commits_success() -> None:
         operation = current_operation_context()
         assert operation is not None
         seen_uow = operation.unit_of_work is not None
-        assert context.values is not None
+        assert isinstance(context.values, _ChangeInput)
         return EndpointResult({"accepted": context.values.value})
 
     app = admin.asgi()
