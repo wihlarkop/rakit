@@ -24,7 +24,7 @@ from .definitions import (
 )
 from .di import ServiceRegistry, _RegistrySnapshot
 from .errors import ErrorCode, RakitError
-from .generated_api import CompiledResourceApi
+from .generated_api import CompiledResourceApi, GeneratedCrudOperation
 from .generated_compiler import compile_generated_resource_apis
 from .permissions import PermissionRequirement
 from .relationships import CompiledRelationship
@@ -35,7 +35,7 @@ from .relationships import CompiledRelationship
 # `rakit_web`'s `AuthorizationMiddleware`, so a resource mounted there
 # would be served to anonymous callers with no permission check at all.
 # Only routes flagged `framework_owned` may live here.
-RESERVED_PATH_PREFIXES = ("/_system", "/auth")
+RESERVED_PATH_PREFIXES = ("/_system", "/auth", "/api")
 # These are static children that only compiled resource definitions claim.
 # They are intentionally not global framework namespaces like `/auth`.
 RESOURCE_ACTION_SEGMENT = "_actions"
@@ -829,6 +829,33 @@ def _resource_definition_routes(builder: ApplicationBuilder) -> tuple[RouteDefin
     return tuple(routes)
 
 
+def _generated_api_definition_routes(
+    builder: ApplicationBuilder,
+) -> tuple[RouteDefinition, ...]:
+    routes: list[RouteDefinition] = []
+    operation_routes = {
+        GeneratedCrudOperation.LIST: ("list", ("GET",), False),
+        GeneratedCrudOperation.DETAIL: ("detail", ("GET",), True),
+        GeneratedCrudOperation.CREATE: ("create", ("POST",), False),
+        GeneratedCrudOperation.UPDATE_PARTIAL: ("update", ("PATCH",), True),
+        GeneratedCrudOperation.DELETE: ("delete", ("DELETE",), True),
+    }
+    for resource in builder.resources:
+        base_path = f"/api/{resource.resource_id}"
+        for operation in resource.api.operations:
+            route_suffix, methods, needs_identity = operation_routes[operation]
+            routes.append(
+                RouteDefinition(
+                    route_name=f"generated-api:{resource.resource_id}:{route_suffix}",
+                    methods=methods,
+                    path=f"{base_path}/{{identity}}" if needs_identity else base_path,
+                    owner_id=resource.resource_id,
+                    framework_owned=True,
+                )
+            )
+    return tuple(routes)
+
+
 def _action_route_pairs(
     routes: tuple[RouteDefinition, ...],
     compiled_actions: tuple[CompiledActionDefinition, ...],
@@ -877,7 +904,11 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
     seen: dict[str, list[tuple[str, str, str]]] = {}
     seen_route_names: dict[str, RouteDefinition] = {}
     application_routes = (*builder.routes, *_application_definition_routes(builder))
-    all_routes = (*application_routes, *_resource_definition_routes(builder))
+    all_routes = (
+        *application_routes,
+        *_resource_definition_routes(builder),
+        *_generated_api_definition_routes(builder),
+    )
     for route in all_routes:
         if not route.framework_owned and any(
             route.path == prefix or route.path.startswith(f"{prefix}/")
