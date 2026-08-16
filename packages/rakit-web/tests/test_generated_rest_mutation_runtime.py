@@ -242,8 +242,9 @@ async def test_create_returns_201_location_and_replays_same_idempotency_key() ->
         first = await client.post("/api/users", json={"email": "new@example.com"}, headers=headers)
         replay = await client.post("/api/users", json={"email": "new@example.com"}, headers=headers)
 
+    expected_identity = IdentityCodec().encode(RecordIdentity(values={"id": 7}))
     assert first.status_code == 201
-    assert first.headers["location"] == "/api/users/rid1.eyJpZCI6N30"
+    assert first.headers["location"] == f"/api/users/{expected_identity}"
     assert first.json() == {"data": {"id": 7, "email": "new@example.com"}}
     assert replay.status_code == 201
     assert replay.json() == first.json()
