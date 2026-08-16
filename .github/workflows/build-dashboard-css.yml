@@ -1,0 +1,25 @@
+name: Build Dashboard CSS
+
+on:
+  push:
+    branches:
+      - feat/dashboard-foundation
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Build Tailwind stylesheet
+        run: |
+          npm install --no-save tailwindcss@4.1.18 @tailwindcss/cli@4.1.18
+          npx tailwindcss --input packages/rakit-web/src/rakit_web/assets/rakit.css --output packages/rakit-web/src/rakit_web/static/rakit.css --minify
+      - name: Emit compiled stylesheet
+        run: |
+          echo "RAKIT_CSS_BASE64_BEGIN"
+          base64 -w 0 packages/rakit-web/src/rakit_web/static/rakit.css
+          echo
+          echo "RAKIT_CSS_BASE64_END"
