@@ -49,7 +49,7 @@ def test_field_policies_are_separate_and_immutable() -> None:
     assert definition.update_fields == ("email",)
 
     with pytest.raises(AttributeError):
-        definition.read_fields = ("secret",)  # type: ignore[misc]
+        setattr(definition, "read_fields", ("secret",))
 
 
 def test_duplicate_field_policy_entries_are_rejected() -> None:
