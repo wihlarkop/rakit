@@ -81,7 +81,10 @@ async def _client_for(admin: Admin) -> AsyncIterator[httpx.AsyncClient]:
 
 def _sort_link(document: str, field: str) -> tuple[str, list[tuple[str, str]]]:
     form_match = re.search(
-        r'<form id="(rakit-sort-[^"]+)" method="get" action="([^"]+)" class="hidden" aria-hidden="true">(.*?)</form>',
+        (
+            r'<form id="(rakit-sort-[^"]+)" method="get" action="([^"]+)" '
+            r'class="hidden" aria-hidden="true">(.*?)</form>'
+        ),
         document,
         flags=re.DOTALL,
     )
