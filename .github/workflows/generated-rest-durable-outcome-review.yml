@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   patch:
-    if: "${{ github.event.head_commit.message == 'ci: retry durable commit idempotency boundary' }}"
+    if: "${{ github.event.head_commit.message == 'ci: finalize durable commit idempotency boundary' }}"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -189,8 +189,10 @@ jobs:
               raise RuntimeError('post-commit callback regression already exists')
           tests.write_text(text + addition)
           PY
-          uv run ruff format packages/rakit-core/src/rakit_core/operations.py packages/rakit-core/src/rakit_core/transactions.py packages/rakit-sqlalchemy/src/rakit_sqlalchemy/uow.py packages/rakit-web/src/rakit_web/generated_rest_runtime.py packages/rakit-web/tests/test_generated_rest_mutation_runtime.py
-          uv run ruff check packages/rakit-core/src/rakit_core/operations.py packages/rakit-core/src/rakit_core/transactions.py packages/rakit-sqlalchemy/src/rakit_sqlalchemy/uow.py packages/rakit-web/src/rakit_web/generated_rest_runtime.py packages/rakit-web/tests/test_generated_rest_mutation_runtime.py
+          FILES="packages/rakit-core/src/rakit_core/operations.py packages/rakit-core/src/rakit_core/transactions.py packages/rakit-sqlalchemy/src/rakit_sqlalchemy/uow.py packages/rakit-web/src/rakit_web/generated_rest_runtime.py packages/rakit-web/tests/test_generated_rest_mutation_runtime.py"
+          uv run ruff check --fix $FILES
+          uv run ruff format $FILES
+          uv run ruff check $FILES
           uv run ty check
           uv run pytest packages/rakit-web/tests/test_generated_rest_mutation_runtime.py packages/rakit-sqlalchemy/tests/test_operation_uow.py -q
       - name: Commit durable outcome hardening
