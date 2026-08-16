@@ -48,6 +48,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from ._paths import mounted_path
 from .generated_rest import (
     generated_error_payload,
     parse_generated_rest_query,
@@ -720,6 +721,7 @@ async def _complete_mutation(
 
 def _mutation_response(
     binding: GeneratedRestBinding,
+    request: Request,
     operation: GeneratedCrudOperation,
     result: object,
 ) -> Response:
@@ -755,8 +757,9 @@ def _mutation_response(
     status_code = 200
     if operation is GeneratedCrudOperation.CREATE:
         status_code = 201
-        headers["Location"] = (
-            f"/api/{binding.api.resource_id}/{binding.codec.encode(result.identity)}"
+        headers["Location"] = mounted_path(
+            request,
+            f"/api/{binding.api.resource_id}/{binding.codec.encode(result.identity)}",
         )
     return JSONResponse(body, status_code=status_code, headers=headers)
 
@@ -854,7 +857,7 @@ async def _mutation_handler(
             authorization,
             idempotency_fingerprint=fingerprint,
         )
-        response = _mutation_response(binding, operation, result)
+        response = _mutation_response(binding, request, operation, result)
         await _complete_mutation(
             binding,
             reservation,
