@@ -23,7 +23,6 @@ from rakit_core.dashboard import (
     WidgetErrorResult,
     WidgetLoadingMode,
     WidgetResult,
-    WidgetSize,
 )
 from rakit_core.definitions import CompiledPageDefinition, ResourceDefinition
 from rakit_core.di import ServiceResolver
@@ -54,12 +53,6 @@ _WIDGET_RESULT_TYPES = (
     TemplateWidgetResult,
     WidgetErrorResult,
 )
-_WIDGET_FLEX_STYLES = {
-    WidgetSize.SMALL: "flex: 1 1 14rem; max-width: 24rem",
-    WidgetSize.MEDIUM: "flex: 1 1 24rem; min-width: 0",
-    WidgetSize.LARGE: "flex: 2 1 36rem; min-width: 0",
-    WidgetSize.FULL: "flex: 1 0 100%; min-width: 0",
-}
 
 
 @dataclass(frozen=True)
@@ -288,13 +281,6 @@ def _launcher_view(request: Request, launcher: LauncherItem) -> dict[str, object
     }
 
 
-def _widget_layout_style(widget: WidgetDefinition) -> str:
-    parts = [_WIDGET_FLEX_STYLES[widget.layout.size]]
-    if widget.layout.min_height is not None:
-        parts.append(f"min-height: {widget.layout.min_height}px")
-    return "; ".join(parts)
-
-
 def _widget_view(
     request: Request,
     widget: WidgetDefinition,
@@ -305,7 +291,7 @@ def _widget_view(
         "result": result,
         "widget_id": str(widget.widget_id),
         "widget_path": mounted_path(request, widget_path(str(widget.widget_id))),
-        "layout_style": _widget_layout_style(widget),
+        "min_height": widget.layout.min_height,
         "is_lazy": widget.loading is WidgetLoadingMode.LAZY and result is None,
     }
 
