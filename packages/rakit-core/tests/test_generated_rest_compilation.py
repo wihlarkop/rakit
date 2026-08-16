@@ -154,14 +154,41 @@ def test_output_schema_requires_output_serialization_capability() -> None:
     assert captured.value.details["missing"] == ["schema.output-serialization"]
 
 
-def test_api_namespace_is_reserved_for_framework_owned_routes() -> None:
+def test_non_conflicting_custom_api_route_can_coexist_with_generated_rest() -> None:
     builder = ApplicationBuilder()
-    builder.add_resource(_resource(ResourceApiDefinition()), ReadDataSource())
+    builder.add_resource(
+        _resource(
+            ResourceApiDefinition(exposure=ApiExposure.READ_ONLY, read_fields=("id", "email"))
+        ),
+        ReadDataSource(),
+    )
     builder.add_route(
         RouteDefinition(
-            route_name="user.api.route",
+            route_name="user.api.status",
             methods=("GET",),
-            path="/api/custom",
+            path="/api/status",
+            owner_id="custom",
+        )
+    )
+
+    compiled = compile_application(builder)
+
+    assert any(route.route_name == "user.api.status" for route in compiled.routes)
+
+
+def test_generated_rest_collides_with_overlapping_custom_api_route() -> None:
+    builder = ApplicationBuilder()
+    builder.add_resource(
+        _resource(
+            ResourceApiDefinition(exposure=ApiExposure.READ_ONLY, read_fields=("id", "email"))
+        ),
+        ReadDataSource(),
+    )
+    builder.add_route(
+        RouteDefinition(
+            route_name="user.api.users",
+            methods=("GET",),
+            path="/api/users",
             owner_id="custom",
         )
     )
@@ -169,4 +196,8 @@ def test_api_namespace_is_reserved_for_framework_owned_routes() -> None:
     with pytest.raises(RakitError) as captured:
         compile_application(builder)
 
-    assert captured.value.code == ErrorCode.CONFIG_RESERVED_PATH
+    assert captured.value.code == ErrorCode.CONFIG_ROUTE_COLLISION
+    assert captured.value.details == {
+        "first": "user.api.users",
+        "second": "generated-api:users:list",
+    }
