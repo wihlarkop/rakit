@@ -1,5 +1,3 @@
-from collections.abc import Callable
-
 import pytest
 from rakit_core.fields import FileField
 
@@ -36,30 +34,24 @@ def test_file_field_has_private_safe_defaults() -> None:
     assert field.prefix is None
 
 
-@pytest.mark.parametrize(
-    "build",
-    (
-        lambda: FileField(field_id="attachment", storage_id=""),
-        lambda: FileField(field_id="attachment", storage_id="../documents"),
-        lambda: FileField(field_id="attachment", storage_id="documents", max_size=0),
-        lambda: FileField(
-            field_id="attachment", storage_id="documents", max_filename_length=0
-        ),
-        lambda: FileField(field_id="attachment", storage_id="documents", prefix="../outside"),
-        lambda: FileField(
-            field_id="attachment", storage_id="documents", allowed_extensions=("pdf",)
-        ),
-        lambda: FileField(
-            field_id="attachment", storage_id="documents", allowed_extensions=("../pdf",)
-        ),
-        lambda: FileField(
-            field_id="attachment", storage_id="documents", allowed_mime_types=("",)
-        ),
-        lambda: FileField(
-            field_id="attachment", storage_id="documents", delete_behavior="sometimes"
-        ),
-    ),
-)
-def test_file_field_rejects_unsafe_policy(build: Callable[[], FileField]) -> None:
+def test_file_field_rejects_unsafe_policy() -> None:
     with pytest.raises(ValueError):
-        build()
+        FileField(field_id="attachment", storage_id="")
+    with pytest.raises(ValueError):
+        FileField(field_id="attachment", storage_id="../documents")
+    with pytest.raises(ValueError):
+        FileField(field_id="attachment", storage_id="documents", max_size=0)
+    with pytest.raises(ValueError):
+        FileField(field_id="attachment", storage_id="documents", max_filename_length=0)
+    with pytest.raises(ValueError):
+        FileField(field_id="attachment", storage_id="documents", prefix="../outside")
+    with pytest.raises(ValueError):
+        FileField(field_id="attachment", storage_id="documents", allowed_extensions=("pdf",))
+    with pytest.raises(ValueError):
+        FileField(
+            field_id="attachment", storage_id="documents", allowed_extensions=("../pdf",)
+        )
+    with pytest.raises(ValueError):
+        FileField(field_id="attachment", storage_id="documents", allowed_mime_types=("",))
+    with pytest.raises(ValueError):
+        FileField(field_id="attachment", storage_id="documents", delete_behavior="sometimes")
