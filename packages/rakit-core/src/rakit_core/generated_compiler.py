@@ -41,9 +41,6 @@ def compile_generated_resource_apis(
             continue
 
         data_source = data_sources[resource.resource_id]
-        if not data_source.capabilities.read:
-            raise _invalid_generated_api(resource.resource_id, "generated_api_read_not_supported")
-
         known_fields = set(data_source.fields)
         identity_fields = tuple(data_source.identity_fields)
         identity_set = set(identity_fields)
