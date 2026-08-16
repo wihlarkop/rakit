@@ -1,0 +1,348 @@
+name: Capability Negotiation Maintenance
+
+on:
+  push:
+    branches: [feat/adapter-capability-negotiation]
+
+permissions:
+  contents: write
+
+jobs:
+  implement-and-verify:
+    if: ${{ !contains(github.event.head_commit.message, '[capability-ci]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: feat/adapter-capability-negotiation
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Wire capability providers and negotiation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str, *, marker: str) -> None:
+              file = Path(path)
+              text = file.read_text()
+              if marker in text:
+                  return
+              if old not in text:
+                  raise SystemExit(f"patch anchor not found in {path}: {marker}")
+              file.write_text(text.replace(old, new, 1))
+
+          compiler = "packages/rakit-core/src/rakit_core/compiler.py"
+          replace_once(
+              compiler,
+              "from .bulk import BulkExecutionPolicy\n",
+              "from .bulk import BulkExecutionPolicy\n"
+              "from .capabilities import (\n"
+              "    CapabilityProvider,\n"
+              "    CapabilityReport,\n"
+              "    CapabilityRequirement,\n"
+              "    require_capabilities,\n"
+              ")\n",
+              marker="    CapabilityProvider,\n",
+          )
+          replace_once(
+              compiler,
+              "    _resource_data_sources: dict[str, DataSource] = field(default_factory=dict)\n"
+              "    _compiled: bool = field(default=False, init=False)\n",
+              "    _resource_data_sources: dict[str, DataSource] = field(default_factory=dict)\n"
+              "    _capability_providers: dict[str, CapabilityProvider] = field(default_factory=dict)\n"
+              "    _capability_requirements: dict[str, CapabilityRequirement] = field(default_factory=dict)\n"
+              "    _compiled: bool = field(default=False, init=False)\n",
+              marker="    _capability_providers: dict[str, CapabilityProvider]",
+          )
+          replace_once(
+              compiler,
+              "    @property\n"
+              "    def registry(self) -> ServiceRegistry:\n"
+              "        return self._registry\n\n"
+              "    def _check_not_compiled(self) -> None:\n",
+              "    @property\n"
+              "    def registry(self) -> ServiceRegistry:\n"
+              "        return self._registry\n\n"
+              "    @property\n"
+              "    def capability_providers(self) -> tuple[CapabilityProvider, ...]:\n"
+              "        return tuple(self._capability_providers.values())\n\n"
+              "    @property\n"
+              "    def capability_requirements(self) -> tuple[CapabilityRequirement, ...]:\n"
+              "        return tuple(self._capability_requirements.values())\n\n"
+              "    def _check_not_compiled(self) -> None:\n",
+              marker="    def capability_providers(self)",
+          )
+          replace_once(
+              compiler,
+              "    def register_adapter(self, name: str, claim: AdapterClaim) -> None:\n"
+              "        self._check_not_compiled()\n"
+              "        if name in self._adapters:\n"
+              "            raise RakitError(\n"
+              "                code=ErrorCode.CONFIG_DUPLICATE_ADAPTER,\n"
+              "                message=f'Adapter \"{name}\" is already registered.',\n"
+              "                status_code=500,\n"
+              "                details={\"adapter\": name},\n"
+              "            )\n"
+              "        self._adapters[name] = claim\n\n"
+              "    def install(self, plugin: Plugin) -> None:\n",
+              "    def register_adapter(self, name: str, claim: AdapterClaim) -> None:\n"
+              "        self._check_not_compiled()\n"
+              "        if name in self._adapters:\n"
+              "            raise RakitError(\n"
+              "                code=ErrorCode.CONFIG_DUPLICATE_ADAPTER,\n"
+              "                message=f'Adapter \"{name}\" is already registered.',\n"
+              "                status_code=500,\n"
+              "                details={\"adapter\": name},\n"
+              "            )\n"
+              "        self._adapters[name] = claim\n\n"
+              "    def register_capability_provider(self, provider: CapabilityProvider) -> None:\n"
+              "        self._check_not_compiled()\n"
+              "        if provider.provider_id in self._capability_providers:\n"
+              "            raise RakitError(\n"
+              "                code=ErrorCode.CONFIG_INVALID,\n"
+              "                message=f'Capability provider \"{provider.provider_id}\" is already registered.',\n"
+              "                status_code=500,\n"
+              "                details={\n"
+              "                    \"provider\": provider.provider_id,\n"
+              "                    \"reason\": \"duplicate_capability_provider\",\n"
+              "                },\n"
+              "            )\n"
+              "        self._capability_providers[provider.provider_id] = provider\n\n"
+              "    def require_capabilities(self, requirement: CapabilityRequirement) -> None:\n"
+              "        self._check_not_compiled()\n"
+              "        if requirement.requirement_id in self._capability_requirements:\n"
+              "            raise RakitError(\n"
+              "                code=ErrorCode.CONFIG_INVALID,\n"
+              "                message=(\n"
+              "                    f'Capability requirement \"{requirement.requirement_id}\" is already registered.'\n"
+              "                ),\n"
+              "                status_code=500,\n"
+              "                details={\n"
+              "                    \"requirement\": requirement.requirement_id,\n"
+              "                    \"reason\": \"duplicate_capability_requirement\",\n"
+              "                },\n"
+              "            )\n"
+              "        self._capability_requirements[requirement.requirement_id] = requirement\n\n"
+              "    def install(self, plugin: Plugin) -> None:\n",
+              marker="    def register_capability_provider(",
+          )
+          replace_once(
+              compiler,
+              "    resource_data_sources: dict[str, DataSource]\n"
+              "    compiled: bool\n",
+              "    resource_data_sources: dict[str, DataSource]\n"
+              "    capability_providers: dict[str, CapabilityProvider]\n"
+              "    capability_requirements: dict[str, CapabilityRequirement]\n"
+              "    compiled: bool\n",
+              marker="    capability_providers: dict[str, CapabilityProvider]",
+          )
+          replace_once(
+              compiler,
+              "            resource_data_sources=dict(builder._resource_data_sources),\n"
+              "            compiled=builder._compiled,\n",
+              "            resource_data_sources=dict(builder._resource_data_sources),\n"
+              "            capability_providers=dict(builder._capability_providers),\n"
+              "            capability_requirements=dict(builder._capability_requirements),\n"
+              "            compiled=builder._compiled,\n",
+              marker="            capability_providers=dict(builder._capability_providers),",
+          )
+          replace_once(
+              compiler,
+              "        builder._resource_data_sources.clear()\n"
+              "        builder._resource_data_sources.update(self.resource_data_sources)\n"
+              "        builder._compiled = self.compiled\n",
+              "        builder._resource_data_sources.clear()\n"
+              "        builder._resource_data_sources.update(self.resource_data_sources)\n"
+              "        builder._capability_providers.clear()\n"
+              "        builder._capability_providers.update(self.capability_providers)\n"
+              "        builder._capability_requirements.clear()\n"
+              "        builder._capability_requirements.update(self.capability_requirements)\n"
+              "        builder._compiled = self.compiled\n",
+              marker="        builder._capability_providers.clear()",
+          )
+          replace_once(
+              compiler,
+              "    action_routes: tuple[tuple[RouteDefinition, CompiledActionDefinition], ...] = ()\n\n\n"
+              "def _invalid_datasource",
+              "    action_routes: tuple[tuple[RouteDefinition, CompiledActionDefinition], ...] = ()\n"
+              "    capability_providers: tuple[CapabilityProvider, ...] = ()\n"
+              "    capability_requirements: tuple[CapabilityRequirement, ...] = ()\n"
+              "    capability_reports: tuple[CapabilityReport, ...] = ()\n\n\n"
+              "def _invalid_datasource",
+              marker="    capability_reports: tuple[CapabilityReport, ...] = ()",
+          )
+          replace_once(
+              compiler,
+              "    builder._mark_compiled()\n"
+              "    return CompiledApplication(\n",
+              "    capability_reports = tuple(\n"
+              "        require_capabilities(requirement, builder.capability_providers)\n"
+              "        for requirement in builder.capability_requirements\n"
+              "    )\n\n"
+              "    builder._mark_compiled()\n"
+              "    return CompiledApplication(\n",
+              marker="    capability_reports = tuple(\n",
+          )
+          replace_once(
+              compiler,
+              "        _action_route_pairs(all_routes, compiled_actions),\n"
+              "    )\n",
+              "        _action_route_pairs(all_routes, compiled_actions),\n"
+              "        capability_providers=builder.capability_providers,\n"
+              "        capability_requirements=builder.capability_requirements,\n"
+              "        capability_reports=capability_reports,\n"
+              "    )\n",
+              marker="        capability_providers=builder.capability_providers,",
+          )
+
+          admin = "packages/rakit-web/src/rakit_web/admin.py"
+          replace_once(
+              admin,
+              "from rakit_core.relationship_mutations import (\n",
+              "from rakit_core.schema import SchemaAdapter\n"
+              "from rakit_core.relationship_mutations import (\n",
+              marker="from rakit_core.schema import SchemaAdapter",
+          )
+          replace_once(
+              admin,
+              "from .action_routes import (\n",
+              "from .capabilities import STARLETTE_WEB_CAPABILITIES\n"
+              "from .schema import PYDANTIC_SCHEMA_CAPABILITIES, PydanticSchemaAdapter\n"
+              "from .action_routes import (\n",
+              marker="from .capabilities import STARLETTE_WEB_CAPABILITIES",
+          )
+          replace_once(
+              admin,
+              "        self._builder = ApplicationBuilder(admin_id=admin_id)\n"
+              "        self._operation_idempotency_store = operation_idempotency_store\n",
+              "        self._builder = ApplicationBuilder(admin_id=admin_id)\n"
+              "        self._builder.register_capability_provider(STARLETTE_WEB_CAPABILITIES)\n"
+              "        self._builder.register_capability_provider(PYDANTIC_SCHEMA_CAPABILITIES)\n"
+              "        schema_adapter: SchemaAdapter = PydanticSchemaAdapter()\n"
+              "        self._builder.registry.add_value(\n"
+              "            SchemaAdapter, schema_adapter, scope=ServiceScope.APPLICATION\n"
+              "        )\n"
+              "        self._operation_idempotency_store = operation_idempotency_store\n",
+              marker="        schema_adapter: SchemaAdapter = PydanticSchemaAdapter()",
+          )
+
+          plugin = "packages/rakit-sqlalchemy/src/rakit_sqlalchemy/plugin.py"
+          replace_once(
+              plugin,
+              "from .datasource import SQLAlchemyDataSource\n",
+              "from .capabilities import SQLALCHEMY_CAPABILITIES\n"
+              "from .datasource import SQLAlchemyDataSource\n",
+              marker="from .capabilities import SQLALCHEMY_CAPABILITIES",
+          )
+          replace_once(
+              plugin,
+              "    def configure(self, builder: ApplicationBuilder) -> None:\n"
+              "        builder.registry.add_value(\n",
+              "    def configure(self, builder: ApplicationBuilder) -> None:\n"
+              "        builder.register_capability_provider(SQLALCHEMY_CAPABILITIES)\n"
+              "        builder.registry.add_value(\n",
+              marker="        builder.register_capability_provider(SQLALCHEMY_CAPABILITIES)",
+          )
+
+          cli = "packages/rakit/src/rakit/cli.py"
+          replace_once(
+              cli,
+              "from rakit_core.di import ServiceRegistry\n",
+              "from rakit_core.di import ServiceRegistry\n"
+              "from rakit_core.errors import RakitError\n",
+              marker="from rakit_core.errors import RakitError",
+          )
+          replace_once(
+              cli,
+              "@cli.command()\n"
+              "@click.argument(\"target\")\n"
+              "def check(target: str) -> None:\n"
+              "    compiled = load_object(target).compile()\n"
+              "    click.echo(\"Rakit configuration is valid.\")\n"
+              "    click.echo(f\"Routes: {len(compiled.routes)}\")\n"
+              "    click.echo(f\"Plugins: {len(compiled.plugins)}\")\n",
+              "def _capability_diagnostics(compiled: CompiledApplication) -> None:\n"
+              "    providers = sorted(compiled.capability_providers, key=lambda item: item.provider_id)\n"
+              "    if providers:\n"
+              "        click.echo(\"Capability providers:\")\n"
+              "        for provider in providers:\n"
+              "            names = \", \".join(provider.capabilities.names) or \"none\"\n"
+              "            click.echo(f\"  {provider.provider_id}: {names}\")\n"
+              "    else:\n"
+              "        click.echo(\"Capability providers: none\")\n\n"
+              "    reports = {report.requirement.requirement_id: report for report in compiled.capability_reports}\n"
+              "    requirements = sorted(\n"
+              "        compiled.capability_requirements, key=lambda item: item.requirement_id\n"
+              "    )\n"
+              "    if requirements:\n"
+              "        click.echo(\"Capability requirements:\")\n"
+              "        for requirement in requirements:\n"
+              "            report = reports.get(requirement.requirement_id)\n"
+              "            status = \"satisfied\" if report is not None and report.satisfied else \"missing\"\n"
+              "            click.echo(f\"  {requirement.requirement_id}: {status}\")\n"
+              "    else:\n"
+              "        click.echo(\"Capability requirements: none\")\n\n\n"
+              "@cli.command()\n"
+              "@click.argument(\"target\")\n"
+              "def check(target: str) -> None:\n"
+              "    try:\n"
+              "        compiled = load_object(target).compile()\n"
+              "    except RakitError as exc:\n"
+              "        if exc.details.get(\"reason\") != \"missing_capabilities\":\n"
+              "            raise\n"
+              "        click.echo(\"Rakit configuration is invalid.\")\n"
+              "        click.echo(f\"Capability requirement: {exc.details.get('requirement', 'unknown')}\")\n"
+              "        click.echo(\n"
+              "            \"Missing capabilities: \"\n"
+              "            + \", \".join(str(item) for item in exc.details.get(\"missing\", []))\n"
+              "        )\n"
+              "        click.echo(\n"
+              "            \"Available capabilities: \"\n"
+              "            + \", \".join(str(item) for item in exc.details.get(\"available\", []))\n"
+              "        )\n"
+              "        click.echo(\n"
+              "            \"Providers: \"\n"
+              "            + \", \".join(str(item) for item in exc.details.get(\"providers\", []))\n"
+              "        )\n"
+              "        raise click.ClickException(\n"
+              "            \"Required adapter capabilities are not available.\"\n"
+              "        ) from None\n"
+              "    click.echo(\"Rakit configuration is valid.\")\n"
+              "    click.echo(f\"Routes: {len(compiled.routes)}\")\n"
+              "    click.echo(f\"Plugins: {len(compiled.plugins)}\")\n"
+              "    _capability_diagnostics(compiled)\n",
+              marker="def _capability_diagnostics(compiled: CompiledApplication)",
+          )
+          PY
+
+      - run: uv sync --all-packages --dev --locked
+      - run: uv run ruff format .
+      - run: uv run ruff check --fix .
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run ty check
+      - name: Focused capability tests
+        run: >-
+          uv run pytest
+          packages/rakit-core/tests/test_capabilities.py
+          packages/rakit-core/tests/test_adapter_capability_negotiation.py
+          packages/rakit-web/tests/test_schema_adapter.py
+          packages/rakit-sqlalchemy/tests/test_capability_profile.py
+          packages/rakit-sqlalchemy/tests/test_plugin_capabilities.py
+          packages/rakit/tests/test_capability_cli.py
+          -q
+      - run: uv run pytest -q
+
+      - name: Commit implementation and formatting
+        run: |
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages
+          git commit -m "feat: wire adapter capability negotiation [capability-ci]"
+          git push origin HEAD:feat/adapter-capability-negotiation
