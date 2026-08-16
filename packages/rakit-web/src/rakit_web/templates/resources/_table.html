@@ -62,9 +62,9 @@
           <th scope="col" class="w-12 px-4 py-3"><span class="sr-only">Select</span></th>
           {% endif %}
           {% for header in sort_headers %}
-          <th scope="col" class="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500" aria-sort="{{ header.aria_sort }}">
+          <th scope="col" class="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 [&>a]:inline-flex [&>a]:items-center [&>a]:gap-1 [&>a:hover]:text-slate-900 [&>a:hover]:underline" aria-sort="{{ header.aria_sort }}">
             {% if header.url %}
-            <a class="inline-flex items-center gap-1 hover:text-slate-900 hover:underline" href="{{ header.url }}">{{ header.field }}</a>
+            <a href="{{ header.url }}">{{ header.field }}</a>
             {% else %}
             {{ header.field }}
             {% endif %}
@@ -110,7 +110,7 @@
 </form>
 {% endif %}
 
-<nav class="mt-4 flex items-center justify-between gap-4" aria-label="Resource pagination" data-rakit-pagination>
+<nav aria-label="Resource pagination" class="mt-4 flex items-center justify-between gap-4" data-rakit-pagination>
   <div>
     {% if pagination.previous_url %}
     <a class="rakit-button rakit-button-secondary" aria-label="Previous page" href="{{ pagination.previous_url }}" rel="prev">Previous</a>
