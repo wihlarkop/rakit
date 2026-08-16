@@ -146,9 +146,7 @@ def visible_launchers(
     principal = _principal(request)
     candidates = binding.dashboard.launchers or _automatic_launchers(binding)
     return tuple(
-        launcher
-        for launcher in candidates
-        if _allowed(binding, principal, launcher.permission)
+        launcher for launcher in candidates if _allowed(binding, principal, launcher.permission)
     )
 
 
@@ -164,9 +162,7 @@ def visible_widgets(
         else binding.widgets
     )
     visible = tuple(
-        widget
-        for widget in selected
-        if _allowed(binding, principal, widget.permission)
+        widget for widget in selected if _allowed(binding, principal, widget.permission)
     )
     registration_order = {
         str(widget.widget_id): index for index, widget in enumerate(binding.widgets)
@@ -210,9 +206,7 @@ async def _execute_widget(
             admin_id=binding.admin_id,
             resource_id=f"dashboard:{binding.dashboard.dashboard_id}",
             operation=f"dashboard.widget:{widget.widget_id}",
-            permissions=(
-                widget.permission.permissions if widget.permission is not None else ()
-            ),
+            permissions=(widget.permission.permissions if widget.permission is not None else ()),
             permission_requirement=widget.permission,
             services=services,
         )
@@ -303,17 +297,13 @@ def _widget_view(
 def build_dashboard_routes(binding: DashboardBinding) -> list[Route]:
     async def dashboard_home(request: Request) -> Response:
         widgets = visible_widgets(binding, request)
-        eager = tuple(
-            widget for widget in widgets if widget.loading is WidgetLoadingMode.EAGER
-        )
+        eager = tuple(widget for widget in widgets if widget.loading is WidgetLoadingMode.EAGER)
         results = await _load_eager_widgets(binding, request, eager)
         views = tuple(
-            _widget_view(request, widget, results.get(str(widget.widget_id)))
-            for widget in widgets
+            _widget_view(request, widget, results.get(str(widget.widget_id))) for widget in widgets
         )
         launchers = tuple(
-            _launcher_view(request, launcher)
-            for launcher in visible_launchers(binding, request)
+            _launcher_view(request, launcher) for launcher in visible_launchers(binding, request)
         )
         return binding.templates.TemplateResponse(
             request,
