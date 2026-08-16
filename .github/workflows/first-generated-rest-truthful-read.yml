@@ -1,0 +1,63 @@
+name: First Generated REST Truthful Read Transport
+
+on:
+  push:
+    branches: [feat/first-generated-rest-read]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: "${{ github.event.head_commit.message == 'ci: align generated REST route graph with read transport' }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/first-generated-rest-read
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages --dev --locked
+      - name: Keep compiler and auth map truthful to read transport
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('packages/rakit-core/src/rakit_core/compiler.py')
+          text = path.read_text()
+          old = '''from .generated_compiler import (\n    compile_generated_resource_apis,\n    validate_generated_resource_runtime_support,\n)\n'''
+          new = 'from .generated_compiler import compile_generated_resource_apis\n'
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''    operation_routes = {\n        GeneratedCrudOperation.LIST: ("list", ("GET",), False),\n        GeneratedCrudOperation.DETAIL: ("detail", ("GET",), True),\n        GeneratedCrudOperation.CREATE: ("create", ("POST",), False),\n        GeneratedCrudOperation.UPDATE_PARTIAL: ("update", ("PATCH",), True),\n        GeneratedCrudOperation.DELETE: ("delete", ("DELETE",), True),\n    }\n    for resource in builder.resources:\n        base_path = f"/api/{resource.resource_id}"\n        for operation in resource.api.operations:\n            route_suffix, methods, needs_identity = operation_routes[operation]\n'''
+          new = '''    operation_routes = {\n        GeneratedCrudOperation.LIST: ("list", ("GET",), False),\n        GeneratedCrudOperation.DETAIL: ("detail", ("GET",), True),\n    }\n    for resource in builder.resources:\n        base_path = f"/api/{resource.resource_id}"\n        for operation in resource.api.operations:\n            route_contract = operation_routes.get(operation)\n            if route_contract is None:\n                continue\n            route_suffix, methods, needs_identity = route_contract\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''    validate_generated_resource_runtime_support(\n        generated_api.resources, builder._resource_generated_executor_providers\n    )\n\n    builder._mark_compiled()\n'''
+          new = '''    builder._mark_compiled()\n'''
+          assert old in text
+          text = text.replace(old, new, 1)
+          path.write_text(text)
+
+          path = Path('packages/rakit-web/src/rakit_web/generated_rest_runtime.py')
+          text = path.read_text()
+          old = '''        if GeneratedCrudOperation.CREATE in api.operations:\n            requirements[("POST", base)] = PermissionRequirement.all_of(\n                f"{admin_id}.resources.{api.resource_id}.create"\n            )\n        if GeneratedCrudOperation.UPDATE_PARTIAL in api.operations:\n            requirements[("PATCH", f"{base}/{{identity}}")] = PermissionRequirement.all_of(\n                f"{admin_id}.resources.{api.resource_id}.update"\n            )\n        if GeneratedCrudOperation.DELETE in api.operations:\n            requirements[("DELETE", f"{base}/{{identity}}")] = PermissionRequirement.all_of(\n                f"{admin_id}.resources.{api.resource_id}.delete"\n            )\n'''
+          assert old in text
+          text = text.replace(old, '', 1)
+          path.write_text(text)
+          PY
+          uv run ruff format packages/rakit-core/src/rakit_core/compiler.py packages/rakit-web/src/rakit_web/generated_rest_runtime.py
+          uv run ruff check packages/rakit-core/src/rakit_core/compiler.py packages/rakit-web/src/rakit_web/generated_rest_runtime.py
+          uv run ty check
+          uv run pytest packages/rakit-core/tests/test_generated_rest_compilation.py packages/rakit-core/tests/test_generated_resource_runtime.py packages/rakit-web/tests/test_generated_rest_read_runtime.py packages/rakit-web/tests/test_auth_enforcement.py -q
+          uv run pytest
+      - name: Commit truthful read transport patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/rakit-core/src/rakit_core/compiler.py packages/rakit-web/src/rakit_web/generated_rest_runtime.py
+          git commit -m "fix: keep generated REST route graph truthful"
+          git push origin HEAD:feat/first-generated-rest-read
