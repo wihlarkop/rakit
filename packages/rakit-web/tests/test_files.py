@@ -109,9 +109,11 @@ def file_binding(
 
     @asynccontextmanager
     async def operation_scope():
-        async with registry.application_scope() as app_services:
-            async with app_services.operation_scope() as services:
-                yield services
+        async with (
+            registry.application_scope() as app_services,
+            app_services.operation_scope() as services,
+        ):
+            yield services
 
     return WriteResourceBinding(
         path="/documents",
