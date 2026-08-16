@@ -67,6 +67,26 @@ def test_constructor_config_supports_direct_programmatic_use(
     assert calls[0][1]["port"] == 9100
 
 
+def test_constructor_target_remains_supported_for_existing_programmatic_users(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[Any] = []
+    monkeypatch.setattr("rakit_server_uvicorn.server.load_application", lambda spec: app)
+    monkeypatch.setattr(
+        "rakit_server_uvicorn.server.uvicorn.run",
+        lambda application, **kwargs: calls.append(application),
+    )
+
+    UvicornServer(app="sample:admin").run()
+
+    assert calls == [app]
+
+
+def test_constructor_and_run_targets_cannot_be_combined() -> None:
+    with pytest.raises(ServerConfigurationError, match="both"):
+        UvicornServer(app="sample:admin").run(app)
+
+
 def test_run_rejects_reload_with_multiple_workers() -> None:
     with pytest.raises(ServerConfigurationError, match="mutually exclusive"):
         UvicornServer().run("sample:app", ServerConfig(reload=True, workers=2))
