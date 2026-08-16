@@ -1,6 +1,12 @@
 {% extends "base.html" %}
 {% block title %}{{ resource.label }}{% endblock %}
 {% block content %}
-<h1>{{ resource.label }}</h1>
-{% include table_template %}
+<div id="rakit-resource-list-root">
+  {% include "components/dashboard_navigation.html" %}
+  <header class="mb-6 border-b border-slate-200 pb-4">
+    <p class="text-sm font-medium text-slate-500">Resource</p>
+    <h1 class="mt-1 text-2xl font-semibold tracking-tight text-slate-950">{{ resource.label }}</h1>
+  </header>
+  {% include table_template %}
+</div>
 {% endblock %}
