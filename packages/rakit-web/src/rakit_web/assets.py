@@ -28,7 +28,9 @@ def _asset(source_name: str) -> _Asset:
     return _Asset(source_name=source_name, hashed_name=hashed_name)
 
 
-_ASSETS = {name: _asset(name) for name in ("rakit.css", "rakit-ui.js", "htmx.min.js")}
+_ASSETS = {
+    name: _asset(name) for name in ("rakit.css", "rakit-ui.js", "htmx.min.js", "theme.js")
+}
 _HASHED_ASSETS = {asset.hashed_name: asset for asset in _ASSETS.values()}
 
 
