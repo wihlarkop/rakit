@@ -13,4 +13,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --all-packages --dev --locked
-      - run: uv run pytest packages/rakit-core/tests/test_generated_rest_mutation_compilation.py -q
+      - run: >-
+          uv run pytest
+          packages/rakit-core/tests/test_generated_rest_mutation_compilation.py
+          packages/rakit-core/tests/test_generated_rest_concurrency_contract.py
+          -q
