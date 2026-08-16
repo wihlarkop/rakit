@@ -38,7 +38,7 @@ def test_dashboard_contracts_are_immutable_and_semantic() -> None:
     assert result.layout.size == "large"
     assert "tailwind" not in result.model_dump_json().lower()
     with pytest.raises(ValidationError):
-        result.layout.priority = 20
+        result.layout.priority = 20  # ty: ignore[invalid-assignment]
 
 
 def test_table_rows_match_declared_columns() -> None:
