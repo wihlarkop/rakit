@@ -1,0 +1,48 @@
+name: Task7 Lint Fix
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  fix-once:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages --dev --locked
+      - name: Apply scoped lint fixes
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path("packages/rakit-web/src/rakit_web/endpoint_admin.py")
+          text = path.read_text(encoding="utf-8")
+          text = text.replace(
+              '''        if endpoint.response_kind in (EndpointResponseKind.FILE, EndpointResponseKind.STREAM):\n            if (\n                method is not EndpointMethod.GET\n                or endpoint.transaction_policy is not TransactionPolicy.READ_ONLY\n            ):\n''',
+              '''        if endpoint.response_kind in (\n            EndpointResponseKind.FILE, EndpointResponseKind.STREAM\n        ) and (\n            method is not EndpointMethod.GET\n            or endpoint.transaction_policy is not TransactionPolicy.READ_ONLY\n        ):\n''',
+          )
+          text = text.replace(
+              '                    message="POST custom endpoints require session authentication and a secret key.",\n',
+              '''                    message=(\n                        "POST custom endpoints require session authentication "\n                        "and a secret key."\n                    ),\n''',
+          )
+          path.write_text(text, encoding="utf-8")
+      - run: uv run ruff format packages/rakit-web/src/rakit_web/endpoint_admin.py
+      - run: uv run ruff check packages/rakit-web/src/rakit_web/endpoint_admin.py
+      - name: Commit fixes when needed
+        shell: bash
+        run: |
+          if git diff --quiet -- packages/rakit-web/src/rakit_web/endpoint_admin.py; then
+            echo "No lint changes needed."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/rakit-web/src/rakit_web/endpoint_admin.py
+          git commit -m "fix(web): satisfy endpoint runtime lint"
+          git push origin HEAD:${{ github.head_ref }}
