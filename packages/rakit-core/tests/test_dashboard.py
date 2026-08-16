@@ -1,6 +1,5 @@
-from pydantic import ValidationError
 import pytest
-
+from pydantic import ValidationError
 from rakit_core.dashboard import (
     DashboardDefinition,
     ListWidgetItem,
