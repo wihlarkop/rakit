@@ -17,6 +17,12 @@ from .transactions import TransactionPolicy
 
 
 @dataclass(frozen=True, slots=True)
+class GeneratedMutationResult:
+    identity: RecordIdentity
+    record: object | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class GeneratedCrudRequest:
     operation: GeneratedCrudOperation
     query: ResourceQuery | None = None
@@ -170,6 +176,7 @@ def build_generated_operation_plan(
 
 __all__ = [
     "GeneratedCrudRequest",
+    "GeneratedMutationResult",
     "GeneratedResourceExecutor",
     "build_generated_operation_plan",
 ]
