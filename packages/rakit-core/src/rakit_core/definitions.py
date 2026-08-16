@@ -12,6 +12,7 @@ from .endpoints import (
     EndpointMethod,
     EndpointResponseKind,
 )
+from .generated_api import ResourceApiDefinition
 from .permissions import PermissionRequirement
 from .relationships import RelationshipDefinition
 from .transactions import TransactionPolicy
@@ -40,6 +41,7 @@ class ResourceDefinition(BaseModel):
     singular_label: str
     field_policy: ResourceFieldPolicy = Field(default_factory=ResourceFieldPolicy)
     relationships: tuple[RelationshipDefinition, ...] = ()
+    api: ResourceApiDefinition = Field(default_factory=ResourceApiDefinition)
 
     @property
     def relationship_ids(self) -> tuple[str, ...]:
