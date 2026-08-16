@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from rakit_core.dashboard import DashboardDefinition, WidgetDefinition
 from rakit_core.definitions import RouteDefinition
@@ -27,7 +28,12 @@ from .security.middleware import SecurityMiddleware
 class _DashboardDispatchMiddleware:
     """Dispatch only the dashboard's exact HTTP paths to its isolated runtime."""
 
-    def __init__(self, base_app: ASGIApp, dashboard_app: ASGIApp, paths: frozenset[str]) -> None:
+    def __init__(
+        self,
+        base_app: ASGIApp,
+        dashboard_app: ASGIApp,
+        paths: frozenset[str],
+    ) -> None:
         self.base_app = base_app
         self.dashboard_app = dashboard_app
         self.paths = paths
@@ -46,7 +52,7 @@ class _DashboardDispatchMiddleware:
 class Admin(_EndpointAdmin):
     """Public Admin facade with an automatic, permission-aware dashboard."""
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._dashboard_definition: DashboardDefinition | None = None
         self._dashboard_widgets: dict[str, WidgetDefinition] = {}
@@ -166,7 +172,10 @@ class Admin(_EndpointAdmin):
             allowed_hosts=self.config.security.allowed_hosts,
             content_security_policy_enabled=self.config.security.content_security_policy_enabled,
         )
-        dashboard_app = RequestContextMiddleware(dashboard_app, admin_id=self.config.admin_id)
+        dashboard_app = RequestContextMiddleware(
+            dashboard_app,
+            admin_id=self.config.admin_id,
+        )
 
         paths = frozenset(
             {"/", *(widget_path(widget_id) for widget_id in self._dashboard_widgets)}
