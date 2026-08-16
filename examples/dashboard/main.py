@@ -47,10 +47,30 @@ _ORDERS: tuple[dict[str, object], ...] = (
 )
 
 _CUSTOMERS: tuple[dict[str, object], ...] = (
-    {"id": "CUS-201", "name": "Northstar Labs", "plan": "Scale", "status": "Active"},
-    {"id": "CUS-202", "name": "Acme Studio", "plan": "Team", "status": "Active"},
-    {"id": "CUS-203", "name": "Vertex Supply", "plan": "Scale", "status": "Active"},
-    {"id": "CUS-204", "name": "Juniper Works", "plan": "Team", "status": "Review"},
+    {
+        "id": "CUS-201",
+        "name": "Northstar Labs",
+        "plan": "Scale",
+        "status": "Active",
+    },
+    {
+        "id": "CUS-202",
+        "name": "Acme Studio",
+        "plan": "Team",
+        "status": "Active",
+    },
+    {
+        "id": "CUS-203",
+        "name": "Vertex Supply",
+        "plan": "Scale",
+        "status": "Active",
+    },
+    {
+        "id": "CUS-204",
+        "name": "Juniper Works",
+        "plan": "Team",
+        "status": "Review",
+    },
 )
 
 
@@ -84,7 +104,11 @@ def _matches(item: dict[str, object], filter_: Any) -> bool:
 class _MemoryDataSource:
     capabilities = type("Capabilities", (), {"read": True})()
 
-    def __init__(self, items: tuple[dict[str, object], ...], fields: tuple[str, ...]) -> None:
+    def __init__(
+        self,
+        items: tuple[dict[str, object], ...],
+        fields: tuple[str, ...],
+    ) -> None:
         self._items = items
         self.fields = fields
         self.identity_fields = ("id",)
