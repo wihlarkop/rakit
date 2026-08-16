@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rakit-server-granian"
+version = "0.1.0a1"
+requires-python = ">=3.12"
+dependencies = [
+    "granian[reload]>=2.7.5",
+    "rakit-server==0.1.0a1",
+]
+
+[project.entry-points."rakit.servers"]
+granian = "rakit_server_granian:GranianServer"
+
+[tool.uv.sources]
+rakit-server = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rakit_server_granian"]
