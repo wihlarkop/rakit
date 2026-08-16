@@ -171,7 +171,7 @@ async def test_lazy_widget_loads_through_fragment_endpoint() -> None:
     assert 'aria-label="Refresh Pending orders"' in fragment.text
 
 
-def test_dashboard_template_url_is_mount_aware() -> None:
+def test_dashboard_navigation_component_is_mount_aware() -> None:
     request = Request(
         {
             "type": "http",
@@ -187,9 +187,12 @@ def test_dashboard_template_url_is_mount_aware() -> None:
             "server": ("localhost", 80),
         }
     )
-    template = build_templates(()).env.from_string('{{ rakit_dashboard_url() }}')
+    template = build_templates(()).env.get_template("components/dashboard_navigation.html")
+    rendered = template.render(request=request)
 
-    assert template.render(request=request) == "/admin/"
+    assert 'href="/admin/"' in rendered
+    assert "Dashboard" in rendered
+    assert 'aria-label="Admin navigation"' in rendered
 
 
 def test_forbidden_launchers_and_widgets_are_hidden() -> None:
