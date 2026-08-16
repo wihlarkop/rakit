@@ -2,7 +2,6 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
 
 from rakit_core.dashboard import DashboardDefinition, WidgetDefinition
 from rakit_core.definitions import RouteDefinition
@@ -52,15 +51,17 @@ class _DashboardDispatchMiddleware:
 class Admin(_EndpointAdmin):
     """Public Admin facade with an automatic, permission-aware dashboard."""
 
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._dashboard_definition: DashboardDefinition | None = None
-        self._dashboard_widgets: dict[str, WidgetDefinition] = {}
+    def _dashboard_widget_registry(self) -> dict[str, WidgetDefinition]:
+        registry = self.__dict__.get("_dashboard_widgets")
+        if registry is None:
+            registry = {}
+            self.__dict__["_dashboard_widgets"] = registry
+        return registry
 
     def register_dashboard(self, definition: DashboardDefinition) -> None:
         if self.compiled is not None:
             raise RuntimeError("Cannot register a dashboard after compilation")
-        if self._dashboard_definition is not None:
+        if getattr(self, "_dashboard_definition", None) is not None:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message="Only one dashboard may be registered for an Admin.",
@@ -72,15 +73,16 @@ class Admin(_EndpointAdmin):
     def register_widget(self, definition: WidgetDefinition) -> None:
         if self.compiled is not None:
             raise RuntimeError("Cannot register widgets after compilation")
+        widgets = self._dashboard_widget_registry()
         widget_id = str(definition.widget_id)
-        if widget_id in self._dashboard_widgets:
+        if widget_id in widgets:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message=f'Dashboard widget "{widget_id}" is already registered.',
                 status_code=500,
                 details={"widget_id": widget_id, "reason": "duplicate_widget"},
             )
-        self._dashboard_widgets[widget_id] = definition
+        widgets[widget_id] = definition
         self.builder.add_route(
             RouteDefinition(
                 route_name=f"rakit.dashboard.widget:{widget_id}",
@@ -92,18 +94,18 @@ class Admin(_EndpointAdmin):
         )
 
     def _resolved_dashboard(self) -> DashboardDefinition:
-        if self._dashboard_definition is not None:
-            dashboard = self._dashboard_definition
+        widgets = self._dashboard_widget_registry()
+        registered = getattr(self, "_dashboard_definition", None)
+        if registered is not None:
+            dashboard = registered
         else:
             dashboard = DashboardDefinition(
                 dashboard_id="main",
                 title=self.config.title,
-                widgets=tuple(self._dashboard_widgets),
+                widgets=tuple(widgets),
             )
         missing = tuple(
-            widget_id
-            for widget_id in dashboard.widgets
-            if str(widget_id) not in self._dashboard_widgets
+            widget_id for widget_id in dashboard.widgets if str(widget_id) not in widgets
         )
         if missing:
             raise RakitError(
@@ -119,6 +121,7 @@ class Admin(_EndpointAdmin):
         return dashboard
 
     def asgi(self) -> ASGIApp:
+        widgets = self._dashboard_widget_registry()
         dashboard = self._resolved_dashboard()
         base_app = super().asgi()
         compiled = self.compile()
@@ -139,7 +142,7 @@ class Admin(_EndpointAdmin):
             dashboard=dashboard,
             resources=tuple(self._resource_definitions.values()),
             pages=compiled.compiled_pages,
-            widgets=tuple(self._dashboard_widgets.values()),
+            widgets=tuple(widgets.values()),
             templates=templates,
             admin_id=self.config.admin_id,
             auth_enabled=auth_enabled,
@@ -177,7 +180,7 @@ class Admin(_EndpointAdmin):
             admin_id=self.config.admin_id,
         )
 
-        paths = frozenset({"/", *(widget_path(widget_id) for widget_id in self._dashboard_widgets)})
+        paths = frozenset({"/", *(widget_path(widget_id) for widget_id in widgets)})
         return _DashboardDispatchMiddleware(base_app, dashboard_app, paths)
 
 
