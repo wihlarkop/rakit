@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from .capabilities import CapabilityProvider
 
@@ -50,7 +50,19 @@ class SchemaAdapter(Protocol):
     def serialize_output(self, schema: type[object], value: object) -> object: ...
 
 
+@runtime_checkable
+class PartialInputSchemaAdapter(Protocol):
+    """Optional presence-aware validation seam for partial-update inputs."""
+
+    def validate_partial_input(
+        self,
+        schema: type[object],
+        values: Mapping[str, object],
+    ) -> Mapping[str, object]: ...
+
+
 __all__ = [
+    "PartialInputSchemaAdapter",
     "SchemaAdapter",
     "SchemaField",
     "SchemaValidationError",
