@@ -1,16 +1,17 @@
 <article
   id="rakit-dashboard-widget-{{ widget.widget_id }}"
-  class="rakit-panel rakit-dashboard-widget p-4"
+  class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm md:col-span-12 {% if widget.definition.layout.size.value == 'small' %}xl:col-span-3{% elif widget.definition.layout.size.value == 'medium' %}xl:col-span-6{% elif widget.definition.layout.size.value == 'large' %}xl:col-span-9{% else %}xl:col-span-12{% endif %}"
   data-rakit-dashboard-widget="{{ widget.widget_id }}"
   data-rakit-dashboard-widget-size="{{ widget.definition.layout.size.value }}"
   {% if widget.min_height is not none %}data-rakit-dashboard-widget-min-height="{{ widget.min_height }}"{% endif %}
 >
   {% if widget.is_lazy %}
-    <header class="mb-3">
-      <h3 class="font-medium text-slate-950">{{ widget.definition.label }}</h3>
+    <header class="border-b border-slate-100 px-4 py-3">
+      <h3 class="text-sm font-semibold text-slate-950">{{ widget.definition.label }}</h3>
     </header>
     <div
       id="rakit-dashboard-widget-{{ widget.widget_id }}-content"
+      class="p-4"
       data-rakit-dashboard-widget-content
       role="status"
       aria-live="polite"
@@ -21,20 +22,24 @@
       hx-target="#rakit-dashboard-widget-{{ widget.widget_id }}"
       hx-swap="outerHTML"
     >
-      <p class="text-sm leading-6 text-slate-600">Loading…</p>
+      <div class="animate-pulse space-y-3" aria-hidden="true">
+        <div class="h-5 w-24 rounded bg-slate-200"></div>
+        <div class="h-4 w-2/3 rounded bg-slate-100"></div>
+      </div>
+      <span class="sr-only">Loading {{ widget.definition.label }}…</span>
     </div>
   {% else %}
     {% set result = widget.result %}
-    <header class="mb-3 flex items-center justify-between gap-3">
-      <h3 class="font-medium text-slate-950">{{ result.label }}</h3>
+    <header class="flex min-h-14 items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+      <h3 class="text-sm font-semibold text-slate-950">{{ result.label }}</h3>
       <div class="flex items-center gap-2">
         <span
           id="rakit-dashboard-widget-{{ widget.widget_id }}-refresh-status"
-          class="rakit-dashboard-refresh-indicator text-sm text-slate-500"
+          class="hidden text-xs text-slate-500 [.htmx-request&]:inline"
           aria-hidden="true"
         >Refreshing…</span>
         <button
-          class="rakit-button rakit-button-secondary"
+          class="inline-flex min-h-8 items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
           type="button"
           hx-get="{{ widget.widget_path }}"
           hx-target="#rakit-dashboard-widget-{{ widget.widget_id }}-content"
@@ -50,49 +55,50 @@
 
     <div
       id="rakit-dashboard-widget-{{ widget.widget_id }}-content"
+      class="p-4"
       data-rakit-dashboard-widget-content
       role="status"
       aria-live="polite"
       aria-atomic="true"
     >
       {% if result.message is defined %}
-        <div role="alert">
+        <div class="rounded-md border border-red-200 bg-red-50 p-3" role="alert">
           <p class="text-sm font-medium text-red-900">Unable to refresh this widget.</p>
-          <p class="mt-1 text-sm leading-6 text-red-900">{{ result.message }}</p>
+          <p class="mt-1 text-sm leading-6 text-red-800">{{ result.message }}</p>
         </div>
       {% elif result.template is defined %}
         {% with payload=result.context, widget_result=result %}{% include result.template %}{% endwith %}
       {% elif result.value is defined %}
-        <p class="text-2xl font-semibold tracking-tight text-slate-950">{{ result.value }}</p>
-        {% if result.description %}<p class="mt-1 text-sm leading-6 text-slate-600">{{ result.description }}</p>{% endif %}
+        <p class="text-3xl font-semibold tracking-tight text-slate-950">{{ result.value }}</p>
+        {% if result.description %}<p class="mt-2 text-sm leading-6 text-slate-500">{{ result.description }}</p>{% endif %}
       {% elif result.text is defined %}
         <p class="text-sm leading-6 text-slate-700">{{ result.text }}</p>
       {% elif result.columns is defined %}
         {% if result.rows %}
-        <div class="overflow-x-auto rounded-md border border-slate-200">
+        <div class="overflow-x-auto">
           <table class="w-full text-left text-sm">
-            <thead class="bg-slate-50">
-              <tr>{% for column in result.columns %}<th scope="col" class="px-3 py-2 font-medium text-slate-700">{{ column }}</th>{% endfor %}</tr>
+            <thead>
+              <tr class="border-b border-slate-200">{% for column in result.columns %}<th scope="col" class="pb-2 pr-4 text-xs font-semibold uppercase tracking-wide text-slate-500 last:pr-0">{{ column }}</th>{% endfor %}</tr>
             </thead>
             <tbody class="divide-y divide-slate-100">
               {% for row in result.rows %}
-              <tr>{% for value in row %}<td class="px-3 py-2 text-slate-700">{{ value }}</td>{% endfor %}</tr>
+              <tr>{% for value in row %}<td class="py-2.5 pr-4 text-slate-700 last:pr-0">{{ value }}</td>{% endfor %}</tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
-        {% else %}<p class="text-sm leading-6 text-slate-600">{{ result.empty_message }}</p>{% endif %}
+        {% else %}<p class="text-sm leading-6 text-slate-500">{{ result.empty_message }}</p>{% endif %}
       {% elif result.items is defined %}
         {% if result.items %}
         <ul class="divide-y divide-slate-100">
           {% for item in result.items %}
-          <li class="flex items-center justify-between gap-3 py-2 text-sm">
-            {% if item.href %}<a href="{{ item.href }}" class="font-medium text-blue-700">{{ item.label }}</a>{% else %}<span>{{ item.label }}</span>{% endif %}
-            {% if item.value %}<span class="text-slate-600">{{ item.value }}</span>{% endif %}
+          <li class="flex items-center justify-between gap-3 py-2.5 text-sm first:pt-0 last:pb-0">
+            {% if item.href %}<a href="{{ item.href }}" class="font-medium text-blue-700 hover:text-blue-800 hover:underline">{{ item.label }}</a>{% else %}<span class="text-slate-700">{{ item.label }}</span>{% endif %}
+            {% if item.value %}<span class="font-medium tabular-nums text-slate-600">{{ item.value }}</span>{% endif %}
           </li>
           {% endfor %}
         </ul>
-        {% else %}<p class="text-sm leading-6 text-slate-600">{{ result.empty_message }}</p>{% endif %}
+        {% else %}<p class="text-sm leading-6 text-slate-500">{{ result.empty_message }}</p>{% endif %}
       {% endif %}
     </div>
   {% endif %}
