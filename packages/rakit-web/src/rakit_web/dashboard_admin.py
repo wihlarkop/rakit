@@ -1,6 +1,6 @@
 """Dashboard-enabled public Admin facade."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
 from rakit_core.dashboard import DashboardDefinition, WidgetDefinition
@@ -14,6 +14,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from .admin import RequestContextMiddleware
 from .dashboard_routes import DashboardBinding, build_dashboard_routes, widget_path
 from .endpoint_admin import Admin as _EndpointAdmin
+from .navigation import AdminNavigation, build_navigation_provider
 from .resource_routes import build_templates
 from .security.authentication import (
     AuthorizationMiddleware,
@@ -46,6 +47,23 @@ class _DashboardDispatchMiddleware:
             await self.dashboard_app(scope, receive, send)
             return
         await self.base_app(scope, receive, send)
+
+
+class _AdminNavigationMiddleware:
+    """Expose a lazy navigation provider to every built-in template request."""
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        provider: Callable[[Request], AdminNavigation],
+    ) -> None:
+        self.app = app
+        self.provider = provider
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            scope.setdefault("state", {})["rakit_navigation_provider"] = self.provider
+        await self.app(scope, receive, send)
 
 
 class Admin(_EndpointAdmin):
@@ -123,10 +141,18 @@ class Admin(_EndpointAdmin):
     def asgi(self) -> ASGIApp:
         widgets = self._dashboard_widget_registry()
         dashboard = self._resolved_dashboard()
-        base_app = super().asgi()
         compiled = self.compile()
-        templates = build_templates(self._template_dirs)
         auth_enabled = self._auth_backend is not None and self._session_store is not None
+        navigation_provider = build_navigation_provider(
+            title=self.config.title,
+            admin_id=self.config.admin_id,
+            resources=tuple(self._resource_definitions.values()),
+            pages=compiled.compiled_pages,
+            auth_enabled=auth_enabled,
+            superuser_bypass=self._superuser_bypass,
+        )
+        base_app = super().asgi()
+        templates = build_templates(self._template_dirs)
 
         @asynccontextmanager
         async def operation_scope() -> AsyncIterator[ServiceResolver]:
@@ -181,7 +207,8 @@ class Admin(_EndpointAdmin):
         )
 
         paths = frozenset({"/", *(widget_path(widget_id) for widget_id in widgets)})
-        return _DashboardDispatchMiddleware(base_app, dashboard_app, paths)
+        app = _DashboardDispatchMiddleware(base_app, dashboard_app, paths)
+        return _AdminNavigationMiddleware(app, navigation_provider)
 
 
 __all__ = ["Admin"]
