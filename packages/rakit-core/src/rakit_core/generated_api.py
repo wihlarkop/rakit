@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from enum import StrEnum
 
+from .fields import FieldDefinition
 from .query import FilterOperator
 
 
@@ -91,6 +92,7 @@ class CompiledResourceApi:
     update_fields: tuple[str, ...]
     identity_fields: tuple[str, ...]
     filters: tuple[ApiFilterDefinition, ...]
+    field_definitions: tuple[FieldDefinition, ...] = ()
 
 
 __all__ = [
