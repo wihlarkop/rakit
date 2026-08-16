@@ -1,7 +1,7 @@
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar
 
 from granian import Granian
 from granian.constants import Interfaces
@@ -103,5 +103,5 @@ class GranianServer:
             "log_level": log_level,
             **native,
         }
-        server = Granian(**cast(dict[str, Any], options))
+        server = Granian(**options)
         server.serve(target_loader=_load_granian_target)
