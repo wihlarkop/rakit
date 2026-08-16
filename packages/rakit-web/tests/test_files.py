@@ -5,6 +5,7 @@ from hashlib import sha256
 import httpx
 import pytest
 from rakit_core.di import ServiceRegistry, ServiceScope
+from rakit_core.events import EventBus, EventPublisher
 from rakit_core.fields import FileField
 from rakit_core.forms import FormSchema
 from rakit_core.identity import RecordIdentity
@@ -193,6 +194,12 @@ def file_binding(
         storage,
         scope=ServiceScope.APPLICATION,
         name=storage.storage_id,
+    )
+    registry.add_value(EventBus, EventBus(), scope=ServiceScope.APPLICATION)
+    registry.add_factory(
+        EventPublisher,
+        lambda resolver: EventPublisher(resolver.require(EventBus)),
+        scope=ServiceScope.OPERATION,
     )
 
     @asynccontextmanager
