@@ -1,7 +1,7 @@
 {% set bulk_actions = rakit_bulk_actions(request, resource.resource_id) if rakit_bulk_actions is defined else () %}
-<div data-rakit-resource-controls="{{ resource.resource_id }}">
+<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between" data-rakit-resource-controls="{{ resource.resource_id }}">
   {% if search_enabled %}
-  <form method="get" data-rakit-search action="{{ resource_path }}">
+  <form class="flex w-full max-w-md gap-2" method="get" data-rakit-search action="{{ resource_path }}">
     {% for filter_value in filter_values %}
     <input type="hidden" name="filter" value="{{ filter_value }}" />
     {% endfor %}
@@ -10,19 +10,21 @@
     {% endif %}
     <input type="hidden" name="per_page" value="{{ per_page_value }}" />
     <input
+      class="rakit-input"
       type="search"
       name="search"
       value="{{ search_value }}"
+      placeholder="Search {{ resource.label | lower }}"
       aria-label="Search {{ resource.label }}"
     />
     {% if query.count_policy.value != "exact" %}
     <input type="hidden" name="count_policy" value="{{ query.count_policy.value }}" />
     {% endif %}
-    <button type="submit">Search</button>
+    <button class="rakit-button rakit-button-secondary shrink-0" type="submit">Search</button>
   </form>
   {% endif %}
 
-  <p data-rakit-total>
+  <p class="text-sm tabular-nums text-slate-500" data-rakit-total>
     {% if query.count_policy.value == "deferred" %}
     <span
       data-rakit-total-deferred
@@ -51,65 +53,73 @@
     {% endfor %}
   </div>
 {% endif %}
-<table data-rakit-resource="{{ resource.resource_id }}">
-  <thead>
-    <tr>
-      {% if bulk_actions %}
-      <th scope="col"><span class="sr-only">Select</span></th>
-      {% endif %}
-      {% for header in sort_headers %}
-      <th scope="col" aria-sort="{{ header.aria_sort }}">
-        {% if header.url %}
-        <a href="{{ header.url }}">{{ header.field }}</a>
+<div class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-x-auto">
+    <table class="w-full text-left text-sm" data-rakit-resource="{{ resource.resource_id }}">
+      <thead class="bg-slate-50">
+        <tr class="border-b border-slate-200">
+          {% if bulk_actions %}
+          <th scope="col" class="w-12 px-4 py-3"><span class="sr-only">Select</span></th>
+          {% endif %}
+          {% for header in sort_headers %}
+          <th scope="col" class="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500" aria-sort="{{ header.aria_sort }}">
+            {% if header.url %}
+            <a class="inline-flex items-center gap-1 hover:text-slate-900 hover:underline" href="{{ header.url }}">{{ header.field }}</a>
+            {% else %}
+            {{ header.field }}
+            {% endif %}
+          </th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for row in rows %}
+        <tr class="transition hover:bg-slate-50">
+          {% if bulk_actions %}
+          <td class="px-4 py-3">
+            {% if row.detail_url %}
+            <input
+              type="checkbox"
+              name="selected"
+              value="{{ row.detail_url.rsplit('/', 1)[-1] }}"
+              aria-label="Select row {{ loop.index }}"
+            />
+            {% endif %}
+          </td>
+          {% endif %}
+          {% for cell in row.cells %}
+          <td class="whitespace-nowrap px-4 py-3 text-slate-700">
+            {% if loop.first and row.detail_url %}
+            <a class="font-medium text-blue-700 hover:text-blue-800 hover:underline" href="{{ row.detail_url }}">{{ cell }}</a>
+            {% else %}
+            {{ cell }}
+            {% endif %}
+          </td>
+          {% endfor %}
+        </tr>
         {% else %}
-        {{ header.field }}
-        {% endif %}
-      </th>
-      {% endfor %}
-    </tr>
-  </thead>
-  <tbody>
-    {% for row in rows %}
-    <tr>
-      {% if bulk_actions %}
-      <td>
-        {% if row.detail_url %}
-        <input
-          type="checkbox"
-          name="selected"
-          value="{{ row.detail_url.rsplit('/', 1)[-1] }}"
-          aria-label="Select row {{ loop.index }}"
-        />
-        {% endif %}
-      </td>
-      {% endif %}
-      {% for cell in row.cells %}
-      <td>
-        {% if loop.first and row.detail_url %}
-        <a href="{{ row.detail_url }}">{{ cell }}</a>
-        {% else %}
-        {{ cell }}
-        {% endif %}
-      </td>
-      {% endfor %}
-    </tr>
-    {% else %}
-    <tr>
-      <td colspan="{{ (fields | length) + (1 if bulk_actions else 0) }}">No records.</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+        <tr>
+          <td class="px-4 py-10 text-center text-sm text-slate-500" colspan="{{ (fields | length) + (1 if bulk_actions else 0) }}">No records.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
 {% if bulk_actions %}
 </form>
 {% endif %}
 
-<nav aria-label="Resource pagination" data-rakit-pagination>
-  {% if pagination.previous_url %}
-  <a aria-label="Previous page" href="{{ pagination.previous_url }}" rel="prev">Previous</a>
-  {% endif %}
-  <span aria-current="page">Page {{ pagination.current_page }}</span>
-  {% if pagination.next_url %}
-  <a aria-label="Next page" href="{{ pagination.next_url }}" rel="next">Next</a>
-  {% endif %}
+<nav class="mt-4 flex items-center justify-between gap-4" aria-label="Resource pagination" data-rakit-pagination>
+  <div>
+    {% if pagination.previous_url %}
+    <a class="rakit-button rakit-button-secondary" aria-label="Previous page" href="{{ pagination.previous_url }}" rel="prev">Previous</a>
+    {% endif %}
+  </div>
+  <span class="text-sm text-slate-500" aria-current="page">Page {{ pagination.current_page }}</span>
+  <div>
+    {% if pagination.next_url %}
+    <a class="rakit-button rakit-button-secondary" aria-label="Next page" href="{{ pagination.next_url }}" rel="next">Next</a>
+    {% endif %}
+  </div>
 </nav>
