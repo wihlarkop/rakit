@@ -186,7 +186,7 @@ async def activity_page(_context):
                 ("09:18", "Customer CUS-204 moved to review", "System"),
                 ("08:55", "Export batch completed", "Worker 03"),
                 ("08:31", "Order ORD-1042 submitted for review", "Owen Park"),
-            )
+            ),
         }
     )
 
@@ -207,7 +207,7 @@ async def runbook_page(_context):
                     "Customer review",
                     "Confirm account ownership and recent activity before clearing a review hold.",
                 ),
-            )
+            ),
         }
     )
 
