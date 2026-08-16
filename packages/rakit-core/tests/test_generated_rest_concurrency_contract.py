@@ -61,7 +61,10 @@ def _authorization(operation: str, identity: RecordIdentity) -> OperationAuthori
 
 def test_partial_update_request_carries_opaque_concurrency_token() -> None:
     identity = RecordIdentity(values={"id": 7})
-    payload = GeneratedInput(values={"email": "next@example.com"}, present_fields={"email"})
+    payload = GeneratedInput(
+        values={"email": "next@example.com"},
+        present_fields=frozenset({"email"}),
+    )
 
     request = GeneratedCrudRequest.update_partial(
         identity,
