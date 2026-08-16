@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 from pydantic import ValidationError
+from rakit_core.operations import OperationContext
 
 from rakit_storage import (
     DeleteBehavior,
@@ -65,7 +66,7 @@ def test_stored_file_metadata_is_immutable_and_copied() -> None:
 
     assert file.metadata == {"tenant": "acme", "scan": "pending"}
     with pytest.raises(ValidationError):
-        file.size = 2048  # type: ignore[misc]
+        file.size = 2048
 
 
 @pytest.mark.parametrize(
@@ -120,20 +121,36 @@ def test_file_storage_is_runtime_checkable_protocol() -> None:
             *,
             prefix: str | None = None,
             max_size: int | None = None,
+            operation_context: OperationContext | None = None,
         ) -> StoredFile:
-            del upload, prefix, max_size
+            del upload, prefix, max_size, operation_context
             return _stored_file(storage_id=self.storage_id)
 
-        async def open(self, file: StoredFile) -> AsyncIterator[bytes]:
-            del file
+        async def open_stream(
+            self,
+            file: StoredFile,
+            *,
+            operation_context: OperationContext | None = None,
+        ) -> AsyncIterator[bytes]:
+            del file, operation_context
             if False:
                 yield b""
 
-        async def delete(self, file: StoredFile) -> None:
-            del file
+        async def delete(
+            self,
+            file: StoredFile,
+            *,
+            operation_context: OperationContext | None = None,
+        ) -> None:
+            del file, operation_context
 
-        async def resolve_access(self, file: StoredFile) -> FileAccess:
-            del file
+        async def resolve_access(
+            self,
+            file: StoredFile,
+            *,
+            operation_context: OperationContext | None = None,
+        ) -> FileAccess:
+            del file, operation_context
             return FileAccess()
 
     assert isinstance(MemoryStorage(), FileStorage)
