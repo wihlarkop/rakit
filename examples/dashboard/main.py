@@ -250,7 +250,7 @@ async def pending_orders(_context):
 async def operations_note(_context):
     return TextWidgetResult(
         label="Operations note",
-        text="Review pending orders before the 11:00 fulfillment cut-off. Export queues are healthy.",
+        text="Review pending orders before 11:00. Export queues are healthy.",
     )
 
 
