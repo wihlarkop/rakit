@@ -305,7 +305,6 @@ def clean_install_smoke(dist: Path, root: Path, workspace: Path) -> None:
     venv = workspace / "venv"
     _run(["uv", "venv", str(venv), "--python", sys.executable], cwd=workspace)
     python = _venv_python(venv)
-    cli = _venv_rakit(venv)
     _run(
         [
             "uv",
@@ -320,6 +319,7 @@ def clean_install_smoke(dist: Path, root: Path, workspace: Path) -> None:
         cwd=workspace,
         env=_clean_env(),
     )
+    cli = _venv_rakit(venv)
     _assert_installed_imports(python, cwd=workspace, repository=root)
     _run([str(cli), "--help"], cwd=workspace, env=_clean_env())
 

@@ -67,3 +67,13 @@ def test_clean_import_probe_uses_isolated_interpreter(
     assert "PYTHONNOUSERSITE" in source
     assert "working-tree import leaked" in source
     assert sys.version_info >= (3, 12)
+
+
+def test_clean_install_resolves_cli_after_standard_install(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository, _checker = _load_checker(monkeypatch)
+    source = (repository / "scripts" / "check_artifacts.py").read_text(encoding="utf-8")
+    install_marker = 'f"rakit[standard]=={VERSION}"'
+    cli_marker = "cli = _venv_rakit(venv)"
+    assert source.index(install_marker) < source.index(cli_marker)
