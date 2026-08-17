@@ -103,7 +103,8 @@ def test_ui_showcase_uses_dashboard_shell_with_mobile_drawer() -> None:
     assert "data-rakit-mobile-navigation-close" in dashboard.text
     assert 'aria-label="Open navigation"' in dashboard.text
     assert 'aria-label="Close navigation"' in dashboard.text
-    assert "overflow-x-auto" not in dashboard.text
+    assert 'class="overflow-x-auto border-b border-slate-200' not in dashboard.text
+    assert 'aria-label="Primary navigation fallback"' in dashboard.text
 
     assert orders.status_code == 200
     assert 'href="/orders"' in orders.text
