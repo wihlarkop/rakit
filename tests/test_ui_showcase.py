@@ -1,3 +1,5 @@
+import re
+
 from httpx import Response
 from rakit.core import IdentityCodec, RecordIdentity
 from starlette.testclient import TestClient
@@ -111,6 +113,51 @@ def test_ui_showcase_uses_dashboard_shell_with_mobile_drawer() -> None:
     assert orders.status_code == 200
     assert 'href="/orders"' in orders.text
     assert 'aria-current="page"' in orders.text
+
+
+def test_ui_showcase_uses_breadcrumbs_collapsible_sidebar_and_entity_detail_header() -> None:
+    from examples.ui_showcase.main import admin
+
+    app = admin.asgi()
+    product_identity = IdentityCodec().encode(RecordIdentity(values={"id": "PRD-101"}))
+    with _showcase_client(app) as client:
+        login = _login(client)
+        assert login.status_code == 303
+        dashboard = client.get("/")
+        ui_lab = client.get("/ui-lab")
+        product = client.get(f"/products/{product_identity}")
+
+        shell_match = re.search(
+            r'<script src="([^"]*rakit-shell\.[a-f0-9]{8}\.js)"', dashboard.text
+        )
+        assert shell_match is not None
+        shell_script = client.get(shell_match.group(1))
+
+    assert dashboard.status_code == 200
+    assert "data-rakit-desktop-navigation-toggle" in dashboard.text
+    assert "data-rakit-sidebar-expanded-icon" in dashboard.text
+    assert "data-rakit-sidebar-collapsed-icon" in dashboard.text
+    assert 'aria-label="Collapse sidebar"' in dashboard.text
+
+    assert shell_script.status_code == 200
+    assert '"rakit.sidebar.collapsed"' in shell_script.text
+    assert "data-rakit-desktop-navigation-collapsed" in shell_script.text
+    assert "localStorage.setItem" in shell_script.text
+
+    assert ui_lab.status_code == 200
+    assert 'data-rakit-breadcrumb="page"' in ui_lab.text
+    assert 'data-rakit-breadcrumb-separator' in ui_lab.text
+    assert 'aria-current="page">UI Lab</span>' in ui_lab.text
+
+    assert product.status_code == 200
+    assert 'data-rakit-breadcrumb="resource-detail"' in product.text
+    assert 'aria-current="page">PRD-101</span>' in product.text
+    assert (
+        'data-rakit-record-title>Precision mechanical keyboard with low-profile tactile switches</h1>'
+        in product.text
+    )
+    assert 'data-rakit-record-context>Product · PRD-101</p>' in product.text
+    assert '>Product</h1>' not in product.text
 
 
 def test_ui_showcase_exposes_record_confirmation_action_and_relationship_contracts() -> None:
