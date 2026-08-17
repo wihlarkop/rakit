@@ -68,6 +68,8 @@ def test_ui_showcase_exposes_realistic_application_and_ui_lab() -> None:
         "Theme",
     ):
         assert section in ui_lab.text
+    assert '<span class="rakit-chip">Active</span>' in ui_lab.text
+    assert 'class="rakit-chip rakit-chip-relationship"' in ui_lab.text
 
     assert all(response.status_code == 200 for response in resources.values())
     assert "Atlas Research &amp; Engineering Cooperative" in resources["customers"].text
@@ -80,20 +82,6 @@ def test_ui_showcase_exposes_realistic_application_and_ui_lab() -> None:
     assert orders_page_two.status_code == 200
     assert "ORD-1075" in orders_page_two.text
     assert "Page 2" in orders_page_two.text
-
-
-def test_ui_showcase_chip_shapes_keep_status_and_relationship_semantics_distinct() -> None:
-    from examples.ui_showcase.main import admin
-
-    app = admin.asgi()
-    with _showcase_client(app) as client:
-        login = _login(client)
-        assert login.status_code == 303
-        ui_lab = client.get("/ui-lab")
-
-    assert ui_lab.status_code == 200
-    assert '<span class="rakit-chip">Active</span>' in ui_lab.text
-    assert 'class="rakit-chip rakit-chip-relationship"' in ui_lab.text
 
 
 def test_ui_showcase_uses_dashboard_shell_with_mobile_drawer() -> None:
