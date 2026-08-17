@@ -65,10 +65,13 @@ def test_ui_showcase_exposes_realistic_application_and_ui_lab() -> None:
     assert ui_lab.status_code == 200
     for section in (
         "Typography",
+        "Iconography",
         "Buttons",
         "Fields",
         "Status",
         "Feedback",
+        "Dialog and popover",
+        "Pagination",
         "Tables",
         "Relationships",
         "Empty states",
@@ -77,7 +80,8 @@ def test_ui_showcase_exposes_realistic_application_and_ui_lab() -> None:
         "Theme",
     ):
         assert section in ui_lab.text
-    assert '<span class="rakit-chip">Active</span>' in ui_lab.text
+    assert "rakit-status-success" in ui_lab.text
+    assert ">Published</span>" in ui_lab.text
     assert 'class="rakit-chip rakit-chip-relationship"' in ui_lab.text
 
     assert all(response.status_code == 200 for response in resources.values())
@@ -91,6 +95,53 @@ def test_ui_showcase_exposes_realistic_application_and_ui_lab() -> None:
     assert orders_page_two.status_code == 200
     assert "ORD-1075" in orders_page_two.text
     assert "Page 2" in orders_page_two.text
+
+
+def test_ui_showcase_exposes_core_component_matrix() -> None:
+    admin = _fresh_showcase_admin()
+    app = admin.asgi()
+    with _showcase_client(app) as client:
+        login = _login(client)
+        assert login.status_code == 303
+        ui_lab = client.get("/ui-lab")
+
+    assert ui_lab.status_code == 200
+    for marker in (
+        "rakit-button-secondary",
+        "rakit-button-quiet",
+        "rakit-button-danger",
+        'aria-busy="true"',
+        "rakit-icon-button",
+        "rakit-textarea",
+        "rakit-checkbox",
+        "rakit-radio",
+        "rakit-file-input",
+        "rakit-field-help",
+        "rakit-field-required",
+        'aria-invalid="true"',
+        "rakit-status-neutral",
+        "rakit-status-success",
+        "rakit-status-warning",
+        "rakit-status-danger",
+        "rakit-status-info",
+        "rakit-alert-neutral",
+        "rakit-alert-success",
+        "rakit-alert-warning",
+        "rakit-alert-danger",
+        "rakit-alert-info",
+        "data-rakit-dialog-trigger",
+        "data-rakit-dialog",
+        'aria-labelledby="ui-lab-dialog-title"',
+        'aria-describedby="ui-lab-dialog-description"',
+        "rakit-popover",
+        "rakit-pagination",
+        'aria-current="page"',
+        'aria-disabled="true"',
+        "rakit-pagination-size",
+        "rakit-loading",
+        "rakit-spinner",
+    ):
+        assert marker in ui_lab.text
 
 
 def test_ui_showcase_uses_dashboard_shell_with_mobile_drawer() -> None:
