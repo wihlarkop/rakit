@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}UI Lab · {{ binding_label }}{% endblock %}
+{% block content %}
+<div id="rakit-ui-lab" class="space-y-5">
+  {% include "components/dashboard_navigation.html" %}
+  <header class="mb-6 flex flex-wrap items-end justify-between gap-3 border-b border-slate-200 pb-4">
+    <div>
+      <p class="text-sm font-medium text-slate-500">Visual QA</p>
+      <h1 class="mt-1 text-2xl font-semibold tracking-tight text-slate-950">UI Lab</h1>
+      <p class="mt-1 text-sm text-slate-600">Deterministic states rendered with the default Rakit UI.</p>
+    </div>
+  </header>
+
+  <section class="rakit-panel">
+    <header class="rakit-panel-header"><h2 class="text-sm font-semibold text-slate-900">Typography</h2></header>
+    <div class="rakit-panel-body space-y-4">
+      <div><p class="text-sm font-medium text-slate-500">Eyebrow</p><h3 class="mt-1 text-2xl font-semibold tracking-tight text-slate-950">Commerce operations</h3></div>
+      <p class="text-sm leading-6 text-slate-600">Readable supporting copy for dense operational interfaces and long working sessions.</p>
+    </div>
+  </section>
+
+  <section class="rakit-panel">
+    <header class="rakit-panel-header"><h2 class="text-sm font-semibold text-slate-900">Buttons</h2></header>
+    <div class="rakit-panel-body flex flex-wrap gap-3">
+      <button class="rakit-button" type="button">Primary action</button>
+      <button class="rakit-button rakit-button-secondary" type="button">Secondary</button>
+      <button class="rakit-button rakit-button-quiet" type="button">Quiet</button>
+      <button class="rakit-button rakit-button-danger" type="button">Destructive</button>
+      <button class="rakit-button" type="button" disabled>Disabled</button>
+    </div>
+  </section>
+
+  <section class="rakit-panel">
+    <header class="rakit-panel-header"><h2 class="text-sm font-semibold text-slate-900">Fields</h2></header>
+    <div class="rakit-panel-body space-y-4">
+      <div class="space-y-1.5">
+        <label class="block text-sm font-medium text-slate-800" for="lab-name">Product name</label>
+        <input class="rakit-input" id="lab-name" value="Precision mechanical keyboard" />
+        <p class="text-sm text-slate-500">Helpful field guidance remains secondary to the value.</p>
+      </div>
+      <div class="space-y-1.5">
+        <label class="block text-sm font-medium text-slate-800" for="lab-status">Status</label>
+        <select class="rakit-select" id="lab-status"><option>Published</option><option>Draft</option></select>
+      </div>
+      <div class="space-y-1.5">
+        <label class="block text-sm font-medium text-slate-800" for="lab-error">Validation error</label>
+        <input class="rakit-input" id="lab-error" value="" aria-invalid="true" aria-describedby="lab-error-message" />
+        <div class="rakit-error" id="lab-error-message" role="alert">This field is required.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="rakit-panel">
+    <header class="rakit-panel-header"><h2 class="text-sm font-semibold text-slate-900">Status</h2></header>
+    <div class="rakit-panel-body flex flex-wrap gap-3">
+      <span class="rakit-chip">Active</span>
+      <span class="rakit-chip">Pending review</span>
+      <span class="rakit-chip">Low stock</span>
+      <span class="rakit-chip">Archived</span>
+    </div>
+  </section>
+
+  <section class="rakit-panel">
+    <header class="rakit-panel-header"><h2 class="text-sm font-semibold text-slate-900">Feedback</h2></header>
+    <div class="rakit-panel-body space-y-4">
+      <div class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950" role="status">Order ORD-1080 was approved.</div>
+      <div class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-950" role="alert">The refund could not be completed.</div>
+    </div>
+  </section>
+
+  <section class="rakit-panel">
+    <header class="rakit-panel-header"><h2 class="text-sm font-semibold text-slate-900">Tables</h2></header>
+    <div class="rakit-panel-body">
+      <table class="w-full text-left text-sm">
+        <thead><tr><th class="pb-3">Order</th><th class="pb-3">Customer</th><th class="pb-3">Status</th></tr></thead>
+        <tbody>
+          <tr><td class="py-2">ORD-1080</td><td class="py-2">Atlas Research</td><td class="py-2">Paid</td></tr>
+          <tr><td class="py-2">ORD-1079</td><td class="py-2">Northstar Labs</td><td class="py-2">Pending review</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="rakit-panel">
+    <header class="rakit-panel-header"><h2 class="text-sm font-semibold text-slate-900">Empty states</h2></header>
+    <div class="rakit-panel-body"><p class="text-sm leading-6 text-slate-600">No orders match this view.</p></div>
+  </section>
+
+  <section class="rakit-panel">
+    <header class="rakit-panel-header"><h2 class="text-sm font-semibold text-slate-900">Loading states</h2></header>
+    <div class="rakit-panel-body"><button class="rakit-button" type="button" disabled>Loading…</button></div>
+  </section>
+
+  <section class="rakit-panel">
+    <header class="rakit-panel-header"><h2 class="text-sm font-semibold text-slate-900">Errors</h2></header>
+    <div class="rakit-panel-body"><div class="rakit-error" role="alert">Example validation and operation errors belong here.</div></div>
+  </section>
+
+  <section class="rakit-panel">
+    <header class="rakit-panel-header"><h2 class="text-sm font-semibold text-slate-900">Theme</h2></header>
+    <div class="rakit-panel-body"><p class="text-sm leading-6 text-slate-600">Use the current System, Light, or Dark control in the application shell to inspect this page.</p></div>
+  </section>
+</div>
+{% endblock %}
