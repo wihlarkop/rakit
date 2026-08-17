@@ -33,6 +33,22 @@ testpaths = ["tests", "packages"]
 anyio_mode = "auto"
 addopts = "--basetemp=.pytest-tmp"
 
+[tool.coverage.run]
+branch = true
+source = [
+  "rakit_core",
+  "rakit_web",
+  "rakit_sqlalchemy",
+  "rakit_auth_sqlalchemy",
+  "rakit_storage",
+  "rakit_storage_local",
+]
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+skip_covered = false
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100
