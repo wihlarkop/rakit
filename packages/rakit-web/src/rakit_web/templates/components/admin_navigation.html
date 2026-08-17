@@ -5,11 +5,23 @@
     data-rakit-desktop-navigation
     class="hidden min-h-screen w-64 shrink-0 border-r border-rakit-border bg-rakit-surface lg:sticky lg:top-0 lg:flex lg:h-screen lg:flex-col"
   >
-    <div class="flex min-h-16 items-center border-b border-rakit-border px-5">
-      <a href="{{ navigation.dashboard.path }}" class="min-w-0 flex-1 truncate text-base font-semibold tracking-tight text-rakit-text">
-        {{ navigation.title }}
-      </a>
-      <span class="ml-3 rounded-rakit-sm border border-rakit-border px-2 py-0.5 text-xs font-medium text-rakit-text-muted">Admin</span>
+    <div class="flex min-h-16 items-center gap-2 border-b border-rakit-border px-3">
+      <div data-rakit-sidebar-brand class="flex min-w-0 flex-1 items-center pl-2">
+        <a href="{{ navigation.dashboard.path }}" class="min-w-0 flex-1 truncate text-base font-semibold tracking-tight text-rakit-text">
+          {{ navigation.title }}
+        </a>
+        <span class="ml-3 rounded-rakit-sm border border-rakit-border px-2 py-0.5 text-xs font-medium text-rakit-text-muted">Admin</span>
+      </div>
+      <button
+        type="button"
+        data-rakit-desktop-navigation-toggle
+        aria-expanded="true"
+        aria-label="Collapse sidebar"
+        class="inline-flex size-10 shrink-0 items-center justify-center rounded-rakit-sm text-rakit-text-muted transition hover:bg-rakit-surface-subtle hover:text-rakit-text"
+      >
+        <span data-rakit-sidebar-expanded-icon>{{ rakit_icon("panel-left-close", class_name="size-5") }}</span>
+        <span data-rakit-sidebar-collapsed-icon hidden>{{ rakit_icon("panel-left-open", class_name="size-5") }}</span>
+      </button>
     </div>
 
     <nav class="min-h-0 flex-1 overflow-y-auto px-3 py-5" aria-label="Primary navigation">
@@ -17,7 +29,7 @@
     </nav>
 
     <div class="border-t border-rakit-border p-4">
-      <p class="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-rakit-text-muted">Appearance</p>
+      <p data-rakit-sidebar-section-label class="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-rakit-text-muted">Appearance</p>
       {% set theme_control_id = "rakit-theme-desktop" %}
       {% include "components/theme_control.html" %}
     </div>
