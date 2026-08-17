@@ -1,0 +1,26 @@
+name: UI CSS build diagnostic
+
+on:
+  push:
+    branches:
+      - ui-02-app-shell-navigation
+
+permissions:
+  contents: read
+
+jobs:
+  build-css:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.23
+      - run: bun install --frozen-lockfile
+      - run: bun run css:build
+      - name: Print rebuilt CSS
+        run: |
+          echo 'RAKIT_CSS_BASE64_BEGIN'
+          base64 -w0 packages/rakit-web/src/rakit_web/static/rakit.css
+          echo
+          echo 'RAKIT_CSS_BASE64_END'
