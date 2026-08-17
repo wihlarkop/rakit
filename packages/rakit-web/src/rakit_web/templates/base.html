@@ -54,20 +54,17 @@
               {% include "components/admin_navigation_items.html" %}
             </nav>
           </noscript>
+    {% endif %}
 
-          <main id="rakit-main-content" tabindex="-1" class="min-w-0 flex-1">
-            <div class="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-              {% block content %}{% endblock %}
-            </div>
-          </main>
+    <main id="rakit-main-content" tabindex="-1" class="min-w-0 flex-1">
+      <div class="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+        {% block content %}{% endblock %}
+      </div>
+    </main>
+
+    {% if navigation_provider %}
         </div>
       </div>
-    {% else %}
-      <main id="rakit-main-content" tabindex="-1" class="min-w-0 flex-1">
-        <div class="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-          {% block content %}{% endblock %}
-        </div>
-      </main>
     {% endif %}
 
     <script src="{{ static_url('rakit-shell.js') }}" defer></script>
