@@ -407,11 +407,7 @@ async def recent_orders(_context: object) -> TableWidgetResult:
 
 
 async def low_inventory(_context: object) -> ListWidgetResult:
-    low_items = tuple(
-        item
-        for item in INVENTORY
-        if item["status"] in {"Low stock", "Out of stock"}
-    )
+    low_items = tuple(item for item in INVENTORY if item["status"] in {"Low stock", "Out of stock"})
     return ListWidgetResult(
         label="Inventory attention",
         items=tuple(
