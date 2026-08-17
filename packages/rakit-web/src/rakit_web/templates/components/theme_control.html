@@ -1,0 +1,42 @@
+{% set control_id = theme_control_id | default('rakit-theme') %}
+<div class="relative" data-rakit-theme-control>
+  <button
+    id="{{ control_id }}-trigger"
+    type="button"
+    data-rakit-theme-trigger
+    aria-haspopup="menu"
+    aria-expanded="false"
+    aria-controls="{{ control_id }}-menu"
+    aria-label="Choose theme"
+    class="flex min-h-10 w-full items-center gap-2 rounded-rakit-md border border-rakit-border bg-rakit-surface px-3 text-sm font-medium text-rakit-text shadow-rakit-sm transition hover:bg-rakit-surface-subtle"
+  >
+    <span data-rakit-theme-trigger-icon="system">{{ rakit_icon("monitor", class_name="size-4") }}</span>
+    <span data-rakit-theme-trigger-icon="light" hidden>{{ rakit_icon("sun", class_name="size-4") }}</span>
+    <span data-rakit-theme-trigger-icon="dark" hidden>{{ rakit_icon("moon", class_name="size-4") }}</span>
+    <span class="min-w-0 flex-1 text-left" data-rakit-theme-label>System</span>
+    {{ rakit_icon("chevron-down", class_name="size-4 shrink-0 text-rakit-text-muted") }}
+  </button>
+
+  <div
+    id="{{ control_id }}-menu"
+    data-rakit-theme-menu
+    role="menu"
+    aria-label="Theme"
+    hidden
+    class="absolute bottom-full left-0 z-50 mb-2 w-full min-w-44 overflow-hidden rounded-rakit-md border border-rakit-border bg-rakit-surface p-1 shadow-rakit-lg"
+  >
+    {% for value, label, icon in (("system", "System", "monitor"), ("light", "Light", "sun"), ("dark", "Dark", "moon")) %}
+      <button
+        type="button"
+        role="menuitemradio"
+        aria-checked="false"
+        data-rakit-theme-option="{{ value }}"
+        class="flex min-h-10 w-full items-center gap-3 rounded-rakit-sm px-3 text-left text-sm text-rakit-text-muted hover:bg-rakit-surface-subtle hover:text-rakit-text focus-visible:bg-rakit-surface-subtle"
+      >
+        {{ rakit_icon(icon, class_name="size-4 shrink-0") }}
+        <span class="min-w-0 flex-1">{{ label }}</span>
+        <span data-rakit-theme-check hidden>{{ rakit_icon("check", class_name="size-4 shrink-0 text-rakit-brand-600") }}</span>
+      </button>
+    {% endfor %}
+  </div>
+</div>
