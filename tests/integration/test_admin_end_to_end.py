@@ -151,13 +151,13 @@ async def test_release_journey_auth_crud_relationship_action_and_private_file(
     finally:
         await auth_engine.dispose()
 
-    # Real SQLAlchemy graph mutation: update a scalar and link a relationship.
+    # Real SQLAlchemy graph mutation: preserve draft availability while linking a relationship.
     app, identities = integration
     tag_two = codec.encode(cast(RecordIdentity, identities["tag_two"]))
     prefix = relationship_prefix("tags")
     async with client_for(app) as client:
         edit = await client.get(f"/orders/{parent}/edit")
-        payload = replace_control(parsed_form(edit.text), "status", "review")
+        payload = replace_control(parsed_form(edit.text), "status", "draft")
         payload.append((f"{prefix}link__{tag_two}", tag_two))
         updated = await client.post(
             f"/orders/{parent}/edit",
@@ -166,7 +166,7 @@ async def test_release_journey_auth_crud_relationship_action_and_private_file(
             follow_redirects=False,
         )
         assert updated.status_code == 303
-        assert (await fetch_orders(app.session_factory)) == [("review", 2)]
+        assert (await fetch_orders(app.session_factory)) == [("draft", 2)]
         assert (await fetch_order_relationship(app.session_factory))[1] == (1, 2)
 
         # Real record action with fresh availability/concurrency evaluation.
