@@ -1,4 +1,5 @@
 import re
+from importlib.resources import files
 
 import httpx
 import pytest
@@ -25,6 +26,25 @@ async def test_theme_script_is_local_and_csp_stays_strict() -> None:
     csp = response.headers["content-security-policy"]
     assert "default-src 'self'" in csp
     assert "'unsafe-inline'" not in csp
+
+
+@pytest.mark.anyio
+async def test_htmx_indicator_styles_are_csp_safe() -> None:
+    admin = Admin(title="Accessibility", debug=True)
+    app = admin.asgi()
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://localhost",
+    ) as client:
+        response = await client.get("/")
+
+    css = files("rakit_web").joinpath("static", "rakit.css").read_text()
+    assert response.status_code == 200
+    assert 'name="htmx-config"' in response.text
+    assert '"includeIndicatorStyles": false' in response.text
+    assert ".htmx-indicator" in css
+    assert ".htmx-request .htmx-indicator" in css
 
 
 @pytest.mark.anyio
