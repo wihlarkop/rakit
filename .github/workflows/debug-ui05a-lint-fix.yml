@@ -1,0 +1,61 @@
+name: Debug UI-05A lint fix
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  lint-fix:
+    if: github.event.pull_request.head.ref == 'ui-05a-dashboard-experience'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ui-05a-dashboard-experience
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-packages --dev --locked
+      - name: Apply scoped lint normalization
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("examples/ui_showcase/main.py")
+          text = path.read_text(encoding="utf-8")
+          text = text.replace(
+              "Monitor stock levels and find items that need replenishment attention.",
+              "Monitor stock levels and replenish items that need attention.",
+          )
+          text = text.replace(
+              "Inspect deterministic component states using the default Rakit design system.",
+              "Inspect deterministic component states in the default Rakit design system.",
+          )
+          path.write_text(text, encoding="utf-8")
+          PY
+          uv run ruff check --fix \
+            examples/ui_showcase/main.py \
+            packages/rakit-web/tests/test_dashboard_ui_maturity.py
+          uv run ruff format \
+            examples/ui_showcase/main.py \
+            packages/rakit-web/tests/test_dashboard_ui_maturity.py
+      - name: Commit lint normalization when changed
+        shell: bash
+        run: |
+          if git diff --quiet -- \
+            examples/ui_showcase/main.py \
+            packages/rakit-web/tests/test_dashboard_ui_maturity.py; then
+            echo "Lint state already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            examples/ui_showcase/main.py \
+            packages/rakit-web/tests/test_dashboard_ui_maturity.py
+          git commit -m "style(web): normalize UI-05A lint"
+          git push origin HEAD:ui-05a-dashboard-experience
