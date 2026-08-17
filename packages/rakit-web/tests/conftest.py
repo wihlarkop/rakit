@@ -72,6 +72,12 @@ class LifespanDriver:
 
 
 @pytest.fixture
+def anyio_backend() -> str:
+    """Run web AnyIO tests on Rakit's supported asyncio backend."""
+    return "asyncio"
+
+
+@pytest.fixture
 async def client() -> AsyncIterator[httpx.AsyncClient]:
     admin = Admin(
         admin_id="operations",

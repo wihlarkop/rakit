@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify-and-build:
+    name: Verify and build release artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Verify tag matches lockstep package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          uv run --no-project python - "$tag_version" <<'PY'
+          import pathlib
+          import sys
+          import tomllib
+
+          tag_version = sys.argv[1]
+          versions = {}
+          for file in sorted(pathlib.Path("packages").glob("*/pyproject.toml")):
+              project = tomllib.loads(file.read_text(encoding="utf-8"))["project"]
+              versions[project["name"]] = project["version"]
+
+          mismatched = {name: version for name, version in versions.items() if version != tag_version}
+          if mismatched:
+              raise SystemExit(
+                  f"tag v{tag_version} does not match official package versions: {mismatched}"
+              )
+          print(f"tag v{tag_version} matches {len(versions)} official distributions")
+          PY
+
+      - run: uv sync --all-packages --dev --locked
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run ty check
+      - run: uv run pytest --cov
+      - run: uv run mkdocs build --strict
+      - run: uv run python scripts/check_artifacts.py
+
+      - name: Build publishable distributions
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          mkdir -p dist
+          for project in packages/*; do
+            uv build "$project" --out-dir dist
+          done
+          ls -la dist
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: python-distributions
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-pypi:
+    name: Publish to PyPI with trusted publishing
+    needs: verify-and-build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/rakit
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download verified release artifacts
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: python-distributions
+          path: dist
+
+      - name: Publish distributions
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/

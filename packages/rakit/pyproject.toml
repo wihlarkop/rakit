@@ -19,6 +19,13 @@ granian = ["rakit-server-granian==0.1.0a1"]
 server-uvicorn = ["rakit-server-uvicorn==0.1.0a1"]
 sqlalchemy = ["rakit-sqlalchemy==0.1.0a1"]
 auth-sqlalchemy = ["rakit-auth-sqlalchemy==0.1.0a1"]
+storage-local = ["rakit-storage-local==0.1.0a1"]
+standard = [
+    "rakit-sqlalchemy==0.1.0a1",
+    "rakit-auth-sqlalchemy==0.1.0a1",
+    "rakit-storage-local==0.1.0a1",
+    "rakit-server-uvicorn==0.1.0a1",
+]
 
 [project.scripts]
 rakit = "rakit.cli:cli"
@@ -30,6 +37,7 @@ rakit-server-uvicorn = { workspace = true }
 rakit-server-granian = { workspace = true }
 rakit-sqlalchemy = { workspace = true }
 rakit-auth-sqlalchemy = { workspace = true }
+rakit-storage-local = { workspace = true }
 rakit-web = { workspace = true }
 
 [tool.hatch.build.targets.wheel]

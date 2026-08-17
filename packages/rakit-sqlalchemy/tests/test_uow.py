@@ -509,7 +509,7 @@ async def test_anyio_timeout_waits_for_a_commit_that_has_already_begun() -> None
 
         async def commit(self) -> None:
             entered.set()
-            await asyncio.sleep(0.02)
+            await asyncio.sleep(0.6)
             self.committed = True
 
         async def rollback(self) -> None:
@@ -525,11 +525,13 @@ async def test_anyio_timeout_waits_for_a_commit_that_has_already_begun() -> None
         async with SQLAlchemyUnitOfWork(factory) as uow:
             await uow.mark_success()
 
-    deadline = Deadline.after(0.001)
+    operation_task = asyncio.create_task(operation())
+    await entered.wait()
+
+    deadline = Deadline.after(0.5)
     context = OperationContext(deadline=deadline, cancellation=CancellationContext())
     with activate_operation_context(context):
-        await run_with_deadline(operation(), deadline)
+        await run_with_deadline(operation_task, deadline)
 
-    assert entered.is_set()
     assert session.committed is True
     assert session.rolled_back is False
