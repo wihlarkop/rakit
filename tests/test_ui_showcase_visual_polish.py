@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 UI_LAB_TEMPLATE = (
     Path(__file__).resolve().parents[1] / "examples" / "ui_showcase" / "templates" / "ui_lab.html"
 )
