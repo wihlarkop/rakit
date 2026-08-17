@@ -80,6 +80,20 @@ function rakitCloseGenericDialog(control) {
   dialog.close(control.dataset.rakitDialogClose || "cancel");
 }
 
+function rakitOpenDetailPopovers() {
+  return [...document.querySelectorAll("details[open]")].filter(
+    (details) => details.querySelector(":scope > .rakit-popover"),
+  );
+}
+
+function rakitCloseDetailPopover(details, { restoreFocus = false } = {}) {
+  if (!(details instanceof HTMLDetailsElement)) return;
+  details.removeAttribute("open");
+  if (!restoreFocus) return;
+  const summary = details.querySelector(":scope > summary");
+  if (summary instanceof HTMLElement) summary.focus();
+}
+
 function rakitInput(form, name, value) {
   form.querySelectorAll(`input[name="${CSS.escape(name)}"]`).forEach((node) => node.remove());
   const input = document.createElement("input");
@@ -319,6 +333,23 @@ document.addEventListener("click", (event) => {
       rakitRemoveDeleteState(form, identity, prefix);
     }
   }
+});
+
+document.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof Node)) return;
+  rakitOpenDetailPopovers().forEach((details) => {
+    if (!details.contains(target)) rakitCloseDetailPopover(details);
+  });
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  const openPopovers = rakitOpenDetailPopovers();
+  const details = openPopovers.at(-1);
+  if (!(details instanceof HTMLDetailsElement)) return;
+  event.preventDefault();
+  rakitCloseDetailPopover(details, { restoreFocus: true });
 });
 
 document.addEventListener("change", (event) => {
