@@ -35,7 +35,7 @@ def test_official_example_compiles(
     _prepend_repository(monkeypatch)
     module = importlib.import_module(module_name)
     compiled = module.admin.compile()
-    assert compiled.admin_id
+    assert module.admin.config.admin_id
     assert compiled.routes
 
 
