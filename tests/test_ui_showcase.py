@@ -1,13 +1,12 @@
-import httpx
-import pytest
+from starlette.testclient import TestClient
 
 
-async def _login(client: httpx.AsyncClient) -> None:
-    page = await client.get("/auth/login")
+def _login(client: TestClient) -> None:
+    page = client.get("/auth/login")
     assert page.status_code == 200
     login_csrf = page.cookies["rakit_login_csrf"]
     client.cookies.set("rakit_login_csrf", login_csrf)
-    response = await client.post(
+    response = client.post(
         "/auth/login",
         data={
             "identifier": "operator@example.com",
@@ -20,19 +19,15 @@ async def _login(client: httpx.AsyncClient) -> None:
     client.cookies.set("rakit_session", response.cookies["rakit_session"])
 
 
-@pytest.mark.anyio
-async def test_ui_showcase_exposes_dashboard_ui_lab_and_resources() -> None:
+def test_ui_showcase_exposes_dashboard_ui_lab_and_resources() -> None:
     from examples.ui_showcase.main import admin
 
     app = admin.asgi()
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://localhost",
-    ) as client:
-        await _login(client)
-        dashboard = await client.get("/")
-        ui_lab = await client.get("/ui-lab")
-        orders = await client.get("/orders")
+    with TestClient(app) as client:
+        _login(client)
+        dashboard = client.get("/")
+        ui_lab = client.get("/ui-lab")
+        orders = client.get("/orders")
 
     assert dashboard.status_code == 200
     assert ui_lab.status_code == 200
