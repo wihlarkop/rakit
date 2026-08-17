@@ -1,4 +1,5 @@
 from httpx import Response
+from rakit.core import IdentityCodec, RecordIdentity
 from starlette.testclient import TestClient
 from starlette.types import ASGIApp
 
@@ -60,6 +61,7 @@ def test_ui_showcase_exposes_realistic_application_and_ui_lab() -> None:
         "Status",
         "Feedback",
         "Tables",
+        "Relationships",
         "Empty states",
         "Loading states",
         "Errors",
@@ -78,6 +80,29 @@ def test_ui_showcase_exposes_realistic_application_and_ui_lab() -> None:
     assert orders_page_two.status_code == 200
     assert "ORD-1075" in orders_page_two.text
     assert "Page 2" in orders_page_two.text
+
+
+def test_ui_showcase_exposes_record_confirmation_action_and_relationship_contracts() -> None:
+    from examples.ui_showcase.main import admin
+
+    app = admin.asgi()
+    identity = IdentityCodec().encode(RecordIdentity(values={"id": "ORD-1080"}))
+    with _showcase_client(app) as client:
+        login = _login(client)
+        assert login.status_code == 303
+        refund = client.get(f"/orders/{identity}/_actions/refund_order")
+
+    assert refund.status_code == 200
+    assert "Refund order" in refund.text
+    assert "Impact" in refund.text
+    assert "This change is applied only when you confirm and submit." in refund.text
+
+    relationship_ids = {
+        str(entry.definition.relationship_id)
+        for entry in admin.compiled.relationships
+        if entry.source_resource_id == "orders"
+    }
+    assert {"customer", "products"} <= relationship_ids
 
 
 def test_ui_showcase_exposes_invalid_login_state() -> None:
