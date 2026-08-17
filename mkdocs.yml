@@ -2,6 +2,8 @@ site_name: Rakit
 site_description: Composable Python admin framework and internal-tools toolkit
 repo_url: https://github.com/wihlarkop/rakit
 strict: true
+exclude_docs: |
+  /plans/
 theme:
   name: material
 nav:
