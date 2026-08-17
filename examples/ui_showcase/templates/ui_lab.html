@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "components/ui.html" import alert, button, icon_button, loading, pagination, status %}
 {% block title %}UI Lab · {{ binding_label }}{% endblock %}
 {% block content %}
 <div id="rakit-ui-lab" class="space-y-5">
@@ -36,50 +37,154 @@
 
   <section class="rakit-panel">
     <header class="rakit-panel-header"><h2 class="text-sm font-semibold text-rakit-text">Buttons</h2></header>
-    <div class="rakit-panel-body flex flex-wrap gap-3">
-      <button class="rakit-button" type="button">Primary action</button>
-      <button class="rakit-button rakit-button-secondary" type="button">Secondary</button>
-      <button class="rakit-button rakit-button-quiet" type="button">Quiet</button>
-      <button class="rakit-button rakit-button-danger" type="button">Destructive</button>
-      <button class="rakit-button" type="button" disabled>Disabled</button>
+    <div class="rakit-panel-body space-y-4">
+      <div class="flex flex-wrap gap-3">
+        {{ button("Primary action") }}
+        {{ button("Secondary", variant="secondary") }}
+        {{ button("Quiet", variant="quiet") }}
+        {{ button("Destructive", variant="danger") }}
+        {{ button("Disabled", disabled=true) }}
+        {{ button("Publishing", loading=true) }}
+      </div>
+      <div class="flex flex-wrap items-center gap-3">
+        {{ icon_button("x", "Close item") }}
+        {{ icon_button("menu", "Open item menu", variant="secondary") }}
+        {{ icon_button("x", "Delete item", variant="danger") }}
+        {{ icon_button("menu", "Unavailable item menu", disabled=true) }}
+        <p class="text-sm text-rakit-text-muted">Icon-only controls keep a practical 40px target and an accessible name.</p>
+      </div>
     </div>
   </section>
 
   <section class="rakit-panel">
     <header class="rakit-panel-header"><h2 class="text-sm font-semibold text-rakit-text">Fields</h2></header>
-    <div class="rakit-panel-body space-y-4">
+    <div class="rakit-panel-body grid gap-5 lg:grid-cols-2">
       <div class="space-y-1.5">
-        <label class="block text-sm font-medium text-rakit-text" for="lab-name">Product name</label>
-        <input class="rakit-input" id="lab-name" value="Precision mechanical keyboard" />
-        <p class="text-sm text-rakit-text-muted">Helpful field guidance remains secondary to the value.</p>
+        <label class="block text-sm font-medium text-rakit-text" for="lab-name">Product name <span class="rakit-field-required" aria-hidden="true">*</span><span class="sr-only"> required</span></label>
+        <input class="rakit-input" id="lab-name" value="Precision mechanical keyboard" required aria-describedby="lab-name-help" />
+        <p class="rakit-field-help" id="lab-name-help">Helpful field guidance remains secondary to the value.</p>
       </div>
       <div class="space-y-1.5">
         <label class="block text-sm font-medium text-rakit-text" for="lab-status">Status</label>
         <select class="rakit-select" id="lab-status"><option>Published</option><option>Draft</option></select>
       </div>
       <div class="space-y-1.5">
+        <label class="block text-sm font-medium text-rakit-text" for="lab-readonly">Read-only identifier</label>
+        <input class="rakit-input" id="lab-readonly" value="PRD-101" readonly />
+      </div>
+      <div class="space-y-1.5">
+        <label class="block text-sm font-medium text-rakit-text" for="lab-disabled">Disabled field</label>
+        <input class="rakit-input" id="lab-disabled" value="Managed externally" disabled />
+      </div>
+      <div class="space-y-1.5 lg:col-span-2">
+        <label class="block text-sm font-medium text-rakit-text" for="lab-description">Description</label>
+        <textarea class="rakit-textarea" id="lab-description" rows="3">Low-profile tactile switches with a compact aluminum chassis.</textarea>
+      </div>
+      <div class="space-y-1.5">
         <label class="block text-sm font-medium text-rakit-text" for="lab-error">Validation error</label>
         <input class="rakit-input" id="lab-error" value="" aria-invalid="true" aria-describedby="lab-error-message" />
         <div class="rakit-error" id="lab-error-message" role="alert">This field is required.</div>
       </div>
+      <div class="space-y-1.5">
+        <label class="block text-sm font-medium text-rakit-text" for="lab-file">Product image</label>
+        <input class="rakit-file-input" id="lab-file" type="file" />
+        <p class="rakit-field-help">File selection stays native while matching the Rakit control system.</p>
+      </div>
+      <fieldset class="space-y-2">
+        <legend class="text-sm font-medium text-rakit-text">Availability</legend>
+        <label class="flex items-center gap-2 text-sm text-rakit-text"><input class="rakit-checkbox" type="checkbox" checked /> Sell online</label>
+        <label class="flex items-center gap-2 text-sm text-rakit-text"><input class="rakit-checkbox" type="checkbox" disabled /> Marketplace locked</label>
+      </fieldset>
+      <fieldset class="space-y-2">
+        <legend class="text-sm font-medium text-rakit-text">Visibility</legend>
+        <label class="flex items-center gap-2 text-sm text-rakit-text"><input class="rakit-radio" type="radio" name="lab-visibility" checked /> Public</label>
+        <label class="flex items-center gap-2 text-sm text-rakit-text"><input class="rakit-radio" type="radio" name="lab-visibility" /> Internal</label>
+      </fieldset>
     </div>
   </section>
 
   <section class="rakit-panel">
     <header class="rakit-panel-header"><h2 class="text-sm font-semibold text-rakit-text">Status</h2></header>
     <div class="rakit-panel-body flex flex-wrap gap-3">
-      <span class="rakit-chip">Active</span>
-      <span class="rakit-chip">Pending review</span>
-      <span class="rakit-chip">Low stock</span>
-      <span class="rakit-chip">Archived</span>
+      {{ status("Archived") }}
+      {{ status("Published", variant="success") }}
+      {{ status("Pending review", variant="warning") }}
+      {{ status("Failed", variant="danger") }}
+      {{ status("Syncing", variant="info") }}
     </div>
   </section>
 
   <section class="rakit-panel">
     <header class="rakit-panel-header"><h2 class="text-sm font-semibold text-rakit-text">Feedback</h2></header>
+    <div class="rakit-panel-body space-y-3">
+      {{ alert("A neutral note for contextual information.", variant="neutral", title="Note") }}
+      {{ alert("Order ORD-1080 was approved.", variant="success", title="Approved") }}
+      {{ alert("Inventory is approaching its reorder threshold.", variant="warning", title="Attention") }}
+      {{ alert("The catalogue sync is still running.", variant="info", title="In progress") }}
+      {{ alert("The refund could not be completed.", variant="danger", urgent=true, title="Refund failed") }}
+    </div>
+  </section>
+
+  <section class="rakit-panel">
+    <header class="rakit-panel-header"><h2 class="text-sm font-semibold text-rakit-text">Dialog and popover</h2></header>
+    <div class="rakit-panel-body flex flex-wrap items-start gap-3">
+      {{ button("Open dialog", variant="secondary", attrs='data-rakit-dialog-trigger aria-controls="ui-lab-dialog"') }}
+      <details class="relative inline-block">
+        <summary class="rakit-button rakit-button-secondary list-none">Open popover</summary>
+        <div class="rakit-popover">
+          <p class="font-medium text-rakit-text">Quick choices</p>
+          <p class="mt-1 text-rakit-text-muted">Lightweight contextual content stays simple and server rendered.</p>
+          <div class="mt-3 flex flex-col gap-1">
+            <button class="rakit-button rakit-button-quiet justify-start" type="button">Duplicate</button>
+            <button class="rakit-button rakit-button-quiet justify-start" type="button">Archive</button>
+          </div>
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <dialog
+    id="ui-lab-dialog"
+    class="rakit-dialog"
+    data-rakit-dialog
+    data-rakit-dialog-backdrop-close
+    aria-labelledby="ui-lab-dialog-title"
+    aria-describedby="ui-lab-dialog-description"
+  >
+    <div class="rakit-dialog-body">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h3 class="rakit-dialog-title" id="ui-lab-dialog-title">Review product change</h3>
+          <p class="rakit-dialog-description" id="ui-lab-dialog-description">Confirm the example interaction or cancel to return focus to the trigger.</p>
+        </div>
+        {{ icon_button("x", "Close dialog", attrs='data-rakit-dialog-close') }}
+      </div>
+      <p class="mt-4 text-sm leading-6 text-rakit-text">This dialog uses native HTML semantics and only small progressive enhancement for trigger wiring and focus return.</p>
+    </div>
+    <footer class="rakit-dialog-footer">
+      <button class="rakit-button rakit-button-secondary" type="button" data-rakit-dialog-close data-rakit-dialog-initial-focus>Cancel</button>
+      <button class="rakit-button" type="button" data-rakit-dialog-close="confirm">Confirm example</button>
+    </footer>
+  </dialog>
+
+  <section class="rakit-panel">
+    <header class="rakit-panel-header"><h2 class="text-sm font-semibold text-rakit-text">Pagination</h2></header>
     <div class="rakit-panel-body space-y-4">
-      <div class="rounded-rakit-sm border border-rakit-success/30 bg-rakit-success-subtle p-4 text-sm text-rakit-text" role="status">Order ORD-1080 was approved.</div>
-      <div class="rounded-rakit-sm border border-rakit-danger/30 bg-rakit-danger-subtle p-4 text-sm text-rakit-text" role="alert">The refund could not be completed.</div>
+      {% set demo_pages = [
+        {"label": "Previous", "disabled": true},
+        {"label": "1", "href": "#ui-lab-pagination", "current": true},
+        {"label": "2", "href": "#ui-lab-pagination"},
+        {"label": "3", "href": "#ui-lab-pagination"},
+        {"ellipsis": true},
+        {"label": "12", "href": "#ui-lab-pagination"},
+        {"label": "Next", "href": "#ui-lab-pagination"}
+      ] %}
+      <div id="ui-lab-pagination">{{ pagination(demo_pages, aria_label="UI Lab pagination example") }}</div>
+      <div class="flex flex-wrap items-center gap-2">
+        <label class="text-sm font-medium text-rakit-text" for="ui-lab-page-size">Rows per page</label>
+        <select class="rakit-pagination-size" id="ui-lab-page-size"><option>25</option><option>50</option><option>100</option></select>
+        <p class="text-sm text-rakit-text-muted">This is presentation-only in UI-04; resource query behavior lands in UI-05.</p>
+      </div>
     </div>
   </section>
 
@@ -89,8 +194,8 @@
       <table class="w-full min-w-lg text-left text-sm text-rakit-text">
         <thead class="text-rakit-text-muted"><tr><th class="border-b border-rakit-border pb-3">Order</th><th class="border-b border-rakit-border pb-3">Customer</th><th class="border-b border-rakit-border pb-3">Status</th></tr></thead>
         <tbody>
-          <tr><td class="border-b border-rakit-border py-3">ORD-1080</td><td class="border-b border-rakit-border py-3">Atlas Research</td><td class="border-b border-rakit-border py-3">Paid</td></tr>
-          <tr><td class="py-3">ORD-1079</td><td class="py-3">Northstar Labs</td><td class="py-3">Pending review</td></tr>
+          <tr><td class="border-b border-rakit-border py-3">ORD-1080</td><td class="border-b border-rakit-border py-3">Atlas Research</td><td class="border-b border-rakit-border py-3">{{ status("Paid", variant="success") }}</td></tr>
+          <tr><td class="py-3">ORD-1079</td><td class="py-3">Northstar Labs</td><td class="py-3">{{ status("Pending review", variant="warning") }}</td></tr>
         </tbody>
       </table>
     </div>
@@ -121,7 +226,11 @@
 
   <section class="rakit-panel">
     <header class="rakit-panel-header"><h2 class="text-sm font-semibold text-rakit-text">Loading states</h2></header>
-    <div class="rakit-panel-body"><button class="rakit-button" type="button" disabled>Loading…</button></div>
+    <div class="rakit-panel-body flex flex-wrap items-center gap-4">
+      {{ button("Saving changes", loading=true) }}
+      {{ loading("Loading orders") }}
+      <span class="rakit-loading htmx-indicator" role="status"><span class="rakit-spinner" aria-hidden="true"></span><span>HTMX pending example</span></span>
+    </div>
   </section>
 
   <section class="rakit-panel">

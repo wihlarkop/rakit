@@ -1,5 +1,6 @@
-/* Small progressive enhancement for server-rendered destructive preview dialogs. */
+/* Small progressive enhancement for server-rendered Rakit interactions. */
 let rakitDialogReturnFocus = null;
+const rakitGenericDialogReturnFocus = new WeakMap();
 
 function rakitReturnFocus() {
   const target = rakitDialogReturnFocus;
@@ -31,6 +32,54 @@ function rakitAnnounce(message) {
   announcer.textContent = "";
   requestAnimationFrame(() => { announcer.textContent = String(message); });
 }
+
+function rakitEnhanceGenericDialog(dialog) {
+  if (!(dialog instanceof HTMLDialogElement) || dialog.dataset.rakitDialogEnhanced === "true") {
+    return;
+  }
+  dialog.dataset.rakitDialogEnhanced = "true";
+  dialog.addEventListener("close", () => {
+    const returnFocus = rakitGenericDialogReturnFocus.get(dialog);
+    rakitGenericDialogReturnFocus.delete(dialog);
+    if (returnFocus instanceof HTMLElement && document.contains(returnFocus)) returnFocus.focus();
+  });
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog && dialog.hasAttribute("data-rakit-dialog-backdrop-close")) {
+      dialog.close("cancel");
+    }
+  });
+}
+
+function rakitEnhanceGenericDialogs(root = document) {
+  const direct = root instanceof HTMLDialogElement && root.hasAttribute("data-rakit-dialog")
+    ? [root]
+    : [];
+  const nested = root.querySelectorAll?.("dialog[data-rakit-dialog]") || [];
+  [...direct, ...nested].forEach((dialog) => rakitEnhanceGenericDialog(dialog));
+}
+
+function rakitOpenGenericDialog(trigger) {
+  if (!(trigger instanceof HTMLElement)) return;
+  const dialogId = trigger.getAttribute("aria-controls") || trigger.dataset.rakitDialogTrigger;
+  if (!dialogId) return;
+  const dialog = document.getElementById(dialogId);
+  if (!(dialog instanceof HTMLDialogElement) || dialog.open) return;
+  rakitEnhanceGenericDialog(dialog);
+  rakitGenericDialogReturnFocus.set(dialog, trigger);
+  dialog.showModal();
+  const initialFocus = dialog.querySelector(
+    "[data-rakit-dialog-initial-focus], [autofocus], button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled)",
+  );
+  if (initialFocus instanceof HTMLElement) initialFocus.focus();
+}
+
+function rakitCloseGenericDialog(control) {
+  if (!(control instanceof HTMLElement)) return;
+  const dialog = control.closest("dialog[data-rakit-dialog]");
+  if (!(dialog instanceof HTMLDialogElement)) return;
+  dialog.close(control.dataset.rakitDialogClose || "cancel");
+}
+
 function rakitInput(form, name, value) {
   form.querySelectorAll(`input[name="${CSS.escape(name)}"]`).forEach((node) => node.remove());
   const input = document.createElement("input");
@@ -192,9 +241,27 @@ function rakitAddDraft(control) {
 document.addEventListener("DOMContentLoaded", () => {
   rakitShowPreview(document);
   rakitFocusTarget(document);
+  rakitEnhanceGenericDialogs(document);
 });
+
 document.addEventListener("click", (event) => {
   const target = event.target;
+  if (!(target instanceof Element)) return;
+
+  const dialogTrigger = target.closest("[data-rakit-dialog-trigger]");
+  if (dialogTrigger instanceof HTMLElement) {
+    event.preventDefault();
+    rakitOpenGenericDialog(dialogTrigger);
+    return;
+  }
+
+  const dialogClose = target.closest("[data-rakit-dialog-close]");
+  if (dialogClose instanceof HTMLElement) {
+    event.preventDefault();
+    rakitCloseGenericDialog(dialogClose);
+    return;
+  }
+
   const addDraft = target.closest("[data-rakit-add-draft]");
   if (addDraft instanceof HTMLElement) {
     rakitAddDraft(addDraft);
@@ -271,6 +338,7 @@ document.addEventListener("htmx:afterSwap", (event) => {
   const root = event.target instanceof HTMLElement ? event.target : document;
   rakitShowPreview(root);
   rakitFocusTarget(root);
+  rakitEnhanceGenericDialogs(root);
 });
 
 document.addEventListener("rakit:announce", (event) => {
