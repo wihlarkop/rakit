@@ -5,8 +5,6 @@ import httpx
 import pytest
 from rakit import Admin
 
-# These contracts intentionally precede the 10C theme implementation.
-
 
 @pytest.mark.anyio
 async def test_theme_script_is_local_and_csp_stays_strict() -> None:
@@ -66,16 +64,21 @@ async def test_theme_control_and_asset_support_light_dark_system() -> None:
         assert css_match is not None
         css = await client.get(css_match.group(1))
 
-    assert 'for="rakit-theme-select-desktop"' in response.text
-    assert 'for="rakit-theme-select-mobile"' in response.text
-    assert response.text.count("data-rakit-theme-select") == 2
-    assert response.text.count('<option value="system">System</option>') == 2
-    assert response.text.count('<option value="light">Light</option>') == 2
-    assert response.text.count('<option value="dark">Dark</option>') == 2
+    assert response.text.count("data-rakit-theme-control") == 2
+    assert response.text.count("data-rakit-theme-trigger") == 2
+    assert response.text.count('aria-haspopup="menu"') == 2
+    assert response.text.count('data-rakit-theme-option="system"') == 2
+    assert response.text.count('data-rakit-theme-option="light"') == 2
+    assert response.text.count('data-rakit-theme-option="dark"') == 2
+    assert response.text.count('role="menuitemradio"') == 6
+    assert "data-rakit-theme-select" not in response.text
     assert script.status_code == 200
     assert "localStorage" in script.text
     assert 'matchMedia("(prefers-color-scheme: dark)")' in script.text
     assert 'new Set(["light", "dark", "system"])' in script.text
-    assert 'querySelectorAll("[data-rakit-theme-select]")' in script.text
+    assert 'querySelectorAll("[data-rakit-theme-control]")' in script.text
+    assert 'querySelectorAll("[data-rakit-theme-option]")' in script.text
+    assert 'event.key === "Escape"' in script.text
+    assert 'event.key === "ArrowDown"' in script.text
     assert css.status_code == 200
     assert "prefers-reduced-motion" in css.text
