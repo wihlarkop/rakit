@@ -23,7 +23,7 @@ def test_ui_showcase_exposes_dashboard_ui_lab_and_resources() -> None:
     from examples.ui_showcase.main import admin
 
     app = admin.asgi()
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         _login(client)
         dashboard = client.get("/")
         ui_lab = client.get("/ui-lab")
