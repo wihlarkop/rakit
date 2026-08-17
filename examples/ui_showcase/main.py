@@ -19,7 +19,7 @@ from rakit import (
 )
 from rakit.core import Principal, SessionRecord
 
-from .data import ORDERS
+from .data import CATEGORIES, CUSTOMERS, INVENTORY, ORDERS, PRODUCTS, TEAMS
 
 
 @dataclass(frozen=True)
@@ -100,6 +100,38 @@ class _MemoryDataSource:
         return next((item for item in self._items if str(item["id"]) == wanted), None)
 
 
+class CustomersAdmin(ResourceAdmin):
+    resource_id = "customers"
+    path = "/customers"
+    label = "Customers"
+    singular_label = "Customer"
+    data_source = _MemoryDataSource(
+        CUSTOMERS,
+        ("id", "name", "segment", "status", "owner", "email"),
+    )
+    list_fields = ("id", "name", "segment", "status", "owner", "email")
+    detail_fields = ("id", "name", "segment", "status", "owner", "email")
+    filter_fields = ("segment", "status", "owner")
+    search_fields = ("id", "name", "email")
+    sort_fields = ("id", "name", "segment", "status")
+
+
+class ProductsAdmin(ResourceAdmin):
+    resource_id = "products"
+    path = "/products"
+    label = "Products"
+    singular_label = "Product"
+    data_source = _MemoryDataSource(
+        PRODUCTS,
+        ("id", "name", "category", "sku", "status", "price"),
+    )
+    list_fields = ("id", "name", "category", "sku", "status", "price")
+    detail_fields = ("id", "name", "category", "sku", "status", "price")
+    filter_fields = ("category", "status")
+    search_fields = ("id", "name", "sku")
+    sort_fields = ("id", "name", "category", "status")
+
+
 class OrdersAdmin(ResourceAdmin):
     resource_id = "orders"
     path = "/orders"
@@ -114,6 +146,54 @@ class OrdersAdmin(ResourceAdmin):
     filter_fields = ("customer", "status")
     search_fields = ("id", "customer")
     sort_fields = ("id", "customer", "status", "created")
+
+
+class CategoriesAdmin(ResourceAdmin):
+    resource_id = "categories"
+    path = "/categories"
+    label = "Categories"
+    singular_label = "Category"
+    data_source = _MemoryDataSource(
+        CATEGORIES,
+        ("id", "name", "status", "products"),
+    )
+    list_fields = ("id", "name", "status", "products")
+    detail_fields = ("id", "name", "status", "products")
+    filter_fields = ("status",)
+    search_fields = ("id", "name")
+    sort_fields = ("id", "name", "status", "products")
+
+
+class InventoryAdmin(ResourceAdmin):
+    resource_id = "inventory"
+    path = "/inventory"
+    label = "Inventory"
+    singular_label = "Inventory item"
+    data_source = _MemoryDataSource(
+        INVENTORY,
+        ("id", "sku", "product", "on_hand", "reorder_at", "status"),
+    )
+    list_fields = ("id", "sku", "product", "on_hand", "reorder_at", "status")
+    detail_fields = ("id", "sku", "product", "on_hand", "reorder_at", "status")
+    filter_fields = ("status",)
+    search_fields = ("id", "sku", "product")
+    sort_fields = ("id", "sku", "product", "on_hand", "status")
+
+
+class TeamsAdmin(ResourceAdmin):
+    resource_id = "teams"
+    path = "/teams"
+    label = "Teams"
+    singular_label = "Team"
+    data_source = _MemoryDataSource(
+        TEAMS,
+        ("id", "name", "lead", "members", "status"),
+    )
+    list_fields = ("id", "name", "lead", "members", "status")
+    detail_fields = ("id", "name", "lead", "members", "status")
+    filter_fields = ("status", "lead")
+    search_fields = ("id", "name", "lead")
+    sort_fields = ("id", "name", "lead", "members", "status")
 
 
 class DemoAuthBackend:
@@ -196,7 +276,15 @@ admin = Admin(
     auth_backend=DemoAuthBackend(),
     session_store=DemoSessionStore(),
 )
-admin.register(OrdersAdmin)
+for resource_admin in (
+    CustomersAdmin,
+    ProductsAdmin,
+    OrdersAdmin,
+    CategoriesAdmin,
+    InventoryAdmin,
+    TeamsAdmin,
+):
+    admin.register(resource_admin)
 
 
 async def pending_orders(_context: object) -> StatWidgetResult:
