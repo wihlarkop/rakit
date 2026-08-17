@@ -87,7 +87,7 @@ class DemoSessionStore:
 
 
 admin = Admin(
-    admin_id="auth-demo",
+    admin_id="auth_demo",
     title="Built-in authentication demo",
     debug=True,
     secret_key=SecretValue("development-only-auth-example-key"),
