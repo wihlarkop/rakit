@@ -144,3 +144,42 @@ def test_ui_showcase_exposes_invalid_login_state() -> None:
 
     assert response.status_code == 401
     assert "Invalid credentials." in response.text
+
+
+def test_ui_showcase_login_page_does_not_render_admin_shell() -> None:
+    from examples.ui_showcase.main import admin
+
+    app = admin.asgi()
+    with _showcase_client(app) as client:
+        response = client.get("/auth/login")
+
+    assert response.status_code == 200
+    assert "data-rakit-app-shell" not in response.text
+    assert "data-rakit-desktop-navigation" not in response.text
+    assert "data-rakit-mobile-navigation-trigger" not in response.text
+
+
+def test_ui_showcase_login_csrf_survives_browser_favicon_redirect() -> None:
+    from examples.ui_showcase.main import admin
+
+    app = admin.asgi()
+    with _showcase_client(app) as client:
+        login_page = client.get("/auth/login")
+        assert login_page.status_code == 200
+        original_csrf = login_page.cookies["rakit_login_csrf"]
+
+        favicon = client.get("/favicon.ico", follow_redirects=True)
+        assert favicon.status_code == 200
+        assert favicon.url.path == "/auth/login"
+
+        response = client.post(
+            "/auth/login",
+            data={
+                "identifier": "operator@example.com",
+                "password": "demo-password",
+                "login_csrf_token": original_csrf,
+            },
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 303
