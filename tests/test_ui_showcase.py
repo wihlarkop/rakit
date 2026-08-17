@@ -2,6 +2,24 @@ import httpx
 import pytest
 
 
+async def _login(client: httpx.AsyncClient) -> None:
+    page = await client.get("/auth/login")
+    assert page.status_code == 200
+    login_csrf = page.cookies["rakit_login_csrf"]
+    client.cookies.set("rakit_login_csrf", login_csrf)
+    response = await client.post(
+        "/auth/login",
+        data={
+            "identifier": "operator@example.com",
+            "password": "demo-password",
+            "login_csrf_token": login_csrf,
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    client.cookies.set("rakit_session", response.cookies["rakit_session"])
+
+
 @pytest.mark.anyio
 async def test_ui_showcase_exposes_dashboard_ui_lab_and_resources() -> None:
     from examples.ui_showcase.main import admin
@@ -11,6 +29,7 @@ async def test_ui_showcase_exposes_dashboard_ui_lab_and_resources() -> None:
         transport=httpx.ASGITransport(app=app),
         base_url="http://localhost",
     ) as client:
+        await _login(client)
         dashboard = await client.get("/")
         ui_lab = await client.get("/ui-lab")
         orders = await client.get("/orders")
