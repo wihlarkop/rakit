@@ -1,4 +1,7 @@
-"""Fast release metadata checks; the expensive clean-install smoke lives in scripts/check_artifacts.py."""
+"""Fast release metadata checks.
+
+The expensive clean-install smoke lives in ``scripts/check_artifacts.py``.
+"""
 
 from __future__ import annotations
 
