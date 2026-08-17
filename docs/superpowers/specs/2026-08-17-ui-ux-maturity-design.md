@@ -36,22 +36,9 @@ The styling architecture has three layers:
 
 ### 3.1 Design-token layer
 
-The design system will use semantic tokens rather than scattering concrete palette classes throughout templates. Tokens cover:
+The design system uses semantic tokens rather than scattering concrete palette classes throughout templates. Tokens cover brand, background, surfaces, borders, text, semantic states, focus, typography, radius, shadow/elevation, and reusable motion values.
 
-- brand scale;
-- application background;
-- surface and raised surface;
-- subtle surface;
-- borders and dividers;
-- primary and muted text;
-- success, warning, danger, and info roles;
-- focus ring;
-- typography;
-- radius;
-- shadow/elevation;
-- motion durations/easing where reusable.
-
-Color values should use OKLCH where Rakit owns the token. Contrast must be calibrated for both light and dark themes.
+Rakit-owned color values use OKLCH. Contrast is calibrated independently for light and dark themes.
 
 The brand direction is a restrained **indigo-violet family** so Rakit is more distinctive than the current generic blue treatment while remaining clearly separate from semantic green, amber, and red states. Neutral colors may be very lightly tinted toward the brand hue, but surfaces remain predominantly neutral.
 
@@ -63,24 +50,13 @@ Target color balance:
 
 ### 3.2 Framework primitives
 
-Reusable framework concepts may retain or gain `.rakit-*` classes implemented with Tailwind composition where that provides a stable visual primitive. Expected families include:
-
-- buttons and button variants;
-- inputs/selects/textarea;
-- checkbox/radio controls where necessary;
-- panels/surfaces;
-- chips/status badges;
-- alerts/feedback;
-- dialogs;
-- pagination/navigation primitives;
-- icon-button primitive;
-- loading/progress feedback.
+Reusable framework concepts may retain or gain `.rakit-*` classes implemented with Tailwind composition where that provides a stable visual primitive. Expected families include buttons, icon buttons, fields, panels/surfaces, chips/status badges, alerts/feedback, dialogs/popovers, pagination/navigation, and loading/progress feedback.
 
 `@apply` is allowed for these true framework primitives. It should not be used to create a custom CSS class for every local layout fragment.
 
 ### 3.3 Template utilities
 
-One-off layout should stay readable as Tailwind utilities in Jinja templates. Rakit should avoid creating classes such as `resource-header-wrapper` or deeply nested page-specific CSS abstractions unless a pattern proves reusable across surfaces.
+One-off layout stays readable as Tailwind utilities in Jinja templates. Rakit avoids page-specific wrapper classes unless a pattern proves reusable across surfaces.
 
 ### 3.4 CSS constraints
 
@@ -94,9 +70,9 @@ One-off layout should stay readable as Tailwind utilities in Jinja templates. Ra
 
 ## 4. Icon System
 
-Icons are part of the product language but must remain restrained.
+Icons are part of the product language but remain restrained.
 
-Rakit will use a curated **Lucide-style outline icon system**, rendered as server-side inline SVG. The implementation must not require a CDN or a browser-side icon runtime.
+Rakit uses a curated subset of **Lucide** outline icons. Required icon SVG source/path data is checked into the repository and rendered server-side as inline SVG through a reusable Rakit icon primitive. Rakit does not load Lucide from a CDN and does not require a browser-side icon runtime. The upstream license notice must be preserved wherever required by the vendored source.
 
 ### 4.1 Icon usage rules
 
@@ -112,79 +88,70 @@ Icons are encouraged for:
 - theme selection;
 - empty/error states when a simple icon improves comprehension.
 
-Icons should not be added automatically to every title, field label, table cell, or button.
+Icons are not added automatically to every title, field label, table cell, or button.
 
-Text labels remain the default for actions whose meaning could be ambiguous. Icon-only buttons are acceptable only for conventional actions with accessible labeling.
+Text labels remain the default for actions whose meaning could be ambiguous. Icon-only buttons are reserved for conventional actions where compact presentation materially improves the interface.
 
 ### 4.2 Accessibility
 
 - Decorative SVG icons are hidden from assistive technology.
 - Icon-only controls require an accessible name.
 - Tooltips may supplement icon-only controls but never replace the accessible name.
-- Critical/destructive actions must not rely on color or icon shape alone.
-- Icon size/stroke should remain visually consistent across the shell and components.
+- Critical/destructive actions do not rely on color or icon shape alone.
+- Icon size and stroke remain visually consistent across shell and components.
 
 ## 5. Theme Control
 
-The current text `<select>` for `System / Light / Dark` will be replaced by an icon-based theme control.
+The current text `<select>` for `System / Light / Dark` is replaced by an icon-based theme control.
 
-Required states:
+The interaction is fixed as follows:
 
-- **System**: monitor/device icon;
-- **Light**: sun icon;
-- **Dark**: moon icon.
+- the shell shows one compact icon button representing the stored preference;
+- **System** uses a monitor/device icon;
+- **Light** uses a sun icon;
+- **Dark** uses a moon icon;
+- activating the button opens a small accessible popover/menu containing all three choices;
+- each menu item shows both its icon and visible text label;
+- the active preference is clearly indicated;
+- selecting an option applies the theme and closes the popover.
 
-The control must:
-
-- expose the active mode clearly;
-- remain fully keyboard accessible;
-- have accessible names and state semantics;
-- preserve the current no-flash theme initialization behavior;
-- work without requiring a large client-side framework;
-- retain the user's selected preference using the existing theme preference mechanism;
-- support light, dark, and system rather than reducing the control to a two-way light/dark toggle.
-
-A compact segmented/popover interaction may be used, but the final implementation must remain understandable without relying on icon recognition alone for assistive technology.
+The control must remain fully keyboard accessible, expose accessible names/state, preserve no-flash theme initialization, retain the user's preference using the existing mechanism, work without a large client-side framework, and keep all three System/Light/Dark modes.
 
 ## 6. Comprehensive Surface Scope
 
-The maturity pass covers all of the following:
+The maturity pass covers:
 
 1. design system and semantic colors;
 2. typography hierarchy;
 3. spacing and page rhythm;
 4. app shell;
-5. desktop navigation;
-6. mobile navigation;
-7. dashboard home;
-8. resource list/table;
-9. resource detail;
-10. create/edit forms;
-11. search/filter/query UI;
-12. record actions;
-13. page/resource actions;
-14. bulk selection and bulk actions;
-15. relationships;
-16. authentication/session surfaces;
-17. custom pages;
-18. dialogs and confirmations;
-19. notifications and inline feedback;
-20. empty states;
-21. error states;
-22. loading/pending/progress states;
-23. chips/badges/statuses;
-24. buttons and icon buttons;
-25. field/control families;
-26. table ergonomics;
-27. breadcrumbs/current-location hierarchy;
-28. responsive behavior;
-29. dark theme quality;
-30. accessibility;
-31. purposeful motion and micro-interactions;
-32. UX copy clarity;
-33. visual consistency across feature areas;
-34. reusable component architecture;
-35. final edge-case polish.
+5. desktop and mobile navigation;
+6. dashboard home;
+7. resource list/table;
+8. resource detail;
+9. create/edit forms;
+10. search/filter/query UI;
+11. record/page/resource actions;
+12. bulk selection and bulk actions;
+13. relationships;
+14. authentication/session surfaces;
+15. custom pages;
+16. dialogs, popovers, and confirmations;
+17. notifications and inline feedback;
+18. empty, error, loading, pending, and progress states;
+19. chips/badges/statuses;
+20. buttons and icon buttons;
+21. field/control families;
+22. table ergonomics;
+23. breadcrumbs/current-location hierarchy;
+24. responsive behavior;
+25. dark-theme quality;
+26. accessibility;
+27. purposeful motion and micro-interactions;
+28. UX copy clarity;
+29. visual consistency across feature areas;
+30. reusable component architecture;
+31. final edge-case polish.
 
 ## 7. `examples/ui_showcase`
 
@@ -198,114 +165,37 @@ It is a hybrid of a realistic operations application and a deterministic UI stat
 
 ### 7.1 Realistic application model
 
-The example represents a fictional commerce/operations admin with resources such as:
+The example represents a fictional commerce/operations admin with resources such as Customers, Products, Orders, Categories, Inventory, and Teams.
 
-- Customers;
-- Products;
-- Orders;
-- Categories;
-- Inventory;
-- Teams.
-
-The data should be realistic enough to produce long labels, statuses, relationships, missing values, multiple states, and useful table/form scenarios.
+The data is realistic enough to produce long labels, statuses, relationships, missing values, multiple states, and useful table/form scenarios.
 
 ### 7.2 Dashboard scenarios
 
-The dashboard should exercise:
-
-- operational summary without defaulting to a wall of identical metric cards;
-- recent orders/activity;
-- low-inventory attention state;
-- resource shortcuts;
-- quick actions;
-- partial and empty states;
-- responsive hierarchy.
+The dashboard exercises operational summary, recent orders/activity, low-inventory attention state, resource shortcuts, quick actions, partial/empty states, and responsive hierarchy without defaulting to a wall of identical metric cards.
 
 ### 7.3 Resource-list scenarios
 
-The showcase should expose:
-
-- sorting;
-- search;
-- filters;
-- status badges;
-- row actions;
-- pagination;
-- bulk selection;
-- long values;
-- no-results state;
-- empty-resource state;
-- responsive overflow strategy;
-- loading/pending feedback.
+The showcase exercises sorting, search, filters, status badges, row actions, pagination, bulk selection, long values, no-results state, empty-resource state, responsive overflow strategy, and loading/pending feedback.
 
 ### 7.4 Detail and relationship scenarios
 
-Detail pages should exercise:
-
-- grouped information;
-- metadata;
-- primary/secondary/destructive action hierarchy;
-- related records;
-- add/remove/connect relationship affordances;
-- no-related-record state;
-- high-cardinality relationship state;
-- readonly relationships.
+Detail pages exercise grouped information, metadata, action hierarchy, related records, add/remove/connect relationship affordances, no-related-record state, high-cardinality relationships, and readonly relationships.
 
 ### 7.5 Form scenarios
 
-The showcase must include representative forms for:
-
-- text;
-- textarea;
-- select;
-- number;
-- checkbox;
-- radio;
-- dates;
-- optional/required values;
-- help text;
-- readonly values;
-- file upload;
-- multiple validation errors;
-- long forms with sections;
-- pending submit state;
-- successful submit feedback.
+The showcase includes representative text, textarea, select, number, checkbox, radio, date, optional/required, help-text, readonly, file-upload, validation-error, long-form, pending-submit, and successful-submit states.
 
 ### 7.6 Action scenarios
 
-Representative actions include:
-
-- Approve;
-- Cancel;
-- Archive;
-- Refund;
-- Publish;
-- Duplicate;
-- Refresh;
-- Export.
-
-The example should cover normal, destructive, confirmation, preview, rejected, validation, and success/result flows already supported by Rakit.
+Representative actions include Approve, Cancel, Archive, Refund, Publish, Duplicate, Refresh, and Export. The example covers normal, destructive, confirmation, preview, rejected, validation, and success/result flows already supported by Rakit.
 
 ### 7.7 Bulk-action scenarios
 
-Exercise:
-
-- selected-row count;
-- bulk toolbar;
-- safe and destructive actions;
-- confirmation;
-- result feedback;
-- partial/best-effort style messaging where applicable to existing runtime behavior.
+Exercise selected-row count, bulk toolbar, safe/destructive actions, confirmation, result feedback, and partial/best-effort messaging where applicable to existing runtime behavior.
 
 ### 7.8 Authentication scenarios
 
-The showcase should make it practical to inspect:
-
-- login;
-- invalid credentials;
-- logout;
-- session-expired presentation;
-- forbidden/access-denied state.
+The showcase makes login, invalid credentials, logout, session-expired presentation, and forbidden/access-denied states practical to inspect.
 
 ## 8. `/ui-lab` Visual QA Surface
 
@@ -313,31 +203,9 @@ The UI showcase includes a dedicated visual QA page at `/ui-lab`.
 
 Its purpose is deterministic design inspection, not a second CSS system.
 
-The page should expose representative states for:
+The page exposes representative states for typography, buttons, icon buttons, icons, inputs, selects, textarea, checkbox/radio, badges/status, alerts, toasts/feedback, panels/surfaces, dialogs/popovers, tables, pagination, breadcrumbs, navigation, empty states, loading states, error states, and theme modes.
 
-- typography;
-- buttons;
-- icon buttons;
-- icons;
-- inputs;
-- selects;
-- textarea;
-- checkbox/radio;
-- badges/status;
-- alerts;
-- toasts/feedback;
-- panels/surfaces;
-- dialogs;
-- tables;
-- pagination;
-- breadcrumbs;
-- navigation states;
-- empty states;
-- loading states;
-- error states;
-- theme modes.
-
-Where meaningful, components should demonstrate default, selected, disabled, error, success, warning, and loading states. Hover/focus behavior should remain interactive rather than duplicated as fake static variants unless deterministic inspection requires a dedicated example.
+Where meaningful, components demonstrate default, selected, disabled, error, success, warning, and loading states. Hover/focus behavior remains interactive rather than duplicated as fake static variants unless deterministic inspection requires a dedicated example.
 
 The UI Lab becomes the primary visual regression playground for each UI PR.
 
@@ -345,22 +213,9 @@ The UI Lab becomes the primary visual regression playground for each UI PR.
 
 Responsive support is a UX design concern, not a final CSS shrinking pass.
 
-Required targets:
+Required targets are desktop workstation, laptop/smaller desktop, tablet, and mobile.
 
-- desktop workstation;
-- laptop/smaller desktop;
-- tablet;
-- mobile.
-
-Specific expectations:
-
-- navigation transforms appropriately rather than merely becoming narrower;
-- forms preserve readable labels and controls;
-- action groups wrap/restructure with clear priority;
-- tables use intentional overflow/column-priority behavior;
-- dialogs remain usable on short/narrow viewports;
-- icon-only controls maintain adequate touch targets;
-- no important action is lost at small widths.
+Navigation transforms appropriately; forms preserve readable labels/controls; action groups restructure with clear priority; tables use intentional overflow/column-priority behavior; dialogs remain usable on short/narrow viewports; icon-only controls retain adequate touch targets; and no important action disappears at small widths.
 
 ## 10. Accessibility Requirements
 
@@ -368,13 +223,12 @@ At minimum:
 
 - normal text contrast >= 4.5:1;
 - large text contrast >= 3:1;
-- visible keyboard focus;
-- useful focus order;
-- semantic labels and descriptions;
+- visible keyboard focus and useful focus order;
+- semantic labels/descriptions;
 - field errors associated with controls;
 - status changes announced where Rakit already has announcer infrastructure;
-- keyboard-operable menus/dialogs/navigation;
-- minimum practical touch targets for compact controls;
+- keyboard-operable menus, popovers, dialogs, and navigation;
+- practical touch targets for compact controls;
 - reduced-motion behavior;
 - no state communicated only by color;
 - icon-only controls have accessible names.
@@ -383,15 +237,7 @@ Existing accessibility behavior must be preserved or improved, never regressed f
 
 ## 11. Motion and Interaction
 
-Motion should be subtle and functional:
-
-- short hover/press transitions;
-- dialog/popover transitions where appropriate;
-- clear HTMX pending feedback;
-- toast/feedback entrance and dismissal where useful;
-- no bounce/elastic decorative motion;
-- no content hidden behind animation initialization;
-- `prefers-reduced-motion` remains respected.
+Motion is subtle and functional: short hover/press transitions, dialog/popover transitions where appropriate, clear HTMX pending feedback, and useful feedback entrance/dismissal. No bounce/elastic decorative motion or content gated behind animation initialization. `prefers-reduced-motion` remains respected.
 
 ## 12. PR Breakdown
 
@@ -402,7 +248,7 @@ Implementation is intentionally split into reviewable PRs.
 - create `examples/ui_showcase`;
 - create `/ui-lab`;
 - cover existing UI states without redesigning the framework yet;
-- add focused tests needed to ensure the example remains runnable and deterministic;
+- add focused tests needed to keep the example runnable/deterministic;
 - document how maintainers run the showcase.
 
 Purpose: establish a stable visual inspection surface before design-system changes.
@@ -415,30 +261,28 @@ Purpose: establish a stable visual inspection surface before design-system chang
 - semantic status colors;
 - typography hierarchy;
 - radius/shadow normalization;
-- light/dark theme calibration;
+- light/dark calibration;
 - focus styling;
 - preserve generated asset workflow.
 
 ### UI-03 — App shell, navigation, theme switcher, icons
 
-- desktop shell;
-- mobile shell;
+- desktop/mobile shell;
 - sidebar/navigation hierarchy;
 - page-location treatment;
 - user/account area where supported;
-- icon-based System/Light/Dark theme selector;
-- reusable server-rendered icon primitive;
+- icon-button + three-option theme popover;
+- reusable server-rendered Lucide icon primitive;
 - curated navigation/action icons.
 
 ### UI-04 — Core components
 
-- buttons;
-- icon buttons;
+- buttons/icon buttons;
 - inputs/selects/textarea;
 - checkbox/radio presentation;
 - chips/status badges;
 - alerts/feedback;
-- dialogs;
+- dialogs/popovers;
 - pagination;
 - loading primitives.
 
@@ -463,10 +307,7 @@ Purpose: establish a stable visual inspection surface before design-system chang
 
 ### UI-07 — Responsive, accessibility, and UX hardening
 
-- viewport audit;
-- keyboard audit;
-- focus audit;
-- contrast audit;
+- viewport, keyboard, focus, and contrast audit;
 - reduced motion;
 - long text/overflow;
 - loading/error/empty edge cases;
@@ -478,32 +319,13 @@ Run a final structured quality pass across the showcase and framework surfaces u
 
 ## 13. Testing and Verification
 
-Each PR must keep the existing repository gate green. UI work adds focused regression tests where behavior or rendered semantics change.
+Each PR keeps the existing repository gate green and adds focused regression tests where behavior or rendered semantics change.
 
-Verification includes:
-
-- existing Python test suite;
-- existing type/lint/format gates;
-- strict docs build when docs change;
-- generated asset consistency;
-- UI showcase smoke coverage;
-- semantic/accessibility assertions where stable and valuable;
-- manual visual inspection of `/ui-lab` and realistic workflows in light, dark, and system modes;
-- desktop/tablet/mobile viewport inspection.
-
-Visual changes should be evaluated against the UI showcase before being propagated to or judged through specialized examples.
+Verification includes the existing Python/type/lint/format gates, strict docs build when docs change, generated asset consistency, UI-showcase smoke coverage, stable semantic/accessibility assertions, manual `/ui-lab` and realistic-workflow inspection in light/dark/system modes, and desktop/tablet/mobile viewport inspection.
 
 ## 14. Non-Goals
 
-This program does not:
-
-- introduce React/Vue/Svelte or another SPA framework;
-- replace SSR + HTMX progressive enhancement;
-- redesign core/domain APIs solely for visual convenience;
-- make `ui_showcase` a separate product theme;
-- introduce decorative animation or icon saturation;
-- require external asset CDNs;
-- publish a release automatically when UI-08 completes.
+This program does not introduce a SPA framework, replace SSR + HTMX progressive enhancement, redesign core/domain APIs solely for visual convenience, make `ui_showcase` a separate product theme, introduce decorative animation/icon saturation, require external asset CDNs, or publish a release automatically when UI-08 completes.
 
 ## 15. Acceptance Criteria
 
@@ -511,13 +333,13 @@ The UI/UX Maturity program is complete when:
 
 1. all major `rakit-web` surfaces use one coherent visual system;
 2. the default interface is comfortable, simple, and clean in both light and dark modes;
-3. System/Light/Dark theme selection is icon-based, accessible, and persistent;
+3. System/Light/Dark selection uses the specified icon-button + accessible three-option popover and persists preference;
 4. icons improve scanning without overwhelming the interface;
-5. direct concrete color usage has been reduced in favor of semantic Tailwind tokens where appropriate;
+5. direct concrete color usage is reduced in favor of semantic Tailwind tokens where appropriate;
 6. resource lists, detail pages, forms, actions, bulk actions, relationships, auth, and custom pages share consistent interaction hierarchy;
 7. responsive behavior is intentionally designed across desktop, tablet, and mobile;
 8. accessibility requirements are met or improved relative to the current baseline;
-9. `examples/ui_showcase` exposes realistic end-to-end UI workflows and `/ui-lab` exposes deterministic visual states;
+9. `examples/ui_showcase` exposes realistic end-to-end workflows and `/ui-lab` exposes deterministic visual states;
 10. the showcase has no private styling layer that hides framework UI deficiencies;
 11. all repository verification gates remain green;
 12. final Impeccable critique/audit/polish findings have no unresolved release-blocking UI issues.
