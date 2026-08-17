@@ -13,6 +13,7 @@
   :root { color-scheme: light; }
   :root[data-theme="dark"] { color-scheme: dark; }
   body { @apply m-0 bg-slate-50 font-sans text-slate-900 antialiased; }
+  body[data-rakit-mobile-navigation-open] { overflow: hidden; }
   button, input, select { font: inherit; }
   button:not(:disabled), summary { cursor: pointer; }
   a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible {
@@ -32,8 +33,19 @@
   .rakit-panel-header { @apply flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3; }
   .rakit-panel-body { @apply p-4; }
   .rakit-error { @apply mt-1 text-sm text-red-700; }
-  .rakit-chip { @apply inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-100 py-1 pl-2.5 pr-1 text-sm font-medium text-slate-700; }
+  .rakit-chip { @apply inline-flex min-h-7 items-center gap-1 rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-sm font-medium leading-5 text-slate-700; }
+  .rakit-chip-relationship { @apply rounded-lg; }
   .rakit-dialog { @apply w-[min(32rem,calc(100%-2rem))] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-2xl backdrop:bg-slate-950/40; margin: auto; max-height: calc(100vh - 2rem); overflow-y: auto; }
+
+  .htmx-indicator {
+    opacity: 0;
+    visibility: hidden;
+  }
+  .htmx-request .htmx-indicator,
+  .htmx-request.htmx-indicator {
+    opacity: 1;
+    visibility: visible;
+  }
 
   [data-theme="dark"] .rakit-button-secondary { @apply border-slate-600 bg-slate-900 text-slate-200 hover:bg-slate-800; }
   [data-theme="dark"] .rakit-button-quiet { @apply text-slate-300 hover:bg-slate-800 hover:text-white; }

@@ -1,27 +1,46 @@
 {% set provider = request.scope.get('state', {}).get('rakit_navigation_provider') %}
 {% if provider %}
   {% set navigation = provider(request) %}
-  <nav class="overflow-x-auto border-b border-slate-200 bg-white px-4 py-2 dark:border-slate-800 dark:bg-slate-900 lg:hidden" aria-label="Primary navigation">
-    <div class="flex min-w-max gap-1">
-      <a
-        href="{{ navigation.dashboard.path }}"
-        class="rounded-md px-3 py-2 text-sm font-medium {% if navigation.dashboard.active %}bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-950{% else %}text-slate-600 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white{% endif %}"
-        {% if navigation.dashboard.active %}aria-current="page"{% endif %}
-      >Dashboard</a>
-      {% for item in navigation.resources %}
-      <a
-        href="{{ item.path }}"
-        class="rounded-md px-3 py-2 text-sm font-medium {% if item.active %}bg-slate-100 text-slate-950 dark:bg-slate-800 dark:text-white{% else %}text-slate-600 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white{% endif %}"
-        {% if item.active %}aria-current="page"{% endif %}
-      >{{ item.label }}</a>
-      {% endfor %}
-      {% for item in navigation.pages %}
-      <a
-        href="{{ item.path }}"
-        class="rounded-md px-3 py-2 text-sm font-medium {% if item.active %}bg-slate-100 text-slate-950 dark:bg-slate-800 dark:text-white{% else %}text-slate-600 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white{% endif %}"
-        {% if item.active %}aria-current="page"{% endif %}
-      >{{ item.label }}</a>
-      {% endfor %}
+  <dialog
+    id="rakit-mobile-navigation"
+    data-rakit-mobile-navigation
+    aria-label="Primary navigation"
+    class="fixed inset-y-0 left-0 m-0 h-dvh max-h-dvh w-[min(20rem,calc(100%-3rem))] max-w-none border-0 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-slate-950/50 dark:bg-slate-900 dark:text-slate-100 lg:hidden"
+  >
+    <div class="flex h-full min-h-0 flex-col">
+      <div class="flex min-h-16 items-center gap-3 border-b border-slate-200 px-4 dark:border-slate-800">
+        <a href="{{ navigation.dashboard.path }}" class="min-w-0 flex-1 truncate text-base font-semibold tracking-tight text-slate-950 dark:text-white">
+          {{ navigation.title }}
+        </a>
+        <button
+          type="button"
+          data-rakit-mobile-navigation-close
+          aria-label="Close navigation"
+          class="inline-flex size-10 shrink-0 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="size-5">
+            <path d="M18 6 6 18" />
+            <path d="m6 6 12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <nav class="min-h-0 flex-1 overflow-y-auto px-3 py-5" aria-label="Primary navigation">
+        {% include "components/admin_navigation_items.html" %}
+      </nav>
+
+      <div class="border-t border-slate-200 p-4 dark:border-slate-800">
+        <label class="mb-1.5 block text-xs font-medium text-slate-500 dark:text-slate-400" for="rakit-theme-select-mobile">Theme</label>
+        <select
+          id="rakit-theme-select-mobile"
+          data-rakit-theme-select
+          class="rakit-select"
+        >
+          <option value="system">System</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </div>
     </div>
-  </nav>
+  </dialog>
 {% endif %}

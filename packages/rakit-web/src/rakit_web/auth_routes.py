@@ -127,10 +127,20 @@ def build_auth_routes(
     trusted_proxies: tuple[TrustedProxyNetwork, ...] = (),
 ) -> list[Route]:
     def _render_login(request: Request, *, error: str | None, status_code: int = 200) -> Response:
-        """Render the login page, always issuing a fresh pre-session CSRF
-        token -- including on a rejected attempt, so the user can retry
-        without being stuck holding a token the server no longer accepts."""
-        token = secrets.token_urlsafe(32)
+        """Render login with a stable pre-session double-submit token.
+
+        Reuse the current login CSRF cookie while it is structurally valid so
+        concurrent GETs (for example a browser following an authenticated
+        favicon request back to the login page) cannot invalidate a form the
+        user already has open. A missing or malformed cookie gets a fresh
+        cryptographically-random token.
+        """
+        existing_token = request.cookies.get(LOGIN_CSRF_COOKIE_NAME)
+        token = (
+            existing_token
+            if existing_token is not None and 0 < len(existing_token) <= _MAX_LOGIN_CSRF_LENGTH
+            else secrets.token_urlsafe(32)
+        )
         response = templates.TemplateResponse(
             request,
             "auth/login.html",
@@ -139,6 +149,7 @@ def build_auth_routes(
                 "login_url": _mounted_path(request, "/auth/login"),
                 "login_csrf_token": token,
                 "login_csrf_field": LOGIN_CSRF_FORM_FIELD,
+                "rakit_shell_enabled": False,
             },
             status_code=status_code,
             headers={"Cache-Control": "no-store"},
