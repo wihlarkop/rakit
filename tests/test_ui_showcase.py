@@ -82,6 +82,34 @@ def test_ui_showcase_exposes_realistic_application_and_ui_lab() -> None:
     assert "Page 2" in orders_page_two.text
 
 
+def test_ui_showcase_uses_dashboard_shell_with_mobile_drawer() -> None:
+    from examples.ui_showcase.main import admin
+
+    app = admin.asgi()
+    with _showcase_client(app) as client:
+        login = _login(client)
+        assert login.status_code == 303
+        dashboard = client.get("/")
+        orders = client.get("/orders")
+
+    assert dashboard.status_code == 200
+    assert 'data-rakit-app-shell' in dashboard.text
+    assert 'data-rakit-desktop-navigation' in dashboard.text
+    assert 'data-rakit-mobile-navigation-trigger' in dashboard.text
+    assert 'aria-controls="rakit-mobile-navigation"' in dashboard.text
+    assert 'aria-expanded="false"' in dashboard.text
+    assert 'id="rakit-mobile-navigation"' in dashboard.text
+    assert 'data-rakit-mobile-navigation' in dashboard.text
+    assert 'data-rakit-mobile-navigation-close' in dashboard.text
+    assert 'aria-label="Open navigation"' in dashboard.text
+    assert 'aria-label="Close navigation"' in dashboard.text
+    assert 'overflow-x-auto' not in dashboard.text
+
+    assert orders.status_code == 200
+    assert 'href="/orders"' in orders.text
+    assert 'aria-current="page"' in orders.text
+
+
 def test_ui_showcase_exposes_record_confirmation_action_and_relationship_contracts() -> None:
     from examples.ui_showcase.main import admin
 
