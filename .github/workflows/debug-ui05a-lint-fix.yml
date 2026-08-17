@@ -33,7 +33,7 @@ jobs:
           )
           text = text.replace(
               "Inspect deterministic component states using the default Rakit design system.",
-              "Inspect deterministic component states in the default Rakit design system.",
+              "Inspect default Rakit component states for deterministic visual QA.",
           )
           path.write_text(text, encoding="utf-8")
           PY
