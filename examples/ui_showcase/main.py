@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from rakit import (
     ActionDefinition,
@@ -126,7 +126,7 @@ class RefundOrder:
     async def execute(self, context: ActionContext) -> ActionSuccess[dict[str, object]]:
         record = context.record
         if isinstance(record, dict):
-            record["status"] = "Refunded"
+            cast(dict[str, object], record)["status"] = "Refunded"
         return ActionSuccess(payload={"status": "Refunded"}, message="Order refunded")
 
 
