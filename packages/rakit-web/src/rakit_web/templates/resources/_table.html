@@ -27,7 +27,7 @@
       {% endif %}
 
       {% if filter_enabled %}
-      <details class="w-full sm:w-auto" data-rakit-filter-panel{% if active_filter_count %} open{% endif %}>
+      <details class="group w-full sm:w-auto" data-rakit-filter-panel{% if active_filter_count %} open{% endif %}>
         <summary class="rakit-button rakit-button-secondary list-none whitespace-nowrap">
           {{ rakit_icon("list-filter", class_name="size-4") }}
           <span>Filters{% if active_filter_count %} {{ active_filter_count }}{% endif %}</span>
@@ -193,8 +193,8 @@
 
     <nav class="rakit-pagination" aria-label="Resource pagination">
       {% if pagination.previous_url %}<a class="rakit-pagination-item" aria-label="Previous page" href="{{ pagination.previous_url }}" rel="prev">Previous</a>{% else %}<span class="rakit-pagination-item" aria-disabled="true">Previous</span>{% endif %}
-      {% if pagination.items %}
-        {% for item in pagination.items %}
+      {% if pagination["items"] %}
+        {% for item in pagination["items"] %}
           {% if item.ellipsis %}<span class="rakit-pagination-ellipsis" aria-hidden="true">…</span>{% elif item.current %}<a class="rakit-pagination-item rakit-pagination-current" href="{{ item.href }}" aria-current="page">{{ item.label }}</a>{% else %}<a class="rakit-pagination-item" href="{{ item.href }}">{{ item.label }}</a>{% endif %}
         {% endfor %}
       {% else %}
