@@ -210,7 +210,9 @@ async def test_forged_csrf_is_rejected_by_real_login_route() -> None:
     app = admin.asgi()
     async with (
         _LifespanDriver(app),
-        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as client,
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+        ) as client,
     ):
         response = await client.post(
             "/auth/login",
@@ -229,7 +231,9 @@ async def test_untrusted_host_and_forged_forwarded_host_fail_closed() -> None:
     app = admin.asgi()
     async with (
         _LifespanDriver(app),
-        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as client,
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+        ) as client,
     ):
         assert (await client.get("/", headers={"host": "evil.example"})).status_code == 400
         forwarded = await client.get(
@@ -300,7 +304,9 @@ async def test_sensitive_field_cannot_be_enabled_by_query_string() -> None:
     app = admin.asgi()
     async with (
         _LifespanDriver(app),
-        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as client,
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+        ) as client,
     ):
         response = await client.get("/records", params={"filter": "secret:eq:do-not-query"})
     assert response.status_code in {400, 422}
@@ -386,7 +392,9 @@ async def test_permission_revocation_between_action_get_and_post_is_rechecked() 
 
     async with (
         _LifespanDriver(app),
-        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as client,
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+        ) as client,
     ):
         csrf = await _login(client)
         page = await client.get(f"/records/{encoded}/_actions/deactivate")

@@ -25,8 +25,7 @@ def test_workspace_release_inventory_is_derived_and_version_locked(
     assert projects
     assert {project.version for project in projects} == {checker.VERSION}
     assert {project.name for project in projects} == {
-        path.parent.name
-        for path in (repository / "packages").glob("*/pyproject.toml")
+        path.parent.name for path in (repository / "packages").glob("*/pyproject.toml")
     }
 
 
@@ -52,7 +51,7 @@ def test_artifact_checker_does_not_write_dist_into_repository(
     repository, checker = _load_checker(monkeypatch)
     source = (repository / "scripts" / "check_artifacts.py").read_text(encoding="utf-8")
     assert "TemporaryDirectory" in source
-    assert "root / \"dist\"" not in source
+    assert 'root / "dist"' not in source
     assert checker.repository_root() == repository
 
 

@@ -194,7 +194,9 @@ def inspect_wheel(artifact: Artifact) -> None:
 
         for required in _REQUIRED_WHEEL_PATHS.get(artifact.project.name, ()):
             if required not in names:
-                raise RuntimeError(f"{artifact.project.name}: wheel missing required asset {required}")
+                raise RuntimeError(
+                    f"{artifact.project.name}: wheel missing required asset {required}"
+                )
         if artifact.project.name == "rakit-auth-sqlalchemy" and not any(
             name.startswith("rakit_auth_sqlalchemy/alembic/versions/") and name.endswith(".py")
             for name in names
@@ -218,7 +220,9 @@ def inspect_sdist(artifact: Artifact) -> None:
         members = [member for member in archive.getmembers() if member.isfile()]
         if not members:
             raise RuntimeError(f"{artifact.project.name}: empty sdist")
-        pyprojects = [member for member in members if PurePosixPath(member.name).name == "pyproject.toml"]
+        pyprojects = [
+            member for member in members if PurePosixPath(member.name).name == "pyproject.toml"
+        ]
         if len(pyprojects) != 1:
             raise RuntimeError(f"{artifact.project.name}: sdist must contain one pyproject.toml")
         member = pyprojects[0]
@@ -368,7 +372,9 @@ def clean_install_smoke(dist: Path, root: Path, workspace: Path) -> None:
 
 
 def check_standard_extra(root: Path) -> None:
-    data = tomllib.loads((root / "packages" / "rakit" / "pyproject.toml").read_text(encoding="utf-8"))
+    data = tomllib.loads(
+        (root / "packages" / "rakit" / "pyproject.toml").read_text(encoding="utf-8")
+    )
     standard = tuple(data["project"]["optional-dependencies"].get("standard", ()))
     required = {
         f"rakit-sqlalchemy=={VERSION}",
