@@ -89,6 +89,40 @@ rakit check myapp:admin
 rakit run myapp:admin
 ```
 
+## Example direction
+
+The SQLAlchemy registration pattern remains executable and is preserved as a compatibility-tested
+reference. Application code owns the engine lifecycle and gives Rakit a session factory.
+
+```python
+from rakit import Admin, ModelAdmin, SecretValue
+from rakit.sqlalchemy import SQLAlchemyPlugin
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+admin = Admin(
+    admin_id="operations",
+    title="Operations",
+    secret_key=SecretValue("replace-with-a-real-secret-at-least-32-bytes"),
+)
+
+session_factory = async_sessionmaker(engine, expire_on_commit=False)
+admin.install(SQLAlchemyPlugin(session_factory=session_factory))
+
+
+class UserAdmin(ModelAdmin):
+    model = User
+    resource_id = "users"
+    path = "/users"
+    label = "Users"
+    singular_label = "User"
+    list_fields = ("id",)
+    detail_fields = ("id",)
+
+
+admin.register(UserAdmin)
+app = admin.asgi()
+```
+
 ## Official examples
 
 Executable journeys live under `examples/`:
