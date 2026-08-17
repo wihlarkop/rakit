@@ -65,7 +65,7 @@ async def test_theme_control_and_asset_support_light_dark_system() -> None:
         css = await client.get(css_match.group(1))
 
     assert response.text.count("data-rakit-theme-control") == 2
-    assert response.text.count("data-rakit-theme-trigger") == 2
+    assert len(re.findall(r"\sdata-rakit-theme-trigger(?:\s|>)", response.text)) == 2
     assert response.text.count('aria-haspopup="menu"') == 2
     assert response.text.count('data-rakit-theme-option="system"') == 2
     assert response.text.count('data-rakit-theme-option="light"') == 2
