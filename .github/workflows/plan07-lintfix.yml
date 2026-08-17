@@ -1,0 +1,40 @@
+name: Plan 07 lint fix
+
+on:
+  push:
+    branches:
+      - plan-07-hardening-examples-release
+
+permissions:
+  contents: write
+
+jobs:
+  lint-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: plan-07-hardening-examples-release
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-packages --dev --locked
+      - name: Apply safe Ruff fixes and format
+        shell: bash
+        run: |
+          uv run ruff check --fix . || true
+          uv run ruff format .
+      - name: Commit lint fixes when needed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "no autofixes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "style: apply Plan 07 lint fixes"
+          git push origin HEAD:plan-07-hardening-examples-release
