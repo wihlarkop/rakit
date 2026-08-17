@@ -167,7 +167,11 @@ class DemoSessionStore:
 
     async def revoke(self, session_id: str) -> None:
         self._records.pop(session_id, None)
-        self._tokens = {token: stored_id for token, stored_id in self._tokens.items() if stored_id != session_id}
+        self._tokens = {
+            token: stored_id
+            for token, stored_id in self._tokens.items()
+            if stored_id != session_id
+        }
 
     def _new_session(self, subject_id: str) -> tuple[str, SessionRecord]:
         self._counter += 1
