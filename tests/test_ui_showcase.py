@@ -86,6 +86,7 @@ def test_ui_showcase_exposes_record_confirmation_action_and_relationship_contrac
     from examples.ui_showcase.main import admin
 
     app = admin.asgi()
+    assert admin.compiled is not None
     identity = IdentityCodec().encode(RecordIdentity(values={"id": "ORD-1080"}))
     with _showcase_client(app) as client:
         login = _login(client)
