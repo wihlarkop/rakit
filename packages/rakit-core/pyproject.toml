@@ -8,5 +8,8 @@ version = "0.1.0a1"
 requires-python = ">=3.12"
 dependencies = ["anyio>=4.0", "pydantic>=2.11,<3", "cryptography>=43"]
 
+[dependency-groups]
+dev = ["pytest>=8.3,<9", "pytest-anyio>=0.0.0"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/rakit_core"]

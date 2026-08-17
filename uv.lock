@@ -855,11 +855,23 @@ dependencies = [
     { name = "pydantic" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-anyio" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "anyio", specifier = ">=4.0" },
     { name = "cryptography", specifier = ">=43" },
     { name = "pydantic", specifier = ">=2.11,<3" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.3,<9" },
+    { name = "pytest-anyio", specifier = ">=0.0.0" },
 ]
 
 [[package]]
