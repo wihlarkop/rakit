@@ -1,10 +1,67 @@
-{% macro button(label, variant="primary", type="button", attrs="") -%}
-  <button type="{{ type }}" class="rakit-button{% if variant == 'secondary' %} rakit-button-secondary{% elif variant == 'quiet' %} rakit-button-quiet{% elif variant == 'danger' %} rakit-button-danger{% endif %}" {{ attrs|safe }}>{{ label }}</button>
+{% macro button(label, variant="primary", type="button", disabled=false, loading=false, aria_label=none, attrs="") -%}
+  <button
+    type="{{ type }}"
+    class="rakit-button{% if variant == 'secondary' %} rakit-button-secondary{% elif variant == 'quiet' %} rakit-button-quiet{% elif variant == 'danger' %} rakit-button-danger{% endif %}"
+    {% if aria_label %}aria-label="{{ aria_label }}"{% endif %}
+    {% if loading %}aria-busy="true"{% endif %}
+    {% if disabled or loading %}disabled{% endif %}
+    {% if attrs %}{{ attrs|safe }}{% endif %}
+  >
+    {% if loading %}<span class="rakit-spinner" aria-hidden="true"></span>{% endif %}
+    <span>{{ label }}</span>
+  </button>
+{%- endmacro %}
+
+{% macro icon_button(icon, aria_label, variant="quiet", type="button", disabled=false, attrs="") -%}
+  <button
+    type="{{ type }}"
+    class="rakit-icon-button{% if variant == 'secondary' %} rakit-icon-button-secondary{% elif variant == 'danger' %} rakit-icon-button-danger{% endif %}"
+    aria-label="{{ aria_label }}"
+    {% if disabled %}disabled{% endif %}
+    {% if attrs %}{{ attrs|safe }}{% endif %}
+  >{{ rakit_icon(icon, class_name="size-4") }}</button>
+{%- endmacro %}
+
+{% macro status(label, variant="neutral") -%}
+  <span class="rakit-status{% if variant == 'success' %} rakit-status-success{% elif variant == 'warning' %} rakit-status-warning{% elif variant == 'danger' %} rakit-status-danger{% elif variant == 'info' %} rakit-status-info{% else %} rakit-status-neutral{% endif %}">{{ label }}</span>
+{%- endmacro %}
+
+{% macro alert(message, variant="info", urgent=false, title="") -%}
+  <div
+    class="rakit-alert{% if variant == 'success' %} rakit-alert-success{% elif variant == 'warning' %} rakit-alert-warning{% elif variant == 'danger' %} rakit-alert-danger{% elif variant == 'neutral' %} rakit-alert-neutral{% else %} rakit-alert-info{% endif %}"
+    role="{{ 'alert' if urgent else 'status' }}"
+  >
+    {% if title %}<p class="font-semibold">{{ title }}</p>{% endif %}
+    <p>{{ message }}</p>
+  </div>
+{%- endmacro %}
+
+{% macro loading(label="Loading") -%}
+  <span class="rakit-loading" role="status">
+    <span class="rakit-spinner" aria-hidden="true"></span>
+    <span>{{ label }}</span>
+  </span>
+{%- endmacro %}
+
+{% macro pagination(items, aria_label="Pagination") -%}
+  <nav class="rakit-pagination" aria-label="{{ aria_label }}">
+    {% for item in items %}
+      {% if item.ellipsis %}
+        <span class="rakit-pagination-ellipsis" aria-hidden="true">…</span>
+      {% elif item.disabled %}
+        <span class="rakit-pagination-item" aria-disabled="true">{{ item.label }}</span>
+      {% elif item.current %}
+        <a class="rakit-pagination-item rakit-pagination-current" href="{{ item.href }}" aria-current="page">{{ item.label }}</a>
+      {% else %}
+        <a class="rakit-pagination-item" href="{{ item.href }}">{{ item.label }}</a>
+      {% endif %}
+    {% endfor %}
+  </nav>
 {%- endmacro %}
 
 {% macro panel_header(title, detail="") -%}
   <header class="rakit-panel-header">
-    <div class="flex min-w-0 items-baseline gap-2"><h2 class="text-sm font-semibold text-slate-900">{{ title }}</h2>{% if detail %}<span class="text-sm text-slate-500">{{ detail }}</span>{% endif %}</div>
+    <div class="flex min-w-0 items-baseline gap-2"><h2 class="text-sm font-semibold text-rakit-text">{{ title }}</h2>{% if detail %}<span class="text-sm text-rakit-text-muted">{{ detail }}</span>{% endif %}</div>
   </header>
 {%- endmacro %}
 

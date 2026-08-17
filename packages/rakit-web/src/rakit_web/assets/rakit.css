@@ -124,12 +124,76 @@
     @apply border-rakit-danger bg-rakit-danger text-white hover:brightness-90;
   }
 
+  .rakit-icon-button {
+    @apply inline-flex size-10 shrink-0 items-center justify-center rounded-rakit-sm border border-transparent bg-transparent text-rakit-text-muted shadow-none transition hover:bg-rakit-surface-subtle hover:text-rakit-text disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .rakit-icon-button-secondary {
+    @apply border-rakit-border-strong bg-rakit-surface text-rakit-text shadow-rakit-sm hover:bg-rakit-surface-subtle;
+  }
+
+  .rakit-icon-button-danger {
+    @apply border-rakit-danger bg-rakit-danger text-white shadow-rakit-sm hover:brightness-90;
+  }
+
   .rakit-input {
     @apply block min-h-9 w-full rounded-rakit-sm border border-rakit-border-strong bg-rakit-surface px-3 py-1.5 text-sm text-rakit-text shadow-rakit-sm placeholder:text-rakit-text-muted focus:border-rakit-focus;
   }
 
   .rakit-select {
     @apply block min-h-9 w-full appearance-auto rounded-rakit-sm border border-rakit-border-strong bg-rakit-surface px-3 py-1.5 pr-8 text-sm text-rakit-text shadow-rakit-sm focus:border-rakit-focus;
+  }
+
+  .rakit-textarea {
+    @apply block min-h-24 w-full resize-y rounded-rakit-sm border border-rakit-border-strong bg-rakit-surface px-3 py-2 text-sm leading-6 text-rakit-text shadow-rakit-sm placeholder:text-rakit-text-muted focus:border-rakit-focus;
+  }
+
+  .rakit-checkbox,
+  .rakit-radio {
+    width: 1rem;
+    height: 1rem;
+    accent-color: var(--color-rakit-brand-600);
+  }
+
+  .rakit-checkbox {
+    border-radius: 0.25rem;
+  }
+
+  .rakit-file-input {
+    @apply block w-full rounded-rakit-sm border border-rakit-border-strong bg-rakit-surface text-sm text-rakit-text shadow-rakit-sm;
+  }
+
+  .rakit-file-input::file-selector-button {
+    @apply mr-3 min-h-9 border-0 border-r border-rakit-border bg-rakit-surface-subtle px-3 text-sm font-medium text-rakit-text transition hover:bg-rakit-brand-subtle;
+  }
+
+  .rakit-field-help {
+    @apply text-sm leading-5 text-rakit-text-muted;
+  }
+
+  .rakit-field-required {
+    @apply text-rakit-danger;
+  }
+
+  .rakit-input[aria-invalid="true"],
+  .rakit-select[aria-invalid="true"],
+  .rakit-textarea[aria-invalid="true"],
+  .rakit-file-input[aria-invalid="true"] {
+    @apply border-rakit-danger focus:border-rakit-danger;
+  }
+
+  .rakit-input:read-only,
+  .rakit-textarea:read-only {
+    @apply bg-rakit-surface-subtle text-rakit-text-muted shadow-none;
+  }
+
+  .rakit-input:disabled,
+  .rakit-select:disabled,
+  .rakit-textarea:disabled,
+  .rakit-file-input:disabled,
+  .rakit-checkbox:disabled,
+  .rakit-radio:disabled {
+    @apply cursor-not-allowed opacity-50;
   }
 
   .rakit-panel {
@@ -156,11 +220,120 @@
     @apply rounded-rakit-sm;
   }
 
+  .rakit-status {
+    @apply inline-flex min-h-6 items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold leading-5;
+  }
+
+  .rakit-status-neutral {
+    @apply border-rakit-border bg-rakit-surface-subtle text-rakit-text-muted;
+  }
+
+  .rakit-status-success {
+    @apply border-rakit-success/30 bg-rakit-success-subtle text-rakit-text;
+  }
+
+  .rakit-status-warning {
+    @apply border-rakit-warning/30 bg-rakit-warning-subtle text-rakit-text;
+  }
+
+  .rakit-status-danger {
+    @apply border-rakit-danger/30 bg-rakit-danger-subtle text-rakit-text;
+  }
+
+  .rakit-status-info {
+    @apply border-rakit-info/30 bg-rakit-info-subtle text-rakit-text;
+  }
+
+  .rakit-alert {
+    @apply rounded-rakit-md border p-4 text-sm leading-6 text-rakit-text;
+  }
+
+  .rakit-alert-neutral {
+    @apply border-rakit-border bg-rakit-surface-subtle;
+  }
+
+  .rakit-alert-success {
+    @apply border-rakit-success/30 bg-rakit-success-subtle;
+  }
+
+  .rakit-alert-warning {
+    @apply border-rakit-warning/30 bg-rakit-warning-subtle;
+  }
+
+  .rakit-alert-danger {
+    @apply border-rakit-danger/30 bg-rakit-danger-subtle;
+  }
+
+  .rakit-alert-info {
+    @apply border-rakit-info/30 bg-rakit-info-subtle;
+  }
+
+  .rakit-loading {
+    @apply inline-flex items-center gap-2 text-sm text-rakit-text-muted;
+  }
+
+  .rakit-spinner {
+    width: 1rem;
+    height: 1rem;
+    flex: none;
+    border: 2px solid color-mix(in oklab, currentColor 28%, transparent);
+    border-top-color: currentColor;
+    border-radius: 9999px;
+    animation: rakit-spin 0.8s linear infinite;
+  }
+
   .rakit-dialog {
     @apply w-[min(32rem,calc(100%-2rem))] rounded-rakit-lg border border-rakit-border bg-rakit-surface p-0 text-rakit-text shadow-rakit-lg backdrop:bg-black/50;
+    position: fixed;
+    inset: 0;
     margin: auto;
     max-height: calc(100vh - 2rem);
     overflow-y: auto;
+  }
+
+  .rakit-dialog-title {
+    @apply text-base font-semibold text-rakit-text;
+  }
+
+  .rakit-dialog-description {
+    @apply mt-1 text-sm leading-6 text-rakit-text-muted;
+  }
+
+  .rakit-dialog-body {
+    @apply px-5 py-4;
+  }
+
+  .rakit-dialog-footer {
+    @apply flex flex-col-reverse gap-2 border-t border-rakit-border bg-rakit-surface-subtle px-5 py-4 sm:flex-row sm:justify-end;
+  }
+
+  .rakit-popover {
+    @apply absolute left-0 top-full z-50 mt-2 min-w-52 rounded-rakit-md border border-rakit-border bg-rakit-surface p-2 text-sm text-rakit-text shadow-rakit-lg;
+  }
+
+  .rakit-pagination {
+    @apply flex flex-wrap items-center gap-1;
+  }
+
+  .rakit-pagination-item {
+    @apply inline-flex min-h-9 min-w-9 items-center justify-center rounded-rakit-sm border border-rakit-border bg-rakit-surface px-3 text-sm font-medium text-rakit-text-muted transition hover:bg-rakit-surface-subtle hover:text-rakit-text;
+  }
+
+  .rakit-pagination-current {
+    @apply border-rakit-brand-200 bg-rakit-brand-subtle text-rakit-brand-700 dark:text-rakit-brand-200;
+  }
+
+  .rakit-pagination-item[aria-disabled="true"] {
+    @apply cursor-not-allowed opacity-50;
+    pointer-events: none;
+  }
+
+  .rakit-pagination-ellipsis {
+    @apply inline-flex min-h-9 min-w-9 items-center justify-center px-1 text-sm text-rakit-text-muted;
+  }
+
+  .rakit-pagination-size {
+    @apply min-h-9 rounded-rakit-sm border border-rakit-border-strong bg-rakit-surface px-2 text-sm text-rakit-text shadow-rakit-sm;
   }
 
   .htmx-indicator {
@@ -172,6 +345,12 @@
   .htmx-request.htmx-indicator {
     opacity: 1;
     visibility: visible;
+  }
+}
+
+@keyframes rakit-spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 
