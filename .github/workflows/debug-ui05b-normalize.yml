@@ -24,10 +24,11 @@ jobs:
         run: |
           sed -i 's/return \[part.strip() for part in raw_value.split(",") if part.strip()\]/return [part for part in raw_value.split(",") if part]/' packages/rakit-web/src/rakit_web/resource_routes.py
           sed -i 's/return "" if filter_.value is True else "not empty"/return ""/' packages/rakit-web/src/rakit_web/resource_routes.py
-          uv run ruff check --fix \
+          sed -i 's/Showing 26–50 of 60/Showing 26\\u201350 of 60/' packages/rakit-web/tests/test_resource_list_ui_maturity.py
+          uv run ruff format \
             packages/rakit-web/src/rakit_web/resource_routes.py \
             packages/rakit-web/tests/test_resource_list_ui_maturity.py
-          uv run ruff format \
+          uv run ruff check --fix \
             packages/rakit-web/src/rakit_web/resource_routes.py \
             packages/rakit-web/tests/test_resource_list_ui_maturity.py
       - name: Commit normalized source when changed
