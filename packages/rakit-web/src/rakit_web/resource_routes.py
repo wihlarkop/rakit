@@ -31,7 +31,7 @@ from rakit_core.query import (
 from rakit_core.resources import ResourceService
 from starlette.datastructures import QueryParams
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import RedirectResponse, Response
 from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 
@@ -40,6 +40,18 @@ from .assets import static_url
 from .icons import render_icon
 
 _PAGINATION_DEFAULTS = OffsetPagination()
+_PAGE_SIZE_CHOICES = (25, 50, 100)
+_FILTER_OPERATOR_LABELS = {
+    FilterOperator.EQ: "equals",
+    FilterOperator.NEQ: "does not equal",
+    FilterOperator.LT: "is less than",
+    FilterOperator.LTE: "is less than or equal to",
+    FilterOperator.GT: "is greater than",
+    FilterOperator.GTE: "is greater than or equal to",
+    FilterOperator.CONTAINS: "contains",
+    FilterOperator.IN: "is one of",
+    FilterOperator.IS_NULL: "is empty",
+}
 
 
 @pass_context
@@ -77,6 +89,10 @@ def _field_value(item: object, field_name: str) -> object:
     if isinstance(item, dict):
         return item.get(field_name)
     return getattr(item, field_name, None)
+
+
+def _display_value(value: object) -> object:
+    return "—" if value is None else value
 
 
 def _identity_values(item: object, identity_fields: Sequence[str]) -> dict[str, int | str]:
@@ -124,13 +140,7 @@ class ResourceBinding:
         return f"{self.definition.path}/{{identity}}"
 
     def resolve_template(self, logical_name: str) -> str:
-        """Resolve a logical name (e.g. ``list.html``) honouring override precedence.
-
-        Candidate order per `select_template`: resource-specific first, then generic.
-        Combined with the loader order (user dirs, then built-in package) this yields:
-        resource-specific user -> generic user -> generic built-in, which matches the
-        design's precedence (the resource-specific built-in tier is normally empty).
-        """
+        """Resolve a logical name (e.g. ``list.html``) honouring override precedence."""
         candidates = [
             f"resources/{self.resource_id}/{logical_name}",
             f"resources/{logical_name}",
@@ -181,11 +191,6 @@ class ResourceBinding:
                 count_policy=count_policy,
             )
         except ValueError as exc:
-            # A malformed query string (bad sort field, out-of-range pagination)
-            # falls back to a default query for this read-only slice; strict
-            # validation-to-HTTP translation is a later task's concern. Filters,
-            # search and count policy are already individually sanitised above,
-            # so they are safe to carry into the fallback.
             if "Contradictory sort field" in str(exc):
                 raise RakitError(
                     code=ErrorCode.VALIDATION_FAILED,
@@ -217,27 +222,29 @@ def _parse_count_policy(value: str | None) -> CountPolicy:
     try:
         return CountPolicy(value.strip().lower())
     except ValueError:
-        # Unknown policy in the URL falls back to the safe default rather than
-        # erroring -- consistent with page/per_page/sort's lenient parsing.
         return CountPolicy.EXACT
 
 
+def _filter_value(operator: FilterOperator, raw_value: str, *, field_name: str) -> object:
+    if operator is FilterOperator.IN:
+        return [part.strip() for part in raw_value.split(",") if part.strip()]
+    if operator is FilterOperator.IS_NULL:
+        normalized_value = raw_value.strip().lower()
+        if normalized_value == "true":
+            return True
+        if normalized_value == "false":
+            return False
+        raise RakitError(
+            code=ErrorCode.VALIDATION_FAILED,
+            message="Invalid filter value",
+            status_code=400,
+            details={"field": field_name, "operator": operator.value},
+        )
+    return raw_value
+
+
 def _parse_filters(params: QueryParams, allowed_fields: set[str]) -> tuple[Filter, ...]:
-    """Parse repeatable ``filter=<field>:<operator>:<value>`` query params.
-
-    Bookmarkable URL contract for 0.1: each filter is a single ``filter`` param
-    whose value is three colon-delimited parts -- the field name, the operator
-    token (one of ``FilterOperator``'s values), and the raw value (which may
-    itself contain colons; only the first two colons are treated as delimiters).
-    The param is repeatable and every filter is AND-combined downstream.
-
-    Special value handling:
-    - ``in``: the value is split on commas into a list.
-    - ``is_null``: the value must be the explicit boolean token ``true`` or ``false``.
-
-    Any filter naming a field outside the whitelist, or using an unknown
-    operator, is silently dropped -- same lenient philosophy as sort parsing.
-    """
+    """Parse validated repeatable ``filter=<field>:<operator>:<value>`` params."""
     filters: list[Filter] = []
     for raw in params.getlist("filter"):
         parts = raw.split(":", 2)
@@ -250,26 +257,36 @@ def _parse_filters(params: QueryParams, allowed_fields: set[str]) -> tuple[Filte
             operator = FilterOperator(operator_token.strip().lower())
         except ValueError:
             continue
-        value: object
-        if operator is FilterOperator.IN:
-            value = [part for part in raw_value.split(",") if part]
-        elif operator is FilterOperator.IS_NULL:
-            normalized_value = raw_value.strip().lower()
-            if normalized_value == "true":
-                value = True
-            elif normalized_value == "false":
-                value = False
-            else:
-                raise RakitError(
-                    code=ErrorCode.VALIDATION_FAILED,
-                    message="Invalid filter value",
-                    status_code=400,
-                    details={"field": field_name, "operator": operator.value},
-                )
-        else:
-            value = raw_value
-        filters.append(Filter(field=field_name, operator=operator, value=value))
+        filters.append(
+            Filter(
+                field=field_name,
+                operator=operator,
+                value=_filter_value(operator, raw_value, field_name=field_name),
+            )
+        )
     return tuple(filters)
+
+
+def _builder_filter(params: QueryParams, allowed_fields: set[str]) -> Filter | None:
+    """Validate the no-JS filter-builder alias without making it canonical state."""
+    field_name = params.get("filter_field")
+    operator_token = params.get("filter_operator")
+    raw_value = params.get("filter_value")
+    if field_name is None and operator_token is None and raw_value is None:
+        return None
+    if field_name is None or operator_token is None or raw_value is None:
+        return None
+    if field_name not in allowed_fields:
+        return None
+    try:
+        operator = FilterOperator(operator_token.strip().lower())
+    except ValueError:
+        return None
+    return Filter(
+        field=field_name,
+        operator=operator,
+        value=_filter_value(operator, raw_value, field_name=field_name),
+    )
 
 
 def _serialize_filter(filter_: Filter) -> str:
@@ -326,7 +343,6 @@ def _validated_query_params(
     explicit_sorting: Sequence[Sort],
 ) -> list[tuple[str, str]]:
     """Serialize only query state that survived resource-policy validation."""
-
     params = [("filter", _serialize_filter(filter_)) for filter_ in query.filters]
     if query.search:
         params.append(("search", query.search))
@@ -337,8 +353,116 @@ def _validated_query_params(
     return params
 
 
+def _resource_url(path: str, params: Sequence[tuple[str, str]]) -> str:
+    return f"{path}?{urlencode(params)}" if params else path
+
+
 def _page_url(path: str, params: Sequence[tuple[str, str]], page: int) -> str:
-    return f"{path}?{urlencode([*params, ('page', str(page))])}"
+    return _resource_url(path, [*params, ("page", str(page))])
+
+
+def _query_without_filters(query: ResourceQuery) -> ResourceQuery:
+    return query.model_copy(update={"filters": ()})
+
+
+def _query_without_search(query: ResourceQuery) -> ResourceQuery:
+    return query.model_copy(update={"search": None})
+
+
+def _display_filter_value(filter_: Filter) -> str:
+    if filter_.operator is FilterOperator.IS_NULL:
+        return "" if filter_.value is True else "not empty"
+    if filter_.operator is FilterOperator.IN:
+        if isinstance(filter_.value, tuple):
+            return ", ".join(str(value) for value in filter_.value)
+        return ""
+    return str(filter_.value)
+
+
+def _filter_presentations(
+    query: ResourceQuery,
+    explicit_sorting: Sequence[Sort],
+    path: str,
+) -> list[dict[str, str]]:
+    presentations: list[dict[str, str]] = []
+    for index, filter_ in enumerate(query.filters):
+        remaining = (*query.filters[:index], *query.filters[index + 1 :])
+        removal_query = query.model_copy(update={"filters": remaining})
+        operator_label = _FILTER_OPERATOR_LABELS[filter_.operator]
+        if filter_.operator is FilterOperator.IS_NULL and filter_.value is False:
+            operator_label = "is not empty"
+        presentations.append(
+            {
+                "field": filter_.field,
+                "operator": filter_.operator.value,
+                "operator_label": operator_label,
+                "value": _display_filter_value(filter_),
+                "serialized": _serialize_filter(filter_),
+                "remove_url": _resource_url(
+                    path,
+                    _validated_query_params(removal_query, explicit_sorting),
+                ),
+            }
+        )
+    return presentations
+
+
+def _filter_operator_options() -> list[dict[str, str]]:
+    return [
+        {"value": operator.value, "label": _FILTER_OPERATOR_LABELS[operator]}
+        for operator in FilterOperator
+    ]
+
+
+def _page_size_options(per_page: int) -> list[dict[str, object]]:
+    values = list(_PAGE_SIZE_CHOICES)
+    if per_page not in values:
+        values.insert(0, per_page)
+    return [
+        {
+            "value": value,
+            "label": f"{value} (custom)" if value not in _PAGE_SIZE_CHOICES else str(value),
+            "selected": value == per_page,
+        }
+        for value in values
+    ]
+
+
+def _numbered_pages(
+    *,
+    total_pages: int,
+    current_page: int,
+    path: str,
+    params: Sequence[tuple[str, str]],
+) -> list[dict[str, object]]:
+    if total_pages < 1 or current_page < 1 or current_page > total_pages:
+        return []
+    if total_pages <= 7:
+        page_numbers = list(range(1, total_pages + 1))
+    else:
+        page_numbers = sorted(
+            {
+                1,
+                total_pages,
+                max(1, current_page - 1),
+                current_page,
+                min(total_pages, current_page + 1),
+            }
+        )
+    items: list[dict[str, object]] = []
+    previous_number: int | None = None
+    for page_number in page_numbers:
+        if previous_number is not None and page_number - previous_number > 1:
+            items.append({"ellipsis": True})
+        items.append(
+            {
+                "label": str(page_number),
+                "href": _page_url(path, params, page_number),
+                "current": page_number == current_page,
+            }
+        )
+        previous_number = page_number
+    return items
 
 
 def _pagination_controls(
@@ -348,14 +472,38 @@ def _pagination_controls(
     *,
     has_previous: bool,
     has_next: bool,
-) -> dict[str, str | int]:
+    total_count: int | None = None,
+    item_count: int = 0,
+) -> dict[str, object]:
     params = _validated_query_params(query, explicit_sorting)
     current_page = query.pagination.page
-    return {
+    context: dict[str, object] = {
         "current_page": current_page,
-        "previous_url": (_page_url(path, params, current_page - 1) if has_previous else ""),
+        "previous_url": _page_url(path, params, current_page - 1) if has_previous else "",
         "next_url": _page_url(path, params, current_page + 1) if has_next else "",
+        "items": [],
+        "total_pages": None,
+        "range_start": None,
+        "range_end": None,
+        "total_count": total_count,
     }
+    if query.count_policy is not CountPolicy.EXACT or total_count is None:
+        return context
+    total_pages = (
+        (total_count + query.pagination.per_page - 1) // query.pagination.per_page
+        if total_count
+        else 0
+    )
+    context["total_pages"] = total_pages
+    context["range_start"] = query.pagination.offset + 1 if item_count else 0
+    context["range_end"] = query.pagination.offset + item_count
+    context["items"] = _numbered_pages(
+        total_pages=total_pages,
+        current_page=current_page,
+        path=path,
+        params=params,
+    )
+    return context
 
 
 def _toggle_explicit_sort(sorting: Sequence[Sort], field_name: str) -> str:
@@ -378,13 +526,7 @@ def _sort_headers(
     explicit_sorting: Sequence[Sort],
     allowed_sort_fields: set[str],
 ) -> list[dict[str, str]]:
-    """Build per-column sort-toggle links for the table header.
-
-    Each link deliberately omits any ``page`` param: changing the sort resets to
-    the first page (a stale page number may not exist in the re-sorted result
-    set). The current free-text search and count policy are preserved so sorting
-    does not silently discard them.
-    """
+    """Build per-column sort-toggle state while preserving validated query state."""
     primary = explicit_sorting[0] if explicit_sorting else None
     explicit_fields = {sort.field for sort in explicit_sorting}
     preserved_params = [("filter", _serialize_filter(filter_)) for filter_ in query.filters]
@@ -398,8 +540,6 @@ def _sort_headers(
         if field_name not in allowed_sort_fields:
             headers.append({"field": field_name, "url": "", "sort_value": "", "aria_sort": "none"})
             continue
-        # Toggle this column in place without discarding the other explicit
-        # user sorts. A newly clicked field is appended to that sequence.
         next_sort = _toggle_explicit_sort(explicit_sorting, field_name)
         params: list[tuple[str, str]] = [("sort", next_sort), *preserved_params]
         aria_sort = "none"
@@ -410,7 +550,7 @@ def _sort_headers(
         headers.append(
             {
                 "field": field_name,
-                "url": f"{path}?{urlencode(params)}",
+                "url": _resource_url(path, params),
                 "sort_value": next_sort,
                 "aria_sort": aria_sort,
             }
@@ -421,10 +561,21 @@ def _sort_headers(
 def build_resource_routes(binding: ResourceBinding) -> list[Route]:
     async def resource_list(request: Request) -> Response:
         query = binding.parse_query(request.query_params)
+        resource_path = _mounted_path(request, binding.definition.path)
+        explicit_sorting = _explicit_sorting(request.query_params.get("sort"), binding.sort_fields)
+        builder_filter = _builder_filter(request.query_params, set(binding.filter_fields))
+        if builder_filter is not None:
+            canonical_query = query.model_copy(update={"filters": (*query.filters, builder_filter)})
+            return RedirectResponse(
+                _resource_url(
+                    resource_path,
+                    _validated_query_params(canonical_query, explicit_sorting),
+                ),
+                status_code=303,
+            )
+
         page = await binding.service.list(query)
         fields = binding.fields
-        resource_path = _mounted_path(request, binding.definition.path)
-
         rows: list[dict[str, object]] = []
         for item in page.items:
             identity_values = _identity_values(item, binding.identity_fields)
@@ -435,9 +586,11 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
                     request,
                     binding.detail_path.replace("{identity}", encoded),
                 )
+            cells = [_field_value(item, field_name) for field_name in fields]
             rows.append(
                 {
-                    "cells": [_field_value(item, field_name) for field_name in fields],
+                    "cells": cells,
+                    "display_cells": [_display_value(value) for value in cells],
                     "detail_url": detail_url,
                 }
             )
@@ -446,14 +599,12 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
         logical_name = (
             table_template if _is_htmx(request) else binding.resolve_template("list.html")
         )
-        explicit_sorting = _explicit_sorting(request.query_params.get("sort"), binding.sort_fields)
         validated_params = _validated_query_params(query, explicit_sorting)
         count_url = _mounted_path(request, binding.count_path)
         if validated_params:
-            # Deferred counts inherit only validated state; rejected raw query
-            # fields are never reflected into generated controls.
-            count_url = f"{count_url}?{urlencode(validated_params)}"
+            count_url = _resource_url(count_url, validated_params)
         filter_values = [_serialize_filter(filter_) for filter_ in query.filters]
+        filter_presentations = _filter_presentations(query, explicit_sorting, resource_path)
         context = {
             "resource": binding.definition,
             "page": page,
@@ -475,12 +626,29 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
                 explicit_sorting,
                 has_previous=page.has_previous,
                 has_next=page.has_next,
+                total_count=page.total_count,
+                item_count=len(page.items),
             ),
             "search_value": query.search or "",
             "search_enabled": bool(binding.search_fields),
+            "clear_search_url": _resource_url(
+                resource_path,
+                _validated_query_params(_query_without_search(query), explicit_sorting),
+            ),
+            "filter_enabled": bool(binding.filter_fields),
+            "filter_fields": binding.filter_fields,
+            "filter_operators": _filter_operator_options(),
             "filter_values": filter_values,
+            "filter_presentations": filter_presentations,
+            "active_filter_count": len(filter_presentations),
+            "clear_filters_url": _resource_url(
+                resource_path,
+                _validated_query_params(_query_without_filters(query), explicit_sorting),
+            ),
+            "has_active_query": bool(query.search or query.filters),
             "sort_value": _sort_parameter(explicit_sorting),
             "per_page_value": str(query.pagination.per_page),
+            "page_size_options": _page_size_options(query.pagination.per_page),
             "table_template": table_template,
         }
         return binding.templates.TemplateResponse(
@@ -531,9 +699,6 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
             headers={"Cache-Control": "no-store"},
         )
 
-    # `_count` is registered before the detail route so a request for
-    # `{path}/_count` matches the count handler rather than being captured by
-    # the detail route's `{identity}` path parameter.
     return [
         Route(
             binding.definition.path,
