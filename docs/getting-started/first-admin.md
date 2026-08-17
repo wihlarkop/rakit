@@ -42,7 +42,8 @@ class ProductAdmin(ResourceAdmin):
 
 admin = Admin(title="Workshop", debug=True)
 admin.register(ProductAdmin)
-assert admin.compile().admin_id == "admin"
+assert admin.config.admin_id == "admin"
+assert admin.compile().routes
 ```
 
 Save the application as `myapp.py`, then run:
