@@ -1,9 +1,10 @@
-<nav aria-label="Admin navigation" class="mb-3">
+<nav data-rakit-breadcrumb="page" aria-label="Breadcrumb" class="mb-3 flex items-center gap-1.5 text-sm text-rakit-text-muted">
   <a
     href="{{ request.scope.get('root_path', '').rstrip('/') }}/"
-    class="inline-flex items-center gap-2 text-sm font-medium text-blue-700"
-  >
-    <span aria-hidden="true">←</span>
-    Dashboard
-  </a>
+    class="font-medium transition hover:text-rakit-text"
+  >Dashboard</a>
+  <span data-rakit-breadcrumb-separator aria-hidden="true" class="text-rakit-text-subtle">
+    {{ rakit_icon("chevron-right", class_name="size-4") }}
+  </span>
+  <span aria-current="page">{{ page.label if page else binding_label }}</span>
 </nav>

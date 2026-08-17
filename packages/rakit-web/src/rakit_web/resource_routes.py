@@ -37,6 +37,7 @@ from starlette.templating import Jinja2Templates
 
 from ._paths import mounted_path as _mounted_path
 from .assets import static_url
+from .icons import render_icon
 
 _PAGINATION_DEFAULTS = OffsetPagination()
 
@@ -66,7 +67,9 @@ def build_templates(template_dirs: Sequence[Path]) -> Jinja2Templates:
         loader=ChoiceLoader(loaders),
         autoescape=select_autoescape(),
     )
-    cast(dict[str, Any], environment.globals)["static_url"] = _template_static_url
+    globals_ = cast(dict[str, Any], environment.globals)
+    globals_["static_url"] = _template_static_url
+    globals_["rakit_icon"] = render_icon
     return Jinja2Templates(env=environment)
 
 

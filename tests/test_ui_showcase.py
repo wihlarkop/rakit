@@ -1,7 +1,17 @@
+import importlib
+import re
+
 from httpx import Response
+from rakit import Admin
 from rakit.core import IdentityCodec, RecordIdentity
 from starlette.testclient import TestClient
 from starlette.types import ASGIApp
+
+
+def _fresh_showcase_admin() -> Admin:
+    from examples.ui_showcase import main as showcase
+
+    return importlib.reload(showcase).admin
 
 
 def _showcase_client(app: ASGIApp) -> TestClient:
@@ -28,8 +38,7 @@ def _login(client: TestClient, *, password: str = "demo-password") -> Response:
 
 
 def test_ui_showcase_exposes_realistic_application_and_ui_lab() -> None:
-    from examples.ui_showcase.main import admin
-
+    admin = _fresh_showcase_admin()
     app = admin.asgi()
     with _showcase_client(app) as client:
         login = _login(client)
@@ -85,8 +94,7 @@ def test_ui_showcase_exposes_realistic_application_and_ui_lab() -> None:
 
 
 def test_ui_showcase_uses_dashboard_shell_with_mobile_drawer() -> None:
-    from examples.ui_showcase.main import admin
-
+    admin = _fresh_showcase_admin()
     app = admin.asgi()
     with _showcase_client(app) as client:
         login = _login(client)
@@ -113,9 +121,53 @@ def test_ui_showcase_uses_dashboard_shell_with_mobile_drawer() -> None:
     assert 'aria-current="page"' in orders.text
 
 
-def test_ui_showcase_exposes_record_confirmation_action_and_relationship_contracts() -> None:
-    from examples.ui_showcase.main import admin
+def test_ui_showcase_uses_breadcrumbs_collapsible_sidebar_and_entity_detail_header() -> None:
+    admin = _fresh_showcase_admin()
+    app = admin.asgi()
+    product_identity = IdentityCodec().encode(RecordIdentity(values={"id": "PRD-101"}))
+    with _showcase_client(app) as client:
+        login = _login(client)
+        assert login.status_code == 303
+        dashboard = client.get("/")
+        ui_lab = client.get("/ui-lab")
+        product = client.get(f"/products/{product_identity}")
 
+        shell_match = re.search(
+            r'<script src="([^"]*rakit-shell\.[a-f0-9]{8}\.js)"', dashboard.text
+        )
+        assert shell_match is not None
+        shell_script = client.get(shell_match.group(1))
+
+    assert dashboard.status_code == 200
+    assert "data-rakit-desktop-navigation-toggle" in dashboard.text
+    assert "data-rakit-sidebar-expanded-icon" in dashboard.text
+    assert "data-rakit-sidebar-collapsed-icon" in dashboard.text
+    assert 'aria-label="Collapse sidebar"' in dashboard.text
+
+    assert shell_script.status_code == 200
+    assert '"rakit.sidebar.collapsed"' in shell_script.text
+    assert "data-rakit-desktop-navigation-collapsed" in shell_script.text
+    assert "localStorage.setItem" in shell_script.text
+
+    assert ui_lab.status_code == 200
+    assert 'data-rakit-breadcrumb="page"' in ui_lab.text
+    assert "data-rakit-breadcrumb-separator" in ui_lab.text
+    assert 'aria-current="page">UI Lab</span>' in ui_lab.text
+
+    assert product.status_code == 200
+    assert 'data-rakit-breadcrumb="resource-detail"' in product.text
+    assert 'aria-current="page">PRD-101</span>' in product.text
+    expected_record_title = (
+        "data-rakit-record-title>Precision mechanical keyboard with "
+        "low-profile tactile switches</h1>"
+    )
+    assert expected_record_title in product.text
+    assert "data-rakit-record-context>Product · PRD-101</p>" in product.text
+    assert ">Product</h1>" not in product.text
+
+
+def test_ui_showcase_exposes_record_confirmation_action_and_relationship_contracts() -> None:
+    admin = _fresh_showcase_admin()
     app = admin.asgi()
     assert admin.compiled is not None
     identity = IdentityCodec().encode(RecordIdentity(values={"id": "ORD-1080"}))
@@ -138,8 +190,7 @@ def test_ui_showcase_exposes_record_confirmation_action_and_relationship_contrac
 
 
 def test_ui_showcase_exposes_invalid_login_state() -> None:
-    from examples.ui_showcase.main import admin
-
+    admin = _fresh_showcase_admin()
     app = admin.asgi()
     with _showcase_client(app) as client:
         response = _login(client, password="wrong-password")
@@ -149,8 +200,7 @@ def test_ui_showcase_exposes_invalid_login_state() -> None:
 
 
 def test_ui_showcase_login_page_does_not_render_admin_shell() -> None:
-    from examples.ui_showcase.main import admin
-
+    admin = _fresh_showcase_admin()
     app = admin.asgi()
     with _showcase_client(app) as client:
         response = client.get("/auth/login")
@@ -162,8 +212,7 @@ def test_ui_showcase_login_page_does_not_render_admin_shell() -> None:
 
 
 def test_ui_showcase_login_csrf_survives_browser_favicon_redirect() -> None:
-    from examples.ui_showcase.main import admin
-
+    admin = _fresh_showcase_admin()
     app = admin.asgi()
     with _showcase_client(app) as client:
         login_page = client.get("/auth/login")

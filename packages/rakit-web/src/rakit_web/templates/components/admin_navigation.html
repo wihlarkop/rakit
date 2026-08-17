@@ -3,30 +3,35 @@
   {% set navigation = provider(request) %}
   <aside
     data-rakit-desktop-navigation
-    class="hidden min-h-screen w-64 shrink-0 border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 lg:sticky lg:top-0 lg:flex lg:h-screen lg:flex-col"
+    class="hidden min-h-screen w-64 shrink-0 border-r border-rakit-border bg-rakit-surface lg:sticky lg:top-0 lg:flex lg:h-screen lg:flex-col"
   >
-    <div class="flex min-h-16 items-center border-b border-slate-200 px-5 dark:border-slate-800">
-      <a href="{{ navigation.dashboard.path }}" class="min-w-0 flex-1 truncate text-base font-semibold tracking-tight text-slate-950 dark:text-white">
-        {{ navigation.title }}
-      </a>
-      <span class="ml-3 rounded border border-slate-200 px-2 py-0.5 text-xs font-medium text-slate-500 dark:border-slate-700 dark:text-slate-400">Admin</span>
+    <div class="flex min-h-16 items-center gap-2 border-b border-rakit-border px-3">
+      <div data-rakit-sidebar-brand class="flex min-w-0 flex-1 items-center pl-2">
+        <a href="{{ navigation.dashboard.path }}" class="min-w-0 flex-1 truncate text-base font-semibold tracking-tight text-rakit-text">
+          {{ navigation.title }}
+        </a>
+        <span class="ml-3 rounded-rakit-sm border border-rakit-border px-2 py-0.5 text-xs font-medium text-rakit-text-muted">Admin</span>
+      </div>
+      <button
+        type="button"
+        data-rakit-desktop-navigation-toggle
+        aria-expanded="true"
+        aria-label="Collapse sidebar"
+        class="inline-flex size-10 shrink-0 items-center justify-center rounded-rakit-sm text-rakit-text-muted transition hover:bg-rakit-surface-subtle hover:text-rakit-text"
+      >
+        <span data-rakit-sidebar-expanded-icon>{{ rakit_icon("panel-left-close", class_name="size-5") }}</span>
+        <span data-rakit-sidebar-collapsed-icon hidden>{{ rakit_icon("panel-left-open", class_name="size-5") }}</span>
+      </button>
     </div>
 
     <nav class="min-h-0 flex-1 overflow-y-auto px-3 py-5" aria-label="Primary navigation">
       {% include "components/admin_navigation_items.html" %}
     </nav>
 
-    <div class="border-t border-slate-200 p-4 dark:border-slate-800">
-      <label class="mb-1.5 block text-xs font-medium text-slate-500 dark:text-slate-400" for="rakit-theme-select-desktop">Theme</label>
-      <select
-        id="rakit-theme-select-desktop"
-        data-rakit-theme-select
-        class="rakit-select"
-      >
-        <option value="system">System</option>
-        <option value="light">Light</option>
-        <option value="dark">Dark</option>
-      </select>
+    <div class="border-t border-rakit-border p-4">
+      <p data-rakit-sidebar-section-label class="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-rakit-text-muted">Appearance</p>
+      {% set theme_control_id = "rakit-theme-desktop" %}
+      {% include "components/theme_control.html" %}
     </div>
   </aside>
 {% endif %}

@@ -7,55 +7,206 @@
 
 @theme {
   --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  --color-rakit-brand-50: oklch(0.97 0.014 285);
+  --color-rakit-brand-100: oklch(0.94 0.028 285);
+  --color-rakit-brand-200: oklch(0.89 0.052 285);
+  --color-rakit-brand-300: oklch(0.81 0.088 285);
+  --color-rakit-brand-400: oklch(0.71 0.14 285);
+  --color-rakit-brand-500: oklch(0.63 0.18 285);
+  --color-rakit-brand-600: oklch(0.56 0.19 285);
+  --color-rakit-brand-700: oklch(0.49 0.18 285);
+  --color-rakit-brand-800: oklch(0.42 0.15 285);
+  --color-rakit-brand-900: oklch(0.36 0.12 285);
+  --color-rakit-brand-950: oklch(0.25 0.09 285);
+
+  --color-rakit-bg: oklch(0.985 0.006 285);
+  --color-rakit-surface: oklch(1 0 0);
+  --color-rakit-surface-subtle: oklch(0.965 0.008 285);
+  --color-rakit-surface-raised: oklch(0.995 0.003 285);
+  --color-rakit-border: oklch(0.90 0.012 285);
+  --color-rakit-border-strong: oklch(0.80 0.02 285);
+  --color-rakit-text: oklch(0.22 0.025 285);
+  --color-rakit-text-muted: oklch(0.50 0.025 285);
+  --color-rakit-text-subtle: oklch(0.66 0.018 285);
+  --color-rakit-brand-subtle: oklch(0.955 0.03 285);
+
+  --color-rakit-success: oklch(0.58 0.15 150);
+  --color-rakit-success-subtle: oklch(0.95 0.045 150);
+  --color-rakit-warning: oklch(0.67 0.15 75);
+  --color-rakit-warning-subtle: oklch(0.96 0.05 82);
+  --color-rakit-danger: oklch(0.58 0.19 25);
+  --color-rakit-danger-subtle: oklch(0.95 0.045 25);
+  --color-rakit-info: oklch(0.60 0.15 245);
+  --color-rakit-info-subtle: oklch(0.95 0.04 245);
+  --color-rakit-focus: oklch(0.56 0.19 285);
+
+  --radius-rakit-sm: 0.5rem;
+  --radius-rakit-md: 0.75rem;
+  --radius-rakit-lg: 1rem;
+  --shadow-rakit-sm: 0 1px 2px rgb(15 23 42 / 0.06), 0 1px 1px rgb(15 23 42 / 0.04);
+  --shadow-rakit-md: 0 10px 24px rgb(15 23 42 / 0.10), 0 2px 6px rgb(15 23 42 / 0.06);
+  --shadow-rakit-lg: 0 20px 48px rgb(15 23 42 / 0.16), 0 4px 12px rgb(15 23 42 / 0.08);
 }
 
 @layer base {
-  :root { color-scheme: light; }
-  :root[data-theme="dark"] { color-scheme: dark; }
-  body { @apply m-0 bg-slate-50 font-sans text-slate-900 antialiased; }
-  body[data-rakit-mobile-navigation-open] { overflow: hidden; }
-  button, input, select { font: inherit; }
-  button:not(:disabled), summary { cursor: pointer; }
-  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible {
-    @apply outline-2 outline-offset-2 outline-blue-600;
+  :root {
+    color-scheme: light;
   }
-  [data-theme="dark"] body { @apply bg-slate-950 text-slate-100; }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --color-rakit-bg: oklch(0.155 0.018 285);
+    --color-rakit-surface: oklch(0.195 0.02 285);
+    --color-rakit-surface-subtle: oklch(0.235 0.022 285);
+    --color-rakit-surface-raised: oklch(0.215 0.022 285);
+    --color-rakit-border: oklch(0.31 0.025 285);
+    --color-rakit-border-strong: oklch(0.42 0.03 285);
+    --color-rakit-text: oklch(0.94 0.012 285);
+    --color-rakit-text-muted: oklch(0.69 0.024 285);
+    --color-rakit-text-subtle: oklch(0.54 0.022 285);
+    --color-rakit-brand-subtle: oklch(0.27 0.055 285);
+    --color-rakit-success: oklch(0.72 0.14 150);
+    --color-rakit-success-subtle: oklch(0.27 0.055 150);
+    --color-rakit-warning: oklch(0.80 0.14 82);
+    --color-rakit-warning-subtle: oklch(0.29 0.055 82);
+    --color-rakit-danger: oklch(0.72 0.17 25);
+    --color-rakit-danger-subtle: oklch(0.28 0.06 25);
+    --color-rakit-info: oklch(0.72 0.13 245);
+    --color-rakit-info-subtle: oklch(0.27 0.05 245);
+    --color-rakit-focus: oklch(0.72 0.14 285);
+  }
+
+  body {
+    @apply m-0 bg-rakit-bg font-sans text-rakit-text antialiased;
+  }
+
+  body[data-rakit-mobile-navigation-open] {
+    overflow: hidden;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+
+  button:not(:disabled),
+  summary {
+    cursor: pointer;
+  }
+
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  summary:focus-visible {
+    @apply outline-2 outline-offset-2 outline-rakit-focus;
+  }
 }
 
 @layer components {
-  .rakit-button { @apply inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-transparent bg-blue-700 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50; }
-  .rakit-button-secondary { @apply border-slate-300 bg-white text-slate-700 hover:bg-slate-50; }
-  .rakit-button-quiet { @apply min-h-8 border-transparent bg-transparent px-2 text-slate-600 shadow-none hover:bg-slate-100 hover:text-slate-900; }
-  .rakit-button-danger { @apply border-red-700 bg-red-700 text-white hover:bg-red-800; }
-  .rakit-input { @apply block min-h-9 w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 shadow-xs placeholder:text-slate-400 focus:border-blue-600; }
-  .rakit-select { @apply block min-h-9 w-full appearance-auto rounded-md border border-slate-300 bg-white px-3 py-1.5 pr-8 text-sm text-slate-900 shadow-xs focus:border-blue-600; }
-  .rakit-panel { @apply overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm; }
-  .rakit-panel-header { @apply flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3; }
-  .rakit-panel-body { @apply p-4; }
-  .rakit-error { @apply mt-1 text-sm text-red-700; }
-  .rakit-chip { @apply inline-flex min-h-7 items-center gap-1 rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-sm font-medium leading-5 text-slate-700; }
-  .rakit-chip-relationship { @apply rounded-lg; }
-  .rakit-dialog { @apply w-[min(32rem,calc(100%-2rem))] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-2xl backdrop:bg-slate-950/40; margin: auto; max-height: calc(100vh - 2rem); overflow-y: auto; }
+  .rakit-button {
+    @apply inline-flex min-h-9 items-center justify-center gap-2 rounded-rakit-sm border border-transparent bg-rakit-brand-600 px-3 py-1.5 text-sm font-medium text-white shadow-rakit-sm transition hover:bg-rakit-brand-700 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .rakit-button-secondary {
+    @apply border-rakit-border-strong bg-rakit-surface text-rakit-text hover:bg-rakit-surface-subtle;
+  }
+
+  .rakit-button-quiet {
+    @apply min-h-8 border-transparent bg-transparent px-2 text-rakit-text-muted shadow-none hover:bg-rakit-surface-subtle hover:text-rakit-text;
+  }
+
+  .rakit-button-danger {
+    @apply border-rakit-danger bg-rakit-danger text-white hover:brightness-90;
+  }
+
+  .rakit-input {
+    @apply block min-h-9 w-full rounded-rakit-sm border border-rakit-border-strong bg-rakit-surface px-3 py-1.5 text-sm text-rakit-text shadow-rakit-sm placeholder:text-rakit-text-muted focus:border-rakit-focus;
+  }
+
+  .rakit-select {
+    @apply block min-h-9 w-full appearance-auto rounded-rakit-sm border border-rakit-border-strong bg-rakit-surface px-3 py-1.5 pr-8 text-sm text-rakit-text shadow-rakit-sm focus:border-rakit-focus;
+  }
+
+  .rakit-panel {
+    @apply overflow-hidden rounded-rakit-md border border-rakit-border bg-rakit-surface shadow-rakit-sm;
+  }
+
+  .rakit-panel-header {
+    @apply flex flex-wrap items-center justify-between gap-3 border-b border-rakit-border bg-rakit-surface-subtle px-4 py-3;
+  }
+
+  .rakit-panel-body {
+    @apply p-4;
+  }
+
+  .rakit-error {
+    @apply mt-1 text-sm text-rakit-danger;
+  }
+
+  .rakit-chip {
+    @apply inline-flex min-h-7 items-center gap-1 rounded-full border border-rakit-border bg-rakit-surface-subtle px-3 py-1 text-sm font-medium leading-5 text-rakit-text-muted;
+  }
+
+  .rakit-chip-relationship {
+    @apply rounded-rakit-sm;
+  }
+
+  .rakit-dialog {
+    @apply w-[min(32rem,calc(100%-2rem))] rounded-rakit-lg border border-rakit-border bg-rakit-surface p-0 text-rakit-text shadow-rakit-lg backdrop:bg-black/50;
+    margin: auto;
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+  }
 
   .htmx-indicator {
     opacity: 0;
     visibility: hidden;
   }
+
   .htmx-request .htmx-indicator,
   .htmx-request.htmx-indicator {
     opacity: 1;
     visibility: visible;
   }
+}
 
-  [data-theme="dark"] .rakit-button-secondary { @apply border-slate-600 bg-slate-900 text-slate-200 hover:bg-slate-800; }
-  [data-theme="dark"] .rakit-button-quiet { @apply text-slate-300 hover:bg-slate-800 hover:text-white; }
-  [data-theme="dark"] .rakit-input,
-  [data-theme="dark"] .rakit-select { @apply border-slate-700 bg-slate-900 text-slate-100 placeholder:text-slate-500 focus:border-blue-400; }
-  [data-theme="dark"] .rakit-panel { @apply border-slate-800 bg-slate-900; }
-  [data-theme="dark"] .rakit-panel-header { @apply border-slate-800 bg-slate-900; }
-  [data-theme="dark"] .rakit-error { @apply text-red-300; }
-  [data-theme="dark"] .rakit-chip { @apply border-slate-700 bg-slate-800 text-slate-200; }
-  [data-theme="dark"] .rakit-dialog { @apply border-slate-700 bg-slate-900 text-slate-100 backdrop:bg-black/60; }
+[data-rakit-desktop-navigation] {
+  transition: width 180ms ease;
+}
+
+[data-rakit-desktop-navigation][data-rakit-desktop-navigation-collapsed] {
+  width: 4.5rem;
+}
+
+[data-rakit-desktop-navigation][data-rakit-desktop-navigation-collapsed] [data-rakit-sidebar-brand],
+[data-rakit-desktop-navigation][data-rakit-desktop-navigation-collapsed] [data-rakit-navigation-label],
+[data-rakit-desktop-navigation][data-rakit-desktop-navigation-collapsed] [data-rakit-sidebar-section-label],
+[data-rakit-desktop-navigation][data-rakit-desktop-navigation-collapsed] [data-rakit-theme-label],
+[data-rakit-desktop-navigation][data-rakit-desktop-navigation-collapsed] [data-rakit-theme-chevron] {
+  display: none;
+}
+
+[data-rakit-desktop-navigation][data-rakit-desktop-navigation-collapsed] a[data-rakit-navigation-icon] {
+  justify-content: center;
+}
+
+[data-rakit-desktop-navigation][data-rakit-desktop-navigation-collapsed] [data-rakit-theme-trigger] {
+  width: 2.5rem;
+  margin-inline: auto;
+  padding-inline: 0;
+  justify-content: center;
+}
+
+[data-rakit-desktop-navigation][data-rakit-desktop-navigation-collapsed] [data-rakit-theme-menu] {
+  left: calc(100% + 0.5rem);
+  bottom: 0;
+  width: 11rem;
+  margin-bottom: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {
