@@ -1,9 +1,9 @@
+import re
 from importlib.resources import files
 
 import httpx
 import pytest
 from rakit import Admin
-
 from rakit_web.resource_routes import build_templates
 
 
@@ -80,7 +80,7 @@ async def test_shell_uses_icon_navigation_and_accessible_theme_popovers() -> Non
 
     assert response.status_code == 200
     assert response.text.count("data-rakit-theme-control") == 2
-    assert response.text.count("data-rakit-theme-trigger") == 2
+    assert len(re.findall(r"\sdata-rakit-theme-trigger(?:\s|>)", response.text)) == 2
     assert response.text.count('aria-haspopup="menu"') == 2
     assert response.text.count("data-rakit-theme-menu") == 2
     assert response.text.count('data-rakit-theme-option="system"') == 2
