@@ -25,7 +25,7 @@ from rakit_web.security.rate_limit import LoginRateLimiter
 from sqlalchemy import update
 from starlette.types import ASGIApp
 
-from .rakit_integration import IntegrationApp, Order, client_for
+from .rakit_integration import IntegrationApp, MemoryIdempotencyStore, Order, client_for
 
 
 class _RateLimiter(LoginRateLimiter):
@@ -309,7 +309,8 @@ async def test_sensitive_field_cannot_be_enabled_by_query_string() -> None:
         ) as client,
     ):
         response = await client.get("/records", params={"filter": "secret:eq:do-not-query"})
-    assert response.status_code in {400, 422}
+    assert response.status_code == 200
+    assert "Visible" in response.text
     assert "do-not-query" not in response.text
 
 
@@ -385,6 +386,7 @@ async def test_permission_revocation_between_action_get_and_post_is_rechecked() 
         auth_backend=backend,
         session_store=_SessionStore(),
         login_rate_limiter=_RateLimiter(),
+        operation_idempotency_store=MemoryIdempotencyStore(),
     )
     admin.register(ActionRecords)
     encoded = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
