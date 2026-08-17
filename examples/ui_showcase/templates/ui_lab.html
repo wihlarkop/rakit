@@ -125,8 +125,8 @@
     </div>
   </section>
 
-  <section class="rakit-panel">
-    <header class="rakit-panel-header"><h2 class="text-sm font-semibold text-rakit-text">Dialog and popover</h2></header>
+  <section class="rakit-panel overflow-visible">
+    <header class="rakit-panel-header rounded-t-rakit-md"><h2 class="text-sm font-semibold text-rakit-text">Dialog and popover</h2></header>
     <div class="rakit-panel-body flex flex-wrap items-start gap-3">
       {{ button("Open dialog", variant="secondary", attrs='data-rakit-dialog-trigger aria-controls="ui-lab-dialog"') }}
       <details class="relative inline-block">
@@ -145,7 +145,7 @@
 
   <dialog
     id="ui-lab-dialog"
-    class="rakit-dialog"
+    class="rakit-dialog fixed inset-0 m-auto"
     data-rakit-dialog
     data-rakit-dialog-backdrop-close
     aria-labelledby="ui-lab-dialog-title"
@@ -182,7 +182,10 @@
       <div id="ui-lab-pagination">{{ pagination(demo_pages, aria_label="UI Lab pagination example") }}</div>
       <div class="flex flex-wrap items-center gap-2">
         <label class="text-sm font-medium text-rakit-text" for="ui-lab-page-size">Rows per page</label>
-        <select class="rakit-pagination-size" id="ui-lab-page-size"><option>25</option><option>50</option><option>100</option></select>
+        <span class="relative inline-flex">
+          <select class="rakit-pagination-size appearance-none pl-3 pr-9" id="ui-lab-page-size"><option>25</option><option>50</option><option>100</option></select>
+          {{ rakit_icon("chevron-down", class_name="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-rakit-text-muted") }}
+        </span>
         <p class="text-sm text-rakit-text-muted">This is presentation-only in UI-04; resource query behavior lands in UI-05.</p>
       </div>
     </div>
