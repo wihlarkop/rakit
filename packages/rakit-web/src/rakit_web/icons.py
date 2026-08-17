@@ -13,6 +13,7 @@ from markupsafe import Markup
 _ICON_BODY: dict[str, str] = {
     "check": '<path d="M20 6 9 17l-5-5" />',
     "chevron-down": '<path d="m6 9 6 6 6-6" />',
+    "chevron-right": '<path d="m9 18 6-6-6-6" />',
     "database": (
         '<ellipse cx="12" cy="5" rx="9" ry="3" />'
         '<path d="M3 5V19A9 3 0 0 0 21 19V5" />'
@@ -39,6 +40,16 @@ _ICON_BODY: dict[str, str] = {
     "moon": (
         '<path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803'
         'a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401" />'
+    ),
+    "panel-left-close": (
+        '<rect width="18" height="18" x="3" y="3" rx="2" />'
+        '<path d="M9 3v18" />'
+        '<path d="m16 15-3-3 3-3" />'
+    ),
+    "panel-left-open": (
+        '<rect width="18" height="18" x="3" y="3" rx="2" />'
+        '<path d="M9 3v18" />'
+        '<path d="m14 9 3 3-3 3" />'
     ),
     "sun": (
         '<circle cx="12" cy="12" r="4" />'
