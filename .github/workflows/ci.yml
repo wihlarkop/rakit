@@ -46,18 +46,6 @@ jobs:
       - name: Sync latest allowed dependencies
         if: matrix.mode == 'latest'
         run: uv sync --all-packages --dev --upgrade
-      - name: List AnyIO-marked test files
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          for root in (Path("tests"), Path("packages")):
-              for path in sorted(root.rglob("*.py")):
-                  text = path.read_text(encoding="utf-8")
-                  if "pytest.mark.anyio" in text or "mark.anyio" in text:
-                      print(path.as_posix())
-          PY
       - name: Run test suite without re-syncing
         run: uv run --no-sync pytest -q --tb=short --maxfail=5
 
