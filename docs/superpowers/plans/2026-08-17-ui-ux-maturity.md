@@ -35,18 +35,18 @@
 - No tag, GitHub Release, PyPI, or TestPyPI action in this program.
 - Keep the approved design spec and this implementation plan in the repo during implementation. Delete both only in UI-08 after the maintainer has saved the pre-implementation copies supplied in chat.
 
-## PR Sequence
+## PR Sequence and Ownership
 
-1. `ui-01-showcase-baseline`
-2. `ui-02-design-tokens`
-3. `ui-03-shell-theme-icons`
-4. `ui-04-core-components`
-5. `ui-05-resource-experience`
-6. `ui-06-advanced-operations`
-7. `ui-07-responsive-a11y-hardening`
-8. `ui-08-final-polish`
+1. `ui-01-showcase-baseline` — realistic showcase + `/ui-lab`, no redesign yet.
+2. `ui-02-design-tokens` — semantic colors, typography hierarchy, spacing/page rhythm, radius/elevation, light/dark foundation.
+3. `ui-03-shell-theme-icons` — shell, desktop/mobile navigation, Lucide icon primitive, icon theme popover.
+4. `ui-04-core-components` — reusable controls, statuses, feedback, dialogs/popovers, pagination/loading.
+5. `ui-05-resource-experience` — **dashboard home + resource list/detail + search/filter + forms/delete**.
+6. `ui-06-advanced-operations` — **actions/bulk/relationships/uploads + auth/session surfaces + custom pages**.
+7. `ui-07-responsive-a11y-hardening` — responsive, keyboard, contrast, motion, overflow, UX copy, accessibility.
+8. `ui-08-final-polish` — final Impeccable review, final matrix, planning-doc cleanup.
 
-Merge each PR before creating the next branch.
+Merge each PR before creating the next branch. The bold ownership above is deliberate: dashboard is completed in UI-05, and auth/session presentation is completed in UI-06 so neither surface is implicitly left for “final polish.”
 
 ---
 
@@ -59,7 +59,7 @@ Merge each PR before creating the next branch.
 - `packages/rakit-web/src/rakit_web/static/theme.js` — early theme resolution/persistence.
 - `packages/rakit-web/src/rakit_web/static/rakit-ui.js` — lightweight UI interaction helpers.
 - `packages/rakit-web/src/rakit_web/assets.py` — static serving.
-- `package.json` — `tailwindcss` and `@tailwindcss/cli` pinned at `4.1.18`; `css:build` is the authoritative build command.
+- `package.json` — Tailwind 4.1.18 build/watch scripts.
 
 ### Shared templates
 
@@ -69,8 +69,10 @@ Merge each PR before creating the next branch.
 - `packages/rakit-web/src/rakit_web/templates/components/admin_mobile_navigation.html`
 - `packages/rakit-web/src/rakit_web/templates/components/dashboard_navigation.html`
 
-### Resource / form / operation templates
+### Dashboard / resource / form / operation templates
 
+- `packages/rakit-web/src/rakit_web/templates/dashboard/index.html`
+- `packages/rakit-web/src/rakit_web/templates/dashboard/_widget.html`
 - `packages/rakit-web/src/rakit_web/templates/resources/list.html`
 - `packages/rakit-web/src/rakit_web/templates/resources/_table.html`
 - `packages/rakit-web/src/rakit_web/templates/resources/_count.html`
@@ -91,12 +93,11 @@ Merge each PR before creating the next branch.
 - `packages/rakit-web/src/rakit_web/templates/relationships/preview_confirm.html`
 - `packages/rakit-web/src/rakit_web/templates/relationships/preview_dialog.html`
 - `packages/rakit-web/src/rakit_web/templates/auth/login.html`
-- templates under `packages/rakit-web/src/rakit_web/templates/dashboard/`
 - templates under `packages/rakit-web/src/rakit_web/templates/pages/`
 
 ### Runtime boundary
 
-Pure visual decisions stay out of Python runtime code. The only planned runtime-level UI addition is the icon helper registration in `packages/rakit-web/src/rakit_web/resource_routes.py::build_templates()`. Other runtime files may change only when a failing semantic test demonstrates missing presentation data; that change must remain local to the relevant PR and preserve current HTTP/security behavior.
+Pure visual choices stay out of Python runtime code. The one pre-planned runtime UI addition is registering the icon helper in `packages/rakit-web/src/rakit_web/resource_routes.py::build_templates()`. Other runtime files change only when a focused failing semantic test proves a template lacks data that cannot be derived safely in Jinja; those changes must preserve HTTP/security behavior.
 
 ### New focused UI tests
 
@@ -105,10 +106,12 @@ Pure visual decisions stay out of Python runtime code. The only planned runtime-
 - `packages/rakit-web/tests/test_icons.py`
 - `packages/rakit-web/tests/test_theme_ui.py`
 - `packages/rakit-web/tests/test_ui_primitives.py`
+- `packages/rakit-web/tests/test_dashboard_ui_maturity.py`
 - `packages/rakit-web/tests/test_resource_ui_maturity.py`
 - `packages/rakit-web/tests/test_advanced_ui_maturity.py`
+- `packages/rakit-web/tests/test_auth_ui_maturity.py`
 
-Existing behavior suites remain authoritative, especially `test_assets.py`, `test_accessibility_contracts.py`, `test_dashboard_runtime.py`, `test_bulk_list_ui.py`, `test_actions.py`, and `test_bulk_actions.py`.
+Existing behavior suites remain authoritative, especially `test_assets.py`, `test_accessibility_contracts.py`, `test_dashboard_runtime.py`, `test_bulk_list_ui.py`, `test_actions.py`, `test_bulk_actions.py`, and auth enforcement tests.
 
 ---
 
@@ -197,16 +200,11 @@ Document local URL, demo credentials, `/ui-lab`, and explicitly state that the e
 uv run pytest tests/test_dashboard_example.py tests/test_ui_showcase.py -q
 ```
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 8: Commit and run the PR gate**
 
 ```powershell
 git add examples/ui_showcase tests/test_ui_showcase.py
 git commit -m "feat(examples): add UI showcase baseline"
-```
-
-- [ ] **Step 9: Run the PR gate**
-
-```powershell
 uv run ruff format --check .
 uv run ruff check .
 uv run ty check
@@ -218,9 +216,9 @@ git status --short
 
 ---
 
-# UI-02 — Tailwind Design Tokens and Color Foundation
+# UI-02 — Tailwind Design Tokens, Typography, Spacing, and Color Foundation
 
-**Goal:** Establish semantic Tailwind v4 tokens and calibrated light/dark color foundations without restructuring interactions.
+**Goal:** Establish semantic Tailwind v4 tokens plus the shared typography/spacing rhythm used by every later UI PR, with calibrated light/dark foundations and no interaction restructuring.
 
 **Files:**
 - Modify `packages/rakit-web/src/rakit_web/assets/rakit.css`
@@ -230,7 +228,7 @@ git status --short
 - Create `packages/rakit-web/tests/test_ui_tokens.py`
 - Keep `packages/rakit-web/tests/test_assets.py` and `test_accessibility_contracts.py` green
 
-**Produces:** semantic token families for brand, background, surface, border, text, focus, semantic states, radius, and elevation while preserving existing `.rakit-*` primitive class names.
+**Produces:** semantic token families for brand, background, surface, border, text, focus, status, typography, radius, elevation, and reusable spacing/page rhythm while preserving existing `.rakit-*` primitive names.
 
 - [ ] **Step 1: Write failing token contract tests**
 
@@ -240,7 +238,7 @@ from pathlib import Path
 SOURCE = Path("packages/rakit-web/src/rakit_web/assets/rakit.css")
 
 
-def test_rakit_theme_defines_semantic_color_roles() -> None:
+def test_rakit_theme_defines_semantic_design_roles() -> None:
     css = SOURCE.read_text(encoding="utf-8")
     for token in (
         "--color-rakit-brand-600:",
@@ -252,6 +250,7 @@ def test_rakit_theme_defines_semantic_color_roles() -> None:
         "--color-rakit-warning:",
         "--color-rakit-danger:",
         "--color-rakit-info:",
+        "--font-sans:",
     ):
         assert token in css
 ```
@@ -262,40 +261,43 @@ def test_rakit_theme_defines_semantic_color_roles() -> None:
 uv run pytest packages/rakit-web/tests/test_ui_tokens.py -q
 ```
 
-- [ ] **Step 3: Define the token system in `@theme`**
+- [ ] **Step 3: Define semantic color and structural tokens**
 
-Use OKLCH for Rakit-owned brand 50–950 and semantic roles. Add neutral application roles for background/surface/subtle/raised, border/strong-border, text/muted, focus, compact radius, and restrained elevation.
+Use OKLCH for brand 50–950 and semantic roles. Add background/surface/subtle/raised, border/strong-border, text/muted, focus, compact radius, restrained elevation, and reusable transition values.
 
-- [ ] **Step 4: Migrate base primitives to semantic utilities**
+- [ ] **Step 4: Define typography hierarchy**
 
-Keep `.rakit-button`, secondary/quiet/danger, `.rakit-input`, `.rakit-select`, `.rakit-panel`, header/body, error, chip, dialog public class names. Replace hard-coded generic blue/slate role usage with Rakit semantic utilities.
+Use one primary sans family stack; establish consistent display/page heading, section heading, body, label, help, metadata, table, and code/identifier treatments. Keep long body copy within roughly 65–75ch where applicable and avoid overly tight display letter spacing.
 
-- [ ] **Step 5: Calibrate dark mode independently**
+- [ ] **Step 5: Define spacing/page rhythm**
 
-Ensure separate readable dark surfaces, muted text, focus, border, and semantic status treatments. Do not merely invert the light palette.
+Normalize page gutters, section gaps, panel padding, form field rhythm, compact table/control density, and mobile spacing. Do not create bespoke CSS classes for every local wrapper; use Tailwind spacing utilities and reusable tokens only where patterns recur.
 
-- [ ] **Step 6: Build CSS**
+- [ ] **Step 6: Migrate base primitives to semantic utilities**
+
+Keep `.rakit-button`, secondary/quiet/danger, `.rakit-input`, `.rakit-select`, `.rakit-panel`, header/body, error, chip, dialog names. Replace generic blue/slate role usage with semantic Rakit utilities.
+
+- [ ] **Step 7: Calibrate dark mode independently**
+
+Ensure readable dark surfaces, muted text, focus, borders, status colors, typography, and elevation. Do not simply invert light colors.
+
+- [ ] **Step 8: Build and verify**
 
 ```powershell
 bun run css:build
-```
-
-- [ ] **Step 7: Run focused verification**
-
-```powershell
 uv run pytest packages/rakit-web/tests/test_ui_tokens.py packages/rakit-web/tests/test_assets.py packages/rakit-web/tests/test_accessibility_contracts.py tests/test_ui_showcase.py -q
 ```
 
-- [ ] **Step 8: Inspect showcase light/dark**
+- [ ] **Step 9: Inspect showcase light/dark and commit**
 
-Run `uv run python -m examples.ui_showcase.main`; inspect dashboard, list, detail, form, and UI Lab. Reject washed-out muted text, excessive brand surfaces, and indistinguishable dark surfaces.
-
-- [ ] **Step 9: Commit and run full PR gate**
+Inspect dashboard, list, detail, form, and UI Lab for hierarchy/rhythm as well as color. Reject washed-out muted text, excessive brand surfaces, indistinguishable dark surfaces, cramped typography, or inconsistent spacing.
 
 ```powershell
 git add packages/rakit-web/src/rakit_web/assets/rakit.css packages/rakit-web/src/rakit_web/static/rakit.css packages/rakit-web/src/rakit_web/templates/base.html packages/rakit-web/src/rakit_web/templates/components/ui.html packages/rakit-web/tests/test_ui_tokens.py
-git commit -m "style(web): establish Rakit design tokens"
+git commit -m "style(web): establish Rakit design foundation"
 ```
+
+Run the full PR gate from UI-01.
 
 ---
 
@@ -345,59 +347,46 @@ def test_decorative_icon_is_hidden_from_assistive_technology() -> None:
 
 Store only curated Lucide path data in Python constants. Escape accessible labels, validate size against a small positive range, and never accept raw SVG/path markup from callers.
 
-- [ ] **Step 3: Add Lucide license and provenance**
+- [ ] **Step 3: Add Lucide license/provenance and register the helper**
 
-Provenance records upstream project/version or commit, retrieval date, vendored icon list, and server-side rendering strategy.
-
-- [ ] **Step 4: Register `rakit_icon` in `resource_routes.build_templates()`**
-
-Add exactly one Jinja global beside `static_url`:
+Record upstream project/version or commit, retrieval date, vendored icon list, and rendering strategy. Register exactly one Jinja global beside `static_url`:
 
 ```python
 cast(dict[str, Any], environment.globals)["rakit_icon"] = render_icon
 ```
 
-- [ ] **Step 5: Write failing theme UI tests**
+- [ ] **Step 4: Write failing theme UI tests**
 
-Render the shell and assert: no `<select data-rakit-theme-select>`, accessible theme trigger exists, three `data-rakit-theme-option` values exist, option text contains System/Light/Dark, and active state is represented semantically.
+Render the shell and assert the old `<select data-rakit-theme-select>` is absent, an accessible theme trigger exists, three `data-rakit-theme-option` values exist, System/Light/Dark visible text exists, and active state has semantics.
 
-- [ ] **Step 6: Replace theme select with one icon-triggered popover**
+- [ ] **Step 5: Replace theme select with one icon-triggered popover**
 
-Use monitor/sun/moon icons. Menu options contain icon + text. Preserve keyboard reachability, Escape close, and focus return.
+Use monitor/sun/moon icons. Options contain icon + visible text. Preserve keyboard reachability, Escape close, focus return, and clear active state.
 
-- [ ] **Step 7: Refactor `theme.js`**
+- [ ] **Step 6: Refactor `theme.js`**
 
-Synchronize `data-rakit-theme-trigger`, `data-rakit-theme-option`, active state, localStorage `rakit.theme`, resolved theme, and OS scheme listener while preserving early no-flash application.
+Synchronize trigger/options/active state, localStorage `rakit.theme`, resolved theme, and OS scheme listener while preserving early no-flash application.
 
-- [ ] **Step 8: Add restrained shell/navigation icons**
+- [ ] **Step 7: Add restrained shell/navigation icons and mature nav hierarchy**
 
-Use icons for dashboard/home, mobile menu, conventional actions, and known showcase resources. Custom user resources remain text-first unless they already provide framework-neutral presentation metadata.
+Use icons for dashboard/home, mobile menu, conventional actions, and known showcase resources. Custom user resources remain text-first unless existing framework-neutral metadata supports an icon. Improve active state, group rhythm, focus, touch targets, mobile open/close, long labels, and theme surfaces.
 
-- [ ] **Step 9: Refine shell navigation**
-
-Improve active state, group rhythm, hover/focus, touch targets, mobile open/close, long labels, and light/dark shell surfaces without changing navigation-provider contracts.
-
-- [ ] **Step 10: Build and test**
+- [ ] **Step 8: Build/test/keyboard-check/commit**
 
 ```powershell
 bun run css:build
 uv run pytest packages/rakit-web/tests/test_icons.py packages/rakit-web/tests/test_theme_ui.py packages/rakit-web/tests/test_accessibility_contracts.py tests/test_ui_showcase.py -q
-```
-
-- [ ] **Step 11: Commit and run full PR gate**
-
-```powershell
 git add packages/rakit-web/src/rakit_web packages/rakit-web/tests tests/test_ui_showcase.py
 git commit -m "feat(web): mature shell theme control and icons"
 ```
 
-Keyboard-check Tab, Shift+Tab, Enter, Space, Escape for theme and mobile navigation.
+Keyboard-check Tab, Shift+Tab, Enter, Space, Escape; then run the full PR gate.
 
 ---
 
 # UI-04 — Core Components
 
-**Goal:** Normalize buttons, icon buttons, fields, statuses, alerts, dialogs, pagination, and loading primitives.
+**Goal:** Normalize buttons, icon buttons, fields, statuses, alerts, dialogs, popovers, pagination, and loading primitives.
 
 **Files:**
 - Modify `packages/rakit-web/src/rakit_web/assets/rakit.css`
@@ -409,7 +398,7 @@ Keyboard-check Tab, Shift+Tab, Enter, Space, Escape for theme and mobile navigat
 
 - [ ] **Step 1: Write primitive contract tests**
 
-Create tests for primary/secondary/quiet/danger button class selection, icon-button accessible labels, form error association, disabled state, semantic alerts, and dialog semantics. Assert roles/attributes and stable `.rakit-*` contracts, not full HTML snapshots.
+Test primary/secondary/quiet/danger class selection, icon-button accessible names, form error association, disabled state, semantic alerts, dialog title/description semantics, pagination current/disabled state, and loading semantics. Assert stable roles/attributes/classes, not complete HTML snapshots.
 
 - [ ] **Step 2: Verify new tests fail**
 
@@ -417,47 +406,43 @@ Create tests for primary/secondary/quiet/danger button class selection, icon-but
 uv run pytest packages/rakit-web/tests/test_ui_primitives.py -q
 ```
 
-- [ ] **Step 3: Refine button family**
+- [ ] **Step 3: Refine button and icon-button families**
 
-Primary is strongest; secondary and quiet support hierarchy; danger is destructive only; icon-only keeps visible focus and a practical touch target; loading preserves readable label/state.
+Primary is strongest; secondary/quiet support hierarchy; danger is destructive only; icon-only maintains visible focus and practical touch target; loading preserves readable label/state.
 
-- [ ] **Step 4: Refine field family**
+- [ ] **Step 4: Refine field/control families**
 
-Unify text/number/date/select/textarea/checkbox/radio/file input, help text, required marker, read-only, disabled, and error states.
+Unify text, number, date, select, textarea, checkbox, radio, file input, help, required, read-only, disabled, and error states.
 
-- [ ] **Step 5: Refine statuses and feedback**
+- [ ] **Step 5: Refine status, feedback, dialogs, popovers, pagination, and loading**
 
-Provide neutral/success/warning/danger/info visual roles with text meaning and restrained optional icons.
+Provide neutral/success/warning/danger/info roles with text meaning and optional restrained icons. Keep dialogs usable on short/narrow viewports and HTMX pending feedback understandable without JavaScript-only behavior.
 
-- [ ] **Step 6: Refine dialogs, pagination, and loading**
+- [ ] **Step 6: Expand `/ui-lab`**
 
-Dialogs remain usable on short/narrow viewports; pagination has clear current/disabled states; HTMX pending state is visible without blocking non-JS flow.
+Expose representative default/disabled/error/success/warning/loading variants interactively.
 
-- [ ] **Step 7: Expand `/ui-lab`**
-
-Expose all core variants interactively in default/disabled/error/success/warning/loading states.
-
-- [ ] **Step 8: Build and verify**
+- [ ] **Step 7: Build/test/commit**
 
 ```powershell
 bun run css:build
 uv run pytest packages/rakit-web/tests/test_ui_primitives.py packages/rakit-web/tests/test_accessibility_contracts.py packages/rakit-web/tests/test_actions.py packages/rakit-web/tests/test_bulk_list_ui.py tests/test_ui_showcase.py -q
-```
-
-- [ ] **Step 9: Commit and run full PR gate**
-
-```powershell
 git add packages/rakit-web/src/rakit_web packages/rakit-web/tests tests/test_ui_showcase.py
 git commit -m "style(web): mature core UI primitives"
 ```
 
+Run the full PR gate.
+
 ---
 
-# UI-05 — Resource Experience
+# UI-05 — Dashboard and Resource Experience
 
-**Goal:** Mature list/table/search/filter/detail/create/edit/delete/pagination/empty-state workflows.
+**Goal:** Mature the dashboard home and the highest-frequency resource workflows: list/table/search/filter/detail/create/edit/delete/pagination/empty states.
 
 **Files:**
+- Modify `packages/rakit-web/src/rakit_web/templates/dashboard/index.html`
+- Modify `packages/rakit-web/src/rakit_web/templates/dashboard/_widget.html`
+- Modify `packages/rakit-web/src/rakit_web/templates/components/dashboard_navigation.html`
 - Modify `packages/rakit-web/src/rakit_web/templates/resources/list.html`
 - Modify `packages/rakit-web/src/rakit_web/templates/resources/_table.html`
 - Modify `packages/rakit-web/src/rakit_web/templates/resources/_count.html`
@@ -466,124 +451,114 @@ git commit -m "style(web): mature core UI primitives"
 - Modify `packages/rakit-web/src/rakit_web/templates/forms/delete_confirm.html`
 - Modify `packages/rakit-web/src/rakit_web/templates/components/ui.html`
 - Modify `packages/rakit-web/src/rakit_web/assets/rakit.css`; regenerate static CSS
+- Create `packages/rakit-web/tests/test_dashboard_ui_maturity.py`
 - Create `packages/rakit-web/tests/test_resource_ui_maturity.py`
-- Keep existing resource/form/bulk behavior suites green
+- Keep `test_dashboard_runtime.py` and existing resource/form/bulk behavior suites green
 
-- [ ] **Step 1: Write resource UI semantic tests**
+- [ ] **Step 1: Write failing dashboard semantic tests**
 
-Cover one page heading, labeled search/filter controls, table headers, accessible row actions, labeled bulk checkboxes, distinct empty vs filtered-no-results messaging, query-preserving pagination, field-linked validation errors, and explicit delete consequence.
+Assert one clear dashboard page heading, resource navigation, operational sections with meaningful labels, quick-action semantics, and explicit partial/empty presentation. Tests must not require a wall of identical metric cards.
 
-- [ ] **Step 2: Verify failures**
+```powershell
+uv run pytest packages/rakit-web/tests/test_dashboard_ui_maturity.py -q
+```
+
+- [ ] **Step 2: Mature dashboard hierarchy**
+
+Design dashboard as contextual heading → operational summary → attention/recent activity → resource shortcuts/quick actions. In `ui_showcase`, include recent orders, low inventory, recent activity, shortcuts, quick actions, and partial/empty states. Use cards only where they are the best information container.
+
+- [ ] **Step 3: Write failing resource UI semantic tests**
+
+Cover page heading, labeled search/filter controls, table headers, accessible row actions, labeled selection, distinct empty vs filtered-no-results messaging, query-preserving pagination, field-linked validation errors, and explicit delete consequence.
 
 ```powershell
 uv run pytest packages/rakit-web/tests/test_resource_ui_maturity.py -q
 ```
 
-- [ ] **Step 3: Redesign list hierarchy**
+- [ ] **Step 4: Redesign list/table/search/filter hierarchy**
 
-Use title/context → primary action → search/filter → active filters → count/selection → table → pagination. Avoid one card per block.
+Use title/context → primary action → search/filter → active filters → count/selection → table → pagination. Keep compact readable table density, sorting, row hover/selection, aligned numeric/status/action columns, and intentional horizontal overflow.
 
-- [ ] **Step 4: Redesign table ergonomics**
+- [ ] **Step 5: Redesign detail and forms**
 
-Readable compact density, aligned statuses/numbers/actions, sort affordance, row hover/selection, horizontal overflow wrapper, and no tiny mobile text.
+Prefer grouped information/definition lists over nested cards. Use coherent field rhythm, help/required/error treatment, long-form sections, clear save/cancel hierarchy, and pending feedback compatible with full-page and HTMX requests.
 
-- [ ] **Step 5: Redesign detail hierarchy**
+- [ ] **Step 6: Redesign delete confirmation and empty/no-results states**
 
-Prefer grouped information and definition-list structures; keep actions clearly prioritized and relationships visually integrated.
+State destructive consequences clearly, separate cancel from danger action, and distinguish truly empty resources from a filter returning no matches.
 
-- [ ] **Step 6: Redesign forms**
-
-Use consistent field rhythm, help/required/error treatment, sections for long forms, clear save/cancel hierarchy, and pending feedback compatible with full-page and HTMX requests.
-
-- [ ] **Step 7: Redesign delete confirmation**
-
-State the destructive consequence explicitly and separate danger action from cancel/back.
-
-- [ ] **Step 8: Build and verify**
+- [ ] **Step 7: Build/test/visual-pass/commit**
 
 ```powershell
 bun run css:build
-uv run pytest packages/rakit-web/tests/test_resource_ui_maturity.py packages/rakit-web/tests/test_bulk_list_ui.py packages/rakit-web/tests/test_accessibility_contracts.py tests/test_ui_showcase.py -q
+uv run pytest packages/rakit-web/tests/test_dashboard_ui_maturity.py packages/rakit-web/tests/test_resource_ui_maturity.py packages/rakit-web/tests/test_dashboard_runtime.py packages/rakit-web/tests/test_bulk_list_ui.py packages/rakit-web/tests/test_accessibility_contracts.py tests/test_ui_showcase.py -q
 uv run pytest packages/rakit-web/tests -q
-```
-
-- [ ] **Step 9: Visual workflow pass**
-
-Inspect many rows, filtered no-results, empty resource, long/missing values, detail, create/edit multi-error validation, delete confirm, desktop and mobile.
-
-- [ ] **Step 10: Commit and run full PR gate**
-
-```powershell
 git add packages/rakit-web/src/rakit_web packages/rakit-web/tests tests/test_ui_showcase.py
-git commit -m "style(web): mature resource workflows"
+git commit -m "style(web): mature dashboard and resource workflows"
 ```
+
+Inspect dashboard, many rows, no-results, empty resource, long/missing values, detail, multi-error form validation, delete confirm, desktop/mobile. Run the full PR gate.
 
 ---
 
-# UI-06 — Advanced Operations
+# UI-06 — Advanced Operations, Auth/Session, and Custom Pages
 
-**Goal:** Mature actions, bulk operations, relationships, uploads, custom pages, previews, confirmations, and result feedback.
+**Goal:** Mature actions, bulk operations, relationships, uploads, auth/session surfaces, custom pages, previews, confirmations, and result feedback.
 
 **Files:**
 - Modify action templates listed in Shared File Map
 - Modify relationship templates listed in Shared File Map
 - Modify existing upload presentation in form/file-upload surfaces
-- Modify relevant dashboard/page templates
+- Modify `packages/rakit-web/src/rakit_web/templates/auth/login.html`
+- Modify templates under `packages/rakit-web/src/rakit_web/templates/pages/`
+- Modify relevant dashboard/page templates only where advanced operation presentation requires it
 - Modify `packages/rakit-web/src/rakit_web/assets/rakit.css`; regenerate static CSS
 - Modify `packages/rakit-web/src/rakit_web/static/rakit-ui.js` only for progressive-enhancement behavior
 - Create `packages/rakit-web/tests/test_advanced_ui_maturity.py`
-- Keep action/bulk/relationship/upload/page behavior suites green
+- Create `packages/rakit-web/tests/test_auth_ui_maturity.py`
+- Keep action/bulk/relationship/upload/page/auth enforcement suites green
 
-- [ ] **Step 1: Write advanced semantic tests**
+- [ ] **Step 1: Write failing advanced semantic tests**
 
-Cover confirmation hierarchy, preview readability without JS, success/rejected/validation feedback, bulk selected count, relationship accessible labels, empty/high-cardinality relationship states, and upload help/error text.
-
-- [ ] **Step 2: Verify failures**
+Cover confirmation hierarchy, preview readability without JS, success/rejected/validation feedback, bulk selected count, relationship accessible labels, empty/high-cardinality relationship states, upload help/error text, and custom-page hierarchy.
 
 ```powershell
 uv run pytest packages/rakit-web/tests/test_advanced_ui_maturity.py -q
 ```
 
-- [ ] **Step 3: Mature action forms and confirmations**
+- [ ] **Step 2: Mature actions, bulk UX, relationships, uploads, and custom pages**
 
-Use one hierarchy across page/resource/record actions with explanatory copy, fields, confirm/back, danger only for destructive actions, and equivalent full-page/HTMX fragments.
+Use one hierarchy across page/resource/record actions; show selected count and safe/destructive separation for bulk; refine to-one/to-many/inline/options/preview/error relationships; reuse core upload primitives/icons; give custom pages a consistent page heading/navigation/content rhythm.
 
-- [ ] **Step 4: Mature bulk UX**
+- [ ] **Step 3: Write failing auth/session UI tests**
 
-Show selected count, compact bulk toolbar, safe/destructive separation, selection state, and existing runtime result summaries.
+Assert login has one clear heading, labeled identifier/password controls, accessible error presentation for invalid credentials, consistent return/navigation affordance where applicable, and stable semantics for session-expired and forbidden/access-denied presentation without changing auth redirect/status/security behavior.
 
-- [ ] **Step 5: Mature relationships**
+```powershell
+uv run pytest packages/rakit-web/tests/test_auth_ui_maturity.py -q
+```
 
-Refine to-one, to-many, inline rows, option selection, preview/confirm, validation, empty, and high-cardinality states. Keep ambiguous operations text-labeled.
+- [ ] **Step 4: Mature auth/session surfaces**
 
-- [ ] **Step 6: Mature upload/custom pages**
+Bring login, invalid credentials, logout/session-expired messaging, and forbidden/access-denied presentation into the same typography/color/feedback system. Do not weaken authentication, CSRF, rate limit, session, or permission boundaries for presentation convenience.
 
-Reuse established primitives/icons; do not add a second widget or styling framework.
-
-- [ ] **Step 7: Build and verify**
+- [ ] **Step 5: Build/test/visual-pass/commit**
 
 ```powershell
 bun run css:build
-uv run pytest packages/rakit-web/tests/test_advanced_ui_maturity.py packages/rakit-web/tests/test_actions.py packages/rakit-web/tests/test_bulk_actions.py packages/rakit-web/tests/test_bulk_list_ui.py tests/test_ui_showcase.py -q
+uv run pytest packages/rakit-web/tests/test_advanced_ui_maturity.py packages/rakit-web/tests/test_auth_ui_maturity.py packages/rakit-web/tests/test_actions.py packages/rakit-web/tests/test_bulk_actions.py packages/rakit-web/tests/test_bulk_list_ui.py tests/test_ui_showcase.py -q
 uv run pytest packages/rakit-web/tests -q
-```
-
-- [ ] **Step 8: Visual advanced-flow pass**
-
-Exercise approve, refund/cancel destructive confirmation, validation, preview, bulk selection, relationship add/remove, no-related state, upload, and custom pages.
-
-- [ ] **Step 9: Commit and run full PR gate**
-
-```powershell
 git add packages/rakit-web/src/rakit_web packages/rakit-web/tests tests/test_ui_showcase.py
-git commit -m "style(web): mature advanced operation UX"
+git commit -m "style(web): mature advanced auth and page UX"
 ```
+
+Visually exercise approve, refund/cancel, validation, preview, bulk selection, relationship add/remove, empty relationships, upload, custom pages, login invalid credentials, session-expired, and forbidden. Run the full PR gate.
 
 ---
 
-# UI-07 — Responsive, Accessibility, and UX Hardening
+# UI-07 — Responsive, Accessibility, Motion, and UX Hardening
 
-**Goal:** Make desktop/tablet/mobile, keyboard, focus, contrast, reduced motion, long content, loading/error/empty states, and UX copy release-quality.
+**Goal:** Make desktop/tablet/mobile, keyboard, focus, contrast, reduced motion, long content, loading/error/empty states, and UX copy release-quality across every surface completed in UI-01 through UI-06.
 
 **Files:**
 - Modify affected `rakit-web` templates/CSS/JS only
@@ -593,7 +568,7 @@ git commit -m "style(web): mature advanced operation UX"
 
 - [ ] **Step 1: Expand accessibility contracts before fixes**
 
-Add stable assertions for main landmark, skip link, icon-button names, dialog semantics, form-error linking, representative duplicate-ID safety, and text meaning accompanying status color/icon.
+Add stable assertions for main landmark, skip link, icon-button names, popover/dialog semantics, form-error linking, representative duplicate-ID safety, and text meaning accompanying status color/icon.
 
 - [ ] **Step 2: Run accessibility tests**
 
@@ -601,44 +576,33 @@ Add stable assertions for main landmark, skip link, icon-button names, dialog se
 uv run pytest packages/rakit-web/tests/test_accessibility_contracts.py tests/test_ui_showcase.py -q
 ```
 
-- [ ] **Step 3: Perform responsive pass**
+- [ ] **Step 3: Perform responsive matrix**
 
-Inspect approximately 1440, 1024, 768, and 390 CSS-pixel widths for dashboard/list/detail/form/action/relationship/login/UI Lab. Fix hierarchy/structure rather than only shrinking typography.
+Inspect approximately 1440, 1024, 768, and 390 CSS-pixel widths for shell, dashboard, list, detail, form, action, bulk, relationship, login, custom page, and UI Lab. Fix hierarchy/structure rather than only shrinking typography.
 
-- [ ] **Step 4: Perform keyboard-only pass**
+- [ ] **Step 4: Perform keyboard-only matrix**
 
-Verify skip link, desktop/mobile nav, theme chooser, search/filter, row actions, dialogs, forms, relationships, and return focus.
+Verify skip link, desktop/mobile nav, theme chooser, search/filter, row actions, dialogs/popovers, forms, relationships, auth, and return focus.
 
-- [ ] **Step 5: Perform contrast pass**
+- [ ] **Step 5: Perform contrast, reduced-motion, and overflow pass**
 
-Verify >=4.5:1 normal and >=3:1 large text in both themes, including muted/placeholder/status text.
+Verify >=4.5:1 normal and >=3:1 large text in both themes, including placeholder/muted/status text. Ensure content is not gated by animation, reduced-motion removes nonessential animation, HTMX pending feedback remains understandable, and long labels/values do not overflow containers.
 
-- [ ] **Step 6: Perform reduced-motion and pending-state pass**
+- [ ] **Step 6: Clarify UX copy and update accessibility docs**
 
-No content becomes visible only after animation; reduced-motion disables nonessential motion; HTMX pending feedback stays understandable.
+Use explicit action labels/destructive consequences while preserving domain terminology. Document keyboard/theme/focus/reduced-motion guarantees actually verified.
 
-- [ ] **Step 7: Clarify UX copy**
-
-Use explicit action labels and destructive consequences while retaining domain terminology.
-
-- [ ] **Step 8: Update accessibility documentation**
-
-Document the keyboard/theme/focus/reduced-motion guarantees actually verified by tests/manual matrix.
-
-- [ ] **Step 9: Build and verify**
+- [ ] **Step 7: Build/test/commit**
 
 ```powershell
 bun run css:build
 uv run pytest packages/rakit-web/tests tests/test_ui_showcase.py -q
 uv run mkdocs build --strict
-```
-
-- [ ] **Step 10: Commit and run full PR gate**
-
-```powershell
 git add packages/rakit-web/src/rakit_web packages/rakit-web/tests tests/test_ui_showcase.py docs/accessibility.md
 git commit -m "fix(web): harden responsive and accessible UX"
 ```
+
+Run the full PR gate.
 
 ---
 
@@ -652,7 +616,7 @@ git commit -m "fix(web): harden responsive and accessible UX"
 
 - [ ] **Step 1: Run Impeccable context against `packages/rakit-web`** and load the product/admin register before evaluating surfaces.
 
-- [ ] **Step 2: Run structured critique/audit** for shell, dashboard, resource list/detail, forms, actions/bulk, relationships, auth, and `/ui-lab`. Record findings in the PR description rather than another repo planning file.
+- [ ] **Step 2: Run structured critique/audit** for shell, dashboard, resource list/detail, forms, actions/bulk, relationships, auth/session, custom pages, and `/ui-lab`. Record findings in the PR description rather than another repo planning file.
 
 - [ ] **Step 3: Fix P0/P1 and material P2 findings test-first**
 
@@ -664,7 +628,7 @@ The final interface remains simple, clean, restrained, comfortable for long sess
 
 - [ ] **Step 5: Complete final manual matrix**
 
-Verify Shell/navigation, Dashboard, Resource list, Detail, Form, Action/confirm, Bulk, Relationships, Login/auth, and UI Lab in Light/Dark/System at Desktop/Tablet/Mobile.
+Verify Shell/navigation, Dashboard, Resource list, Detail, Form, Action/confirm, Bulk, Relationships, Login/auth/session, Custom pages, and UI Lab in Light/Dark/System at Desktop/Tablet/Mobile.
 
 - [ ] **Step 6: Run complete repository gate**
 
@@ -682,7 +646,7 @@ git status --short
 
 Expected: zero failures, coverage >=85%, generated CSS committed, no unintended dirty files.
 
-- [ ] **Step 7: Confirm the maintainer has saved both files supplied before implementation**
+- [ ] **Step 7: Confirm the maintainer has saved both pre-implementation copies supplied in chat**
 
 Required local copies:
 - `2026-08-17-ui-ux-maturity-design.md`
@@ -728,10 +692,11 @@ State UI-01 through UI-08 complete, local/CI results, planning-doc cleanup after
 - `examples/ui_showcase` is a realistic end-to-end application using default Rakit UI.
 - `/ui-lab` exposes deterministic representative components and states.
 - Semantic Tailwind tokens replace generic concrete palette usage where appropriate.
+- Typography and spacing/rhythm are coherent across all major surfaces.
 - Light/dark/system themes are polished and accessible.
 - Theme switching uses the icon-triggered System/Light/Dark popover.
 - Curated Lucide icons are vendored with license/provenance and rendered server-side through `rakit_icon`.
-- Resource/form/action/bulk/relationship/auth/custom-page surfaces share one interaction hierarchy.
+- Dashboard, resource/form/action/bulk/relationship/auth/session/custom-page surfaces share one interaction hierarchy.
 - Desktop/tablet/mobile behavior is intentional.
 - Keyboard/focus/contrast/reduced-motion requirements are satisfied.
 - All repository gates are green.
