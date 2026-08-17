@@ -1,4 +1,36 @@
 /* Small progressive enhancement for server-rendered destructive preview dialogs. */
+let rakitDialogReturnFocus = null;
+
+function rakitReturnFocus() {
+  const target = rakitDialogReturnFocus;
+  rakitDialogReturnFocus = null;
+  if (target instanceof HTMLElement && document.contains(target)) target.focus();
+}
+
+function rakitFocusTarget(root = document) {
+  const direct = root instanceof HTMLElement && root.hasAttribute("data-rakit-focus-target")
+    ? root
+    : null;
+  const target = direct || root.querySelector?.("[data-rakit-focus-target]");
+  if (!(target instanceof HTMLElement)) return;
+  const targetId = target.dataset.rakitFocusTarget;
+  const focusTarget = targetId && target.id !== targetId
+    ? document.getElementById(targetId) || target
+    : target;
+  if (!(focusTarget instanceof HTMLElement)) return;
+  if (!focusTarget.matches("a, button, input, select, textarea, summary, [tabindex]")) {
+    focusTarget.tabIndex = -1;
+  }
+  focusTarget.focus({ preventScroll: true });
+  focusTarget.scrollIntoView({ block: "nearest" });
+}
+
+function rakitAnnounce(message) {
+  const announcer = document.getElementById("rakit-announcer");
+  if (!(announcer instanceof HTMLElement) || !message) return;
+  announcer.textContent = "";
+  requestAnimationFrame(() => { announcer.textContent = String(message); });
+}
 function rakitInput(form, name, value) {
   form.querySelectorAll(`input[name="${CSS.escape(name)}"]`).forEach((node) => node.remove());
   const input = document.createElement("input");
@@ -74,6 +106,9 @@ function rakitApplyUnlinkState(form, prefix, identity, pending) {
 function rakitShowPreview(root) {
   const dialog = root.querySelector("[data-rakit-preview-dialog]");
   if (!dialog || dialog.open) return;
+  rakitDialogReturnFocus = document.activeElement instanceof HTMLElement
+    ? document.activeElement
+    : null;
   document.querySelectorAll("[data-rakit-preview-dialog]").forEach((node) => {
     if (node !== dialog) node.remove();
   });
@@ -81,8 +116,8 @@ function rakitShowPreview(root) {
   dialog.showModal();
   dialog.querySelector("[data-rakit-confirm-preview]")?.focus();
   dialog.addEventListener("close", () => {
-    const form = document.querySelector("form[action]");
     dialog.remove();
+    rakitReturnFocus();
   }, { once: true });
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog) dialog.close("cancel");
@@ -154,7 +189,10 @@ function rakitAddDraft(control) {
   row.querySelector("input")?.focus();
 }
 
-document.addEventListener("DOMContentLoaded", () => rakitShowPreview(document));
+document.addEventListener("DOMContentLoaded", () => {
+  rakitShowPreview(document);
+  rakitFocusTarget(document);
+});
 document.addEventListener("click", (event) => {
   const target = event.target;
   const addDraft = target.closest("[data-rakit-add-draft]");
@@ -229,4 +267,12 @@ document.addEventListener("change", (event) => {
   rakitRemoveRelationshipConfirmation(form, prefix);
 });
 
-document.addEventListener("htmx:afterSwap", (event) => rakitShowPreview(event.target));
+document.addEventListener("htmx:afterSwap", (event) => {
+  const root = event.target instanceof HTMLElement ? event.target : document;
+  rakitShowPreview(root);
+  rakitFocusTarget(root);
+});
+
+document.addEventListener("rakit:announce", (event) => {
+  rakitAnnounce(event.detail?.message);
+});

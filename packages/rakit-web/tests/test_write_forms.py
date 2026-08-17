@@ -605,7 +605,8 @@ async def test_invalid_layout_form_links_errors_and_opens_invalid_tab() -> None:
     assert 'data-rakit-first-invalid="rakit--users-email"' in response.text
     assert 'aria-selected="true"' in response.text
     assert "(1)</span>" in response.text
-    assert 'id="contact-details" open' in response.text
+    contact_details = response.text.split('id="contact-details"', 1)[1].split(">", 1)[0]
+    assert " open" in contact_details
     assert 'href="#contact"' in response.text
     assert 'id="contact" role="tabpanel" hidden' not in response.text
 

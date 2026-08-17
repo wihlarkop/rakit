@@ -1,23 +1,23 @@
 {% set provider = request.scope.get('state', {}).get('rakit_navigation_provider') %}
 {% if provider %}
   {% set navigation = provider(request) %}
-  <aside class="hidden w-64 shrink-0 border-r border-slate-200 bg-white lg:block">
+  <aside class="hidden w-64 shrink-0 border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 lg:block">
     <nav class="sticky top-0 px-4 py-6" aria-label="Primary navigation">
       <a
         href="{{ navigation.dashboard.path }}"
-        class="mb-6 block rounded-lg px-3 py-2 text-sm font-semibold {% if navigation.dashboard.active %}bg-slate-900 text-white{% else %}text-slate-700 hover:bg-slate-100 hover:text-slate-950{% endif %}"
+        class="mb-6 block rounded-lg px-3 py-2 text-sm font-semibold {% if navigation.dashboard.active %}bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-950{% else %}text-slate-700 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white{% endif %}"
         {% if navigation.dashboard.active %}aria-current="page"{% endif %}
       >Dashboard</a>
 
       {% if navigation.resources %}
       <div class="mb-6">
-        <p class="mb-2 px-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Resources</p>
+        <p class="mb-2 px-3 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Resources</p>
         <ul class="space-y-1">
           {% for item in navigation.resources %}
           <li>
             <a
               href="{{ item.path }}"
-              class="block rounded-lg px-3 py-2 text-sm font-medium {% if item.active %}bg-slate-100 text-slate-950{% else %}text-slate-600 hover:bg-slate-50 hover:text-slate-950{% endif %}"
+              class="block rounded-lg px-3 py-2 text-sm font-medium {% if item.active %}bg-slate-100 text-slate-950 dark:bg-slate-800 dark:text-white{% else %}text-slate-600 hover:bg-slate-50 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white{% endif %}"
               {% if item.active %}aria-current="page"{% endif %}
             >{{ item.label }}</a>
           </li>
@@ -28,13 +28,13 @@
 
       {% if navigation.pages %}
       <div>
-        <p class="mb-2 px-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Pages</p>
+        <p class="mb-2 px-3 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Pages</p>
         <ul class="space-y-1">
           {% for item in navigation.pages %}
           <li>
             <a
               href="{{ item.path }}"
-              class="block rounded-lg px-3 py-2 text-sm font-medium {% if item.active %}bg-slate-100 text-slate-950{% else %}text-slate-600 hover:bg-slate-50 hover:text-slate-950{% endif %}"
+              class="block rounded-lg px-3 py-2 text-sm font-medium {% if item.active %}bg-slate-100 text-slate-950 dark:bg-slate-800 dark:text-white{% else %}text-slate-600 hover:bg-slate-50 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white{% endif %}"
               {% if item.active %}aria-current="page"{% endif %}
             >{{ item.label }}</a>
           </li>

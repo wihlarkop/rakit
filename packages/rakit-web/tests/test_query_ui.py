@@ -2,7 +2,7 @@ import html
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 import httpx
 import pytest
@@ -80,20 +80,45 @@ async def _client_for(admin: Admin) -> AsyncIterator[httpx.AsyncClient]:
 
 
 def _sort_link(document: str, field: str) -> tuple[str, list[tuple[str, str]]]:
-    match = re.search(rf'<a href="([^"]+)">{re.escape(field)}</a>', document)
-    assert match is not None
-    url = html.unescape(match.group(1))
-    return url, parse_qsl(urlsplit(url).query, keep_blank_values=True)
+    form_match = re.search(
+        (
+            r'<form id="(rakit-sort-[^"]+)" method="get" action="([^"]+)" '
+            r'class="hidden" aria-hidden="true">(.*?)</form>'
+        ),
+        document,
+        flags=re.DOTALL,
+    )
+    assert form_match is not None
+    form_id, action, body = form_match.groups()
+    button = re.search(
+        rf'<button\s+type="submit"\s+form="{re.escape(form_id)}"\s+name="sort"\s+value="([^"]+)"[^>]*>\s*{re.escape(field)}\s*</button>',
+        document,
+        flags=re.DOTALL,
+    )
+    assert button is not None
+    hidden = re.findall(
+        r'<input\s+type="hidden"\s+name="([^"]+)"\s+value="([^"]*)"\s*/?>',
+        body,
+    )
+    pairs = [(html.unescape(name), html.unescape(value)) for name, value in hidden]
+    pairs.append(("sort", html.unescape(button.group(1))))
+    url = f"{html.unescape(action)}?{urlencode(pairs)}"
+    return url, pairs
 
 
 def _search_form(document: str) -> tuple[str, list[tuple[str, str]]]:
-    action_match = re.search(r'<form[^>]+data-rakit-search[^>]+action="([^"]+)"', document)
-    assert action_match is not None
+    form_match = re.search(
+        r'<form[^>]+data-rakit-search[^>]+action="([^"]+)"[^>]*>(.*?)</form>',
+        document,
+        flags=re.DOTALL,
+    )
+    assert form_match is not None
+    action, body = form_match.groups()
     hidden = re.findall(
         r'<input\s+type="hidden"\s+name="([^"]+)"\s+value="([^"]*)"\s*/?>',
-        document,
+        body,
     )
-    return html.unescape(action_match.group(1)), [
+    return html.unescape(action), [
         (html.unescape(name), html.unescape(value)) for name, value in hidden
     ]
 
@@ -339,14 +364,13 @@ async def test_per_page_over_max_falls_back_to_default(client: httpx.AsyncClient
     assert "Grace" in response.text
 
 
-async def test_sort_header_link_omits_page(client: httpx.AsyncClient) -> None:
+async def test_sort_header_control_omits_page(client: httpx.AsyncClient) -> None:
     response = await client.get("/users", params={"page": "1", "sort": "name"})
-    # Sort-toggle links reset pagination: they never carry a page param forward.
-    assert "sort=-name" in response.text
-    hrefs = [html.unescape(value) for value in re.findall(r'href="([^"]+)"', response.text)]
-    assert all(
-        not any(key == "page" for key, _value in parse_qsl(urlsplit(href).query)) for href in hrefs
-    )
+    sort_url, sort_pairs = _sort_link(response.text, "name")
+
+    assert ("sort", "-name") in sort_pairs
+    assert not any(key == "page" for key, _value in sort_pairs)
+    assert not any(key == "page" for key, _value in parse_qsl(urlsplit(sort_url).query))
 
 
 async def test_sort_and_search_controls_preserve_active_query_standalone(
@@ -454,9 +478,11 @@ async def test_sort_headers_render_only_valid_exact_aria_sort_values(
 
     values = re.findall(r'aria-sort="([^"]+)"', response.text)
     assert set(values) <= {"ascending", "descending", "none", "other"}
-    assert re.search(r'aria-sort="descending"[^>]*>\s*<a[^>]*>name</a>', response.text)
-    assert re.search(r'aria-sort="other"[^>]*>\s*<a[^>]*>email</a>', response.text)
-    assert re.search(r'aria-sort="none"[^>]*>\s*<a[^>]*>id</a>', response.text)
+    assert re.search(
+        r'aria-sort="descending"[^>]*>\s*<button[^>]*>\s*name\s*</button>', response.text
+    )
+    assert re.search(r'aria-sort="other"[^>]*>\s*<button[^>]*>\s*email\s*</button>', response.text)
+    assert re.search(r'aria-sort="none"[^>]*>\s*<button[^>]*>\s*id\s*</button>', response.text)
 
     default_response = await client.get("/users")
     assert set(re.findall(r'aria-sort="([^"]+)"', default_response.text)) == {"none"}

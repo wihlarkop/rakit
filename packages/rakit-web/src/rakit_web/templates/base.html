@@ -4,24 +4,41 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{% block title %}{{ resource.label if resource else "Rakit" }}{% endblock %}</title>
+    <script src="{{ static_url('theme.js') }}"></script>
     <link rel="stylesheet" href="{{ static_url('rakit.css') }}" />
     <script src="{{ static_url('htmx.min.js') }}" defer></script>
   </head>
-  <body class="min-h-screen bg-slate-50">
+  <body class="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
     <a
       href="#rakit-main-content"
-      class="sr-only z-50 rounded-md bg-white px-3 py-2 text-sm font-medium text-slate-950 shadow focus:not-sr-only focus:fixed focus:left-4 focus:top-4"
+      class="sr-only z-50 rounded-md bg-white px-3 py-2 text-sm font-medium text-slate-950 shadow focus:not-sr-only focus:fixed focus:left-4 focus:top-4 dark:bg-slate-900 dark:text-white"
     >Skip to main content</a>
+
+    <div id="rakit-announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 
     {% set navigation_provider = request.scope.get('state', {}).get('rakit_navigation_provider') %}
     {% if navigation_provider %}
       {% set shell_navigation = navigation_provider(request) %}
       <header class="border-b border-slate-800 bg-slate-950 text-white">
-        <div class="flex min-h-16 items-center px-4 sm:px-6 lg:px-8">
-          <a href="{{ shell_navigation.dashboard.path }}" class="text-base font-semibold tracking-tight text-white">
-            {{ shell_navigation.title }}
-          </a>
-          <span class="ml-3 rounded border border-slate-700 px-2 py-0.5 text-xs font-medium text-slate-300">Admin</span>
+        <div class="flex min-h-16 items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
+          <div class="flex min-w-0 items-center">
+            <a href="{{ shell_navigation.dashboard.path }}" class="truncate text-base font-semibold tracking-tight text-white">
+              {{ shell_navigation.title }}
+            </a>
+            <span class="ml-3 rounded border border-slate-700 px-2 py-0.5 text-xs font-medium text-slate-300">Admin</span>
+          </div>
+          <div class="shrink-0">
+            <label class="sr-only" for="rakit-theme-select">Theme</label>
+            <select
+              id="rakit-theme-select"
+              data-rakit-theme-select
+              class="min-h-9 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-sm text-slate-100 focus:border-blue-400"
+            >
+              <option value="system">System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </div>
         </div>
       </header>
       {% include "components/admin_mobile_navigation.html" %}
