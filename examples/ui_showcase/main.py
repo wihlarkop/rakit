@@ -6,10 +6,16 @@ from pathlib import Path
 from typing import Any
 
 from rakit import (
+    ActionDefinition,
+    ActionScope,
+    ActionSuccess,
     Admin,
     DashboardDefinition,
     PageDefinition,
     PageResult,
+    RelationshipCardinality,
+    RelationshipDefinition,
+    RelationshipKind,
     ResourceAdmin,
     SecretValue,
     StatWidgetResult,
@@ -17,7 +23,15 @@ from rakit import (
     WidgetDefinition,
     WidgetLayout,
 )
-from rakit.core import Principal, SessionRecord
+from rakit.core import (
+    IdempotencyReservation,
+    IdempotencyStatus,
+    OperationReceipt,
+    Principal,
+    SessionRecord,
+    TransactionPolicy,
+)
+from rakit_core.actions import ActionContext, ActionPreview
 
 from .data import CATEGORIES, CUSTOMERS, INVENTORY, ORDERS, PRODUCTS, TEAMS
 
@@ -99,6 +113,30 @@ class _MemoryDataSource:
         wanted = str(identity.values["id"])
         return next((item for item in self._items if str(item["id"]) == wanted), None)
 
+    def validate_relationship(
+        self,
+        definition: RelationshipDefinition,
+        target_data_source: object,
+        association_target_data_source: object | None,
+    ) -> None:
+        del definition, target_data_source, association_target_data_source
+
+
+class RefundOrder:
+    async def execute(self, context: ActionContext) -> ActionSuccess[dict[str, object]]:
+        record = context.record
+        if isinstance(record, dict):
+            record["status"] = "Refunded"
+        return ActionSuccess(payload={"status": "Refunded"}, message="Order refunded")
+
+
+def refund_preview(_context: ActionContext) -> ActionPreview:
+    return ActionPreview(
+        title="Refund order",
+        description="Review this refund before applying it to the selected order.",
+        impact="The order status will change to Refunded in this development-only showcase.",
+    )
+
 
 class CustomersAdmin(ResourceAdmin):
     resource_id = "customers"
@@ -146,6 +184,40 @@ class OrdersAdmin(ResourceAdmin):
     filter_fields = ("customer", "status")
     search_fields = ("id", "customer")
     sort_fields = ("id", "customer", "status", "created")
+    relationships = (
+        RelationshipDefinition(
+            relationship_id="customer",
+            target_resource_id="customers",
+            label="Customer",
+            kind=RelationshipKind.MANY_TO_ONE,
+            cardinality=RelationshipCardinality.TO_ONE,
+            nullable=True,
+            record_label_field="name",
+        ),
+        RelationshipDefinition(
+            relationship_id="products",
+            target_resource_id="products",
+            label="Products",
+            kind=RelationshipKind.MANY_TO_MANY,
+            cardinality=RelationshipCardinality.TO_MANY,
+            record_label_field="name",
+        ),
+    )
+    actions = (
+        ActionDefinition(
+            action_id="refund_order",
+            label="Refund order",
+            scope=ActionScope.RECORD,
+            resource_id="orders",
+            description="Refund the selected order.",
+            preview=refund_preview,
+            executor=RefundOrder(),
+            needs_preview=True,
+            needs_confirmation=True,
+            mutating=True,
+            transaction_policy=TransactionPolicy.DISABLED,
+        ),
+    )
 
 
 class CategoriesAdmin(ResourceAdmin):
@@ -267,6 +339,27 @@ class DemoSessionStore:
         return raw_token, record
 
 
+class DemoIdempotencyStore:
+    production_safe = False
+
+    async def begin(self, token_hash: str, *, fingerprint: str) -> IdempotencyReservation:
+        del token_hash, fingerprint
+        return IdempotencyReservation(1, IdempotencyStatus.IN_PROGRESS)
+
+    async def complete(
+        self,
+        reservation: IdempotencyReservation,
+        receipt: OperationReceipt,
+    ) -> None:
+        del reservation, receipt
+
+    async def release(self, reservation: IdempotencyReservation) -> None:
+        del reservation
+
+    async def fail_final(self, reservation: IdempotencyReservation) -> None:
+        del reservation
+
+
 admin = Admin(
     admin_id="ui_showcase",
     title="Rakit Commerce",
@@ -275,6 +368,7 @@ admin = Admin(
     template_dirs=(Path(__file__).parent / "templates",),
     auth_backend=DemoAuthBackend(),
     session_store=DemoSessionStore(),
+    operation_idempotency_store=DemoIdempotencyStore(),
 )
 for resource_admin in (
     CustomersAdmin,
