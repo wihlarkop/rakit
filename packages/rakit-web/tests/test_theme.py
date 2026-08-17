@@ -46,14 +46,16 @@ async def test_theme_control_and_asset_support_light_dark_system() -> None:
         assert css_match is not None
         css = await client.get(css_match.group(1))
 
-    assert 'for="rakit-theme-select"' in response.text
-    assert "data-rakit-theme-select" in response.text
-    assert '<option value="system">System</option>' in response.text
-    assert '<option value="light">Light</option>' in response.text
-    assert '<option value="dark">Dark</option>' in response.text
+    assert 'for="rakit-theme-select-desktop"' in response.text
+    assert 'for="rakit-theme-select-mobile"' in response.text
+    assert response.text.count("data-rakit-theme-select") == 2
+    assert response.text.count('<option value="system">System</option>') == 2
+    assert response.text.count('<option value="light">Light</option>') == 2
+    assert response.text.count('<option value="dark">Dark</option>') == 2
     assert script.status_code == 200
     assert "localStorage" in script.text
     assert 'matchMedia("(prefers-color-scheme: dark)")' in script.text
     assert 'new Set(["light", "dark", "system"])' in script.text
+    assert 'querySelectorAll("[data-rakit-theme-select]")' in script.text
     assert css.status_code == 200
     assert "prefers-reduced-motion" in css.text
