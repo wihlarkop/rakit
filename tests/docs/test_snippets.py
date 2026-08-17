@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-
 _RUNNABLE = re.compile(r"```python runnable\n(.*?)```", re.DOTALL)
 _PRIVATE_IMPORT = re.compile(r"(?:from|import)\s+[A-Za-z0-9_.]+\._[A-Za-z0-9_]+")
 

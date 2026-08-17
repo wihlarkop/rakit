@@ -9,7 +9,6 @@ import pytest
 from click.testing import CliRunner
 from rakit.cli import cli
 
-
 EXAMPLES = (
     "examples.minimal.main",
     "examples.fastapi_sqlalchemy.main",

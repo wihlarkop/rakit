@@ -93,7 +93,7 @@ class _LifespanDriver:
         self.stopped = asyncio.Event()
         self.task: asyncio.Task[None] | None = None
 
-    async def __aenter__(self) -> "_LifespanDriver":
+    async def __aenter__(self) -> _LifespanDriver:
         async def receive() -> dict[str, str]:
             return await self.queue.get()
 

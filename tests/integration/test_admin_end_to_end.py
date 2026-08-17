@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 import httpx
@@ -51,7 +50,7 @@ class _LifespanDriver:
         self.stopped = asyncio.Event()
         self.task: asyncio.Task[None] | None = None
 
-    async def __aenter__(self) -> "_LifespanDriver":
+    async def __aenter__(self) -> _LifespanDriver:
         async def receive() -> dict[str, str]:
             return await self.receive_queue.get()
 
