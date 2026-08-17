@@ -13,11 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.2.23
-      - run: bun install --frozen-lockfile
-      - run: bun run css:build
+      - run: npm install --no-save --package-lock=false @tailwindcss/cli@4.1.18 tailwindcss@4.1.18
+      - run: npx tailwindcss --input packages/rakit-web/src/rakit_web/assets/rakit.css --output packages/rakit-web/src/rakit_web/static/rakit.css --minify
       - name: Print rebuilt CSS
         run: |
           echo 'RAKIT_CSS_BASE64_BEGIN'
