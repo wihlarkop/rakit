@@ -523,7 +523,7 @@ admin.register_dashboard(
                 launcher_id="inventory",
                 label="Inventory",
                 path="/inventory",
-                description="Monitor stock levels and find items that need replenishment attention.",
+                description="Monitor stock levels and replenish items that need attention.",
             ),
             LauncherItem(
                 launcher_id="products",
@@ -535,7 +535,7 @@ admin.register_dashboard(
                 launcher_id="ui_lab",
                 label="UI Lab",
                 path="/ui-lab",
-                description="Inspect deterministic component states using the default Rakit design system.",
+                description="Inspect default Rakit component states for deterministic visual QA.",
             ),
         ),
     )

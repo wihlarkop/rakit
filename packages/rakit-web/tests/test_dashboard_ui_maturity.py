@@ -1,6 +1,5 @@
 from importlib.resources import files
 
-
 TEMPLATES = files("rakit_web").joinpath("templates", "dashboard")
 
 
