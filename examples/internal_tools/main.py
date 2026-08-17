@@ -98,7 +98,7 @@ class DemoSessionStore:
 
 reports = ReportService()
 admin = Admin(
-    admin_id="internal-tools",
+    admin_id="internal_tools",
     title="Internal tools",
     debug=True,
     secret_key=SecretValue("development-only-internal-tools-key"),
