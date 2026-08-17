@@ -4,7 +4,13 @@ import pytest
 
 
 @pytest.mark.anyio
-async def test_storage_example_round_trips_private_object(tmp_path: Path) -> None:
+async def test_storage_example_round_trips_private_object(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    monkeypatch.syspath_prepend(str(repository))
+
     from examples.storage.main import run_demo
 
     stored, loaded = await run_demo(tmp_path)
