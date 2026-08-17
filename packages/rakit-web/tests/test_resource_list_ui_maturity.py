@@ -26,14 +26,18 @@ class _DataSource:
     identity_fields = ("id",)
 
     def __init__(self, *, empty: bool = False) -> None:
-        self._items = () if empty else tuple(
-            {
-                "id": index,
-                "name": f"Order {index:03d}",
-                "status": "pending" if index % 2 else "paid",
-                "optional": None if index == 1 else "present",
-            }
-            for index in range(1, 61)
+        self._items = (
+            ()
+            if empty
+            else tuple(
+                {
+                    "id": index,
+                    "name": f"Order {index:03d}",
+                    "status": "pending" if index % 2 else "paid",
+                    "optional": None if index == 1 else "present",
+                }
+                for index in range(1, 61)
+            )
         )
 
     async def list(self, query: ResourceQuery) -> PageResult[dict[str, object]]:
@@ -43,7 +47,9 @@ class _DataSource:
             items = [item for item in items if needle in str(item["name"]).casefold()]
         for filter_ in query.filters:
             if filter_.operator.value == "eq":
-                items = [item for item in items if str(item.get(filter_.field)) == str(filter_.value)]
+                items = [
+                    item for item in items if str(item.get(filter_.field)) == str(filter_.value)
+                ]
         start = query.pagination.offset
         end = start + query.pagination.per_page
         page_items = tuple(items[start:end])
@@ -168,7 +174,7 @@ async def test_search_and_active_filters_render_validated_server_state() -> None
     assert 'role="search"' in response.text
     assert 'aria-label="Search Orders"' in response.text
     assert ">Search</button>" not in response.text
-    assert 'data-rakit-filter-panel open' in response.text
+    assert "data-rakit-filter-panel open" in response.text
     assert "Filters 1" in response.text
     assert "status equals pending" in response.text
     assert "Clear all filters" in response.text
@@ -202,10 +208,10 @@ async def test_exact_count_pagination_renders_range_numbered_pages_and_custom_si
         custom = await client.get("/orders", params={"per_page": "17"})
 
     assert page_two.status_code == 200
-    assert "Showing 26–50 of 60" in page_two.text
+    assert "Showing 26\u201350 of 60" in page_two.text
     assert 'aria-current="page">2</a>' in page_two.text
-    assert '>1</a>' in page_two.text
-    assert '>3</a>' in page_two.text
+    assert ">1</a>" in page_two.text
+    assert ">3</a>" in page_two.text
     assert 'aria-label="Previous page"' in page_two.text
     assert 'aria-label="Next page"' in page_two.text
 
@@ -284,7 +290,7 @@ async def test_sorting_and_page_size_forms_preserve_validated_state_without_page
     assert response.status_code == 200
     assert 'aria-sort="ascending"' in response.text
     assert 'form="rakit-sort-orders"' in response.text
-    assert 'data-rakit-page-size' in response.text
+    assert "data-rakit-page-size" in response.text
     assert 'name="filter" value="status:eq:pending"' in response.text
     assert 'name="search" value="Order"' in response.text
     assert 'name="sort" value="name"' in response.text

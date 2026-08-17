@@ -227,7 +227,7 @@ def _parse_count_policy(value: str | None) -> CountPolicy:
 
 def _filter_value(operator: FilterOperator, raw_value: str, *, field_name: str) -> object:
     if operator is FilterOperator.IN:
-        return [part.strip() for part in raw_value.split(",") if part.strip()]
+        return [part for part in raw_value.split(",") if part]
     if operator is FilterOperator.IS_NULL:
         normalized_value = raw_value.strip().lower()
         if normalized_value == "true":
@@ -371,7 +371,7 @@ def _query_without_search(query: ResourceQuery) -> ResourceQuery:
 
 def _display_filter_value(filter_: Filter) -> str:
     if filter_.operator is FilterOperator.IS_NULL:
-        return "" if filter_.value is True else "not empty"
+        return ""
     if filter_.operator is FilterOperator.IN:
         if isinstance(filter_.value, tuple):
             return ", ".join(str(value) for value in filter_.value)
