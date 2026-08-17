@@ -93,17 +93,17 @@ def test_ui_showcase_uses_dashboard_shell_with_mobile_drawer() -> None:
         orders = client.get("/orders")
 
     assert dashboard.status_code == 200
-    assert 'data-rakit-app-shell' in dashboard.text
-    assert 'data-rakit-desktop-navigation' in dashboard.text
-    assert 'data-rakit-mobile-navigation-trigger' in dashboard.text
+    assert "data-rakit-app-shell" in dashboard.text
+    assert "data-rakit-desktop-navigation" in dashboard.text
+    assert "data-rakit-mobile-navigation-trigger" in dashboard.text
     assert 'aria-controls="rakit-mobile-navigation"' in dashboard.text
     assert 'aria-expanded="false"' in dashboard.text
     assert 'id="rakit-mobile-navigation"' in dashboard.text
-    assert 'data-rakit-mobile-navigation' in dashboard.text
-    assert 'data-rakit-mobile-navigation-close' in dashboard.text
+    assert "data-rakit-mobile-navigation" in dashboard.text
+    assert "data-rakit-mobile-navigation-close" in dashboard.text
     assert 'aria-label="Open navigation"' in dashboard.text
     assert 'aria-label="Close navigation"' in dashboard.text
-    assert 'overflow-x-auto' not in dashboard.text
+    assert "overflow-x-auto" not in dashboard.text
 
     assert orders.status_code == 200
     assert 'href="/orders"' in orders.text
