@@ -472,7 +472,7 @@ async def test_nested_failure_without_savepoint_poison_parent_transaction(
     async with SQLAlchemyUnitOfWork(session_factory) as outer:
         outer.session.add(User(name="outer"))
         with pytest.raises(RuntimeError, match="child failure"):
-            async with SQLAlchemyUnitOfWork(factory) as nested:
+            async with SQLAlchemyUnitOfWork(session_factory) as nested:
                 nested.session.add(User(name="child"))
                 raise RuntimeError("child failure")
         await outer.mark_success()
