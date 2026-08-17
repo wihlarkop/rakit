@@ -11,6 +11,9 @@ from rakit import (
     ActionSuccess,
     Admin,
     DashboardDefinition,
+    LauncherItem,
+    ListWidgetItem,
+    ListWidgetResult,
     PageDefinition,
     PageResult,
     RelationshipCardinality,
@@ -21,7 +24,9 @@ from rakit import (
     StatWidgetResult,
     TableWidgetResult,
     WidgetDefinition,
+    WidgetErrorResult,
     WidgetLayout,
+    WidgetLoadingMode,
 )
 from rakit.core import (
     IdempotencyReservation,
@@ -401,6 +406,53 @@ async def recent_orders(_context: object) -> TableWidgetResult:
     )
 
 
+async def low_inventory(_context: object) -> ListWidgetResult:
+    low_items = tuple(
+        item for item in INVENTORY if item["status"] in {"Low stock", "Out of stock"}
+    )
+    return ListWidgetResult(
+        label="Inventory attention",
+        items=tuple(
+            ListWidgetItem(
+                label=str(item["product"]),
+                value=f'{item["on_hand"]} on hand',
+                href="/inventory",
+            )
+            for item in low_items
+        ),
+        empty_message="No inventory items need attention.",
+    )
+
+
+async def recent_activity(_context: object) -> ListWidgetResult:
+    return ListWidgetResult(
+        label="Recent activity",
+        items=tuple(
+            ListWidgetItem(
+                label=f'{order["id"]} · {order["customer"]}',
+                value=str(order["status"]),
+                href="/orders",
+            )
+            for order in ORDERS[:4]
+        ),
+    )
+
+
+async def returns_queue(_context: object) -> ListWidgetResult:
+    return ListWidgetResult(
+        label="Returns queue",
+        items=(),
+        empty_message="No returns need review right now.",
+    )
+
+
+async def warehouse_sync(_context: object) -> WidgetErrorResult:
+    return WidgetErrorResult(
+        label="Warehouse sync",
+        message="The warehouse sync is unavailable in this deterministic demo.",
+    )
+
+
 admin.register_widget(
     WidgetDefinition(
         widget_id="pending_orders",
@@ -417,11 +469,77 @@ admin.register_widget(
         layout=WidgetLayout(size="large", priority=20),
     )
 )
+admin.register_widget(
+    WidgetDefinition(
+        widget_id="low_inventory",
+        label="Inventory attention",
+        loader=low_inventory,
+        layout=WidgetLayout(size="medium", priority=30),
+    )
+)
+admin.register_widget(
+    WidgetDefinition(
+        widget_id="recent_activity",
+        label="Recent activity",
+        loader=recent_activity,
+        loading=WidgetLoadingMode.LAZY,
+        layout=WidgetLayout(size="medium", priority=40),
+    )
+)
+admin.register_widget(
+    WidgetDefinition(
+        widget_id="returns_queue",
+        label="Returns queue",
+        loader=returns_queue,
+        layout=WidgetLayout(size="medium", priority=50),
+    )
+)
+admin.register_widget(
+    WidgetDefinition(
+        widget_id="warehouse_sync",
+        label="Warehouse sync",
+        loader=warehouse_sync,
+        layout=WidgetLayout(size="medium", priority=60),
+    )
+)
 admin.register_dashboard(
     DashboardDefinition(
         dashboard_id="main",
         title="Commerce operations",
-        widgets=("pending_orders", "recent_orders"),
+        widgets=(
+            "pending_orders",
+            "recent_orders",
+            "low_inventory",
+            "recent_activity",
+            "returns_queue",
+            "warehouse_sync",
+        ),
+        launchers=(
+            LauncherItem(
+                launcher_id="orders",
+                label="Orders",
+                path="/orders",
+                description="Review incoming orders, fulfilment state, and customer activity.",
+            ),
+            LauncherItem(
+                launcher_id="inventory",
+                label="Inventory",
+                path="/inventory",
+                description="Monitor stock levels and find items that need replenishment attention.",
+            ),
+            LauncherItem(
+                launcher_id="products",
+                label="Products",
+                path="/products",
+                description="Browse the product catalogue and publication state.",
+            ),
+            LauncherItem(
+                launcher_id="ui_lab",
+                label="UI Lab",
+                path="/ui-lab",
+                description="Inspect deterministic component states using the default Rakit design system.",
+            ),
+        ),
     )
 )
 
