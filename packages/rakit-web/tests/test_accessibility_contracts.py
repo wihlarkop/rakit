@@ -1,5 +1,6 @@
 import re
 from html.parser import HTMLParser
+from pathlib import Path
 
 import httpx
 import pytest
@@ -31,8 +32,16 @@ def _duplicate_ids(html: str) -> set[str]:
     return {value for value in parser.ids if parser.ids.count(value) > 1}
 
 
+def _prepend_repository(monkeypatch: pytest.MonkeyPatch) -> None:
+    repository = Path(__file__).resolve().parents[3]
+    monkeypatch.syspath_prepend(str(repository))
+
+
 @pytest.mark.anyio
-async def test_dashboard_has_skip_link_landmarks_one_h1_and_live_announcer() -> None:
+async def test_dashboard_has_skip_link_landmarks_one_h1_and_live_announcer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _prepend_repository(monkeypatch)
     from examples.dashboard.main import admin
 
     app = admin.asgi()
@@ -56,7 +65,10 @@ async def test_dashboard_has_skip_link_landmarks_one_h1_and_live_announcer() -> 
 
 
 @pytest.mark.anyio
-async def test_invalid_form_links_summary_fields_and_focus_target() -> None:
+async def test_invalid_form_links_summary_fields_and_focus_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _prepend_repository(monkeypatch)
     from examples.fastapi_sqlalchemy import relationship_review
 
     async with httpx.AsyncClient(
@@ -82,7 +94,10 @@ async def test_invalid_form_links_summary_fields_and_focus_target() -> None:
 
 
 @pytest.mark.anyio
-async def test_sortable_table_uses_button_and_aria_sort() -> None:
+async def test_sortable_table_uses_button_and_aria_sort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _prepend_repository(monkeypatch)
     from examples.dashboard.main import admin
 
     app = admin.asgi()
