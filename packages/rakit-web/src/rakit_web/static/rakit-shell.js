@@ -1,4 +1,5 @@
 const RAKIT_DESKTOP_NAVIGATION = matchMedia("(min-width: 64rem)");
+const RAKIT_SIDEBAR_COLLAPSED_KEY = "rakit.sidebar.collapsed";
 let rakitMobileNavigationReturnFocus = null;
 
 function rakitMobileNavigation() {
@@ -9,6 +10,47 @@ function rakitMobileNavigation() {
 function rakitMobileNavigationTrigger() {
   const trigger = document.querySelector("[data-rakit-mobile-navigation-trigger]");
   return trigger instanceof HTMLButtonElement ? trigger : null;
+}
+
+function rakitDesktopNavigation() {
+  return document.querySelector("[data-rakit-desktop-navigation]");
+}
+
+function rakitDesktopNavigationToggle() {
+  const toggle = document.querySelector("[data-rakit-desktop-navigation-toggle]");
+  return toggle instanceof HTMLButtonElement ? toggle : null;
+}
+
+function rakitStoredSidebarCollapsed() {
+  try {
+    return localStorage.getItem(RAKIT_SIDEBAR_COLLAPSED_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function rakitApplyDesktopNavigationCollapsed(collapsed) {
+  const navigation = rakitDesktopNavigation();
+  const toggle = rakitDesktopNavigationToggle();
+  if (!(navigation instanceof HTMLElement) || !toggle) return;
+
+  navigation.toggleAttribute("data-rakit-desktop-navigation-collapsed", collapsed);
+  toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  toggle.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar");
+
+  const expandedIcon = toggle.querySelector("[data-rakit-sidebar-expanded-icon]");
+  const collapsedIcon = toggle.querySelector("[data-rakit-sidebar-collapsed-icon]");
+  if (expandedIcon instanceof HTMLElement) expandedIcon.hidden = collapsed;
+  if (collapsedIcon instanceof HTMLElement) collapsedIcon.hidden = !collapsed;
+}
+
+function rakitSetDesktopNavigationCollapsed(collapsed) {
+  rakitApplyDesktopNavigationCollapsed(collapsed);
+  try {
+    localStorage.setItem(RAKIT_SIDEBAR_COLLAPSED_KEY, collapsed ? "true" : "false");
+  } catch {
+    // Persistence is optional; the sidebar remains fully usable without storage access.
+  }
 }
 
 function rakitOpenMobileNavigation(trigger) {
@@ -45,6 +87,14 @@ document.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof Element)) return;
 
+  const desktopToggle = target.closest("[data-rakit-desktop-navigation-toggle]");
+  if (desktopToggle instanceof HTMLButtonElement) {
+    const navigation = rakitDesktopNavigation();
+    const collapsed = navigation?.hasAttribute("data-rakit-desktop-navigation-collapsed") ?? false;
+    rakitSetDesktopNavigationCollapsed(!collapsed);
+    return;
+  }
+
   const trigger = target.closest("[data-rakit-mobile-navigation-trigger]");
   if (trigger instanceof HTMLButtonElement) {
     rakitOpenMobileNavigation(trigger);
@@ -65,6 +115,8 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("DOMContentLoaded", () => {
+  rakitApplyDesktopNavigationCollapsed(rakitStoredSidebarCollapsed());
+
   const navigation = rakitMobileNavigation();
   if (!navigation) return;
   navigation.addEventListener("close", rakitResetMobileNavigation);
