@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, MutableMapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -97,7 +97,7 @@ class _LifespanDriver:
         async def receive() -> dict[str, str]:
             return await self.queue.get()
 
-        async def send(message: dict[str, Any]) -> None:
+        async def send(message: MutableMapping[str, Any]) -> None:
             if message["type"].startswith("lifespan.startup"):
                 self.started.set()
             elif message["type"].startswith("lifespan.shutdown"):
