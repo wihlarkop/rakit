@@ -1,3 +1,6 @@
+import importlib
+import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -64,3 +67,34 @@ def test_run_command_defaults_to_uvicorn(monkeypatch: pytest.MonkeyPatch) -> Non
     assert calls[0][1]["port"] == 8000
     assert calls[0][1]["workers"] == 1
     assert calls[0][1]["reload"] is False
+
+
+def test_run_command_makes_working_directory_importable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module_name = "rakit_cli_local_target_fixture"
+    (tmp_path / f"{module_name}.py").write_text("marker = 'loaded-from-cwd'\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    working_directory = str(tmp_path.resolve())
+    monkeypatch.setattr(
+        sys,
+        "path",
+        [entry for entry in sys.path if entry not in {"", working_directory}],
+    )
+    sys.modules.pop(module_name, None)
+
+    imported: list[str] = []
+
+    def fake_run(target: str, **kwargs: Any) -> None:
+        del kwargs
+        target_module, _ = target.split(":", 1)
+        imported.append(importlib.import_module(target_module).marker)
+
+    monkeypatch.setattr("rakit.cli.run_server", fake_run)
+
+    result = CliRunner().invoke(cli, ["run", f"{module_name}:admin"])
+
+    assert result.exit_code == 0
+    assert imported == ["loaded-from-cwd"]
