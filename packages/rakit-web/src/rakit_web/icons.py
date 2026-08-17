@@ -20,7 +20,7 @@ _ICON_BODY: dict[str, str] = {
         '<path d="M3 12A9 3 0 0 0 21 12" />'
     ),
     "file-text": (
-        '<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 '
+        '<path d="M6 22a2 2 0 0 1-2-2V4a2 2.4 2.4 0 0 1 '
         '1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" />'
         '<path d="M14 2v5a1 1 0 0 0 1 1h5" />'
         '<path d="M10 9H8" /><path d="M16 13H8" /><path d="M16 17H8" />'
@@ -31,6 +31,7 @@ _ICON_BODY: dict[str, str] = {
         '<rect width="7" height="9" x="14" y="12" rx="1" />'
         '<rect width="7" height="5" x="3" y="16" rx="1" />'
     ),
+    "list-filter": '<path d="M3 6h18" /><path d="M7 12h10" /><path d="M10 18h4" />',
     "menu": '<path d="M4 5h16" /><path d="M4 12h16" /><path d="M4 19h16" />',
     "monitor": (
         '<rect width="20" height="14" x="2" y="3" rx="2" />'
@@ -51,6 +52,7 @@ _ICON_BODY: dict[str, str] = {
         '<path d="M9 3v18" />'
         '<path d="m14 9 3 3-3 3" />'
     ),
+    "search": '<circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />',
     "sun": (
         '<circle cx="12" cy="12" r="4" />'
         '<path d="M12 2v2" /><path d="M12 20v2" />'
