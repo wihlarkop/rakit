@@ -52,9 +52,7 @@ def test_ui_foundation_defines_semantic_tailwind_roles() -> None:
 def test_collapsed_sidebar_state_overrides_tailwind_utility_layer() -> None:
     css = files("rakit_web").joinpath("assets", "rakit.css").read_text()
     components_end = _css_block_end(css, "@layer components")
-    collapsed_rule = (
-        "[data-rakit-desktop-navigation][data-rakit-desktop-navigation-collapsed] {"
-    )
+    collapsed_rule = "[data-rakit-desktop-navigation][data-rakit-desktop-navigation-collapsed] {"
 
     assert css.index(collapsed_rule) > components_end
     assert "width: 4.5rem;" in css[css.index(collapsed_rule) :]
