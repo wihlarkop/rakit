@@ -151,7 +151,7 @@ def test_ui_showcase_uses_breadcrumbs_collapsible_sidebar_and_entity_detail_head
 
     assert ui_lab.status_code == 200
     assert 'data-rakit-breadcrumb="page"' in ui_lab.text
-    assert 'data-rakit-breadcrumb-separator' in ui_lab.text
+    assert "data-rakit-breadcrumb-separator" in ui_lab.text
     assert 'aria-current="page">UI Lab</span>' in ui_lab.text
 
     assert product.status_code == 200
@@ -162,8 +162,8 @@ def test_ui_showcase_uses_breadcrumbs_collapsible_sidebar_and_entity_detail_head
         "low-profile tactile switches</h1>"
     )
     assert expected_record_title in product.text
-    assert 'data-rakit-record-context>Product · PRD-101</p>' in product.text
-    assert '>Product</h1>' not in product.text
+    assert "data-rakit-record-context>Product · PRD-101</p>" in product.text
+    assert ">Product</h1>" not in product.text
 
 
 def test_ui_showcase_exposes_record_confirmation_action_and_relationship_contracts() -> None:
