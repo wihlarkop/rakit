@@ -415,7 +415,7 @@ async def low_inventory(_context: object) -> ListWidgetResult:
         items=tuple(
             ListWidgetItem(
                 label=str(item["product"]),
-                value=f'{item["on_hand"]} on hand',
+                value=f"{item["on_hand"]} on hand",
                 href="/inventory",
             )
             for item in low_items
@@ -429,7 +429,7 @@ async def recent_activity(_context: object) -> ListWidgetResult:
         label="Recent activity",
         items=tuple(
             ListWidgetItem(
-                label=f'{order["id"]} · {order["customer"]}',
+                label=f"{order["id"]} · {order["customer"]}",
                 value=str(order["status"]),
                 href="/orders",
             )
