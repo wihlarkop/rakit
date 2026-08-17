@@ -6,7 +6,7 @@ on:
       - ui-02-app-shell-navigation
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-css:
@@ -15,9 +15,14 @@ jobs:
       - uses: actions/checkout@v4
       - run: npm install --no-save --package-lock=false @tailwindcss/cli@4.1.18 tailwindcss@4.1.18
       - run: npx tailwindcss --input packages/rakit-web/src/rakit_web/assets/rakit.css --output packages/rakit-web/src/rakit_web/static/rakit.css --minify
-      - name: Print rebuilt CSS
+      - name: Commit rebuilt CSS
         run: |
-          echo 'RAKIT_CSS_BASE64_BEGIN'
-          base64 -w0 packages/rakit-web/src/rakit_web/static/rakit.css
-          echo
-          echo 'RAKIT_CSS_BASE64_END'
+          git add packages/rakit-web/src/rakit_web/static/rakit.css
+          if git diff --cached --quiet; then
+            echo 'Generated CSS already matches source.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'style(web): rebuild Tailwind asset'
+          git push origin HEAD:ui-02-app-shell-navigation
