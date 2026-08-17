@@ -284,6 +284,8 @@
 
   .rakit-dialog {
     @apply w-[min(32rem,calc(100%-2rem))] rounded-rakit-lg border border-rakit-border bg-rakit-surface p-0 text-rakit-text shadow-rakit-lg backdrop:bg-black/50;
+    position: fixed;
+    inset: 0;
     margin: auto;
     max-height: calc(100vh - 2rem);
     overflow-y: auto;
