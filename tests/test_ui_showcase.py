@@ -82,6 +82,20 @@ def test_ui_showcase_exposes_realistic_application_and_ui_lab() -> None:
     assert "Page 2" in orders_page_two.text
 
 
+def test_ui_showcase_chip_shapes_keep_status_and_relationship_semantics_distinct() -> None:
+    from examples.ui_showcase.main import admin
+
+    app = admin.asgi()
+    with _showcase_client(app) as client:
+        login = _login(client)
+        assert login.status_code == 303
+        ui_lab = client.get("/ui-lab")
+
+    assert ui_lab.status_code == 200
+    assert '<span class="rakit-chip">Active</span>' in ui_lab.text
+    assert 'class="rakit-chip rakit-chip-relationship"' in ui_lab.text
+
+
 def test_ui_showcase_uses_dashboard_shell_with_mobile_drawer() -> None:
     from examples.ui_showcase.main import admin
 
