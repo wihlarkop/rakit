@@ -4,102 +4,155 @@
 
 **Goal:** Mature Rakit resource browsing into a compact server-authoritative workflow for search, generic filters, active filter chips, sorting, table scanning, selection, count-aware pagination, page size, and empty/no-results states.
 
-**Architecture:** Keep `ResourceQuery`, field whitelists, sorting rules, count policy, and data-source semantics authoritative in Python. Add narrow presentation helpers in `resource_routes.py` only where validated state must be normalized for templates. Jinja renders the complete GET-first experience; HTMX is optional progressive enhancement. Feature work precedes visual review, then focused tests are added/finalized at the end.
+**Architecture:** Keep `ResourceQuery`, `FilterOperator`, field whitelists, sorting rules, count policy, identity encoding, and data-source semantics authoritative in Python. `resource_routes.py` gains narrow validated presentation helpers and one explicit filter-builder normalization path. Jinja renders the complete GET-first experience; HTMX remains optional enhancement. Feature work is completed before the focused test phase.
 
-**Tech Stack:** Python 3.12+, Starlette, Jinja2, HTMX, Tailwind CSS v4, Lucide icons, pytest, Ruff, ty.
+**Tech Stack:** Python 3.12+, Starlette, Jinja2, HTMX, Tailwind CSS v4, server-rendered Lucide icons, pytest, Ruff, ty.
 
 ## Global Constraints
 
-- Start only after UI-05A has merged into `ui-05-resource-experience`.
+- Start only after UI-05A merges into `ui-05-resource-experience`.
 - Feature branch: `ui-05b-resource-list-experience`.
-- Merge destination: `ui-05-resource-experience`, never `main` directly.
-- Preserve existing `ResourceQuery`, `FilterOperator`, `CountPolicy`, sort whitelist, search whitelist, filter whitelist, identity encoding, and bulk-selection semantics.
-- Validated state flows `raw query -> parser/whitelist -> ResourceQuery -> presentation`.
-- Do not introduce a second query parser in Jinja or JavaScript.
-- Search remains normal GET; Enter submits; no standalone Search button.
-- Filters use an expandable panel below the toolbar, not a modal/popover.
-- Active filter chips render validated filters only.
-- Sorting remains table-header driven; no separate sort dropdown.
-- Search/filter/sort/page-size changes reset page to 1 while preserving unrelated validated state.
-- Built-in page-size UI choices are 25, 50, 100; valid custom `per_page` remains representable and must not be silently replaced.
-- Exact/deferred/disabled count policies must be represented truthfully; do not invent total pages.
+- Merge destination: `ui-05-resource-experience`, not `main`.
+- Preserve existing `ResourceQuery`, `FilterOperator`, `CountPolicy`, search/filter/sort whitelists, identity encoding, and bulk-selection semantics.
+- Validated state flow remains: `raw GET -> parser/whitelist -> ResourceQuery -> presentation`.
+- Never copy arbitrary raw `request.query_params` into trusted chips, sort links, pagination links, or hidden preserved state.
+- Search remains native GET and has no standalone Search button.
+- Filters use a panel below the toolbar, not a modal/popover.
+- Sorting stays table-header driven.
+- Search/filter/sort/page-size changes reset page to 1 by omitting `page` from the resulting URL.
+- Built-in page-size choices are 25, 50, 100; a valid custom current `per_page` remains representable.
+- Exact/deferred/disabled count policies are represented truthfully; numbered total-page navigation exists only when total is known.
 - Do not infer numeric/status/domain semantics from field names.
-- Missing display values render as `—` when absence is safely distinguishable.
-- Advanced bulk workflows remain UI-06.
-- Feature first -> visual review -> tests at end -> full verification.
+- `None` may render as `—`; `""`, `0`, and `False` remain real values.
+- Advanced bulk flows remain UI-06.
+- Execution order: feature -> visual/manual review -> tests at end -> full verification.
 
 ## File Structure
 
-Runtime/presentation normalization:
-
-- `packages/rakit-web/src/rakit_web/resource_routes.py` — validated filter display/removal URLs, query-preserving helpers, count/range/page metadata, page-size options, safe cell presentation metadata if needed.
-
-Templates:
-
-- `packages/rakit-web/src/rakit_web/templates/resources/list.html`
-- `packages/rakit-web/src/rakit_web/templates/resources/_table.html`
-- `packages/rakit-web/src/rakit_web/templates/resources/_count.html`
-- `packages/rakit-web/src/rakit_web/templates/components/ui.html` only for truly reusable resource-list primitives.
-
-Styling/assets:
-
-- `packages/rakit-web/src/rakit_web/assets/rakit.css`
-- generated `packages/rakit-web/src/rakit_web/static/rakit.css`
-- `packages/rakit-web/src/rakit_web/static/rakit-ui.js` only if a small progressive enhancement is necessary; no client query model.
-
-Showcase/tests:
-
-- `examples/ui_showcase` deterministic list scenarios.
-- Create `packages/rakit-web/tests/test_resource_list_ui_maturity.py`.
-- Modify `tests/test_ui_showcase.py` only for new showcase contracts.
-- Keep resource query/count/sort/bulk/accessibility suites green.
+- `packages/rakit-web/src/rakit_web/resource_routes.py` — validated query-preservation helpers, filter-builder normalization, filter display/removal state, pagination/range/page-size metadata, missing-value display normalization.
+- `packages/rakit-web/src/rakit_web/templates/resources/list.html` — page heading and resource toolbar container.
+- `packages/rakit-web/src/rakit_web/templates/resources/_table.html` — search/filter controls, chips, count/selection context, table, empty/no-results, pagination.
+- `packages/rakit-web/src/rakit_web/templates/resources/_count.html` — deferred count fragment presentation.
+- `packages/rakit-web/src/rakit_web/templates/components/ui.html` — extend only when a resource-list pattern is truly reusable.
+- `packages/rakit-web/src/rakit_web/assets/rakit.css` — reusable list/filter/table primitives only.
+- `packages/rakit-web/src/rakit_web/static/rakit.css` — generated with `bun run css:build`, never hand-edited.
+- `packages/rakit-web/src/rakit_web/static/rakit-ui.js` — optional progressive enhancement only; no client query model.
+- `examples/ui_showcase` — deterministic visual states.
+- Create `packages/rakit-web/tests/test_resource_list_ui_maturity.py` in the final test phase.
 
 ---
 
-### Task 1: Add Validated Resource-List Presentation Metadata
+### Task 1: Add Validated Query and Filter-Builder Presentation State
 
 **Files:**
 - Modify `packages/rakit-web/src/rakit_web/resource_routes.py`
 
 **Interfaces:**
-- Consumes existing `ResourceQuery`, `_serialize_filter()`, `_validated_query_params()`, `_page_url()`, `_sort_headers()`, `OffsetPagination`, `CountPolicy`, and current `resource_list()` context.
-- Produces template-ready dictionaries/lists derived only from validated query state.
+- Consumes existing `ResourceBinding.parse_query()`, `_parse_filters()`, `_serialize_filter()`, `_validated_query_params()`, `_page_url()`, `_sort_headers()`, `ResourceQuery`, `Filter`, `FilterOperator`, and `CountPolicy`.
+- Produces validated template context and canonical GET URLs.
 
-- [ ] **Step 1: Inventory the current `resource_list()` template context and existing tests before changing helper names.**
+- [ ] **Step 1: Preserve the current canonical filter URL contract.**
 
-Record current keys including `rows`, `fields`, `sort_headers`, `search_enabled`, `search_value`, `filter_values`, `per_page_value`, `pagination`, `count_url`, `resource_path`, `page`, and `query`. Preserve keys relied on by existing templates/tests unless the implementation updates both atomically.
+Canonical URLs remain repeatable:
 
-- [ ] **Step 2: Add a single query-preservation helper for GET controls.**
+```text
+filter=<field>:<operator>:<value>
+```
 
-Use validated query state plus explicit sorting to build reusable parameter tuples. Support controlled inclusion/exclusion of filters/search/sort/per_page/count policy and never copy raw `request.query_params` wholesale.
+Do not replace this contract with three permanent query parameters.
 
-- [ ] **Step 3: Add validated filter presentation models.**
+- [ ] **Step 2: Define filter-builder input names as a presentation-only GET alias.**
 
-For each `query.filters` item expose at minimum: serialized value, field, operator token, human-readable operator label, display value, and a removal URL that removes only that validated filter instance while preserving search/sort/per_page/count policy and omitting page.
+The filter panel submits:
 
-Human labels should be a fixed mapping over existing `FilterOperator` values. Do not invent operators or infer field type.
+```text
+filter_field=<field>
+filter_operator=<operator>
+filter_value=<value>
+```
 
-- [ ] **Step 4: Add clear-filter and clear-search URLs.**
+These three parameters exist only to make a no-JavaScript HTML form possible. They are never treated as canonical query state.
 
-`Clear all filters` preserves search/sort/per_page/count policy. `Clear search` preserves filters/sort/per_page/count policy. Both reset page by omitting it.
+- [ ] **Step 3: Add `_builder_filter(params: QueryParams, allowed_fields: set[str]) -> Filter | None`.**
 
-- [ ] **Step 5: Add filter-builder metadata.**
+Behavior:
 
-Expose approved filter field names and the existing supported operator vocabulary with fixed human-readable labels. For `is_null`, expose presentation choices equivalent to true/false without changing serialization semantics. `in` remains generic comma-separated input.
+- return `None` when all three builder inputs are absent;
+- reject/ignore incomplete triples without creating a filter;
+- field must be in `allowed_fields`;
+- operator must be a real `FilterOperator`;
+- `in` converts comma-separated non-empty values using the same semantics as canonical filters;
+- `is_null` accepts only explicit `true`/`false` presentation values;
+- other operators preserve the submitted string value;
+- malformed `is_null` uses the same `RakitError(VALIDATION_FAILED, status_code=400)` discipline as canonical parsing.
 
-- [ ] **Step 6: Add truthful pagination metadata.**
+Do not infer field type from the field name.
 
-For exact count, derive total pages, visible record range, numbered page items with bounded ellipsis, and Previous/Next URLs using validated params. For deferred/disabled count, expose current page + Previous/Next only and never fabricate last/numbered pages.
+- [ ] **Step 4: Canonicalize builder submissions before listing data.**
 
-- [ ] **Step 7: Add page-size option metadata.**
+At the start of `resource_list(request)`, when a valid builder filter exists:
 
-Always expose 25/50/100. If the current valid `query.pagination.per_page` is not one of those values, prepend/include that custom value as selected. Generate GET-preservation fields/params without page.
+1. parse the existing canonical query through the normal validated path;
+2. append the validated builder filter to the validated filters;
+3. preserve validated search, explicit sort, current `per_page`, and count policy;
+4. omit `page` so the new filter starts on page 1;
+5. generate a URL using canonical repeatable `filter=` parameters only;
+6. return an HTTP redirect to that canonical resource URL.
 
-- [ ] **Step 8: Normalize safe missing cell presentation.**
+After redirect, templates see only canonical validated query state. This avoids a second long-lived query vocabulary and works without JavaScript.
 
-When a rendered field value is `None`, expose display `—`. Keep the raw object/value untouched. Do not coerce empty string, zero, or false into missing.
+- [ ] **Step 5: Add one validated query-preservation helper.**
 
-- [ ] **Step 9: Commit runtime presentation helpers.**
+The helper must build parameter tuples from `ResourceQuery` plus validated explicit sorting and allow intentional omission of filters/search/sort/per_page/count policy/page. Never preserve raw request params wholesale.
+
+- [ ] **Step 6: Add validated filter presentation models.**
+
+For each `query.filters` item expose:
+
+```text
+field
+operator token
+human operator label
+display value
+serialized canonical value
+remove_url
+```
+
+`remove_url` removes that one filter instance, preserves validated search/sort/per_page/count policy, and omits page.
+
+Use a fixed human-readable label mapping over the existing `FilterOperator` enum. Do not add operators.
+
+- [ ] **Step 7: Add `clear_filters_url` and `clear_search_url`.**
+
+- clear filters: preserve search/sort/per_page/count policy;
+- clear search: preserve filters/sort/per_page/count policy;
+- both omit page.
+
+- [ ] **Step 8: Expose generic filter-builder metadata.**
+
+Provide allowed field names and existing operator tokens/labels. `is_null` is presented with meaningful true/false choices; `in` remains comma-separated generic input.
+
+- [ ] **Step 9: Add page-size metadata.**
+
+Always include 25/50/100. When the current valid `per_page` is not one of these, include that custom current value as selected instead of silently changing it.
+
+- [ ] **Step 10: Add truthful exact-count pagination metadata.**
+
+When `CountPolicy.EXACT` and total count is available, derive:
+
+- first visible record index;
+- last visible record index;
+- total pages;
+- bounded numbered page items with non-interactive ellipsis;
+- Previous/Next canonical URLs.
+
+For deferred/disabled count, do not create total-page items.
+
+- [ ] **Step 11: Normalize cell display for `None` only.**
+
+Keep stored/raw values untouched; provide `—` only as presentation.
+
+- [ ] **Step 12: Commit runtime presentation work.**
 
 ```powershell
 git add packages/rakit-web/src/rakit_web/resource_routes.py
@@ -113,40 +166,44 @@ git commit -m "feat(web): add validated resource list presentation state"
 **Files:**
 - Modify `packages/rakit-web/src/rakit_web/templates/resources/list.html`
 - Modify `packages/rakit-web/src/rakit_web/templates/resources/_table.html`
-- Modify `packages/rakit-web/src/rakit_web/assets/rakit.css` only for reusable list/filter primitives
+- Modify `packages/rakit-web/src/rakit_web/assets/rakit.css` only for reusable primitives
 
-**Interfaces:**
-- Consumes Task 1 validated template metadata.
-- Produces GET-first search/filter controls; no JavaScript is required for correctness.
+- [ ] **Step 1: Keep breadcrumb and exactly one resource `<h1>`.**
 
-- [ ] **Step 1: Keep breadcrumb and one resource `<h1>`, then place built-in primary CRUD action only if an existing safe create route/capability is already present in template context.**
+Do not fabricate a Create route if the current context does not safely expose one; built-in CRUD route integration is completed in UI-05C.
 
-If no such context exists in UI-05B, do not fabricate the route; leave create-action integration to UI-05C/runtime inspection.
+- [ ] **Step 2: Replace the current search form with a search-first toolbar.**
 
-- [ ] **Step 2: Replace search row with search-first toolbar.**
+Use Lucide `search`, one labeled `type="search"` input, preserved validated hidden state, and no standalone Search button. Native Enter submits GET.
 
-Use Lucide `search` inside/adjacent to the control, one `type="search"` input, preserved hidden validated state, and no standalone Search button. Submit on Enter through native GET.
+- [ ] **Step 3: Add a Filters control and panel.**
 
-- [ ] **Step 3: Add Filters toggle/control.**
+Use a semantic `<details>`/`<summary>` baseline so the panel works without JavaScript. Label shows `Filters` plus validated active count. The panel sits below the toolbar.
 
-Use a secondary button labeled `Filters` plus validated active count. The filter panel sits below the toolbar. Prefer native `<details>`/`<summary>` or a small progressive-enhancement toggle that remains usable without JS; if using JS, retain semantic expanded/control attributes.
+- [ ] **Step 4: Render the builder form using the exact alias names from Task 1.**
 
-- [ ] **Step 4: Render generic filter builder.**
+```text
+filter_field
+filter_operator
+filter_value
+```
 
-Controls: field selector, condition selector, value input/choice, Apply filter. Build a server-compatible GET representation that serializes into the existing repeatable `filter=<field>:<operator>:<value>` contract. If a small server-side normalization endpoint/form handler is required, keep it on the same resource GET route and fail closed to allowed fields/operators.
+Preserve canonical existing `filter` values, validated search, explicit sort, per-page, and count policy as hidden fields. Omit page. Apply submits a normal GET; Task 1 canonicalizes it to canonical `filter=` URLs.
 
-- [ ] **Step 5: Render validated active filter chips.**
+- [ ] **Step 5: Render active filter chips from validated presentation models only.**
 
-Each chip contains human-readable field/operator/value and a remove link with an accessible name. `Clear all filters` is separate and does not clear search.
+Each chip displays field/operator/value and has a clear accessible removal link. Add `Clear all filters` separately; it does not clear search.
 
-- [ ] **Step 6: Add search clear affordance when search is active.**
+- [ ] **Step 6: Add an active-search clear affordance using `clear_search_url`.**
 
-Use the validated clear-search URL from Task 1.
-
-- [ ] **Step 7: Commit search/filter feature work.**
+- [ ] **Step 7: Commit toolbar/filter feature work.**
 
 ```powershell
-git add packages/rakit-web/src/rakit_web/templates/resources/list.html packages/rakit-web/src/rakit_web/templates/resources/_table.html packages/rakit-web/src/rakit_web/assets/rakit.css packages/rakit-web/src/rakit_web/resource_routes.py
+git add `
+  packages/rakit-web/src/rakit_web/resource_routes.py `
+  packages/rakit-web/src/rakit_web/templates/resources/list.html `
+  packages/rakit-web/src/rakit_web/templates/resources/_table.html `
+  packages/rakit-web/src/rakit_web/assets/rakit.css
 git commit -m "feat(web): add resource search and filter experience"
 ```
 
@@ -157,103 +214,99 @@ git commit -m "feat(web): add resource search and filter experience"
 **Files:**
 - Modify `packages/rakit-web/src/rakit_web/templates/resources/_table.html`
 - Modify `packages/rakit-web/src/rakit_web/assets/rakit.css`
-- Modify `packages/rakit-web/src/rakit_web/resource_routes.py` only if safe cell metadata needs refinement
 
-- [ ] **Step 1: Convert table shell/header/cells to semantic Rakit tokens.**
+- [ ] **Step 1: Migrate table shell/header/cell styling to semantic Rakit tokens.**
 
-Keep intentional horizontal overflow. Remove direct blue/slate role styling from modified resource table markup when semantic equivalents exist.
+Keep intentional horizontal overflow and compact operational density.
 
-- [ ] **Step 2: Refine sortable headers.**
+- [ ] **Step 2: Refine sortable headers without changing sort semantics.**
 
-Keep existing form/button sort submissions and `aria-sort`. Add restrained Lucide sort direction icons based on server-provided `aria_sort`; do not construct sort state in JS.
+Keep existing GET form/button behavior and `aria-sort`. Use restrained Lucide direction icons based only on server-provided `aria_sort`.
 
-- [ ] **Step 3: Preserve row identity link behavior.**
+- [ ] **Step 3: Keep only the first meaningful/detail cell linked.**
 
-Only the first meaningful/detail-linked cell becomes a link. Do not make the whole row clickable.
+Do not make the whole row clickable.
 
-- [ ] **Step 4: Render `—` for safe missing values.**
+- [ ] **Step 4: Render Task 1 display values, including `None -> —`.**
 
-Use Task 1 normalized display value. Long values may wrap where practical; identifiers may remain nowrap when needed for table scanning.
+Allow reasonable wrapping for long content; do not convert arbitrary values to status badges.
 
-- [ ] **Step 5: Refine bulk selection presentation without changing workflow.**
+- [ ] **Step 5: Mature bulk-selection presentation only.**
 
-Use `.rakit-checkbox`, keep per-row accessible label, preserve `name="selected"` and encoded identity value, provide restrained selected-count context only through existing bulk enhancement/runtime mechanisms. Do not redesign confirmation/results.
+Use `.rakit-checkbox`, preserve `name="selected"`, encoded identity value, and per-row accessible label. Existing bulk action behavior remains authoritative; advanced workflow presentation stays UI-06.
 
-- [ ] **Step 6: Keep domain status as plain text unless explicit semantic metadata exists.**
-
-No auto-status badges from field names/strings.
-
-- [ ] **Step 7: Commit table feature work.**
+- [ ] **Step 6: Commit table feature work.**
 
 ```powershell
-git add packages/rakit-web/src/rakit_web/templates/resources/_table.html packages/rakit-web/src/rakit_web/assets/rakit.css packages/rakit-web/src/rakit_web/resource_routes.py
+git add packages/rakit-web/src/rakit_web/templates/resources/_table.html packages/rakit-web/src/rakit_web/assets/rakit.css
 git commit -m "style(web): mature resource table scanning and sorting"
 ```
 
 ---
 
-### Task 4: Implement Empty/No-Results and Count-Aware Pagination
+### Task 4: Add Empty/No-Results and Count-Aware Pagination
 
 **Files:**
 - Modify `packages/rakit-web/src/rakit_web/templates/resources/_table.html`
 - Modify `packages/rakit-web/src/rakit_web/templates/resources/_count.html`
-- Modify `packages/rakit-web/src/rakit_web/templates/components/ui.html` only if pagination primitive requires a backward-compatible extension
+- Modify `packages/rakit-web/src/rakit_web/templates/components/ui.html` only for backward-compatible pagination extension
 - Modify `packages/rakit-web/src/rakit_web/assets/rakit.css`
 
-- [ ] **Step 1: Distinguish true empty from no matching records.**
+- [ ] **Step 1: Distinguish true empty from no matching rows.**
 
-True empty requires no rows and no validated search/filters. No-results requires no rows with active validated search and/or filters. Use distinct copy and clear-state affordances. Do not invent Create if capability/context is unavailable.
+True empty = no rows and no validated search/filters. No-results = no rows with validated search and/or filters. Use distinct copy and clear-state affordances.
 
-- [ ] **Step 2: Render exact-count range and numbered pagination.**
+- [ ] **Step 2: Render exact-count range and numbered pages.**
 
-Use server-derived pagination items. Current page uses `aria-current="page"`; ellipsis is non-interactive; Previous/Next explicit disabled/available semantics reuse UI-04 pagination primitives.
+Use server-derived page items only. Current page uses `aria-current="page"`; ellipsis is non-interactive; disabled/available Previous/Next semantics reuse UI-04 pagination primitives.
 
-- [ ] **Step 3: Render deferred-count state truthfully.**
+- [ ] **Step 3: Keep deferred count honest.**
 
-Keep `Calculating total…` server/HTMX count fragment behavior. Until total is known, show current page + Previous/Next only.
+Preserve the existing deferred count HTMX fragment. Until total is known, show current page + Previous/Next only and `Calculating total…`.
 
-- [ ] **Step 4: Render disabled-count state truthfully.**
+- [ ] **Step 4: Keep disabled count honest.**
 
-Show total unavailable/unknown plus current page + Previous/Next only.
+Show total unavailable/unknown and current page + Previous/Next only.
 
-- [ ] **Step 5: Add page-size GET control.**
+- [ ] **Step 5: Add native GET page-size control.**
 
-Render selected custom value if needed plus 25/50/100. Changing selection submits a native GET form preserving validated search/filters/sort/count policy while omitting page.
+Render custom current value when needed plus 25/50/100. Preserve validated search/filters/sort/count policy and omit page.
 
-- [ ] **Step 6: Keep mobile baseline usable.**
+- [ ] **Step 6: Keep narrow layouts usable.**
 
-Toolbar stacks, table scrolls horizontally, pagination wraps/simplifies, and page-size remains reachable. UI-07 will do systematic hardening later.
+Toolbar stacks, table scrolls, pagination wraps/simplifies, page-size remains reachable.
 
-- [ ] **Step 7: Commit pagination/empty-state feature work.**
+- [ ] **Step 7: Commit pagination/empty feature work.**
 
 ```powershell
-git add packages/rakit-web/src/rakit_web/templates/resources packages/rakit-web/src/rakit_web/templates/components/ui.html packages/rakit-web/src/rakit_web/assets/rakit.css packages/rakit-web/src/rakit_web/resource_routes.py
+git add `
+  packages/rakit-web/src/rakit_web/templates/resources/_table.html `
+  packages/rakit-web/src/rakit_web/templates/resources/_count.html `
+  packages/rakit-web/src/rakit_web/templates/components/ui.html `
+  packages/rakit-web/src/rakit_web/assets/rakit.css
 git commit -m "feat(web): add truthful resource pagination and empty states"
 ```
 
 ---
 
-### Task 5: Expand Deterministic Resource-List Showcase and Visual QA
+### Task 5: Expand Showcase and Perform Visual Acceptance
 
 **Files:**
-- Modify `examples/ui_showcase` data/resource definitions only through public APIs
+- Modify `examples/ui_showcase` through public APIs only
+- Regenerate `packages/rakit-web/src/rakit_web/static/rakit.css`
 
-- [ ] **Step 1: Ensure showcase data supports many rows, missing optional values, long values, sortable/filterable/searchable fields, and bulk identities.**
-
-- [ ] **Step 2: Exercise URLs/states for active search, one filter, multiple filters, no matches, true empty resource, exact middle/last pages, and custom per-page when publicly supported.**
-
-- [ ] **Step 3: Exercise deferred/disabled count only if the public resource API already exposes those policies in the showcase without private hooks.**
-
-- [ ] **Step 4: Build Tailwind CSS and visually inspect light/dark + narrow layouts.**
+- [ ] **Step 1:** Ensure deterministic data covers many rows, missing optional values, long values, searchable/filterable/sortable fields, and valid bulk identities.
+- [ ] **Step 2:** Exercise active search, one filter, multiple filters, no matches, true empty, middle/last exact pages, and custom per-page when publicly supported.
+- [ ] **Step 3:** Exercise deferred/disabled count only if public showcase configuration supports it without private hooks.
+- [ ] **Step 4:** Build and run.
 
 ```powershell
 bun run css:build
 uv run python -m examples.ui_showcase.main
 ```
 
-- [ ] **Step 5: Fix source defects and rebuild until accepted.**
-
-- [ ] **Step 6: Commit showcase and generated CSS.**
+- [ ] **Step 5:** Inspect light/dark and narrow layouts; fix source defects and rebuild until accepted.
+- [ ] **Step 6:** Commit showcase/generated CSS.
 
 ```powershell
 git add examples/ui_showcase packages/rakit-web/src/rakit_web/static/rakit.css
@@ -262,70 +315,51 @@ git commit -m "build(web): finalize resource list visual states"
 
 ---
 
-### Task 6: Add Focused Resource-List Tests After Feature Completion
+### Task 6: Add Focused Tests After Feature Completion
 
 **Files:**
 - Create `packages/rakit-web/tests/test_resource_list_ui_maturity.py`
-- Modify existing resource route/query tests only when a new presentation helper needs direct unit coverage
+- Modify existing resource route/query tests only when new helpers need direct coverage
 - Modify `tests/test_ui_showcase.py` as needed
 
-- [ ] **Step 1: Test search semantics and preservation.**
-
-Assert no standalone Search button, labeled search input, validated filter/sort/per_page/count preservation, and page reset.
-
-- [ ] **Step 2: Test filter panel and validated chips.**
-
-Assert allowed field/operator controls, validated active count, human labels, remove-one URL, clear-all-filter URL, clear-search URL, and no raw invalid filter reflected as active trusted state.
-
-- [ ] **Step 3: Test sorting/header semantics.**
-
-Assert `aria-sort`, sort value preservation, page reset, and no domain guessing.
-
-- [ ] **Step 4: Test table/missing/selection semantics.**
-
-Assert `—` only for `None`, detail link behavior, labeled checkboxes, and absence of whole-row click semantics.
-
-- [ ] **Step 5: Test page-size behavior.**
-
-Assert default/current metadata, 25/50/100, valid custom value visibility, preservation of unrelated validated state, and page reset.
-
-- [ ] **Step 6: Test exact/deferred/disabled count presentation.**
-
-Assert numbered pages only for truthful exact totals; deferred/disabled do not fabricate total pages.
-
-- [ ] **Step 7: Test true-empty vs no-results copy/affordances.**
-
-- [ ] **Step 8: Run focused package tests.**
+- [ ] **Step 1:** Test builder alias validation and canonical redirect: allowed field/operator succeeds; disallowed/incomplete/malformed state cannot become a trusted active filter; canonical URL contains `filter=` and no `filter_field/filter_operator/filter_value`.
+- [ ] **Step 2:** Test search preservation/page reset and absence of a standalone Search button.
+- [ ] **Step 3:** Test validated chips, remove-one URL, clear-all-filter URL, and clear-search URL.
+- [ ] **Step 4:** Test sorting/`aria-sort` preservation and page reset.
+- [ ] **Step 5:** Test `None -> —` without changing `""`, `0`, or `False`; test detail links and labeled bulk checkboxes.
+- [ ] **Step 6:** Test 25/50/100 plus valid custom page-size behavior and page reset.
+- [ ] **Step 7:** Test exact/deferred/disabled count presentation and numbered pages only when truthful.
+- [ ] **Step 8:** Test true-empty vs no-results messaging.
+- [ ] **Step 9:** Run focused package regressions.
 
 ```powershell
 uv run pytest `
   packages/rakit-web/tests/test_resource_list_ui_maturity.py `
   packages/rakit-web/tests/test_bulk_list_ui.py `
   packages/rakit-web/tests/test_accessibility_contracts.py `
-  packages/rakit-web/tests/test_pages.py `
   -q
 ```
 
-Run existing resource query/count/sort suites discovered during implementation in the same package test phase.
+Also run the existing resource route/query/count/sort suites discovered in the package.
 
-- [ ] **Step 9: Run showcase tests separately if needed.**
+- [ ] **Step 10:** Run showcase tests separately if fixture isolation requires it.
 
 ```powershell
 uv run pytest tests/test_ui_showcase.py -q
 ```
 
-- [ ] **Step 10: Commit tests.**
+- [ ] **Step 11:** Commit tests.
 
 ```powershell
-git add packages/rakit-web/tests tests/test_ui_showcase.py
+git add packages/rakit-web/tests/test_resource_list_ui_maturity.py tests/test_ui_showcase.py
 git commit -m "test(web): cover resource list experience contracts"
 ```
 
 ---
 
-### Task 7: Final Verification and Integration PR
+### Task 7: Final Verification and Integration Merge
 
-- [ ] **Step 1: Run quality gates.**
+- [ ] **Step 1:** Run static gates.
 
 ```powershell
 uv run ruff format --check .
@@ -334,7 +368,7 @@ uv run ty check
 git diff --check
 ```
 
-- [ ] **Step 2: Run full repository gate.**
+- [ ] **Step 2:** Run full repository gate.
 
 ```powershell
 uv run pytest -n auto --cov
@@ -342,10 +376,6 @@ uv run mkdocs build --strict
 uv run python scripts/check_artifacts.py
 ```
 
-- [ ] **Step 3: Inspect diff specifically for raw-query trust, whitelist weakening, page-state loss, bulk changes, and accidental UI-06 work.**
-
-- [ ] **Step 4: Open PR `ui-05b-resource-list-experience -> ui-05-resource-experience`.**
-
-- [ ] **Step 5: Review and merge the slice into integration.**
-
-This merge is pre-authorized. Do not merge integration to `main`.
+- [ ] **Step 3:** Review for raw-query trust, whitelist weakening, page-state loss, bulk behavior changes, and UI-06 scope creep.
+- [ ] **Step 4:** Open PR `ui-05b-resource-list-experience -> ui-05-resource-experience`.
+- [ ] **Step 5:** Review and merge the slice into integration. This merge is pre-authorized; do not merge integration to `main`.
