@@ -1,5 +1,7 @@
 import asyncio
 import importlib
+import sys
+from pathlib import Path
 from typing import Any, Protocol, cast
 
 import click
@@ -62,9 +64,18 @@ async def _resolve_session_factory(registry: ServiceRegistry) -> Any:
         return resolver.require(async_sessionmaker)
 
 
+def _make_working_directory_importable() -> None:
+    working_directory = str(Path.cwd())
+    if sys.path[:1] == [working_directory]:
+        return
+    if working_directory in sys.path:
+        sys.path.remove(working_directory)
+    sys.path.insert(0, working_directory)
+
+
 @click.group()
 def cli() -> None:
-    pass
+    _make_working_directory_importable()
 
 
 def _capability_diagnostics(compiled: CompiledApplication) -> None:
