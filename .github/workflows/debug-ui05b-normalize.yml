@@ -1,0 +1,48 @@
+name: Debug UI-05B normalize
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  normalize:
+    if: github.event.pull_request.head.ref == 'ui-05b-resource-list-experience'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ui-05b-resource-list-experience
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-packages --dev --locked
+      - name: Restore exact query compatibility and normalize tests
+        shell: bash
+        run: |
+          sed -i 's/return \[part.strip() for part in raw_value.split(",") if part.strip()\]/return [part for part in raw_value.split(",") if part]/' packages/rakit-web/src/rakit_web/resource_routes.py
+          sed -i 's/return "" if filter_.value is True else "not empty"/return ""/' packages/rakit-web/src/rakit_web/resource_routes.py
+          uv run ruff check --fix \
+            packages/rakit-web/src/rakit_web/resource_routes.py \
+            packages/rakit-web/tests/test_resource_list_ui_maturity.py
+          uv run ruff format \
+            packages/rakit-web/src/rakit_web/resource_routes.py \
+            packages/rakit-web/tests/test_resource_list_ui_maturity.py
+      - name: Commit normalized source when changed
+        shell: bash
+        run: |
+          if git diff --quiet -- \
+            packages/rakit-web/src/rakit_web/resource_routes.py \
+            packages/rakit-web/tests/test_resource_list_ui_maturity.py; then
+            echo "Source already normalized."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            packages/rakit-web/src/rakit_web/resource_routes.py \
+            packages/rakit-web/tests/test_resource_list_ui_maturity.py
+          git commit -m "fix(web): preserve UI-05B query compatibility"
+          git push origin HEAD:ui-05b-resource-list-experience
