@@ -1,14 +1,16 @@
 name: Debug UI-05B feature finalize
 
 on:
-  pull_request:
+  push:
+    branches:
+      - ui-05b-resource-list-experience
 
 permissions:
   contents: write
 
 jobs:
   finalize:
-    if: github.event.pull_request.head.ref == 'ui-05b-resource-list-experience'
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -21,7 +23,7 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
       - run: uv sync --all-packages --dev --locked
       - run: bun install --frozen-lockfile
-      - name: Apply deterministic feature polish
+      - name: Add deterministic empty resource
         shell: bash
         run: |
           python - <<'PY'
@@ -29,9 +31,10 @@ jobs:
 
           main = Path("examples/ui_showcase/main.py")
           text = main.read_text(encoding="utf-8")
-          anchor = "\n\nclass DemoAuthBackend:\n"
-          assert text.count(anchor) == 1
-          returns_admin = '''
+          if "class ReturnsAdmin(ResourceAdmin):" not in text:
+              anchor = "\n\nclass DemoAuthBackend:\n"
+              assert text.count(anchor) == 1
+              returns_admin = '''
 
 class ReturnsAdmin(ResourceAdmin):
     resource_id = "returns"
@@ -45,31 +48,19 @@ class ReturnsAdmin(ResourceAdmin):
     search_fields = ("id", "customer")
     sort_fields = ("id", "customer", "status")
 '''
-          text = text.replace(anchor, returns_admin + anchor)
+              text = text.replace(anchor, returns_admin + anchor)
           registration = '''    InventoryAdmin,
     TeamsAdmin,
 ):'''
-          assert text.count(registration) == 1
-          text = text.replace(
-              registration,
-              '''    InventoryAdmin,
+          if registration in text:
+              text = text.replace(
+                  registration,
+                  '''    InventoryAdmin,
     TeamsAdmin,
     ReturnsAdmin,
 ):''',
-          )
+              )
           main.write_text(text, encoding="utf-8")
-
-          table = Path("packages/rakit-web/src/rakit_web/templates/resources/_table.html")
-          source = table.read_text(encoding="utf-8")
-          old = '<details class="w-full sm:w-auto" data-rakit-filter-panel'
-          assert source.count(old) == 1
-          table.write_text(
-              source.replace(
-                  old,
-                  '<details class="group w-full sm:w-auto" data-rakit-filter-panel',
-              ),
-              encoding="utf-8",
-          )
           PY
           uv run ruff check --fix examples/ui_showcase/main.py
           uv run ruff format examples/ui_showcase/main.py
@@ -79,7 +70,6 @@ class ReturnsAdmin(ResourceAdmin):
         run: |
           if git diff --quiet -- \
             examples/ui_showcase/main.py \
-            packages/rakit-web/src/rakit_web/templates/resources/_table.html \
             packages/rakit-web/src/rakit_web/static/rakit.css; then
             echo "Feature surface already current."
             exit 0
@@ -88,7 +78,6 @@ class ReturnsAdmin(ResourceAdmin):
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add \
             examples/ui_showcase/main.py \
-            packages/rakit-web/src/rakit_web/templates/resources/_table.html \
             packages/rakit-web/src/rakit_web/static/rakit.css
           git commit -m "build(web): finalize UI-05B resource list feature"
           git push origin HEAD:ui-05b-resource-list-experience
