@@ -1,0 +1,31 @@
+name: Debug UI-05B CSS build
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build-css:
+    if: github.event.pull_request.head.ref == 'ui-05b-resource-list-experience'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ui-05b-resource-list-experience
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - run: bun install --frozen-lockfile
+      - run: bun run css:build
+      - name: Commit generated CSS when changed
+        shell: bash
+        run: |
+          if git diff --quiet -- packages/rakit-web/src/rakit_web/static/rakit.css; then
+            echo "Generated CSS already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/rakit-web/src/rakit_web/static/rakit.css
+          git commit -m "build(web): regenerate UI-05B resource list CSS"
+          git push origin HEAD:ui-05b-resource-list-experience
