@@ -1,27 +1,31 @@
 <a
   href="{{ navigation.dashboard.path }}"
   data-rakit-navigation-icon="dashboard"
+  aria-label="Dashboard"
+  title="Dashboard"
   class="flex min-h-10 items-center gap-3 rounded-rakit-sm px-3 text-sm font-semibold transition {% if navigation.dashboard.active %}bg-rakit-brand-subtle text-rakit-brand-700 dark:text-rakit-brand-200{% else %}text-rakit-text-muted hover:bg-rakit-surface-subtle hover:text-rakit-text{% endif %}"
   {% if navigation.dashboard.active %}aria-current="page"{% endif %}
 >
   {{ rakit_icon("layout-dashboard", class_name="size-4 shrink-0") }}
-  <span class="min-w-0 truncate">Dashboard</span>
+  <span data-rakit-navigation-label class="min-w-0 truncate">Dashboard</span>
 </a>
 
 {% if navigation.resources %}
 <div class="mt-6">
-  <p class="mb-2 px-3 text-xs font-semibold uppercase tracking-[0.12em] text-rakit-text-muted">Resources</p>
+  <p data-rakit-sidebar-section-label class="mb-2 px-3 text-xs font-semibold uppercase tracking-[0.12em] text-rakit-text-muted">Resources</p>
   <ul class="space-y-1">
     {% for item in navigation.resources %}
     <li>
       <a
         href="{{ item.path }}"
         data-rakit-navigation-icon="resource"
+        aria-label="{{ item.label }}"
+        title="{{ item.label }}"
         class="flex min-h-10 items-center gap-3 rounded-rakit-sm px-3 text-sm font-medium transition {% if item.active %}bg-rakit-brand-subtle text-rakit-brand-700 dark:text-rakit-brand-200{% else %}text-rakit-text-muted hover:bg-rakit-surface-subtle hover:text-rakit-text{% endif %}"
         {% if item.active %}aria-current="page"{% endif %}
       >
         {{ rakit_icon("database", class_name="size-4 shrink-0") }}
-        <span class="min-w-0 truncate">{{ item.label }}</span>
+        <span data-rakit-navigation-label class="min-w-0 truncate">{{ item.label }}</span>
       </a>
     </li>
     {% endfor %}
@@ -31,18 +35,20 @@
 
 {% if navigation.pages %}
 <div class="mt-6">
-  <p class="mb-2 px-3 text-xs font-semibold uppercase tracking-[0.12em] text-rakit-text-muted">Pages</p>
+  <p data-rakit-sidebar-section-label class="mb-2 px-3 text-xs font-semibold uppercase tracking-[0.12em] text-rakit-text-muted">Pages</p>
   <ul class="space-y-1">
     {% for item in navigation.pages %}
     <li>
       <a
         href="{{ item.path }}"
         data-rakit-navigation-icon="page"
+        aria-label="{{ item.label }}"
+        title="{{ item.label }}"
         class="flex min-h-10 items-center gap-3 rounded-rakit-sm px-3 text-sm font-medium transition {% if item.active %}bg-rakit-brand-subtle text-rakit-brand-700 dark:text-rakit-brand-200{% else %}text-rakit-text-muted hover:bg-rakit-surface-subtle hover:text-rakit-text{% endif %}"
         {% if item.active %}aria-current="page"{% endif %}
       >
         {{ rakit_icon("file-text", class_name="size-4 shrink-0") }}
-        <span class="min-w-0 truncate">{{ item.label }}</span>
+        <span data-rakit-navigation-label class="min-w-0 truncate">{{ item.label }}</span>
       </a>
     </li>
     {% endfor %}
