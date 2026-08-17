@@ -15,7 +15,14 @@ from rakit import (
     PageResult,
     SecretValue,
 )
-from rakit.core import Principal, ServiceScope, SessionRecord
+from rakit.core import (
+    IdempotencyReservation,
+    IdempotencyStatus,
+    OperationReceipt,
+    Principal,
+    ServiceScope,
+    SessionRecord,
+)
 
 
 class ReportService:
@@ -96,6 +103,29 @@ class DemoSessionStore:
             self.record = None
 
 
+class DemoIdempotencyStore:
+    """Single-process action store for this development-only example."""
+
+    production_safe = False
+
+    async def begin(self, token_hash: str, *, fingerprint: str) -> IdempotencyReservation:
+        del token_hash, fingerprint
+        return IdempotencyReservation(1, IdempotencyStatus.IN_PROGRESS)
+
+    async def complete(
+        self,
+        reservation: IdempotencyReservation,
+        receipt: OperationReceipt,
+    ) -> None:
+        del reservation, receipt
+
+    async def release(self, reservation: IdempotencyReservation) -> None:
+        del reservation
+
+    async def fail_final(self, reservation: IdempotencyReservation) -> None:
+        del reservation
+
+
 reports = ReportService()
 admin = Admin(
     admin_id="internal_tools",
@@ -104,6 +134,7 @@ admin = Admin(
     secret_key=SecretValue("development-only-internal-tools-key"),
     auth_backend=DemoAuthBackend(),
     session_store=DemoSessionStore(),
+    operation_idempotency_store=DemoIdempotencyStore(),
 )
 
 # Rakit's registry owns the application-scoped service. The page and action use
