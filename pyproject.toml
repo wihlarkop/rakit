@@ -32,7 +32,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "packages"]
-addopts = "-p rakit_pytest_backend --basetemp=.pytest-tmp"
+addopts = "--basetemp=.pytest-tmp"
 
 [tool.coverage.run]
 branch = true
