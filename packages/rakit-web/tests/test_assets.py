@@ -25,6 +25,10 @@ def test_static_url_uses_local_content_hashed_filenames() -> None:
         r"/_system/static/rakit-ui\.[0-9a-f]{8}\.js",
         assets.static_url("rakit-ui.js"),
     )
+    assert re.fullmatch(
+        r"/_system/static/rakit-shell\.[0-9a-f]{8}\.js",
+        assets.static_url("rakit-shell.js"),
+    )
 
 
 def test_static_url_rejects_unknown_or_path_names() -> None:
@@ -48,6 +52,7 @@ async def test_admin_serves_only_hashed_immutable_assets() -> None:
     async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
         css = await client.get(assets.static_url("rakit.css"))
         javascript = await client.get(assets.static_url("htmx.min.js"))
+        shell = await client.get(assets.static_url("rakit-shell.js"))
         raw = await client.get("/_system/static/htmx.min.js")
         missing = await client.get("/_system/static/missing.00000000.js")
         traversal = await client.get("/_system/static/%2e%2e/templates/base.html")
@@ -59,6 +64,9 @@ async def test_admin_serves_only_hashed_immutable_assets() -> None:
     assert javascript.status_code == 200
     assert javascript.headers["cache-control"] == immutable
     assert "javascript" in javascript.headers["content-type"]
+    assert shell.status_code == 200
+    assert shell.headers["cache-control"] == immutable
+    assert "javascript" in shell.headers["content-type"]
     assert raw.status_code == 404
     assert missing.status_code == 404
     assert traversal.status_code == 404
@@ -81,6 +89,7 @@ def test_rakit_web_artifacts_include_runtime_resources(tmp_path: Path) -> None:
         "rakit_web/assets.py",
         "rakit_web/static/rakit.css",
         "rakit_web/static/rakit-ui.js",
+        "rakit_web/static/rakit-shell.js",
         "rakit_web/static/htmx.min.js",
         "rakit_web/static/HTMX_LICENSE.txt",
         "rakit_web/static/HTMX_PROVENANCE.md",
