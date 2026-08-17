@@ -408,14 +408,16 @@ async def recent_orders(_context: object) -> TableWidgetResult:
 
 async def low_inventory(_context: object) -> ListWidgetResult:
     low_items = tuple(
-        item for item in INVENTORY if item["status"] in {"Low stock", "Out of stock"}
+        item
+        for item in INVENTORY
+        if item["status"] in {"Low stock", "Out of stock"}
     )
     return ListWidgetResult(
         label="Inventory attention",
         items=tuple(
             ListWidgetItem(
                 label=str(item["product"]),
-                value=f"{item["on_hand"]} on hand",
+                value=f"{item['on_hand']} on hand",
                 href="/inventory",
             )
             for item in low_items
@@ -429,7 +431,7 @@ async def recent_activity(_context: object) -> ListWidgetResult:
         label="Recent activity",
         items=tuple(
             ListWidgetItem(
-                label=f"{order["id"]} · {order["customer"]}",
+                label=f"{order['id']} · {order['customer']}",
                 value=str(order["status"]),
                 href="/orders",
             )
