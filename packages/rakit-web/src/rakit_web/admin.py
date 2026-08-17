@@ -578,6 +578,11 @@ class Admin:
             (f"resource:{resource_id}:edit.submit", ("POST",), binding.update_path),
             (f"resource:{resource_id}:delete", ("GET",), binding.delete_path),
             (f"resource:{resource_id}:delete.submit", ("POST",), binding.delete_path),
+            (
+                f"resource:{resource_id}:file.download",
+                ("GET",),
+                f"{binding.path}/{{identity}}/_files/{{field_id}}",
+            ),
         ):
             self._builder.add_route(
                 RouteDefinition(

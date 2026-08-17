@@ -937,11 +937,15 @@ name = "rakit-storage"
 version = "0.1.0a1"
 source = { editable = "packages/rakit-storage" }
 dependencies = [
+    { name = "pydantic" },
     { name = "rakit-core" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "rakit-core", editable = "packages/rakit-core" }]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.12,<3" },
+    { name = "rakit-core", editable = "packages/rakit-core" },
+]
 
 [[package]]
 name = "rakit-storage-local"
@@ -966,6 +970,7 @@ dependencies = [
     { name = "jinja2" },
     { name = "python-multipart" },
     { name = "rakit-core" },
+    { name = "rakit-storage" },
     { name = "starlette" },
     { name = "structlog" },
 ]
@@ -981,6 +986,7 @@ requires-dist = [
     { name = "jinja2", specifier = ">=3.1" },
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "rakit-core", editable = "packages/rakit-core" },
+    { name = "rakit-storage", editable = "packages/rakit-storage" },
     { name = "starlette", specifier = ">=1.3.1" },
     { name = "structlog", specifier = ">=26.1.0" },
 ]
