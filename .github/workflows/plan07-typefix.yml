@@ -1,0 +1,58 @@
+name: Plan 07 type fix
+
+on:
+  push:
+    branches:
+      - plan-07-hardening-examples-release
+
+permissions:
+  contents: write
+
+jobs:
+  type-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: plan-07-hardening-examples-release
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-packages --dev --locked
+      - name: Widen ASGI send callback annotations
+        shell: python
+        run: |
+          from pathlib import Path
+
+          for relative in (
+              "tests/integration/test_admin_end_to_end.py",
+              "tests/integration/test_security_regressions.py",
+          ):
+              path = Path(relative)
+              text = path.read_text(encoding="utf-8")
+              text = text.replace(
+                  "from collections.abc import AsyncIterator",
+                  "from collections.abc import AsyncIterator, MutableMapping",
+              )
+              text = text.replace(
+                  "async def send(message: dict[str, Any]) -> None:",
+                  "async def send(message: MutableMapping[str, Any]) -> None:",
+              )
+              path.write_text(text, encoding="utf-8")
+      - run: uv run ruff format .
+      - run: uv run ruff check .
+      - run: uv run ty check
+      - name: Commit type fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "no changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/integration
+          git commit -m "test: type ASGI lifespan callbacks correctly"
+          git push origin HEAD:plan-07-hardening-examples-release
