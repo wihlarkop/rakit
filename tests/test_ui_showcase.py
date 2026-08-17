@@ -152,10 +152,11 @@ def test_ui_showcase_uses_breadcrumbs_collapsible_sidebar_and_entity_detail_head
     assert product.status_code == 200
     assert 'data-rakit-breadcrumb="resource-detail"' in product.text
     assert 'aria-current="page">PRD-101</span>' in product.text
-    assert (
-        'data-rakit-record-title>Precision mechanical keyboard with low-profile tactile switches</h1>'
-        in product.text
+    expected_record_title = (
+        "data-rakit-record-title>Precision mechanical keyboard with "
+        "low-profile tactile switches</h1>"
     )
+    assert expected_record_title in product.text
     assert 'data-rakit-record-context>Product · PRD-101</p>' in product.text
     assert '>Product</h1>' not in product.text
 
