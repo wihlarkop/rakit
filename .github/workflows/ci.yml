@@ -27,6 +27,28 @@ jobs:
       - run: uv run ty check
       - run: uv run pytest
 
+  dependency-compatibility:
+    name: Dependencies (${{ matrix.mode }})
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [lowest-direct, latest]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Sync minimum supported direct dependencies
+        if: matrix.mode == 'lowest-direct'
+        run: uv sync --all-packages --dev --resolution lowest-direct
+      - name: Sync latest allowed dependencies
+        if: matrix.mode == 'latest'
+        run: uv sync --all-packages --dev --upgrade
+      - name: Run test suite without re-syncing
+        run: uv run --no-sync pytest
+
   artifact-dry-run:
     name: Artifact dry run
     if: github.event_name == 'pull_request'
