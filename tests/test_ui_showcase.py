@@ -1,15 +1,17 @@
+from httpx import Response
 from starlette.testclient import TestClient
+from starlette.types import ASGIApp
 
 
-def _showcase_client(app: object) -> TestClient:
+def _showcase_client(app: ASGIApp) -> TestClient:
     return TestClient(
-        app,  # type: ignore[arg-type]
+        app,
         base_url="http://localhost",
         client=("127.0.0.1", 50000),
     )
 
 
-def _login(client: TestClient, *, password: str = "demo-password") -> object:
+def _login(client: TestClient, *, password: str = "demo-password") -> Response:
     page = client.get("/auth/login")
     assert page.status_code == 200
     login_csrf = page.cookies["rakit_login_csrf"]
