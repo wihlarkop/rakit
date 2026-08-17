@@ -2,91 +2,122 @@
 
 > A composable Python framework for building admin panels, internal tools, dynamic dashboards, and APIs over any data source.
 
-Rakit is an early-stage Python framework designed around explicit composition. Developers assemble resources, pages, actions, endpoints, dashboards, adapters, themes, authentication, storage, and application services without coupling the domain core to one web framework or ORM.
+Rakit is an early-stage Python framework designed around explicit composition. Developers assemble
+resources, pages, actions, endpoints, dashboards, adapters, themes, authentication, storage, and
+application services without coupling the domain core to one web framework or ORM.
 
 ## Status
 
-Rakit is currently under active design and early development. The initial design baseline has been approved, but public APIs may still change before the first stable release.
+Rakit is in alpha release hardening. The codebase targets synchronized `0.1.0a1` artifacts, but the
+release remains **unreleased** until the maintainer explicitly creates a release tag. Public APIs
+may still evolve under the documented pre-1.0 compatibility policy.
 
 ## Design principles
 
 - Secure by default, with security treated as a first-class system concern.
 - Framework-agnostic core with a standalone ASGI runtime.
 - Explicit registration, plugin activation, dependency injection, and lifecycle.
-- One operation pipeline shared by HTML admin, custom endpoints, and future generated APIs.
-- Backend-neutral contracts with typed, capability-aware adapter escape hatches.
-- Progressive enhancement: server-rendered HTML works without JavaScript; HTMX improves the experience.
-- Batteries included, but every battery is replaceable.
-- Fully typed public packages with stable, documented import paths.
+- One operation pipeline shared by HTML admin, custom endpoints, and generated APIs.
+- Backend-neutral contracts with typed, capability-aware adapters.
+- Progressive enhancement: server-rendered HTML works without JavaScript; HTMX improves supported flows.
+- Batteries included, but replaceable through documented contracts.
+- Fully typed public packages with reviewed import surfaces.
 
-## Planned v0.1 highlights
+## Implemented alpha scope
 
 - Standalone or mountable Starlette-based ASGI application.
 - SQLAlchemy CRUD with relationships, filters, search, sorting, and pagination.
 - Custom resources, pages, actions, endpoints, dashboards, and widgets.
-- Built-in optional SQLAlchemy authentication and allow-only RBAC.
-- Pydantic v2 validation and a Jinja-based form engine.
+- Optional SQLAlchemy authentication, Argon2 password hashing, sessions, and allow-only RBAC.
+- Pydantic v2 validation and Jinja form rendering.
 - HTMX progressive enhancement and bundled Tailwind CSS.
-- Local private file storage through a portable storage contract.
+- Portable file storage with a secure private LocalStorage reference backend.
 - Explicit DI scopes, transactions, events, deadlines, and cooperative cancellation.
 - Optimistic concurrency, idempotency, signed destructive confirmations, and CSRF.
-- Structured logging, health/readiness endpoints, and graceful shutdown.
-- Unit, contract, integration, and example smoke tests.
+- CSP-safe light/dark/system themes and built-in accessibility quality gates.
+- Structured logging, health/readiness, graceful shutdown, Uvicorn and Granian server adapters.
+- Reusable adapter contracts plus release-level integration/security regression tests.
 
-## Example direction
-
-Executable read-only examples now live in
-[`examples/minimal`](examples/minimal) and
-[`examples/fastapi_sqlalchemy`](examples/fastapi_sqlalchemy). Their READMEs show the declared
-optional dependency, configuration-check, route-listing, and startup commands.
+## Quick start
 
 ```python
-from rakit import Admin, ModelAdmin, SecretValue
-from rakit.sqlalchemy import SQLAlchemyPlugin
-from sqlalchemy.ext.asyncio import async_sessionmaker
-
-admin = Admin(
-    admin_id="operations",
-    title="Operations",
-    secret_key=SecretValue("replace-with-a-real-secret-at-least-32-bytes"),
-)
-
-# Application code owns the engine lifecycle and gives Rakit a session factory.
-session_factory = async_sessionmaker(engine, expire_on_commit=False)
-admin.install(SQLAlchemyPlugin(session_factory=session_factory))
+from rakit import Admin, ResourceAdmin
+from rakit.core import DataSourceCapabilities, PageResult, RecordIdentity
 
 
-class UserAdmin(ModelAdmin):
-    model = User
-    resource_id = "users"
-    path = "/users"
-    label = "Users"
-    singular_label = "User"
-    list_fields = ("id",)
-    detail_fields = ("id",)
+class Products:
+    capabilities = DataSourceCapabilities(read=True)
+    fields = ("id", "name")
+    identity_fields = ("id",)
+
+    async def list(self, query):
+        return PageResult(
+            items=({"id": 1, "name": "Clamp"},),
+            page=query.pagination.page,
+            per_page=query.pagination.per_page,
+            has_previous=False,
+            has_next=False,
+            total_count=1,
+        )
+
+    async def count(self, query):
+        return 1
+
+    async def detail(self, identity: RecordIdentity):
+        return {"id": 1, "name": "Clamp"}
 
 
-admin.register(UserAdmin)
+class ProductAdmin(ResourceAdmin):
+    resource_id = "products"
+    path = "/products"
+    label = "Products"
+    singular_label = "Product"
+    data_source = Products()
+    list_fields = ("id", "name")
+    detail_fields = ("id", "name")
 
+
+admin = Admin(title="Workshop", debug=True)
+admin.register(ProductAdmin)
 app = admin.asgi()
 ```
 
-This is the implemented Plan 02 read-only registration API; broader v0.1 APIs remain provisional.
+Validate and run:
 
-## Repository documentation
+```bash
+rakit check myapp:admin
+rakit run myapp:admin
+```
 
-- [Framework design](docs/design/2026-07-19-rakit-framework-design.md)
-- [Roadmap](docs/roadmap.md)
+## Official examples
 
-The framework design and roadmap are public documentation and are committed to
-the repository. Task-by-task implementation plans under `docs/plans/` are
-local, maintainer-only working documents used to drive development — they are
-not committed, are not published documentation, and are not a public API or
-compatibility commitment. The design specification and the shipped public API
-are the source of truth; a plan describes how a change was built, not a
-guarantee of what it produces.
+Executable journeys live under `examples/`:
 
-## Intended package layout
+- `minimal` — smallest read-only custom data source;
+- `fastapi_sqlalchemy` — FastAPI mount + SQLAlchemy adapter;
+- `builtin_auth` — built-in login/session protocol shape;
+- `relationships` — portable relationship declarations;
+- `internal_tools` — page, action, service registration, endpoint;
+- `custom_datasource` — explicit third-party-style DataSource capabilities;
+- `dashboard` — eager/lazy/failing widgets;
+- `storage` — named private LocalStorage round trip.
+
+Each official journey has an exact run/check command in its README.
+
+## Documentation
+
+The user documentation is built with MkDocs Material:
+
+```bash
+uv run mkdocs serve
+uv run mkdocs build --strict
+```
+
+Start at [`docs/index.md`](docs/index.md). The repository roadmap remains in
+[`docs/roadmap.md`](docs/roadmap.md). Task-by-task implementation plans under `docs/plans/` are
+maintainer-local execution material and are not a public compatibility commitment.
+
+## Package layout
 
 ```text
 rakit
@@ -96,19 +127,23 @@ rakit-sqlalchemy
 rakit-auth-sqlalchemy
 rakit-storage
 rakit-storage-local
+rakit-server
 rakit-server-uvicorn
+rakit-server-granian
 ```
 
-Official packages are planned to use synchronized versions and a strict one-way dependency graph.
+Official packages use synchronized versions and a one-way dependency direction.
 
-## Compatibility direction
+## Compatibility
 
-Rakit uses Semantic Versioning. During `0.x`, public APIs should still receive deprecation warnings and migration guidance whenever practical. After `1.0`, breaking public API changes are reserved for major releases.
+Rakit uses Semantic Versioning. During `0.x`, documented public APIs receive deprecation guidance
+when practical; security/correctness fixes may require a faster change. See
+[`docs/reference/compatibility.md`](docs/reference/compatibility.md).
 
 Minimum Python version: **3.12**.
 
 ## Security
 
-Rakit is intended to be secure by default. Production deployments will require persistent cryptographic keys, secure cookies, trusted host/proxy configuration, CSRF protection, restrictive response caching, and successful startup validation.
-
-Security vulnerabilities should eventually be reported privately through the process documented in `SECURITY.md`, rather than through public issues.
+Use production-safe key/session/rate-limit stores, trusted host/proxy configuration, HTTPS, CSP,
+CSRF, safe upload policy, and release security regression tests. Vulnerabilities should be reported
+privately according to `SECURITY.md`, not through a public issue.

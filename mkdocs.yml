@@ -1,0 +1,44 @@
+site_name: Rakit
+site_description: Composable Python admin framework and internal-tools toolkit
+repo_url: https://github.com/wihlarkop/rakit
+strict: true
+theme:
+  name: material
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - First Admin: getting-started/first-admin.md
+      - FastAPI Integration: getting-started/fastapi.md
+  - Guides:
+      - Resources: guides/resources.md
+      - Relationships: guides/relationships.md
+      - Authentication: guides/authentication.md
+      - Security: guides/security.md
+      - Pages and Actions: guides/pages-actions.md
+      - Dashboards: guides/dashboards.md
+      - Local File Storage: guides/local-file-storage.md
+  - Concepts:
+      - Architecture: concepts/architecture.md
+      - Operation Pipeline: concepts/operation-pipeline.md
+      - DI and Transactions: concepts/di-transactions.md
+      - Events: concepts/events.md
+  - Reference:
+      - Configuration: reference/configuration.md
+      - CLI: reference/cli.md
+      - Permissions: reference/permissions.md
+      - Errors: reference/errors.md
+      - Events: reference/events.md
+      - Templates: reference/templates.md
+      - Public API: reference/public-api.md
+      - Compatibility: reference/compatibility.md
+  - Extending:
+      - Custom DataSource: extending/custom-datasource.md
+      - Custom Plugin: extending/custom-plugin.md
+      - Custom Auth: extending/custom-auth.md
+      - Custom Storage: extending/custom-storage.md
+      - Adapter Contract Tests: extending/adapter-contract-tests.md
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
