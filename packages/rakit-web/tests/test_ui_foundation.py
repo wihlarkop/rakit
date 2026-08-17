@@ -90,8 +90,7 @@ async def test_shell_uses_icon_navigation_and_accessible_theme_popovers() -> Non
     assert "data-rakit-theme-select" not in response.text
     assert 'data-rakit-navigation-icon="dashboard"' in response.text
     assert (
-        'data-rakit-navigation-icon="resource"' in response.text
-        or "Resources" not in response.text
+        'data-rakit-navigation-icon="resource"' in response.text or "Resources" not in response.text
     )
     assert '<svg aria-hidden="true"' in response.text
 
@@ -100,4 +99,4 @@ async def test_shell_uses_icon_navigation_and_accessible_theme_popovers() -> Non
     assert 'querySelectorAll("[data-rakit-theme-option]")' in theme_script.text
     assert 'event.key === "Escape"' in theme_script.text
     assert 'event.key === "ArrowDown"' in theme_script.text
-    assert 'localStorage.setItem(RAKIT_THEME_KEY, preference)' in theme_script.text
+    assert "localStorage.setItem(RAKIT_THEME_KEY, preference)" in theme_script.text
