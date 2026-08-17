@@ -47,7 +47,7 @@ jobs:
         if: matrix.mode == 'latest'
         run: uv sync --all-packages --dev --upgrade
       - name: Run test suite without re-syncing
-        run: uv run --no-sync pytest
+        run: uv run --no-sync pytest -q --tb=short --maxfail=5
 
   artifact-dry-run:
     name: Artifact dry run
