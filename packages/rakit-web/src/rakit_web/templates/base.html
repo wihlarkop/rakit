@@ -3,6 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="htmx-config" content='{"includeIndicatorStyles": false}' />
     <title>{% block title %}{{ resource.label if resource else "Rakit" }}{% endblock %}</title>
     <script src="{{ static_url('theme.js') }}"></script>
     <link rel="stylesheet" href="{{ static_url('rakit.css') }}" />
@@ -17,7 +18,8 @@
     <div id="rakit-announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 
     {% set navigation_provider = request.scope.get('state', {}).get('rakit_navigation_provider') %}
-    {% if navigation_provider %}
+    {% set shell_enabled = rakit_shell_enabled | default(true) %}
+    {% if navigation_provider and shell_enabled %}
       {% set shell_navigation = navigation_provider(request) %}
       <div data-rakit-app-shell class="min-h-screen lg:flex">
         {% include "components/admin_navigation.html" %}
@@ -62,7 +64,7 @@
       </div>
     </main>
 
-    {% if navigation_provider %}
+    {% if navigation_provider and shell_enabled %}
         </div>
       </div>
     {% endif %}
