@@ -1,7 +1,5 @@
 """Rakit Commerce: deterministic visual QA application for the default UI."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
