@@ -41,7 +41,12 @@ def test_lucide_icon_helper_is_allowlisted_and_registered_with_jinja() -> None:
     templates = build_templates(())
     assert templates.env.globals["rakit_icon"] is render_icon
 
-    icon = str(render_icon("moon", class_name='size-5\" data-bad=\"value'))
+    icon = str(
+        render_icon(
+            "moon",
+            class_name='size-5" data-bad="value',
+        )
+    )
     assert icon.startswith("<svg")
     assert 'viewBox="0 0 24 24"' in icon
     assert 'aria-hidden="true"' in icon
@@ -84,7 +89,10 @@ async def test_shell_uses_icon_navigation_and_accessible_theme_popovers() -> Non
     assert response.text.count('role="menuitemradio"') == 6
     assert "data-rakit-theme-select" not in response.text
     assert 'data-rakit-navigation-icon="dashboard"' in response.text
-    assert 'data-rakit-navigation-icon="resource"' in response.text or "Resources" not in response.text
+    assert (
+        'data-rakit-navigation-icon="resource"' in response.text
+        or "Resources" not in response.text
+    )
     assert '<svg aria-hidden="true"' in response.text
 
     assert theme_script.status_code == 200
