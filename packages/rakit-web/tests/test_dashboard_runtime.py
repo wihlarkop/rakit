@@ -198,7 +198,8 @@ def test_dashboard_navigation_component_is_mount_aware() -> None:
 
     assert 'href="/admin/"' in rendered
     assert "Dashboard" in rendered
-    assert 'aria-label="Admin navigation"' in rendered
+    assert 'data-rakit-breadcrumb="page"' in rendered
+    assert 'aria-label="Breadcrumb"' in rendered
 
 
 def test_forbidden_launchers_and_widgets_are_hidden() -> None:
