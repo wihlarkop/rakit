@@ -4,9 +4,9 @@
 
 **Goal:** Give login/session, 403, 404, and production 500 states a coherent minimal Rakit experience while preserving all existing authentication, authorization, CSRF, rate-limit, cookie, mount-path, and generated-API response semantics.
 
-**Architecture:** Introduce one Web-only `SystemPageRenderer` shared by auth/system templates and error translation. Keep `PrincipalMiddleware` responsible for session resolution and `AuthorizationMiddleware` responsible for gating; add only a safe request-state auth-reason marker and an injected browser-forbidden renderer. Starlette exception handlers use the same renderer for browser 404/500 while generated API paths remain JSON. `base.html` gains explicit `app/auth/system` shell modes while preserving `rakit_shell_enabled` compatibility.
+**Architecture:** Introduce one Web-internal auth-reason enum and one Web-only `SystemPageRenderer`. `PrincipalMiddleware` remains responsible for session resolution and only marks a stale-session reason in request state; `AuthorizationMiddleware` remains responsible for gating and accepts a narrow injected browser-forbidden renderer. Starlette exception handlers use the shared renderer for browser 404/500 while generated API paths remain JSON. `base.html` gains explicit `app/auth/system` shell modes while preserving `rakit_shell_enabled` compatibility.
 
-**Tech Stack:** Python 3.12+, Starlette ASGI/raw ASGI middleware, Jinja2, existing Rakit security middleware/session/CSRF/rate limiting, Tailwind CSS 4.1.18, pytest/pytest-anyio, Ruff, ty.
+**Tech Stack:** Python 3.12+, Starlette ASGI/raw ASGI middleware, Jinja2, existing Rakit security/session/CSRF/rate-limit services, Tailwind CSS 4.1.18, pytest/pytest-anyio, Ruff, ty.
 
 **Spec:** `docs/superpowers/specs/2026-08-19-ui-06-advanced-operations-auth-system-design.md`
 
@@ -14,27 +14,28 @@
 
 - Work from the latest `ui-06-advanced-operations` integration head after UI-06B is merged; implement UI-06C on a child branch.
 - Feature/source implementation comes first; regression/security tests are added at the end of the slice.
-- Do not rebuild authentication or authorization; presentation must sit on the existing security boundary.
+- Do not rebuild authentication or authorization; presentation sits on the existing security boundary.
 - Login CSRF remains the existing pre-session double-submit token. Do not weaken field limits, origin handling, rate limiting, credential normalization, session creation, cookie attributes, or no-store behavior.
 - Invalid credentials remain non-enumerating and status 401.
 - Rate-limited login remains status 429.
-- Logout remains POST-only, CSRF-protected when an active session exists, revokes the session, deletes cookies, and redirects with 303.
+- Logout remains POST-only, validates CSRF when an active session exists, revokes the session, deletes cookies, and redirects with 303.
 - Anonymous browser access to a protected route remains a 303 login redirect.
 - Anonymous generated API access remains JSON 401.
 - Authenticated browser permission failure remains HTTP 403 but becomes system HTML.
-- Generated API permission failure remains JSON 403.
+- Generated API permission failure remains its existing JSON 403 contract.
 - Browser not found remains HTTP 404 HTML only after the existing security boundary permits the request to reach routing.
 - Generated API 404 remains JSON.
-- Production browser unexpected failure becomes safe HTTP 500 HTML; generated API 500 remains safe JSON.
+- Production browser unexpected failure becomes safe HTTP 500 HTML; generated API unexpected failure becomes safe JSON 500 without changing existing expected `RakitError` JSON contracts.
 - Debug mode retains Starlette/developer diagnostics rather than the production 500 surface.
 - Auth reason query values are fixed whitelist identifiers only. Never render arbitrary query text.
 - `session_expired` is emitted only when a prior session cookie was present but became unusable; a normal no-cookie anonymous redirect must not claim expiration.
 - 403 must not expose permission identifiers, route names, hidden resource names, or authorization internals.
 - 404 must not suggest/enumerate hidden routes/resources.
 - 500 must not expose exception strings, traceback, SQL, filesystem paths, storage/database configuration, secrets, or tokens.
+- Dashboard/return CTA visibility is permission-aware. System renderers never blindly assume the dashboard is reachable.
 - Preserve `rakit_shell_enabled` for custom-template compatibility.
 - Reuse `components/theme_control.html`; do not build a second theme system.
-- Mounted admin URLs must use `mounted_path` / `root_path`, never hardcoded root assumptions.
+- Mounted admin URLs use `mounted_path` / `root_path`, never hardcoded root assumptions.
 - No release/tag/PyPI action.
 
 ---
@@ -42,23 +43,24 @@
 ## File Map
 
 ### Create
-- `packages/rakit-web/src/rakit_web/system_responses.py` — safe browser/API system response renderer and fixed auth-reason mapping.
-- `packages/rakit-web/src/rakit_web/templates/system/page.html` — shared minimal system shell content.
+- `packages/rakit-web/src/rakit_web/auth_state.py` — Web-internal fixed `AuthReason` enum; no rendering dependency.
+- `packages/rakit-web/src/rakit_web/system_responses.py` — safe auth-reason message mapping and browser/API system response helpers.
+- `packages/rakit-web/src/rakit_web/templates/system/page.html`
 - `packages/rakit-web/src/rakit_web/templates/system/403.html`
 - `packages/rakit-web/src/rakit_web/templates/system/404.html`
 - `packages/rakit-web/src/rakit_web/templates/system/500.html`
 - `packages/rakit-web/tests/test_auth_ui_maturity.py` — slice UI/security regression tests, created after feature work.
 
 ### Modify
-- `packages/rakit-web/src/rakit_web/templates/base.html` — explicit shell mode and centered auth/system layout while preserving existing app shell.
-- `packages/rakit-web/src/rakit_web/templates/auth/login.html` — dedicated auth shell, fixed reason feedback, semantic errors.
-- `packages/rakit-web/src/rakit_web/auth_routes.py` — pass title and whitelisted reason presentation; signed-out redirect reason.
-- `packages/rakit-web/src/rakit_web/security/authentication.py` — stale-session marker + injected forbidden renderer; auth/API semantics remain unchanged.
-- `packages/rakit-web/src/rakit_web/admin.py` — create renderer; browser/API exception translation; wire auth/system callbacks and title.
+- `packages/rakit-web/src/rakit_web/templates/base.html` — explicit shell mode and centered auth/system layout.
+- `packages/rakit-web/src/rakit_web/templates/auth/login.html` — dedicated auth shell and semantic fixed feedback.
+- `packages/rakit-web/src/rakit_web/auth_routes.py` — title/reason presentation and signed-out redirect reason.
+- `packages/rakit-web/src/rakit_web/security/authentication.py` — stale-session marker + injected forbidden renderer; security semantics unchanged.
+- `packages/rakit-web/src/rakit_web/admin.py` — renderer creation, permission-aware dashboard CTA helper, browser/API exception translation, auth wiring.
 - `packages/rakit-web/src/rakit_web/assets/rakit.css`
 - `packages/rakit-web/src/rakit_web/static/rakit.css` — generated output.
-- `examples/ui_showcase/main.py` — deterministic auth/system states where practical.
-- Existing auth/security suites, especially `packages/rakit-web/tests/test_auth_enforcement.py`, `test_csrf.py`, and mounted-admin/runtime tests.
+- `examples/ui_showcase/main.py` only where real auth/system review scenarios need deterministic setup.
+- Existing auth/security/API error suites including `test_auth_enforcement.py`, `test_login_security.py`, `test_csrf.py`, `test_generated_rest_http_errors.py`.
 
 ---
 
@@ -70,47 +72,37 @@
 - Regenerate: `packages/rakit-web/src/rakit_web/static/rakit.css`
 
 **Interfaces:**
-- Consumes: existing `rakit_shell_enabled`, optional new `rakit_shell_mode`, `binding_label`/title, shared theme control.
-- Produces: three presentation modes: `app`, `auth`, `system`.
+- Consumes: existing `rakit_shell_enabled`, optional `rakit_shell_mode`, application title, shared theme control.
+- Produces: `app`, `auth`, and `system` presentation contexts.
 
-- [ ] **Step 1: Preserve the existing compatibility flag and derive shell mode**
+- [ ] **Step 1: Preserve compatibility and derive shell mode**
 
-At the top of `<body>` rendering, keep:
+Keep:
 
 ```jinja
 {% set shell_enabled = rakit_shell_enabled | default(true) %}
 ```
 
-and add:
+Add:
 
 ```jinja
 {% set shell_mode = rakit_shell_mode | default('app' if shell_enabled else 'auth') %}
 ```
 
 Rules:
-- `app` uses the current navigation/sidebar/mobile shell unchanged;
-- `auth` and `system` must not call/render the navigation provider;
-- existing templates that only pass `rakit_shell_enabled=False` continue to receive an auth-like no-sidebar layout.
+- `app` keeps current desktop/mobile navigation behavior;
+- `auth` and `system` do not render/call the navigation provider;
+- existing templates that only pass `rakit_shell_enabled=False` still get a valid no-sidebar shell.
 
-- [ ] **Step 2: Add a minimal non-app header for auth/system modes**
+- [ ] **Step 2: Add a minimal non-app header**
 
-For `shell_mode in ('auth', 'system')`, render a small top bar containing:
-- application title from `binding_label | default('Rakit')`;
-- an `Admin` badge only if it remains visually useful and non-sensitive;
-- existing `components/theme_control.html` with a unique `theme_control_id` such as `rakit-theme-system`;
-- no sidebar/resource navigation.
+For auth/system modes render application title plus existing `components/theme_control.html` using a unique `theme_control_id`. Do not turn the title into a dashboard link unless `dashboard_url` is explicitly supplied and safe.
 
-Use mounted-safe dashboard links only when the template explicitly receives `dashboard_url`; the shell title itself should not become a blind link.
+- [ ] **Step 3: Constrain auth/system content width while preserving shared document behavior**
 
-- [ ] **Step 3: Add constrained main widths by shell mode**
+Keep skip link, announcer, theme initialization, HTMX assets, UI JS, focus target, and semantic background. Use centered constrained content widths for auth/system while app shell retains current width/navigation.
 
-Keep current `max-w-7xl` for app. Use a centered constrained width for auth/system, e.g. `max-w-md` for login and `max-w-xl` for system pages. Keep skip link, announcer, main focus target, theme scripts, HTMX assets, and UI JS shared.
-
-- [ ] **Step 4: Add only stable shell CSS primitives if template utilities become repetitive**
-
-Prefer direct Tailwind utilities. Add `.rakit-auth-surface` / `.rakit-system-surface` only if used across multiple templates.
-
-- [ ] **Step 5: Rebuild and load templates**
+- [ ] **Step 4: Add only reusable CSS, rebuild, verify**
 
 ```powershell
 bun run css:build
@@ -119,7 +111,7 @@ uv run ruff format --check .
 uv run ruff check .
 ```
 
-- [ ] **Step 6: Commit shell modes**
+- [ ] **Step 5: Commit**
 
 ```powershell
 git add packages/rakit-web/src/rakit_web/templates/base.html packages/rakit-web/src/rakit_web/assets/rakit.css packages/rakit-web/src/rakit_web/static/rakit.css
@@ -128,9 +120,10 @@ git commit -m "feat(web): add auth and system shell modes"
 
 ---
 
-### Task 2: Build the Safe System Response Renderer
+### Task 2: Define Fixed Auth Reasons and Safe System Response Rendering
 
 **Files:**
+- Create: `packages/rakit-web/src/rakit_web/auth_state.py`
 - Create: `packages/rakit-web/src/rakit_web/system_responses.py`
 - Create: `packages/rakit-web/src/rakit_web/templates/system/page.html`
 - Create: `packages/rakit-web/src/rakit_web/templates/system/403.html`
@@ -138,12 +131,12 @@ git commit -m "feat(web): add auth and system shell modes"
 - Create: `packages/rakit-web/src/rakit_web/templates/system/500.html`
 
 **Interfaces:**
-- Consumes: `Jinja2Templates`, request state/request id, mounted path, fixed public messages.
-- Produces: safe browser 403/404/500 responses plus API error helper with stable JSON envelope.
+- Consumes: Jinja templates, request state/request id, mounted path, fixed public copy.
+- Produces: a tiny reason enum, whitelisted login reason presentation, safe browser 403/404/500, and a safe helper for unexpected generated-API 500.
 
-- [ ] **Step 1: Define fixed safe messages and auth reasons**
+- [ ] **Step 1: Create the rendering-independent reason enum**
 
-In `system_responses.py`:
+`auth_state.py`:
 
 ```python
 from enum import StrEnum
@@ -152,30 +145,40 @@ from enum import StrEnum
 class AuthReason(StrEnum):
     SESSION_EXPIRED = "session_expired"
     SIGNED_OUT = "signed_out"
-
-
-_AUTH_REASON_MESSAGES = {
-    AuthReason.SESSION_EXPIRED: ("warning", "Your session has expired. Sign in again to continue."),
-    AuthReason.SIGNED_OUT: ("success", "You have signed out successfully."),
-}
 ```
 
-Add:
+Keep it Web-internal; do not export it from `rakit`.
+
+- [ ] **Step 2: Map reasons to fixed presentation copy**
+
+In `system_responses.py`:
 
 ```python
+_AUTH_REASON_MESSAGES = {
+    AuthReason.SESSION_EXPIRED: (
+        "warning",
+        "Your session has expired. Sign in again to continue.",
+    ),
+    AuthReason.SIGNED_OUT: (
+        "success",
+        "You have signed out successfully.",
+    ),
+}
+
+
 def auth_reason_message(raw: str | None) -> tuple[str, str] | None:
+    if raw is None:
+        return None
     try:
-        reason = AuthReason(raw) if raw is not None else None
+        reason = AuthReason(raw)
     except ValueError:
         return None
-    return _AUTH_REASON_MESSAGES.get(reason) if reason is not None else None
+    return _AUTH_REASON_MESSAGES[reason]
 ```
 
-Never return the original `raw` text.
+Never return/render raw query input.
 
-- [ ] **Step 2: Add `SystemPageRenderer`**
-
-Use an immutable binding-like object:
+- [ ] **Step 3: Add `SystemPageRenderer` with no exception-text input**
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -188,68 +191,54 @@ class SystemPageRenderer:
     def internal_error(self, request: Request, *, dashboard_available: bool) -> Response: ...
 ```
 
-Each method calls `TemplateResponse` with:
+Each response passes:
 - `binding_label=self.label`;
 - `rakit_shell_enabled=False`;
 - `rakit_shell_mode="system"`;
-- `status_code` 403/404/500;
+- exact status 403/404/500;
 - `Cache-Control: no-store`;
-- `dashboard_url=mounted_path(request, "/") if dashboard_available else ""`;
-- request id only for 500 and only if it is a string.
+- `dashboard_url=mounted_path(request, "/")` only when `dashboard_available`;
+- request id only on 500 and only when it is a string.
 
-Do **not** accept exception text as a template argument.
+Do not accept an Exception object/message as template context.
 
-- [ ] **Step 3: Add a shared API system-error helper**
-
-Create:
+- [ ] **Step 4: Add a helper only for unexpected API 500**
 
 ```python
-def api_error_response(
-    request: Request,
-    *,
-    status_code: int,
-    code: str,
-    message: str,
-    headers: Mapping[str, str] | None = None,
-) -> JSONResponse:
-    ...
+def unexpected_api_error(request: Request) -> JSONResponse:
+    request_id = request.scope.get("state", {}).get("request_id", "")
+    return JSONResponse(
+        {
+            "error": {
+                "code": "internal.error",
+                "message": "Internal server error.",
+            },
+            "request_id": request_id if isinstance(request_id, str) else "",
+        },
+        status_code=500,
+        headers={"Cache-Control": "no-store"},
+    )
 ```
 
-It uses the existing envelope:
+Do not route normal `RakitError` through this helper; preserve existing generated API error contracts.
 
-```json
-{
-  "error": {"code": "...", "message": "..."},
-  "request_id": "..."
-}
-```
+- [ ] **Step 5: Create safe system templates**
 
-This helper must receive only explicitly safe public messages from callers.
+Required public copy:
+- 403: `Access denied` / `You don't have permission to view this page.`
+- 404: `Page not found` / `The page you're looking for doesn't exist or may have been moved.`
+- 500: `Something went wrong` / `We couldn't complete this request.` and request-id support copy when present.
 
-- [ ] **Step 4: Create the three system templates**
+Only show dashboard CTA when `dashboard_url` is non-empty. Baseline 500 has no automatic Retry CTA.
 
-Use `system/page.html` as the shared structure or include base macros. Required copy:
-- 403: heading `Access denied`, body `You don't have permission to view this page.`;
-- 404: heading `Page not found`, body `The page you're looking for doesn't exist or may have been moved.`;
-- 500: heading `Something went wrong`, body `We couldn't complete this request.` plus request-id support copy when present.
-
-Only show `Back to dashboard` when `dashboard_url` is non-empty.
-
-For 500, do not include a Retry link in the shared template yet. Add it only if a caller explicitly passes a safe `retry_url` for GET/HEAD; the baseline renderer should be conservative.
-
-- [ ] **Step 5: Structural verification**
+- [ ] **Step 6: Verify and commit**
 
 ```powershell
-uv run ruff format packages/rakit-web/src/rakit_web/system_responses.py
-uv run ruff check packages/rakit-web/src/rakit_web/system_responses.py
+uv run ruff format packages/rakit-web/src/rakit_web/auth_state.py packages/rakit-web/src/rakit_web/system_responses.py
+uv run ruff check packages/rakit-web/src/rakit_web/auth_state.py packages/rakit-web/src/rakit_web/system_responses.py
 uv run ty check
 uv run python -c "from rakit_web.resource_routes import build_templates; t=build_templates(()); [t.env.get_template(p) for p in ('system/403.html','system/404.html','system/500.html')]"
-```
-
-- [ ] **Step 6: Commit renderer/templates**
-
-```powershell
-git add packages/rakit-web/src/rakit_web/system_responses.py packages/rakit-web/src/rakit_web/templates/system
+git add packages/rakit-web/src/rakit_web/auth_state.py packages/rakit-web/src/rakit_web/system_responses.py packages/rakit-web/src/rakit_web/templates/system
 git commit -m "feat(web): add safe system response surfaces"
 ```
 
@@ -262,29 +251,16 @@ git commit -m "feat(web): add safe system response surfaces"
 - Modify: `packages/rakit-web/src/rakit_web/templates/auth/login.html`
 
 **Interfaces:**
-- Consumes: existing login CSRF cookie/form, `AuthReason` whitelist, admin title.
-- Produces: dedicated auth shell, fixed session-expired/signed-out feedback, same status/security semantics.
+- Consumes: existing login CSRF behavior, fixed `AuthReason`, safe reason message resolver, application title.
+- Produces: dedicated auth shell and fixed session-expired/signed-out feedback with unchanged HTTP/security semantics.
 
-- [ ] **Step 1: Pass the application title into auth routes**
+- [ ] **Step 1: Pass application title into auth routes**
 
-Extend:
+Extend `build_auth_routes(..., label: str, ...)` and later pass `self.config.title` from `Admin.asgi()`.
 
-```python
-def build_auth_routes(
-    *,
-    ...,
-    admin_id: str,
-    label: str,
-    secure_cookies: bool,
-    ...,
-) -> list[Route]:
-```
+- [ ] **Step 2: Resolve only whitelisted GET reason messages**
 
-`Admin.asgi()` will pass `label=self.config.title` later.
-
-- [ ] **Step 2: Resolve only whitelisted reason messages on login GET**
-
-Change `_render_login` to accept an optional `reason_message: tuple[str, str] | None`. Add template context:
+Extend `_render_login` context with:
 
 ```python
 "binding_label": label,
@@ -293,64 +269,26 @@ Change `_render_login` to accept an optional `reason_message: tuple[str, str] | 
 "reason_message": reason_message,
 ```
 
-`login_get` resolves:
+`login_get` calls `auth_reason_message(request.query_params.get("reason"))`. Unknown reason produces `None`; raw query text is never reflected.
 
-```python
-reason_message = auth_reason_message(request.query_params.get("reason"))
-return _render_login(request, error=None, reason_message=reason_message)
-```
+- [ ] **Step 3: Keep credential/rate-limit/security failures independent**
 
-If the query parameter is unknown, `reason_message` is `None`. Do not reflect the query string.
+POST credential failures remain generic 401, limiter failure remains 429, malformed form / invalid login CSRF retain existing failure semantics. Do not distinguish unknown identifier from wrong password.
 
-- [ ] **Step 3: Keep credential/rate-limit errors independent from reason messages**
+- [ ] **Step 4: Add fixed signed-out reason to successful logout redirect**
 
-POST error renders may omit stale GET reason state. Continue exact backend copy/status:
-- invalid credentials => 401;
-- rate-limit => 429;
-- malformed login / invalid CSRF retain current failure response semantics.
+Build mounted login URL and append only constant `AuthReason.SIGNED_OUT.value`; keep POST, revocation, CSRF logic, cookie deletion, and 303 unchanged.
 
-Do not change identifier/password error distinction.
+- [ ] **Step 5: Rewrite login template as minimal auth surface**
 
-- [ ] **Step 4: Add signed-out reason to successful logout redirect**
+Keep hidden login CSRF name/value, Email/Password ids/names/autocomplete/required, and Sign in POST target unchanged. Add semantic reason/error alerts, heading/support copy, full-width CTA. No fake remember-me/reset/social controls.
 
-Use a mounted-safe URL:
-
-```python
-login_url = mounted_path(request, "/auth/login")
-response = RedirectResponse(
-    url=f"{login_url}?reason={AuthReason.SIGNED_OUT.value}",
-    status_code=303,
-)
-```
-
-Because the reason is a constant enum value, no arbitrary query encoding is needed; using `urlencode` is also acceptable.
-
-Keep session/CSRF cookie deletion exactly as today.
-
-- [ ] **Step 5: Rewrite `auth/login.html` as the minimal auth surface**
-
-Required structure:
-- `{% extends "base.html" %}`;
-- concise `Welcome back` heading;
-- support copy using `binding_label`;
-- `reason_message` rendered as semantic success/warning alert based only on its fixed kind;
-- `error` rendered as `rakit-alert rakit-alert-danger` with `role="alert"`;
-- hidden `login_csrf_token` field unchanged;
-- Email and Password labels/IDs/names/autocomplete/required unchanged;
-- full-width primary Sign in button;
-- no fake remember-me/password-reset/social-auth controls.
-
-- [ ] **Step 6: Run structural verification**
+- [ ] **Step 6: Verify and commit**
 
 ```powershell
 uv run ruff format packages/rakit-web/src/rakit_web/auth_routes.py
 uv run ruff check packages/rakit-web/src/rakit_web/auth_routes.py
 uv run ty check
-```
-
-- [ ] **Step 7: Commit auth UI**
-
-```powershell
 git add packages/rakit-web/src/rakit_web/auth_routes.py packages/rakit-web/src/rakit_web/templates/auth/login.html
 git commit -m "feat(web): mature login and session feedback"
 ```
@@ -363,60 +301,37 @@ git commit -m "feat(web): mature login and session feedback"
 - Modify: `packages/rakit-web/src/rakit_web/security/authentication.py`
 
 **Interfaces:**
-- Consumes: existing `clear_session_cookie` result from `PrincipalMiddleware._resolve()`.
-- Produces: a fixed request-state reason used only when AuthorizationMiddleware performs a browser login redirect.
+- Consumes: existing `clear_session_cookie` result from `PrincipalMiddleware._resolve()` and `AuthReason` enum only.
+- Produces: fixed request-state reason used only on browser login redirect.
 
-- [ ] **Step 1: Add a private request-state key**
-
-Use a module constant:
+- [ ] **Step 1: Add a private state key**
 
 ```python
 _AUTH_REASON_STATE_KEY = "rakit_auth_reason"
 ```
 
-Do not expose it as public user input.
-
 - [ ] **Step 2: Mark only stale/unusable-session requests**
 
-After `_resolve()` returns and `scope["state"]` is initialized:
+After `_resolve()` and state initialization:
 
 ```python
 if clear_session_cookie:
     scope["state"][_AUTH_REASON_STATE_KEY] = AuthReason.SESSION_EXPIRED.value
 ```
 
-This condition already means a session cookie was present but no longer usable. No-cookie anonymous requests leave the key absent.
+No-cookie anonymous requests do not get the marker. Keep revoke/cookie-clearing behavior unchanged.
 
-Keep session revocation and cookie-clearing behavior unchanged.
+- [ ] **Step 3: Append reason only to browser unauthenticated redirects**
 
-- [ ] **Step 3: Add reason only to browser auth redirect**
+In AuthorizationMiddleware browser redirect logic, append `?reason=session_expired` only when state contains that exact constant. API requests remain JSON 401 and ignore the reason.
 
-In the unauthenticated browser branch of `AuthorizationMiddleware`:
+- [ ] **Step 4: Smoke-check clean anonymous vs stale session**
 
-```python
-login_url = mounted_path(request, LOGIN_PATH)
-reason = scope.get("state", {}).get(_AUTH_REASON_STATE_KEY)
-if reason == AuthReason.SESSION_EXPIRED.value:
-    login_url = f"{login_url}?reason={AuthReason.SESSION_EXPIRED.value}"
-```
+Using the showcase/test client:
+- clean anonymous protected path -> mounted `/auth/login` without reason;
+- stale cookie -> mounted `/auth/login?reason=session_expired` and cookie clear.
 
-Then use the same 303 + `Cache-Control: no-store` RedirectResponse.
-
-API requests ignore the reason and remain JSON 401.
-
-- [ ] **Step 4: Verify no-cookie behavior manually with a tiny ASGI smoke**
-
-Run the existing auth test helper or a local one-off request through the showcase:
-
-```powershell
-uv run python -m examples.ui_showcase.main
-```
-
-Check:
-- clean anonymous visit to a protected path -> `/auth/login` without reason;
-- stale cookie -> `/auth/login?reason=session_expired` and cookie deletion.
-
-- [ ] **Step 5: Commit stale-session signaling**
+- [ ] **Step 5: Commit**
 
 ```powershell
 git add packages/rakit-web/src/rakit_web/security/authentication.py
@@ -432,209 +347,164 @@ git commit -m "feat(web): surface expired session redirects safely"
 - Modify: `packages/rakit-web/src/rakit_web/admin.py`
 
 **Interfaces:**
-- Consumes: exact permission resolver/principal, `SystemPageRenderer.forbidden()`.
-- Produces: browser 403 HTML while API 403 stays unchanged JSON.
+- Consumes: exact permission resolver/principal and `SystemPageRenderer.forbidden()`.
+- Produces: browser HTML 403 while API 403 remains unchanged JSON.
 
-- [ ] **Step 1: Add a narrow browser forbidden renderer type**
-
-In `security/authentication.py`:
+- [ ] **Step 1: Add a narrow browser forbidden callback type**
 
 ```python
 BrowserForbiddenRenderer = Callable[[Request, bool], Response]
 ```
 
-Extend `AuthorizationMiddleware.__init__`:
+Extend `AuthorizationMiddleware.__init__(..., render_forbidden: BrowserForbiddenRenderer | None = None)`. Do not import Jinja/templates into the security module.
+
+- [ ] **Step 2: Compute dashboard availability with the same permission resolver**
+
+For authenticated browser forbidden state, resolve `requirement_for("/", "GET")`. Dashboard is available only if requirement is absent/public or the current authenticated principal matches it. Do not pass failed requirement/permission details to renderer.
+
+If callback is absent, preserve current plain-text fallback so middleware remains independently usable.
+
+- [ ] **Step 3: Create one shared dashboard availability helper in `Admin.asgi()`**
+
+After `requirement_resolver` exists:
 
 ```python
-render_forbidden: BrowserForbiddenRenderer | None = None
+def dashboard_available(request: Request) -> bool:
+    requirement = requirement_resolver("/", "GET")
+    if requirement is None:
+        return True
+    principal = request.scope.get("state", {}).get("principal")
+    return bool(
+        principal is not None
+        and principal.authenticated
+        and requirement.matches(principal, superuser_bypass=self._superuser_bypass)
+    )
 ```
 
-Do not import templates into the security module.
+This helper will also be reused by browser 404/500 rendering.
 
-- [ ] **Step 2: Determine whether dashboard is safe using the same resolver**
+- [ ] **Step 4: Wire `SystemPageRenderer` into AuthorizationMiddleware**
 
-In the authenticated-forbidden browser branch:
+Create renderer from shared templates/title and pass a callback that renders 403 with the middleware-computed dashboard flag. Keep middleware ordering unchanged: Principal before Authorization, then outer Security and RequestContext.
 
-```python
-dashboard_requirement = self._requirement_for("/", "GET")
-dashboard_available = (
-    dashboard_requirement is None
-    or dashboard_requirement.matches(principal, superuser_bypass=self._superuser_bypass)
-)
-```
-
-If `render_forbidden` exists, call it with `(request, dashboard_available)`; otherwise preserve the current PlainText fallback. This makes the middleware reusable outside the full Admin facade.
-
-Do not pass the failed requirement or permission names to the renderer.
-
-- [ ] **Step 3: Wire the renderer in `Admin.asgi()`**
-
-After `templates = build_templates(...)`, create:
-
-```python
-system_renderer = SystemPageRenderer(templates=templates, label=self.config.title)
-```
-
-When creating `AuthorizationMiddleware`:
-
-```python
-render_forbidden=lambda request, dashboard_available: system_renderer.forbidden(
-    request,
-    dashboard_available=dashboard_available,
-),
-```
-
-Keep middleware ordering unchanged: Principal resolves before Authorization reads principal; Security and RequestContext remain outer wrappers.
-
-- [ ] **Step 4: Run type/static verification**
+- [ ] **Step 5: Verify and commit**
 
 ```powershell
 uv run ruff format packages/rakit-web/src/rakit_web/security/authentication.py packages/rakit-web/src/rakit_web/admin.py
 uv run ruff check packages/rakit-web/src/rakit_web/security/authentication.py packages/rakit-web/src/rakit_web/admin.py
 uv run ty check
-```
-
-- [ ] **Step 5: Commit 403 presentation wiring**
-
-```powershell
 git add packages/rakit-web/src/rakit_web/security/authentication.py packages/rakit-web/src/rakit_web/admin.py
 git commit -m "feat(web): render safe browser forbidden pages"
 ```
 
 ---
 
-### Task 6: Add Context-Aware Browser/API 404 and 500 Translation
+### Task 6: Add Context-Aware Browser/API 404 and Production 500 Translation
 
 **Files:**
 - Modify: `packages/rakit-web/src/rakit_web/admin.py`
-- Modify if needed: `packages/rakit-web/src/rakit_web/system_responses.py`
+- Modify if needed: `packages/rakit-web/src/rakit_web/security/authentication.py`
 
 **Interfaces:**
-- Consumes: `admin_relative_path()`, existing `_is_generated_api_path` behavior or equivalent helper, `SystemPageRenderer`.
-- Produces: browser 404/500 HTML and generated API JSON without changing status/error meaning.
+- Consumes: `admin_relative_path()`, the existing generated-API path rule, shared renderer, permission-aware dashboard helper.
+- Produces: browser 404/500 HTML and generated API JSON while preserving existing expected error contracts.
 
-- [ ] **Step 1: Use one authoritative API-path classifier**
+- [ ] **Step 1: Reuse one authoritative generated-API path classifier**
 
-Promote the existing private `_is_generated_api_path` to a reusable Web-internal helper, e.g.:
+Expose/reuse a Web-internal helper matching the current rule:
 
 ```python
 def is_generated_api_path(path: str) -> bool:
     return path == "/api" or path.startswith("/api/")
 ```
 
-Update existing security use to that helper. Do not infer API solely from `Accept`.
+Use it in both security and exception translation. Do not infer from Accept alone.
 
 - [ ] **Step 2: Refactor `http_error_handler`**
 
 Use `relative_path = admin_relative_path(request)`.
 
-For generated API:
-- 404 => `http.not_found` JSON;
-- 405 => `http.method_not_allowed` JSON;
-- other HTTPException => `http.error` JSON;
-- preserve `exc.headers` plus no-store.
+Generated API keeps existing HTTPException JSON shape/codes (`http.not_found`, `http.method_not_allowed`, `http.error`) plus request id/no-store.
 
-For browser:
-- 404 => `system_renderer.not_found(request, dashboard_available=True)` **only because the request has already passed middleware authorization to reach Starlette routing**;
-- other HTTPException statuses keep an appropriate existing safe response unless separately owned by UI-06C. Do not silently convert all 4xx into 404/500 pages.
+Browser:
+- 404 -> `system_renderer.not_found(request, dashboard_available=dashboard_available(request))`;
+- other HTTPException statuses retain their existing safe/route-specific response unless explicitly owned by this slice.
 
-- [ ] **Step 3: Refactor `rakit_error_handler` by browser/API context**
+- [ ] **Step 3: Refactor `rakit_error_handler` without changing generated API payload contracts**
 
-Generated API path: keep `exc.to_public_dict()` JSON and exact `exc.status_code`.
+For generated API path, continue returning `exc.to_public_dict()` with exact `exc.status_code` and no-store as today.
 
-Browser path:
-- `exc.status_code == 404` => safe system 404;
-- `exc.status_code == 403` => safe system 403 without permission details;
-- other expected 4xx keep a safe existing browser response or route-specific presentation;
-- 5xx must not render `exc.message`; use the generic production 500 surface when `debug=False`.
+For browser path:
+- status 404 -> system 404;
+- status 403 -> system 403 without permission details;
+- other expected 4xx retain safe existing browser/route-specific behavior;
+- status >=500 with `debug=False` -> generic system 500 and **never** `exc.message`.
 
-- [ ] **Step 4: Add a generic unexpected exception handler**
-
-Define:
+- [ ] **Step 4: Add an unexpected exception handler for production**
 
 ```python
 async def unexpected_error_handler(request: Request, exc: Exception) -> Response:
     del exc
-    relative_path = admin_relative_path(request)
-    if is_generated_api_path(relative_path):
-        return api_error_response(
-            request,
-            status_code=500,
-            code="internal_error",
-            message="Internal server error.",
-        )
-    return system_renderer.internal_error(request, dashboard_available=True)
+    if is_generated_api_path(admin_relative_path(request)):
+        return unexpected_api_error(request)
+    return system_renderer.internal_error(
+        request,
+        dashboard_available=dashboard_available(request),
+    )
 ```
 
-Register it in Starlette:
-
-```python
-exception_handlers={
-    RakitError: rakit_error_handler,
-    HTTPException: http_error_handler,
-    Exception: unexpected_error_handler,
-}
-```
-
-Keep `debug=self.config.debug`. Starlette debug behavior must remain authoritative; verify in tests that debug exceptions are not replaced by the production 500 template.
+Register `Exception: unexpected_error_handler` alongside existing handlers. Keep `Starlette(debug=self.config.debug)`; verify debug mode still uses developer diagnostics rather than production system 500.
 
 - [ ] **Step 5: Pass `label=self.config.title` to `build_auth_routes`**
 
-Wire the signature change from Task 3.
+Complete Task 3 signature wiring.
 
 - [ ] **Step 6: Keep 404 security ordering unchanged**
 
-Do not change `build_requirement_resolver` fallback behavior. Unknown non-public paths still require admin access before routing, so:
-- anonymous unknown path -> 303 login;
+Do not change requirement resolver fallback. Unknown protected paths still pass through auth/admin permission gating before Starlette routing:
+- anonymous -> 303 login;
 - authenticated without admin access -> 403;
-- authenticated with access -> routed 404 HTML.
+- authenticated with access -> HTML 404.
 
-- [ ] **Step 7: Verify production output manually**
+- [ ] **Step 7: Manual production leakage smoke**
 
-With `debug=False` test app/showcase variant:
-- route raising `RuntimeError("SECRET_DB_PASSWORD=...")` renders generic 500 without string;
-- request id appears when RequestContext assigned one;
-- `/api/...` equivalent failure is JSON.
+Use `debug=False` fixture with an exception containing seeded credentials/path text. Browser response must be generic 500 + request id; API response safe JSON 500. Seeded string must be absent.
 
-- [ ] **Step 8: Commit error translation**
+- [ ] **Step 8: Commit**
 
 ```powershell
-git add packages/rakit-web/src/rakit_web/admin.py packages/rakit-web/src/rakit_web/system_responses.py
+git add packages/rakit-web/src/rakit_web/admin.py packages/rakit-web/src/rakit_web/security/authentication.py
 git commit -m "feat(web): add safe browser system error translation"
 ```
+
+Only stage authentication.py if the shared API classifier was moved/changed there.
 
 ---
 
 ### Task 7: Exercise Auth/System Surfaces in `examples/ui_showcase`
 
 **Files:**
-- Modify: `examples/ui_showcase/main.py`
-- Add development-only route/page hooks only if needed to make deterministic 403/404/500 review practical.
+- Modify: `examples/ui_showcase/main.py` only if deterministic real-runtime scenarios need setup.
 
 **Interfaces:**
-- Consumes: normal public Admin/auth configuration and framework-owned error behavior.
-- Produces: repeatable visual acceptance scenarios.
+- Consumes: real Admin/auth/error behavior.
+- Produces: repeatable visual acceptance without fake standalone system templates.
 
-- [ ] **Step 1: Keep real login flow as the primary auth acceptance path**
+- [ ] **Step 1: Use real login flow**
 
-Use existing showcase credentials. Review:
-- login initial state;
-- invalid credentials 401;
-- rate-limit state if the demo limiter can deterministically reach it without making the app inconvenient;
-- signed-out message through real logout POST;
-- session-expired message by invalidating a demo session record, not by hand-building HTML.
+Review normal login, invalid credentials, signed-out redirect, and session expiration by invalidating a real demo session record. Rate-limit state may be tested in automated fixture if making it deterministic in the showcase would degrade the demo.
 
-- [ ] **Step 2: Add a deterministic restricted page/resource if needed for 403**
+- [ ] **Step 2: Use real AuthorizationMiddleware for 403**
 
-Use a principal/permission scenario that reaches the real AuthorizationMiddleware. Do not create a custom template pretending to be 403.
+Add/use a restricted principal/page only if needed; never create a fake 403 page route.
 
 - [ ] **Step 3: Use a truly missing route for 404**
 
-Review `/this-route-does-not-exist` while authenticated with admin access. Also confirm anonymous request is redirected to login rather than receiving informative 404.
+Authenticated permitted user visits `/this-route-does-not-exist`; clean anonymous request to same path must redirect to login instead of seeing informative 404.
 
-- [ ] **Step 4: Add a development-only error trigger for production-500 visual QA if practical**
+- [ ] **Step 4: Keep production 500 primarily in test fixture**
 
-Because the normal showcase runs `debug=True`, a separate test fixture is preferred for safe production 500 verification. Do not weaken debug behavior just to show the pretty 500 in the showcase.
+The showcase runs `debug=True`; do not weaken that to display the pretty 500. Use automated `debug=False` fixture as primary 500 evidence.
 
 - [ ] **Step 5: Browser review**
 
@@ -642,16 +512,16 @@ Because the normal showcase runs `debug=True`, a separate test fixture is prefer
 uv run python -m examples.ui_showcase.main
 ```
 
-Review Login/403/404 in Light and Dark, desktop and narrow viewport. Verify system pages have no sidebar and theme control still works.
+Review login/403/404 in Light/Dark and narrow/desktop widths; confirm no sidebar and working theme control.
 
-- [ ] **Step 6: Commit showcase-only scenario changes**
+- [ ] **Step 6: Commit only actual showcase changes**
 
 ```powershell
 git add examples/ui_showcase/main.py
 git commit -m "feat(examples): cover auth and system surfaces"
 ```
 
-Skip this commit if no showcase code change was needed; tests may provide the production-500 fixture.
+Skip commit if no showcase source change was necessary.
 
 ---
 
@@ -659,93 +529,51 @@ Skip this commit if no showcase code change was needed; tests may provide the pr
 
 **Files:**
 - Create: `packages/rakit-web/tests/test_auth_ui_maturity.py`
-- Modify existing auth/security tests only where new response presentation requires assertions.
+- Modify existing auth/security/API error suites only if new presentation assertions require it.
 
 **Interfaces:**
 - Consumes: completed UI-06C behavior.
-- Produces: security and HTTP-format regression coverage.
+- Produces: security, response-format, leakage, shell, and mount regression coverage.
 
-- [ ] **Step 1: Test auth reason whitelist**
+- [ ] **Step 1: Test auth reason whitelist/non-reflection**
 
-```python
-def test_unknown_auth_reason_is_not_reflected() -> None:
-    assert auth_reason_message("<script>alert(1)</script>") is None
-```
-
-Request `/auth/login?reason=<encoded-arbitrary-value>` and assert the raw value is absent from the response.
+Unknown arbitrary reason resolves to `None`; request with encoded HTML/script reason never reflects that raw value.
 
 - [ ] **Step 2: Test stale-session vs clean-anonymous redirects**
 
-Assert:
-- no session cookie + protected browser route => 303 to mounted `/auth/login` with no reason;
-- stale session cookie => 303 to `?reason=session_expired` and session-cookie deletion header;
-- API stale session => JSON 401, not HTML/login redirect.
+Assert clean anonymous protected browser route redirects to mounted login without reason; stale session redirects to `?reason=session_expired` and clears cookie; stale API request remains JSON 401.
 
-- [ ] **Step 3: Reassert login security semantics**
+- [ ] **Step 3: Reassert login/logout security semantics**
 
-Cover:
-- unknown identifier and wrong password return the same generic UI copy/status 401;
-- rate-limit remains 429;
-- invalid login CSRF stays 403 and credentials backend is not invoked;
-- logout still requires POST and validates CSRF for active session;
-- successful logout redirects 303 to whitelisted `signed_out` reason and deletes session/CSRF cookies.
+Unknown identifier/wrong password produce identical generic 401 behavior; rate-limit remains 429; invalid login CSRF remains 403 and does not call credential backend; logout remains POST + active-session CSRF + revoke/delete-cookie + 303 signed-out reason.
 
 - [ ] **Step 4: Test browser/API 403 matrix**
 
-Browser authenticated without permission:
-
-```python
-assert response.status_code == 403
-assert response.headers["content-type"].startswith("text/html")
-assert "Access denied" in response.text
-assert "ops.resources.secret.read" not in response.text
-```
-
-API forbidden:
-
-```python
-assert response.status_code == 403
-assert response.headers["content-type"].startswith("application/json")
-assert response.json()["error"]["code"] == "auth.forbidden"
-```
+Browser forbidden = HTML 403 with `Access denied`, no permission ids. API forbidden remains existing JSON `auth.forbidden` contract.
 
 - [ ] **Step 5: Test 404 security ordering and mounted paths**
 
 Matrix:
-- anonymous `/missing` => 303 login;
-- authenticated without admin access `/missing` => 403;
-- authenticated with admin access `/missing` => HTML 404;
-- mounted admin `/admin/missing` dashboard CTA points to `/admin/`, never `/`;
-- `/api/missing` after appropriate auth => JSON 404.
+- anonymous missing path -> 303 login;
+- authenticated without admin access -> 403;
+- authenticated with admin access -> HTML 404;
+- mounted admin dashboard CTA points to mounted root;
+- `/api/missing` after applicable auth -> JSON 404.
 
-Assert response does not contain known hidden resource names/registered route dumps.
+No route/resource registry disclosure.
 
 - [ ] **Step 6: Test production 500 leakage boundary**
 
-Create a route/handler that raises:
+Raise `RuntimeError("postgresql://user:secret@db/private + /srv/app/internal.py")` under `debug=False`. Browser response is generic HTML 500 + request id with all seeded secret/path text absent. Generated API unexpected failure is safe JSON with code `internal.error` and request id. Under `debug=True`, response is not the production system-page copy.
 
-```python
-RuntimeError("postgresql://user:secret@db/private + /srv/app/internal.py")
-```
+- [ ] **Step 7: Test shell markup**
 
-For `debug=False` browser request assert:
-- 500 HTML;
-- `Something went wrong` present;
-- request id present when assigned;
-- the exception string, `secret`, `/srv/app/internal.py`, traceback markers absent.
+Login/403/404/500 contain theme controls and do not contain desktop/mobile admin navigation. Dashboard CTA appears only when permission-aware flag permits it.
 
-For generated API failure assert safe JSON 500 + request id and no exception string.
-
-For `debug=True`, assert the response is not the production `Something went wrong` system page; developer diagnostic behavior remains enabled.
-
-- [ ] **Step 7: Test auth/system shell markup**
-
-Assert login/403/404/500 HTML contains `data-theme` controls / `data-rakit-theme-control` and does **not** contain `data-rakit-desktop-navigation` or mobile admin navigation.
-
-- [ ] **Step 8: Run focused tests**
+- [ ] **Step 8: Run the exact focused suite**
 
 ```powershell
-uv run pytest packages/rakit-web/tests/test_auth_ui_maturity.py packages/rakit-web/tests/test_auth_enforcement.py packages/rakit-web/tests/test_csrf.py -q
+uv run pytest packages/rakit-web/tests/test_auth_ui_maturity.py packages/rakit-web/tests/test_auth_enforcement.py packages/rakit-web/tests/test_login_security.py packages/rakit-web/tests/test_csrf.py packages/rakit-web/tests/test_generated_rest_http_errors.py -q
 ```
 
 Expected: PASS.
@@ -766,12 +594,12 @@ git status --short
 - [ ] **Step 10: Commit tests**
 
 ```powershell
-git add packages/rakit-web/tests/test_auth_ui_maturity.py packages/rakit-web/tests/test_auth_enforcement.py packages/rakit-web/tests/test_csrf.py
+git add packages/rakit-web/tests/test_auth_ui_maturity.py packages/rakit-web/tests/test_auth_enforcement.py packages/rakit-web/tests/test_login_security.py packages/rakit-web/tests/test_csrf.py packages/rakit-web/tests/test_generated_rest_http_errors.py
 git commit -m "test(web): cover auth and system UI boundaries"
 ```
 
-Only stage existing auth/security test files if they actually changed.
+Only stage existing files that actually changed.
 
-- [ ] **Step 11: Open the UI-06C PR against `ui-06-advanced-operations`**
+- [ ] **Step 11: Open UI-06C PR against `ui-06-advanced-operations`**
 
-Require fresh PR CI and maintainer browser acceptance for login, session feedback, 403, 404, Light/Dark, and production-500 test evidence. Merge only into the integration branch.
+Require fresh PR CI and maintainer browser acceptance for login/session/403/404/themes plus production-500 automated evidence. Merge only into integration.
