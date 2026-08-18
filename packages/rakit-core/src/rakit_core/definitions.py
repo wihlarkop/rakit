@@ -14,6 +14,7 @@ from .endpoints import (
 )
 from .filters import ResourceFilter
 from .generated_api import ResourceApiDefinition
+from .pagination import ResourcePaginationPolicy
 from .permissions import PermissionRequirement
 from .relationships import RelationshipDefinition
 from .transactions import TransactionPolicy
@@ -42,6 +43,7 @@ class ResourceDefinition(BaseModel):
     singular_label: str
     field_policy: ResourceFieldPolicy = Field(default_factory=ResourceFieldPolicy)
     filters: tuple[ResourceFilter, ...] = ()
+    pagination: ResourcePaginationPolicy = Field(default_factory=ResourcePaginationPolicy)
     relationships: tuple[RelationshipDefinition, ...] = ()
     api: ResourceApiDefinition = Field(default_factory=ResourceApiDefinition)
 
