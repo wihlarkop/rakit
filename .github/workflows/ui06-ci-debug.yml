@@ -1,0 +1,46 @@
+name: UI-06A CI diagnostic
+
+on:
+  pull_request:
+    branches:
+      - ui-06-advanced-operations
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ui-06a-actions-bulk
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-packages --dev
+      - name: Format regression and capture focused/full failures
+        run: |
+          uv run ruff format packages/rakit-web/tests/test_advanced_ui_maturity.py
+          set +e
+          {
+            echo '=== FOCUSED UI-06A REGRESSION ==='
+            uv run pytest packages/rakit-web/tests/test_advanced_ui_maturity.py -q -x
+            echo "focused_exit=$?"
+            echo
+            echo '=== SHOWCASE IMPORT ==='
+            uv run python -c 'from examples.ui_showcase.main import app; print(type(app).__name__)'
+            echo "showcase_exit=$?"
+            echo
+            echo '=== FULL SUITE FIRST FAILURE ==='
+            uv run pytest -q -x
+            echo "full_exit=$?"
+          } > ui06-ci-debug.txt 2>&1
+          set -e
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/rakit-web/tests/test_advanced_ui_maturity.py ui06-ci-debug.txt
+          git commit -m "chore(ci): capture UI-06A diagnostic output"
+          git push origin HEAD:ui-06a-actions-bulk
