@@ -47,7 +47,11 @@ def _principal(request: Request) -> Principal | None:
 
 def _owner_id(compiled: CompiledActionDefinition) -> str:
     definition = compiled.definition
-    owner = definition.page_id if definition.scope is ActionScope.PAGE else definition.resource_id
+    owner = (
+        definition.page_id
+        if definition.scope is ActionScope.PAGE
+        else definition.resource_id
+    )
     return str(owner) if owner is not None else ""
 
 
@@ -79,11 +83,7 @@ async def resolve_action_views(
     """Resolve permission- and availability-aware action entry points."""
 
     principal = _principal(request)
-    if (
-        principal is None
-        or not principal.authenticated
-        or principal.subject_id is None
-    ):
+    if principal is None or not principal.authenticated or principal.subject_id is None:
         return ()
 
     views: list[ActionView] = []
