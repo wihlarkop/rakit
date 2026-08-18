@@ -159,7 +159,7 @@ async def test_sqlalchemy_rejects_cursor_instead_of_emulating_it(
     with pytest.raises(RakitError) as captured:
         await datasource.list(ResourceQuery(pagination=CursorPagination(cursor="opaque", limit=2)))
 
-    assert captured.value.code is ErrorCode.CONFIG_INVALID_RESOURCE_POLICY
+    assert captured.value.code == ErrorCode.CONFIG_INVALID_RESOURCE_POLICY.value
     assert captured.value.details == {"reason": "pagination_strategy_not_supported"}
 
 
