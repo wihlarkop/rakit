@@ -1,0 +1,49 @@
+name: UI-05D generated REST patch
+
+on:
+  pull_request:
+    branches:
+      - ui-05-resource-experience
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ui-05d-resource-query-configuration
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply deterministic generated REST patch
+        run: python .github/ui05d_patch_generated_rest.py
+      - name: Normalize generated REST modules
+        run: |
+          uv run ruff format \
+            packages/rakit-web/src/rakit_web/generated_rest.py \
+            packages/rakit-web/src/rakit_web/generated_rest_runtime.py
+          uv run ruff check --fix \
+            packages/rakit-web/src/rakit_web/generated_rest.py \
+            packages/rakit-web/src/rakit_web/generated_rest_runtime.py
+          uv run ruff check \
+            packages/rakit-web/src/rakit_web/generated_rest.py \
+            packages/rakit-web/src/rakit_web/generated_rest_runtime.py
+      - name: Commit generated REST patch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            packages/rakit-web/src/rakit_web/generated_rest.py \
+            packages/rakit-web/src/rakit_web/generated_rest_runtime.py
+          if git diff --cached --quiet; then
+            echo 'No generated REST patch changes to commit.'
+            exit 0
+          fi
+          git commit -m 'feat(api): support resource query strategies'
+          git push origin HEAD:ui-05d-resource-query-configuration
