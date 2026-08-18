@@ -39,4 +39,16 @@ Additional surfaces:
 - Orders expose a `refund_order` record action using Rakit's real preview + confirmation pipeline as a baseline for later action-UX work
 - `/auth/login` — successful and invalid-credential states using the development-only demo backend
 
+## UI-05E filter rail acceptance
+
+Use `/orders`, `/products`, and `/inventory` together when reviewing resource filtering:
+
+- `/orders` exercises text, choice, and date-range controls in the default rail;
+- `/products` intentionally exposes five filter groups so automatic group collapse is visible, and its Category filter has ten choices so `Show more`/`Show less` behavior can be inspected;
+- `/products` also uses the public Web presentation override to show five Category choices before disclosure;
+- `/inventory` exercises a custom semantic `ResourceFilter` whose friendly selection resolves to backend-neutral predicates;
+- on desktop, verify the right rail, group dividers, Hide/Show filters, active chips, and table expansion;
+- on tablet/mobile, verify the no-JavaScript fallback and the enhanced filter drawer;
+- clearing one filter or all filters must not unexpectedly hide the filtering surface.
+
 The UI Lab is a baseline, not a separate theme. If it needs styling that the default Rakit UI does not provide, the framework UI should be improved in a later UI maturity PR instead of adding showcase-only CSS.

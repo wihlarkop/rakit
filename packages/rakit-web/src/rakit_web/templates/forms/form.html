@@ -7,32 +7,37 @@
     {% if node.field %}
       {% set field = node.field %}
       <div class="space-y-1.5">
-        <label class="block text-sm font-medium text-slate-800 dark:text-slate-200" for="{{ field.id }}">{{ field.label }}</label>
+        <label class="block text-sm font-medium text-rakit-text" for="{{ field.id }}">
+          {{ field.label }}{% if field.required %}<span class="rakit-field-required" aria-hidden="true"> *</span><span class="sr-only"> required</span>{% endif %}
+        </label>
         {% set descriptions = [] %}
         {% if field.description %}{% set _ = descriptions.append(field.description_id) %}{% endif %}
         {% if field.issues %}{% set _ = descriptions.append(field.error_id) %}{% endif %}
         {% if field.is_file %}
-        <input class="rakit-input" type="file" id="{{ field.id }}" name="{{ field.name }}"{% if field.accept %} accept="{{ field.accept }}"{% endif %}{% if field.required %} required{% endif %}{% if descriptions %} aria-describedby="{{ descriptions | join(' ') }}"{% endif %}{% if field.issues %} aria-invalid="true"{% endif %} />
+        <input class="rakit-file-input" type="file" id="{{ field.id }}" name="{{ field.name }}"{% if field.accept %} accept="{{ field.accept }}"{% endif %}{% if field.required %} required{% endif %}{% if descriptions %} aria-describedby="{{ descriptions | join(' ') }}"{% endif %}{% if field.issues %} aria-invalid="true"{% endif %} />
         {% else %}
-        <input class="rakit-input" id="{{ field.id }}" name="{{ field.name }}" value="{{ field.value }}"{% if descriptions %} aria-describedby="{{ descriptions | join(' ') }}"{% endif %}{% if field.issues %} aria-invalid="true"{% endif %} />
+        <input class="rakit-input" id="{{ field.id }}" name="{{ field.name }}" value="{{ field.value }}"{% if field.required %} required{% endif %}{% if descriptions %} aria-describedby="{{ descriptions | join(' ') }}"{% endif %}{% if field.issues %} aria-invalid="true"{% endif %} />
         {% endif %}
-        {% if field.description %}<p id="{{ field.description_id }}" class="text-sm text-slate-500 dark:text-slate-400">{{ field.description }}</p>{% endif %}
+        {% if field.description %}<p id="{{ field.description_id }}" class="rakit-field-help">{{ field.description }}</p>{% endif %}
         {% if field.issues %}<div id="{{ field.error_id }}" class="rakit-error" role="alert">{% for issue in field.issues %}<p>{{ issue.message }}</p>{% endfor %}</div>{% endif %}
       </div>
     {% endif %}
   {% elif node.kind == "section" %}
-    <section id="{{ node.id }}" class="rakit-panel space-y-4 p-4"><h2 class="text-base font-semibold text-slate-900 dark:text-white">{{ node.title }}</h2>{% for child in node.children %}{{ render_node(child) }}{% endfor %}</section>
+    <section id="{{ node.id }}" class="rakit-panel">
+      <div class="rakit-panel-header"><h2 class="text-sm font-semibold text-rakit-text">{{ node.title }}</h2></div>
+      <div class="rakit-panel-body space-y-4">{% for child in node.children %}{{ render_node(child) }}{% endfor %}</div>
+    </section>
   {% elif node.kind == "row" %}
     <div class="grid gap-4 md:grid-cols-2">{% for child in node.children %}{{ render_node(child) }}{% endfor %}</div>
   {% elif node.kind == "column" %}
     <div class="space-y-4">{% for child in node.children %}{{ render_node(child) }}{% endfor %}</div>
   {% elif node.kind == "tabs" %}
     <div id="{{ node.id }}" data-rakit-tabs>
-      <nav aria-label="Form sections" class="mb-4 flex flex-wrap gap-2">{% for tab in node.tabs %}<a class="rounded-md px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800" href="#{{ tab.id }}" role="tab" aria-controls="{{ tab.id }}" aria-selected="{{ 'true' if tab.active else 'false' }}">{{ tab.label }}{% if tab.errors %} <span>({{ tab.errors }})</span>{% endif %}</a>{% endfor %}</nav>
-      {% for tab in node.tabs %}<section id="{{ tab.id }}" role="tabpanel">{% for child in tab.children %}{{ render_node(child) }}{% endfor %}</section>{% endfor %}
+      <nav aria-label="Form sections" class="mb-4 flex flex-wrap gap-2 border-b border-rakit-border pb-2">{% for tab in node.tabs %}<a class="rounded-rakit-sm px-3 py-2 text-sm font-medium text-rakit-text-muted transition hover:bg-rakit-surface-subtle hover:text-rakit-text" href="#{{ tab.id }}" role="tab" aria-controls="{{ tab.id }}" aria-selected="{{ 'true' if tab.active else 'false' }}">{{ tab.label }}{% if tab.errors %} <span class="rakit-status rakit-status-danger">{{ tab.errors }}</span>{% endif %}</a>{% endfor %}</nav>
+      {% for tab in node.tabs %}<section id="{{ tab.id }}" role="tabpanel" class="space-y-4">{% for child in tab.children %}{{ render_node(child) }}{% endfor %}</section>{% endfor %}
     </div>
   {% elif node.kind == "collapsible" %}
-    <details id="{{ node.id }}" class="rounded-lg border border-slate-200 p-4 dark:border-slate-800"{% if node.open %} open{% endif %}><summary class="font-medium text-slate-900 dark:text-white">{{ node.label }}</summary><div class="mt-4 space-y-4">{% for child in node.children %}{{ render_node(child) }}{% endfor %}</div></details>
+    <details id="{{ node.id }}" class="rounded-rakit-md border border-rakit-border bg-rakit-surface p-4"{% if node.open %} open{% endif %}><summary class="font-medium text-rakit-text">{{ node.label }}</summary><div class="mt-4 space-y-4">{% for child in node.children %}{{ render_node(child) }}{% endfor %}</div></details>
   {% elif node.kind == "relationship" %}
     {% if node.panel %}
       {% with panel = node.panel %}{% include node.template %}{% endwith %}
@@ -43,13 +48,22 @@
     <section id="{{ node.id }}" data-rakit-custom-block="{{ node.block }}"></section>
   {% endif %}
 {% endmacro %}
-<header class="mb-6 flex flex-wrap items-end justify-between gap-3 border-b border-slate-200 pb-4 dark:border-slate-800">
-  <div><p class="text-sm font-medium text-slate-500 dark:text-slate-400">{{ 'Create' if operation == 'create' else 'Edit' }}</p><h1 class="mt-1 text-2xl font-semibold tracking-tight text-slate-950 dark:text-white">{{ title }}</h1></div>
+<nav data-rakit-breadcrumb="resource-form" class="mb-3 flex flex-wrap items-center gap-1.5 text-sm text-rakit-text-muted" aria-label="Breadcrumb">
+  <a href="{{ request.scope.get('root_path', '').rstrip('/') }}/" class="font-medium transition hover:text-rakit-text">Dashboard</a>
+  <span data-rakit-breadcrumb-separator aria-hidden="true" class="text-rakit-text-subtle">{{ rakit_icon("chevron-right", class_name="size-4") }}</span>
+  <a href="{{ resource_url }}" class="font-medium transition hover:text-rakit-text">{{ label }}</a>
+  <span data-rakit-breadcrumb-separator aria-hidden="true" class="text-rakit-text-subtle">{{ rakit_icon("chevron-right", class_name="size-4") }}</span>
+  <span aria-current="page">{{ 'Create' if operation == 'create' else 'Edit' }}</span>
+</nav>
+<header class="mb-6 border-b border-rakit-border pb-4">
+  <p class="text-sm font-medium text-rakit-text-muted">{{ 'Create record' if operation == 'create' else 'Edit record' }}</p>
+  <h1 class="mt-1 text-2xl font-semibold tracking-tight text-rakit-text">{{ title }}</h1>
+  <p class="mt-2 max-w-2xl text-sm leading-6 text-rakit-text-muted">{{ 'Add a new record using the fields available for this resource.' if operation == 'create' else 'Update the fields available for this record.' }}</p>
 </header>
 {% if issues %}
-<div id="form-errors" class="mb-5 rounded-lg border border-red-200 bg-red-50 p-4 text-red-950 dark:border-red-900 dark:bg-red-950/40 dark:text-red-100" data-rakit-focus-target="form-errors" role="alert" tabindex="-1">
-  <p class="font-medium">There are problems with this form</p>
-  <ul class="mt-2 list-disc space-y-1 pl-5">{% for issue in summary_issues %}<li>{% if issue.anchor %}<a class="underline" href="#{{ issue.anchor }}">{{ issue.label }}: {{ issue.message }}</a>{% else %}{{ issue.message }}{% endif %}</li>{% endfor %}</ul>
+<div id="form-errors" class="rakit-alert rakit-alert-danger mb-5" data-rakit-focus-target="form-errors" role="alert" tabindex="-1">
+  <p class="font-semibold">There are problems with this form</p>
+  <ul class="mt-2 list-disc space-y-1 pl-5">{% for issue in summary_issues %}<li>{% if issue.anchor %}<a class="font-medium underline" href="#{{ issue.anchor }}">{{ issue.label }}: {{ issue.message }}</a>{% else %}{{ issue.message }}{% endif %}</li>{% endfor %}</ul>
 </div>
 {% endif %}
 <form class="space-y-5" method="post" action="{{ action_url }}"{% if has_file_fields %} enctype="multipart/form-data"{% endif %} novalidate{% if first_invalid_id %} data-rakit-first-invalid="{{ first_invalid_id }}"{% endif %}>
@@ -58,8 +72,8 @@
   {% if concurrency_token %}<input type="hidden" name="concurrency_token" value="{{ concurrency_token }}" />{% endif %}
   {% for node in layout %}{{ render_node(node) }}{% endfor %}
   <div id="rakit-dialog-root" aria-live="polite"></div>
-  <footer class="sticky bottom-0 flex justify-end gap-3 border-t border-slate-200 bg-slate-50/95 px-4 py-3 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
-    <a class="rakit-button rakit-button-secondary" href="{{ action_url.rsplit('/', 1)[0] if operation == 'update' else action_url.rsplit('/', 1)[0] }}">Cancel</a>
+  <footer class="sticky bottom-0 z-10 flex flex-col justify-end gap-2 border-t border-rakit-border bg-rakit-surface px-4 py-3 sm:flex-row">
+    <a class="rakit-button rakit-button-secondary" href="{{ cancel_url }}">Cancel</a>
     <button class="rakit-button" type="submit">{{ 'Create' if operation == 'create' else 'Save changes' }}</button>
   </footer>
 </form>

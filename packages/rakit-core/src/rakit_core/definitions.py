@@ -12,7 +12,9 @@ from .endpoints import (
     EndpointMethod,
     EndpointResponseKind,
 )
+from .filters import ResourceFilter
 from .generated_api import ResourceApiDefinition
+from .pagination import ResourcePaginationPolicy
 from .permissions import PermissionRequirement
 from .relationships import RelationshipDefinition
 from .transactions import TransactionPolicy
@@ -40,8 +42,17 @@ class ResourceDefinition(BaseModel):
     label: str
     singular_label: str
     field_policy: ResourceFieldPolicy = Field(default_factory=ResourceFieldPolicy)
+    filters: tuple[ResourceFilter, ...] = ()
+    pagination: ResourcePaginationPolicy = Field(default_factory=ResourcePaginationPolicy)
     relationships: tuple[RelationshipDefinition, ...] = ()
     api: ResourceApiDefinition = Field(default_factory=ResourceApiDefinition)
+
+    @model_validator(mode="after")
+    def _validate_filters(self) -> "ResourceDefinition":
+        filter_ids = tuple(definition.filter_id for definition in self.filters)
+        if len(set(filter_ids)) != len(filter_ids):
+            raise ValueError("Resource filter ids must be unique")
+        return self
 
     @property
     def relationship_ids(self) -> tuple[str, ...]:

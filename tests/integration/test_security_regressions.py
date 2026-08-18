@@ -18,7 +18,7 @@ from rakit_core.crypto import TokenService
 from rakit_core.datasource import DataSourceCapabilities
 from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_core.permissions import PermissionRequirement
-from rakit_core.query import PageResult, ResourceQuery
+from rakit_core.query import PagePagination, PageResult, ResourceQuery
 from rakit_storage import TemporaryUpload
 from rakit_storage_local import LocalStorage
 from rakit_web.security.rate_limit import LoginRateLimiter
@@ -133,10 +133,13 @@ class _Source:
         return RecordIdentity(values={"id": record.id})
 
     async def list(self, query: ResourceQuery) -> PageResult[_Record]:
+        pagination = query.pagination
+        if not isinstance(pagination, PagePagination):
+            raise ValueError("_Source supports page-number pagination only")
         return PageResult(
             items=(_Record(),),
-            page=query.pagination.page,
-            per_page=query.pagination.per_page,
+            page=pagination.page,
+            per_page=pagination.per_page,
             has_previous=False,
             has_next=False,
             total_count=1,

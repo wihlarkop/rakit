@@ -27,6 +27,7 @@ from .errors import ErrorCode, RakitError
 from .generated_api import ApiExposure, CompiledResourceApi, GeneratedCrudOperation
 from .generated_compiler import compile_generated_resource_apis
 from .generated_runtime import GeneratedResourceExecutorProvider, ResourceAdapterRuntime
+from .pagination import PaginationStrategy
 from .permissions import PermissionRequirement
 from .relationships import CompiledRelationship
 
@@ -258,6 +259,25 @@ class ApplicationBuilder:
                 message=f'Resource "{definition.resource_id}" is already registered.',
                 status_code=500,
                 details={"resource_id": definition.resource_id},
+            )
+        pagination_strategies = getattr(
+            data_source.capabilities,
+            "pagination_strategies",
+            frozenset({PaginationStrategy.PAGE}),
+        )
+        if definition.pagination.strategy not in pagination_strategies:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+                message=(
+                    f'Resource "{definition.resource_id}" requests an unsupported '
+                    "pagination strategy."
+                ),
+                status_code=500,
+                details={
+                    "resource_id": definition.resource_id,
+                    "reason": "pagination_strategy_not_supported",
+                    "strategy": definition.pagination.strategy.value,
+                },
             )
         self._resources.append(definition)
         self._resource_data_sources[definition.resource_id] = data_source

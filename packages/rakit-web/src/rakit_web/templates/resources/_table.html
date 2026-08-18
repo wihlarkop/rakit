@@ -1,139 +1,284 @@
+{% from "resources/_filters.html" import render_filter_groups with context %}
 {% set bulk_actions = rakit_bulk_actions(request, resource.resource_id) if rakit_bulk_actions is defined else () %}
-<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between" data-rakit-resource-controls="{{ resource.resource_id }}">
-  {% if search_enabled %}
-  <form class="flex w-full max-w-md gap-2" method="get" data-rakit-search action="{{ resource_path }}">
-    {% for filter_value in filter_values %}
-    <input type="hidden" name="filter" value="{{ filter_value }}" />
-    {% endfor %}
-    {% if sort_value %}
-    <input type="hidden" name="sort" value="{{ sort_value }}" />
-    {% endif %}
-    <input type="hidden" name="per_page" value="{{ per_page_value }}" />
-    <input
-      class="rakit-input"
-      type="search"
-      name="search"
-      value="{{ search_value }}"
-      placeholder="Search {{ resource.label | lower }}"
-      aria-label="Search {{ resource.label }}"
-    />
-    {% if query.count_policy.value != "exact" %}
-    <input type="hidden" name="count_policy" value="{{ query.count_policy.value }}" />
-    {% endif %}
-    <button class="rakit-button rakit-button-secondary shrink-0" type="submit">Search</button>
-  </form>
+{% set web_presentation = rakit_resource_web_presentation(resource) %}
+{% set filter_policy = web_presentation.filters %}
+<section
+  class="space-y-4"
+  data-rakit-resource-controls="{{ resource.resource_id }}"
+  data-rakit-filter-ui="{{ resource.resource_id }}"
+  data-rakit-filter-default-visible="{{ 'true' if filter_policy.visible_by_default else 'false' }}"
+>
+  {% if search_enabled or filter_enabled %}
+  <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+    <div class="flex w-full flex-col gap-2 sm:flex-row sm:items-start lg:max-w-3xl">
+      {% if search_enabled %}
+      <form class="w-full sm:max-w-lg" method="get" data-rakit-search action="{{ resource_path }}" role="search">
+        {% for input in search_hidden_inputs %}<input type="hidden" name="{{ input.name }}" value="{{ input.value }}" />{% endfor %}
+        <div class="relative">
+          <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-rakit-text-subtle" aria-hidden="true">{{ rakit_icon("search", class_name="size-4") }}</span>
+          <input
+            class="rakit-input pl-9{% if search_value %} pr-10{% endif %}"
+            type="search"
+            name="search"
+            value="{{ search_value }}"
+            placeholder="Search {{ resource.label | lower }}"
+            aria-label="Search {{ resource.label }}"
+          />
+          {% if search_value %}
+          <a class="absolute right-1.5 top-1/2 inline-flex size-8 -translate-y-1/2 items-center justify-center rounded-rakit-sm text-rakit-text-muted transition hover:bg-rakit-surface-subtle hover:text-rakit-text" href="{{ clear_search_url }}" aria-label="Clear search">{{ rakit_icon("x", class_name="size-4") }}</a>
+          {% endif %}
+        </div>
+      </form>
+      {% endif %}
+
+      {% if filter_enabled %}
+      <button
+        class="rakit-button rakit-button-secondary lg:hidden"
+        type="button"
+        hidden
+        data-rakit-filter-drawer-trigger
+        data-rakit-dialog-trigger
+        aria-controls="rakit-filter-drawer-{{ resource.resource_id }}"
+      >
+        {{ rakit_icon("list-filter", class_name="size-4") }}
+        <span>Filters{% if active_filter_count %} ({{ active_filter_count }}){% endif %}</span>
+      </button>
+      <button
+        class="rakit-button rakit-button-secondary hidden lg:inline-flex"
+        type="button"
+        hidden
+        data-rakit-filter-rail-show
+        aria-controls="rakit-filter-rail-{{ resource.resource_id }}"
+      >
+        {{ rakit_icon("list-filter", class_name="size-4") }}
+        <span>Show filters{% if active_filter_count %} ({{ active_filter_count }}){% endif %}</span>
+      </button>
+      {% endif %}
+    </div>
+
+    <div class="shrink-0 text-sm tabular-nums text-rakit-text-muted" data-rakit-total>
+      {% if query.count_policy.value == "deferred" %}
+      <span data-rakit-total-deferred><span hx-get="{{ count_url }}" hx-trigger="load" hx-swap="innerHTML">Calculating</span> total</span>
+      {% elif query.count_policy.value == "disabled" %}
+      Total unavailable
+      {% elif pagination.total_count is not none %}
+      {{ pagination.total_count }} total
+      {% endif %}
+    </div>
+  </div>
   {% endif %}
 
-  <p class="text-sm tabular-nums text-slate-500 dark:text-slate-400" data-rakit-total>
-    {% if query.count_policy.value == "deferred" %}
-    <span
-      data-rakit-total-deferred
-      hx-get="{{ count_url }}"
-      hx-trigger="load"
-      hx-swap="outerHTML"
-    >Calculating total…</span>
-    {% elif query.count_policy.value == "disabled" %}
-    Total unknown
-    {% else %}
-    {{ page.total_count }} total
-    {% endif %}
-  </p>
-</div>
-
-<form id="rakit-sort-{{ resource.resource_id }}" method="get" action="{{ resource_path }}" class="hidden" aria-hidden="true">
-  {% for filter_value in filter_values %}<input type="hidden" name="filter" value="{{ filter_value }}" />{% endfor %}
-  {% if search_value %}<input type="hidden" name="search" value="{{ search_value }}" />{% endif %}
-  <input type="hidden" name="per_page" value="{{ per_page_value }}" />
-  {% if query.count_policy.value != "exact" %}<input type="hidden" name="count_policy" value="{{ query.count_policy.value }}" />{% endif %}
-</form>
-
-{% if bulk_actions %}
-<form method="get" data-rakit-bulk-actions="{{ resource.resource_id }}">
-  <div class="mb-3 flex flex-wrap items-center gap-2" role="group" aria-label="Bulk actions">
-    <span class="text-sm text-slate-600 dark:text-slate-300">Selected rows:</span>
-    {% for action in bulk_actions %}
-    <button
-      class="rakit-button rakit-button-secondary"
-      type="submit"
-      formaction="{{ action.url }}"
-    >{{ action.label }}</button>
+  {% if filter_presentations %}
+  <div class="flex flex-wrap items-center gap-2" data-rakit-active-filters aria-label="Active filters">
+    {% for filter in filter_presentations %}
+    <a class="rakit-chip max-w-full transition hover:border-rakit-border-strong hover:text-rakit-text" href="{{ filter.remove_url }}" aria-label="Remove filter {{ filter.chip_label }}">
+      <span class="max-w-72 truncate">{{ filter.chip_label }}</span>
+      {{ rakit_icon("x", class_name="size-3.5 shrink-0") }}
+    </a>
     {% endfor %}
+    <a class="rakit-button rakit-button-quiet" href="{{ clear_filters_url }}">Clear all filters</a>
   </div>
-{% endif %}
-<div class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-  <div class="overflow-x-auto">
-    <table class="w-full text-left text-sm" data-rakit-resource="{{ resource.resource_id }}">
-      <thead class="bg-slate-50 dark:bg-slate-900">
-        <tr class="border-b border-slate-200 dark:border-slate-800">
-          {% if bulk_actions %}
-          <th scope="col" class="w-12 px-4 py-3"><span class="sr-only">Select</span></th>
-          {% endif %}
-          {% for header in sort_headers %}
-          <th scope="col" class="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400" aria-sort="{{ header.aria_sort }}">
-            {% if header.sort_value %}
-            <button
-              type="submit"
-              form="rakit-sort-{{ resource.resource_id }}"
-              name="sort"
-              value="{{ header.sort_value }}"
-              class="font-semibold uppercase tracking-wide hover:text-slate-900 hover:underline dark:hover:text-white"
-              aria-label="Sort by {{ header.field }} {% if header.aria_sort == 'ascending' %}descending{% else %}ascending{% endif %}"
-            >{{ header.field }}</button>
-            {% else %}
-            {{ header.field }}
-            {% endif %}
-          </th>
-          {% endfor %}
-        </tr>
-      </thead>
-      <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
-        {% for row in rows %}
-        <tr class="transition hover:bg-slate-50 dark:hover:bg-slate-800/70">
-          {% if bulk_actions %}
-          <td class="px-4 py-3">
-            {% if row.detail_url %}
-            <input
-              type="checkbox"
-              name="selected"
-              value="{{ row.detail_url.rsplit('/', 1)[-1] }}"
-              aria-label="Select {{ row.cells[0] }}"
-            />
-            {% endif %}
-          </td>
-          {% endif %}
-          {% for cell in row.cells %}
-          <td class="whitespace-nowrap px-4 py-3 text-slate-700 dark:text-slate-300">
-            {% if loop.first and row.detail_url %}
-            <a class="font-medium text-blue-700 hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300" href="{{ row.detail_url }}">{{ cell }}</a>
-            {% else %}
-            {{ cell }}
-            {% endif %}
-          </td>
-          {% endfor %}
-        </tr>
-        {% else %}
-        <tr>
-          <td class="px-4 py-10 text-center text-sm text-slate-500 dark:text-slate-400" colspan="{{ (fields | length) + (1 if bulk_actions else 0) }}">No records.</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
-{% if bulk_actions %}
-</form>
-{% endif %}
+  {% endif %}
 
-<nav aria-label="Resource pagination" class="mt-4 flex items-center justify-between gap-4" data-rakit-pagination>
-  <div>
-    {% if pagination.previous_url %}
-    <a class="rakit-button rakit-button-secondary" aria-label="Previous page" href="{{ pagination.previous_url }}" rel="prev">Previous</a>
+  {% if filter_enabled %}
+  <details class="rounded-rakit-md border border-rakit-border bg-rakit-surface p-4 lg:hidden" data-rakit-filter-mobile-fallback{% if active_filter_count %} open{% endif %}>
+    <summary class="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-rakit-text">
+      <span class="inline-flex items-center gap-2">
+        {{ rakit_icon("list-filter", class_name="size-4") }}
+        Filters{% if active_filter_count %} ({{ active_filter_count }}){% endif %}
+      </span>
+      {{ rakit_icon("chevron-down", class_name="size-4 text-rakit-text-muted") }}
+    </summary>
+    <div class="mt-4 border-t border-rakit-border pt-4">
+      {{ render_filter_groups(filter_groups, resource, resource_path, filter_hidden_inputs, filter_presentations, filter_policy, "mobile-fallback") }}
+    </div>
+  </details>
+
+  <dialog
+    id="rakit-filter-drawer-{{ resource.resource_id }}"
+    class="fixed right-0 top-0 m-0 h-dvh max-h-dvh w-[min(24rem,calc(100vw-1rem))] max-w-none overflow-y-auto border-0 border-l border-rakit-border bg-rakit-surface p-0 text-rakit-text shadow-rakit-lg backdrop:bg-black/40 lg:hidden"
+    hidden
+    data-rakit-dialog
+    data-rakit-dialog-backdrop-close
+    data-rakit-filter-drawer
+    aria-label="Filters"
+  >
+    <div class="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-rakit-border bg-rakit-surface px-4 py-3">
+      <div>
+        <p class="text-sm font-semibold text-rakit-text">Filters{% if active_filter_count %} · {{ active_filter_count }} active{% endif %}</p>
+        <p class="text-xs text-rakit-text-muted">Refine {{ resource.label | lower }}</p>
+      </div>
+      <button class="rakit-icon-button" type="button" data-rakit-dialog-close aria-label="Close filters">
+        {{ rakit_icon("x", class_name="size-4") }}
+      </button>
+    </div>
+    <div class="p-4">
+      {{ render_filter_groups(filter_groups, resource, resource_path, filter_hidden_inputs, filter_presentations, filter_policy, "mobile-drawer") }}
+    </div>
+  </dialog>
+  {% endif %}
+
+  <form id="rakit-sort-{{ resource.resource_id }}" method="get" action="{{ resource_path }}" class="hidden" aria-hidden="true">
+    {% for input in sort_hidden_inputs %}<input type="hidden" name="{{ input.name }}" value="{{ input.value }}" />{% endfor %}
+  </form>
+
+  <div class="flex flex-col gap-4 lg:flex-row lg:items-start" data-rakit-resource-layout>
+    <div class="min-w-0 flex-1 space-y-4" data-rakit-resource-results>
+      {% if bulk_actions %}
+      <form method="get" data-rakit-bulk-actions="{{ resource.resource_id }}">
+        <div class="mb-3 flex flex-wrap items-center gap-2" role="group" aria-label="Bulk actions">
+          <span class="text-sm text-rakit-text-muted" data-rakit-selected-count>Selected rows:</span>
+          {% for action in bulk_actions %}
+          <button class="rakit-button rakit-button-secondary" type="submit" formaction="{{ action.url }}">{{ action.label }}</button>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      <div class="rakit-panel">
+        <div class="overflow-x-auto">
+          <table class="w-full min-w-max text-left text-sm text-rakit-text" data-rakit-resource="{{ resource.resource_id }}">
+            <thead class="bg-rakit-surface-subtle">
+              <tr class="border-b border-rakit-border">
+                {% if bulk_actions %}
+                <th scope="col" class="w-12 px-4 py-3"><span class="sr-only">Select</span></th>
+                {% endif %}
+                {% for header in sort_headers %}
+                <th scope="col" class="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-rakit-text-muted" aria-sort="{{ header.aria_sort }}">
+                  {% if header.sort_value %}
+                  <button
+                    type="submit"
+                    form="rakit-sort-{{ resource.resource_id }}"
+                    name="sort"
+                    value="{{ header.sort_value }}"
+                    class="inline-flex items-center gap-1.5 font-semibold uppercase tracking-wide transition hover:text-rakit-text"
+                    aria-label="Sort by {{ header.field }}{% if header.state == 'ascending' %}, currently ascending{% elif header.state == 'descending' %}, currently descending{% endif %}"
+                  >
+                    <span>{{ header.field }}</span>
+                    {% if header.state == "unsorted" %}
+                      {{ rakit_icon("arrow-up-down", class_name="size-3.5 text-rakit-text-subtle") }}
+                    {% elif header.state == "ascending" %}
+                      {{ rakit_icon("chevron-down", class_name="size-3.5 rotate-180") }}
+                    {% elif header.state == "descending" %}
+                      {{ rakit_icon("chevron-down", class_name="size-3.5") }}
+                    {% elif header.state == "secondary" %}
+                      {{ rakit_icon("arrow-up-down", class_name="size-3.5") }}
+                    {% endif %}
+                  </button>
+                  {% else %}
+                  {{ header.field }}
+                  {% endif %}
+                </th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-rakit-border">
+              {% for row in rows %}
+              <tr class="transition hover:bg-rakit-surface-subtle">
+                {% if bulk_actions %}
+                <td class="px-4 py-3 align-middle">
+                  {% if row.detail_url %}
+                  <input class="rakit-checkbox" type="checkbox" name="selected" value="{{ row.detail_url.rsplit('/', 1)[-1] }}" aria-label="Select {{ row.display_cells[0] }}" />
+                  {% endif %}
+                </td>
+                {% endif %}
+                {% for cell in row.display_cells %}
+                <td class="max-w-80 px-4 py-3 align-middle text-rakit-text">
+                  {% if loop.first and row.detail_url %}
+                  <a class="font-medium text-rakit-brand-700 transition hover:text-rakit-brand-800 hover:underline dark:text-rakit-brand-300 dark:hover:text-rakit-brand-200" href="{{ row.detail_url }}">{{ cell }}</a>
+                  {% else %}
+                  {{ cell }}
+                  {% endif %}
+                </td>
+                {% endfor %}
+              </tr>
+              {% else %}
+              <tr>
+                <td class="px-4 py-12 text-center" colspan="{{ (fields | length) + (1 if bulk_actions else 0) }}">
+                  {% if has_active_query %}
+                  <p class="text-sm font-semibold text-rakit-text">No matching {{ resource.label | lower }}</p>
+                  <p class="mt-1 text-sm text-rakit-text-muted">Try changing your search or removing filters.</p>
+                  <div class="mt-3 flex flex-wrap justify-center gap-2">
+                    {% if search_value %}<a class="rakit-button rakit-button-secondary" href="{{ clear_search_url }}">Clear search</a>{% endif %}
+                    {% if filter_presentations %}<a class="rakit-button rakit-button-secondary" href="{{ clear_filters_url }}">Clear filters</a>{% endif %}
+                  </div>
+                  {% else %}
+                  <p class="text-sm font-semibold text-rakit-text">No {{ resource.label | lower }} yet</p>
+                  <p class="mt-1 text-sm text-rakit-text-muted">Records will appear here when they are available.</p>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% if bulk_actions %}
+      </form>
+      {% endif %}
+
+      <div class="flex flex-col gap-3 border-t border-rakit-border pt-4 lg:flex-row lg:items-center lg:justify-between" data-rakit-pagination data-rakit-pagination-strategy="{{ pagination.strategy }}">
+        <p class="text-sm tabular-nums text-rakit-text-muted">
+          {% if pagination.strategy == "page" %}
+            {% if query.count_policy.value == "exact" and pagination.total_count is not none %}
+              {% if pagination.total_count %}Showing {{ pagination.range_start }}–{{ pagination.range_end }} of {{ pagination.total_count }}{% else %}0 records{% endif %}
+            {% elif query.count_policy.value == "deferred" %}
+            Page {{ pagination.current_page }} · total calculating
+            {% else %}
+            Page {{ pagination.current_page }} · total unavailable
+            {% endif %}
+          {% elif pagination.strategy == "limit_offset" %}
+            {% if pagination.total_count is not none %}Showing {{ pagination.range_start }}–{{ pagination.range_end }} of {{ pagination.total_count }}{% else %}Showing {{ pagination.range_start }}–{{ pagination.range_end }}{% endif %}
+          {% else %}
+          Cursor navigation
+          {% endif %}
+        </p>
+
+        <nav class="rakit-pagination" aria-label="Resource pagination">
+          {% if pagination.previous_url %}<a class="rakit-pagination-item" aria-label="Previous results" href="{{ pagination.previous_url }}" rel="prev">Previous</a>{% else %}<span class="rakit-pagination-item" aria-disabled="true">Previous</span>{% endif %}
+          {% if pagination.strategy == "page" %}
+            {% if pagination["items"] %}
+              {% for item in pagination["items"] %}
+                {% if item.ellipsis %}<span class="rakit-pagination-ellipsis" aria-hidden="true">…</span>{% elif item.current %}<a class="rakit-pagination-item rakit-pagination-current" href="{{ item.href }}" aria-current="page">{{ item.label }}</a>{% else %}<a class="rakit-pagination-item" href="{{ item.href }}">{{ item.label }}</a>{% endif %}
+              {% endfor %}
+            {% else %}
+            <span class="rakit-pagination-item rakit-pagination-current" aria-current="page">{{ pagination.current_page }}</span>
+            {% endif %}
+          {% endif %}
+          {% if pagination.next_url %}<a class="rakit-pagination-item" aria-label="Next results" href="{{ pagination.next_url }}" rel="next">Next</a>{% else %}<span class="rakit-pagination-item" aria-disabled="true">Next</span>{% endif %}
+        </nav>
+
+        {% if show_page_size_selector %}
+        <form class="flex items-center gap-2" method="get" action="{{ resource_path }}" data-rakit-page-size>
+          {% for input in page_size_hidden_inputs %}<input type="hidden" name="{{ input.name }}" value="{{ input.value }}" />{% endfor %}
+          <label class="text-sm font-medium text-rakit-text" for="rakit-page-size-{{ resource.resource_id }}">Rows per page</label>
+          <span class="relative inline-flex">
+            <select class="rakit-pagination-size appearance-none pl-3 pr-9" id="rakit-page-size-{{ resource.resource_id }}" name="{{ page_size_param }}">
+              {% for option in page_size_options %}<option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>{% endfor %}
+            </select>
+            {{ rakit_icon("chevron-down", class_name="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-rakit-text-muted") }}
+          </span>
+          <button class="rakit-button rakit-button-quiet" type="submit">Apply</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if filter_enabled %}
+    <aside
+      id="rakit-filter-rail-{{ resource.resource_id }}"
+      class="hidden w-full shrink-0 border-l border-rakit-border pl-5 lg:block lg:w-72"
+      data-rakit-filter-rail
+      aria-label="Filters"
+    >
+      <div class="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <h2 class="text-xs font-semibold uppercase tracking-wide text-rakit-text-muted">Filters</h2>
+          {% if active_filter_count %}<p class="mt-0.5 text-xs text-rakit-text-subtle">{{ active_filter_count }} active</p>{% endif %}
+        </div>
+        <button class="rakit-button rakit-button-quiet" type="button" hidden data-rakit-filter-rail-hide>Hide</button>
+      </div>
+      {{ render_filter_groups(filter_groups, resource, resource_path, filter_hidden_inputs, filter_presentations, filter_policy, "desktop") }}
+    </aside>
     {% endif %}
   </div>
-  <span class="text-sm text-slate-500 dark:text-slate-400" aria-current="page">Page {{ pagination.current_page }}</span>
-  <div>
-    {% if pagination.next_url %}
-    <a class="rakit-button rakit-button-secondary" aria-label="Next page" href="{{ pagination.next_url }}" rel="next">Next</a>
-    {% endif %}
-  </div>
-</nav>
+</section>

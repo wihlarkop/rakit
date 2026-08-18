@@ -11,6 +11,10 @@ from html import escape
 from markupsafe import Markup
 
 _ICON_BODY: dict[str, str] = {
+    "arrow-up-down": (
+        '<path d="m21 16-4 4-4-4" /><path d="M17 20V4" />'
+        '<path d="m3 8 4-4 4 4" /><path d="M7 4v16" />'
+    ),
     "check": '<path d="M20 6 9 17l-5-5" />',
     "chevron-down": '<path d="m6 9 6 6 6-6" />',
     "chevron-right": '<path d="m9 18 6-6-6-6" />',
@@ -31,6 +35,7 @@ _ICON_BODY: dict[str, str] = {
         '<rect width="7" height="9" x="14" y="12" rx="1" />'
         '<rect width="7" height="5" x="3" y="16" rx="1" />'
     ),
+    "list-filter": '<path d="M3 6h18" /><path d="M7 12h10" /><path d="M10 18h4" />',
     "menu": '<path d="M4 5h16" /><path d="M4 12h16" /><path d="M4 19h16" />',
     "monitor": (
         '<rect width="20" height="14" x="2" y="3" rx="2" />'
@@ -51,6 +56,7 @@ _ICON_BODY: dict[str, str] = {
         '<path d="M9 3v18" />'
         '<path d="m14 9 3 3-3 3" />'
     ),
+    "search": '<circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />',
     "sun": (
         '<circle cx="12" cy="12" r="4" />'
         '<path d="M12 2v2" /><path d="M12 20v2" />'

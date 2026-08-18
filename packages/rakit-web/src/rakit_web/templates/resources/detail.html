@@ -21,26 +21,37 @@
   {% set record_view.title = record_view.identity if record_view.identity else resource.singular_label %}
 {% endif %}
 <div id="rakit-resource-detail-root">
-  <nav data-rakit-breadcrumb="resource-detail" class="mb-3 flex items-center gap-1.5 text-sm text-rakit-text-muted" aria-label="Breadcrumb">
+  <nav data-rakit-breadcrumb="resource-detail" class="mb-3 flex flex-wrap items-center gap-1.5 text-sm text-rakit-text-muted" aria-label="Breadcrumb">
     <a href="{{ request.scope.get('root_path', '').rstrip('/') }}/" class="font-medium transition hover:text-rakit-text">Dashboard</a>
     <span data-rakit-breadcrumb-separator aria-hidden="true" class="text-rakit-text-subtle">{{ rakit_icon("chevron-right", class_name="size-4") }}</span>
     <a href="{{ request.scope.get('root_path', '').rstrip('/') }}{{ resource.path }}" class="font-medium transition hover:text-rakit-text">{{ resource.label }}</a>
     {% if record_view.identity %}
       <span data-rakit-breadcrumb-separator aria-hidden="true" class="text-rakit-text-subtle">{{ rakit_icon("chevron-right", class_name="size-4") }}</span>
-      <span aria-current="page">{{ record_view.identity }}</span>
+      <span class="max-w-80 truncate" aria-current="page">{{ record_view.identity }}</span>
     {% endif %}
   </nav>
-  <header class="mb-6">
-    <h1 class="text-2xl font-semibold tracking-tight text-rakit-text" data-rakit-record-title>{{ record_view.title }}</h1>
-    <p class="mt-1 text-sm font-medium text-rakit-text-muted" data-rakit-record-context>{% if record_view.identity and record_view.title != record_view.identity %}{{ resource.singular_label }} · {{ record_view.identity }}{% else %}{{ resource.singular_label }}{% endif %}</p>
-    <p class="mt-2 text-sm leading-6 text-rakit-text-muted">Inspect the fields available for this record.</p>
+  <header class="mb-6 flex flex-col items-start justify-between gap-4 sm:flex-row">
+    <div class="min-w-0">
+      <h1 class="text-2xl font-semibold tracking-tight text-rakit-text" data-rakit-record-title>{{ record_view.title }}</h1>
+      <p class="mt-1 text-sm font-medium text-rakit-text-muted" data-rakit-record-context>{% if record_view.identity and record_view.title != record_view.identity %}{{ resource.singular_label }} · {{ record_view.identity }}{% else %}{{ resource.singular_label }}{% endif %}</p>
+      <p class="mt-2 text-sm leading-6 text-rakit-text-muted">Inspect the fields available for this record.</p>
+    </div>
+    {% if edit_url or delete_url %}
+      <div class="flex flex-wrap items-center gap-2" aria-label="Record actions">
+        {% if edit_url %}<a class="rakit-button rakit-button-secondary" href="{{ edit_url }}">Edit</a>{% endif %}
+        {% if delete_url %}<a class="rakit-button rakit-button-danger" href="{{ delete_url }}">Delete</a>{% endif %}
+      </div>
+    {% endif %}
   </header>
-  <section class="rakit-panel">
+  <section class="rakit-panel" aria-labelledby="rakit-record-fields-title">
+    <div class="rakit-panel-header">
+      <h2 id="rakit-record-fields-title" class="text-sm font-semibold text-rakit-text">General information</h2>
+    </div>
     <dl data-rakit-resource="{{ resource.resource_id }}" class="divide-y divide-rakit-border">
       {% for field_name in fields %}
       <div class="grid gap-1 px-4 py-4 sm:grid-cols-3 sm:gap-4 sm:px-5">
         <dt class="text-sm font-medium text-rakit-text-muted">{{ field_name }}</dt>
-        <dd class="text-sm text-rakit-text sm:col-span-2">{{ cells[field_name] }}</dd>
+        <dd class="min-w-0 text-sm leading-6 text-rakit-text sm:col-span-2">{{ display_cells[field_name] }}</dd>
       </div>
       {% endfor %}
     </dl>

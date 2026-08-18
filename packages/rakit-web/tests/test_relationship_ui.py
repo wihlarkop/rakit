@@ -9,7 +9,7 @@ from rakit_core.fields import FieldDefinition
 from rakit_core.forms import FormLayout, FormSchema, RelationshipPanel
 from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_core.mutations import MutationAuthorization, OperationAuthorizationSet
-from rakit_core.query import PageResult, ResourceQuery
+from rakit_core.query import PagePagination, PageResult, ResourceQuery
 from rakit_core.relationship_mutations import (
     ClearRelated,
     CreateRelated,
@@ -61,13 +61,16 @@ class CandidateSource:
         records = self.records
         if query.search:
             records = tuple(record for record in records if query.search in record.label)
-        start = query.pagination.offset
-        items = records[start : start + query.pagination.per_page]
+        pagination = query.pagination
+        if not isinstance(pagination, PagePagination):
+            raise ValueError("CandidateSource supports page-number pagination only")
+        start = pagination.offset
+        items = records[start : start + pagination.per_page]
         return PageResult(
             items=items,
-            page=query.pagination.page,
-            per_page=query.pagination.per_page,
-            has_previous=query.pagination.page > 1,
+            page=pagination.page,
+            per_page=pagination.per_page,
+            has_previous=pagination.page > 1,
             has_next=start + len(items) < len(records),
             total_count=len(records),
         )

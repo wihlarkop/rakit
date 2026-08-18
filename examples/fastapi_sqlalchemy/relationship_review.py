@@ -15,7 +15,7 @@ from rakit_core.forms import FieldLayout, FormLayout, FormSchema, RelationshipPa
 from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import MutationAuthorization, OperationAuthorizationSet
 from rakit_core.permissions import PermissionRequirement
-from rakit_core.query import PageResult, ResourceQuery
+from rakit_core.query import PagePagination, PageResult, ResourceQuery
 from rakit_core.relationship_mutations import (
     DeleteRelated,
     RelationshipCandidate,
@@ -72,13 +72,16 @@ class Candidates:
     async def list(self, query: ResourceQuery) -> PageResult[DemoRecord]:
         search = (query.search or "").casefold()
         visible = tuple(record for record in self.records if search in record.label.casefold())
-        start = query.pagination.offset
-        page = visible[start : start + query.pagination.per_page]
+        pagination = query.pagination
+        if not isinstance(pagination, PagePagination):
+            raise ValueError("Candidates supports page-number pagination only")
+        start = pagination.offset
+        page = visible[start : start + pagination.per_page]
         return PageResult(
             items=page,
-            page=query.pagination.page,
-            per_page=query.pagination.per_page,
-            has_previous=query.pagination.page > 1,
+            page=pagination.page,
+            per_page=pagination.per_page,
+            has_previous=pagination.page > 1,
             has_next=start + len(page) < len(visible),
             total_count=len(visible),
         )

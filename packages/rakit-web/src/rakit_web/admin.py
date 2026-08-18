@@ -25,6 +25,7 @@ from rakit_core.definitions import (
 from rakit_core.di import ServiceKey, ServiceRegistry, ServiceResolver, ServiceScope
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.events import EventBus, EventPublisher
+from rakit_core.filters import ResourceFilter
 from rakit_core.generated_api import ApiExposure
 from rakit_core.generated_runtime import (
     GeneratedResourceExecutorContext,
@@ -39,6 +40,7 @@ from rakit_core.mutations import (
     OperationAuthorizationSet,
 )
 from rakit_core.operations import resolve_operation_executor_capabilities
+from rakit_core.pagination import ResourcePaginationPolicy
 from rakit_core.relationship_mutations import (
     CreateRelated,
     DeleteRelated,
@@ -81,7 +83,12 @@ from .page_admin import (
 )
 from .public_composition import resource_actions, resource_relationships
 from .relationship_routes import build_relationship_routes
-from .resource_routes import ResourceBinding, build_resource_routes, build_templates
+from .resource_routes import (
+    ResourceBinding,
+    ResourceCrudPaths,
+    build_resource_routes,
+    build_templates,
+)
 from .schema import PydanticSchemaAdapter
 from .security.authentication import (
     LOGIN_PATH,
@@ -355,6 +362,37 @@ class Admin:
                 )
 
         field_policy = _normalize_field_policy(admin_cls)
+        raw_filters = getattr(admin_cls, "filters", ())
+        if not isinstance(raw_filters, list | tuple) or not all(
+            isinstance(definition, ResourceFilter) for definition in raw_filters
+        ):
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+                message="Invalid resource filter declaration",
+                status_code=500,
+                details={"resource_id": admin_cls.resource_id, "reason": "invalid_filters"},
+            )
+        filters = tuple(raw_filters)
+        pagination = getattr(admin_cls, "pagination", ResourcePaginationPolicy())
+        if not isinstance(pagination, ResourcePaginationPolicy):
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+                message="Invalid resource pagination declaration",
+                status_code=500,
+                details={
+                    "resource_id": admin_cls.resource_id,
+                    "reason": "invalid_pagination_policy",
+                },
+            )
+        predicate_fields = tuple(
+            field for definition in filters for field in definition.predicate_fields
+        )
+        effective_filter_fields = tuple(
+            dict.fromkeys((*field_policy.filter_fields, *predicate_fields))
+        )
+        adapter_field_policy = field_policy.model_copy(
+            update={"filter_fields": effective_filter_fields}
+        )
         relationships = resource_relationships(admin_cls)
         actions = resource_actions(
             admin_cls,
@@ -365,7 +403,7 @@ class Admin:
             claims = [
                 result
                 for claim in self._builder._adapters.values()
-                if (result := claim(admin_cls.model, field_policy)) is not None
+                if (result := claim(admin_cls.model, adapter_field_policy)) is not None
             ]
             if len(claims) == 0:
                 raise RakitError(
@@ -402,12 +440,26 @@ class Admin:
             )
 
         data_source = adapter_runtime.data_source
+        unknown_predicate_fields = set(predicate_fields).difference(data_source.fields)
+        if unknown_predicate_fields:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+                message="Invalid resource filter declaration",
+                status_code=500,
+                details={
+                    "resource_id": admin_cls.resource_id,
+                    "reason": "unknown_filter_predicate_field",
+                    "fields": sorted(unknown_predicate_fields),
+                },
+            )
         definition = ResourceDefinition(
             resource_id=admin_cls.resource_id,
             path=admin_cls.path,
             label=admin_cls.label,
             singular_label=admin_cls.singular_label,
             field_policy=field_policy,
+            filters=filters,
+            pagination=pagination,
             relationships=relationships,
             api=admin_cls.api,
         )
@@ -810,10 +862,23 @@ class Admin:
         bindings: dict[str, ResourceBinding] = {}
         resource_routes: list[Route] = []
         for resource_id, service in self._resource_services.items():
+            write_binding = self._write_resource_bindings.get(resource_id)
+            crud_paths = None
+            if write_binding is not None:
+                crud_paths = ResourceCrudPaths(
+                    create_path=write_binding.create_path,
+                    update_path=(
+                        write_binding.update_path if write_binding.has_record_write_routes else None
+                    ),
+                    delete_path=(
+                        write_binding.delete_path if write_binding.has_record_write_routes else None
+                    ),
+                )
             binding = ResourceBinding(
                 definition=self._resource_definitions[resource_id],
                 service=service,
                 templates=templates,
+                crud_paths=crud_paths,
             )
             bindings[resource_id] = binding
             resource_routes.extend(build_resource_routes(binding))
