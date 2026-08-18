@@ -238,7 +238,8 @@ async def test_non_exact_count_does_not_fabricate_numbered_total_pages() -> None
 
     assert deferred.status_code == 200
     assert "Page 2 · total calculating" in deferred.text
-    assert "Calculating total…" in deferred.text
+    assert "data-rakit-total-deferred" in deferred.text
+    assert "Calculating" in deferred.text
     assert 'aria-current="page">2</span>' in deferred.text
 
     assert disabled.status_code == 200
