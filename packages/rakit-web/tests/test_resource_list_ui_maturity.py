@@ -5,13 +5,13 @@ import httpx
 import pytest
 from rakit_core.datasource import DataSourceCapabilities
 from rakit_core.definitions import ResourceDefinition, ResourceFieldPolicy
-from rakit_core.errors import RakitError
+from rakit_core.filters import LegacyFieldFilter
 from rakit_core.identity import RecordIdentity
-from rakit_core.query import CountPolicy, PageResult, ResourceQuery
+from rakit_core.query import CountPolicy, PagePagination, PageResult, ResourceQuery
 from rakit_core.resources import ResourceService
+from rakit_web.resource_query_ui import builder_selections
 from rakit_web.resource_routes import (
     ResourceBinding,
-    _builder_filter,
     build_resource_routes,
     build_templates,
 )
@@ -50,14 +50,17 @@ class _DataSource:
                 items = [
                     item for item in items if str(item.get(filter_.field)) == str(filter_.value)
                 ]
-        start = query.pagination.offset
-        end = start + query.pagination.per_page
+        pagination = query.pagination
+        if not isinstance(pagination, PagePagination):
+            raise ValueError("_DataSource supports page-number pagination only")
+        start = pagination.offset
+        end = start + pagination.per_page
         page_items = tuple(items[start:end])
         return PageResult(
             items=page_items,
-            page=query.pagination.page,
-            per_page=query.pagination.per_page,
-            has_previous=query.pagination.page > 1,
+            page=pagination.page,
+            per_page=pagination.per_page,
+            has_previous=pagination.page > 1,
             has_next=end < len(items),
             total_count=len(items) if query.count_policy is CountPolicy.EXACT else None,
         )
@@ -133,25 +136,34 @@ async def test_filter_builder_redirects_to_canonical_validated_query() -> None:
 
 
 def test_filter_builder_rejects_unapproved_or_malformed_state() -> None:
+    definitions = (
+        LegacyFieldFilter(
+            filter_id="status",
+            label="Status",
+            field="status",
+        ),
+    )
     assert (
-        _builder_filter(
+        builder_selections(
             QueryParams("filter_field=secret&filter_operator=eq&filter_value=value"),
-            {"status"},
+            definitions,
         )
-        is None
+        == ()
     )
     assert (
-        _builder_filter(
+        builder_selections(
             QueryParams("filter_field=status&filter_operator=eq"),
-            {"status"},
+            definitions,
         )
-        is None
+        == ()
     )
-    with pytest.raises(RakitError):
-        _builder_filter(
+    assert (
+        builder_selections(
             QueryParams("filter_field=status&filter_operator=is_null&filter_value=maybe"),
-            {"status"},
+            definitions,
         )
+        == ()
+    )
 
 
 @pytest.mark.anyio
@@ -199,7 +211,7 @@ async def test_invalid_canonical_filter_is_not_reflected_as_active_state() -> No
 
 
 @pytest.mark.anyio
-async def test_exact_count_pagination_renders_range_numbered_pages_and_custom_size() -> None:
+async def test_exact_count_pagination_renders_range_numbered_pages_and_policy_size() -> None:
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=_app()),
         base_url="http://test",
@@ -216,8 +228,9 @@ async def test_exact_count_pagination_renders_range_numbered_pages_and_custom_si
     assert 'aria-label="Next page"' in page_two.text
 
     assert custom.status_code == 200
-    assert '<option value="17" selected>17 (custom)</option>' in custom.text
-    for size in (25, 50, 100):
+    assert '<option value="17"' not in custom.text
+    assert '<option value="25" selected>25</option>' in custom.text
+    for size in (50, 100):
         assert f'<option value="{size}">{size}</option>' in custom.text
 
 

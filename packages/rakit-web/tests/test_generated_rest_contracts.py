@@ -5,14 +5,16 @@ import pytest
 from rakit_core.capabilities import CapabilityProvider, CapabilitySet
 from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.errors import ErrorCode, RakitError
+from rakit_core.filters import LegacyFieldFilter
 from rakit_core.generated_api import (
     ApiExposure,
     ApiFilterDefinition,
+    CompiledApiFilterDefinition,
     CompiledResourceApi,
     GeneratedCrudOperation,
     ResourceApiDefinition,
 )
-from rakit_core.query import FilterOperator, SortDirection
+from rakit_core.query import FilterOperator, PagePagination, SortDirection
 from rakit_core.schema import SchemaField
 from rakit_web.generated_rest import (
     generated_error_payload,
@@ -46,6 +48,13 @@ def _api(*, output_schema: type[object] | None = None) -> CompiledResourceApi:
         ),
         output_schema=output_schema,
     )
+    filter_definition = LegacyFieldFilter(
+        filter_id="status",
+        label="Status",
+        field="status",
+        operators=(FilterOperator.EQ, FilterOperator.IN),
+        strip_in_values=True,
+    )
     return CompiledResourceApi(
         resource_id="users",
         definition=definition,
@@ -54,7 +63,13 @@ def _api(*, output_schema: type[object] | None = None) -> CompiledResourceApi:
         create_fields=definition.create_fields,
         update_fields=definition.update_fields,
         identity_fields=("id",),
-        filters=definition.filters,
+        filters=(
+            CompiledApiFilterDefinition(
+                name="status",
+                filter=filter_definition,
+                operators=filter_definition.operators,
+            ),
+        ),
     )
 
 
@@ -67,6 +82,7 @@ def test_strict_query_parser_builds_resource_query_from_bracket_filters() -> Non
         ),
     )
 
+    assert isinstance(query.pagination, PagePagination)
     assert query.pagination.page == 2
     assert query.pagination.per_page == 20
     assert query.search == "example.com"

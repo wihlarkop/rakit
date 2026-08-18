@@ -8,10 +8,10 @@ import httpx
 import pytest
 from conftest import LifespanDriver
 from rakit import Admin, ModelAdmin, SecretValue
-from rakit_core.errors import RakitError
-from rakit_core.query import Filter, FilterOperator
+from rakit_core.filters import FilterSelection, LegacyFieldFilter
+from rakit_core.query import FilterOperator
 from rakit_sqlalchemy.plugin import SQLAlchemyPlugin
-from rakit_web.resource_routes import _serialize_filter
+from rakit_web.resource_query_ui import serialize_selection
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -561,17 +561,17 @@ async def test_is_null_accepts_explicit_true_false(
     assert ("Ada" in response.text) is has_records
 
 
-def test_query_control_serialization_rejects_unsafe_filter_shapes() -> None:
-    filter_ = Filter(
+def test_query_control_serialization_rejects_unsafe_semantic_values() -> None:
+    definition = LegacyFieldFilter(
+        filter_id="name",
+        label="Name",
         field="name",
+    )
+    selection = FilterSelection(
+        filter_id="name",
         operator=FilterOperator.EQ,
         value={"unexpected": "mapping"},
     )
 
-    with pytest.raises(RakitError) as exc_info:
-        _serialize_filter(filter_)
-
-    assert exc_info.value.to_public_dict() == {
-        "code": "validation.failed",
-        "message": "Cannot safely render query controls",
-    }
+    with pytest.raises(ValueError):
+        serialize_selection(selection, definition)
