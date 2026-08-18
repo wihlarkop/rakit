@@ -53,3 +53,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "style(web): frame resource filter rail"
           git push origin HEAD:ui-05f-filter-rail-framing-polish
+
+# second push intentionally triggers this one-shot workflow
