@@ -1,7 +1,4 @@
 import pytest
-from rakit_core.identity import RecordIdentity
-from rakit_core.relationships import RelationshipCardinality, RelationshipEditMode
-
 from examples.ui_showcase.advanced_states import (
     ADVANCED_LAUNCHERS,
     FILE_STORAGE,
@@ -10,6 +7,8 @@ from examples.ui_showcase.advanced_states import (
     _RelationshipStateProvider,
 )
 from examples.ui_showcase.main import admin, app
+from rakit_core.identity import RecordIdentity
+from rakit_core.relationships import RelationshipCardinality, RelationshipEditMode
 
 
 def test_ui06_acceptance_launchers_and_pages_are_compiled() -> None:
