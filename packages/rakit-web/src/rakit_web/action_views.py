@@ -47,11 +47,7 @@ def _principal(request: Request) -> Principal | None:
 
 def _owner_id(compiled: CompiledActionDefinition) -> str:
     definition = compiled.definition
-    owner = (
-        definition.page_id
-        if definition.scope is ActionScope.PAGE
-        else definition.resource_id
-    )
+    owner = definition.page_id if definition.scope is ActionScope.PAGE else definition.resource_id
     return str(owner) if owner is not None else ""
 
 
