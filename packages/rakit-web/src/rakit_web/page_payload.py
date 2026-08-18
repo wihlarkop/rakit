@@ -86,7 +86,7 @@ def page_payload_view(payload: object) -> PagePayloadView:
     if type(payload) is list:
         return _table_view(cast(list[object], payload))
     if type(payload) is tuple:
-        return _table_view(cast(tuple[object, ...], payload))
+        return _table_view(payload)
     return PagePayloadView(PagePayloadKind.UNSUPPORTED)
 
 
