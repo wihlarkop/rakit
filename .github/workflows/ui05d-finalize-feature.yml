@@ -25,27 +25,30 @@ jobs:
         run: uv sync --all-packages --dev --locked
       - name: Apply focused Web regression fixes
         run: python .github/ui05d_fix_focused_web_tests.py
-      - name: Normalize focused Web tests
+      - name: Normalize focused query tests
         run: |
           uv run ruff format \
+            packages/rakit-core/tests/test_resource_filters.py \
             packages/rakit-web/tests/test_query_ui.py \
             packages/rakit-web/tests/test_resource_list_ui_maturity.py \
             packages/rakit-web/tests/test_generated_rest_contracts.py
           uv run ruff check \
+            packages/rakit-core/tests/test_resource_filters.py \
             packages/rakit-web/tests/test_query_ui.py \
             packages/rakit-web/tests/test_resource_list_ui_maturity.py \
             packages/rakit-web/tests/test_generated_rest_contracts.py
           uv run ty check
-      - name: Commit focused Web regression fixes
+      - name: Commit normalized focused query tests
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add \
+            packages/rakit-core/tests/test_resource_filters.py \
             packages/rakit-web/tests/test_query_ui.py \
             packages/rakit-web/tests/test_resource_list_ui_maturity.py \
             packages/rakit-web/tests/test_generated_rest_contracts.py
           if ! git diff --cached --quiet; then
-            git commit -m 'test(query): align Web regressions with query policy'
+            git commit -m 'test(query): normalize resource query coverage'
             git push origin HEAD:ui-05d-resource-query-configuration
           fi
       - name: Run focused regression suites
@@ -55,6 +58,7 @@ jobs:
           {
             echo '=== rakit-core query suites ==='
             uv run pytest \
+              packages/rakit-core/tests/test_resource_filters.py \
               packages/rakit-core/tests/test_query.py \
               packages/rakit-core/tests/test_generated_api_query.py \
               packages/rakit-core/tests/testing/test_datasource_contract.py \
