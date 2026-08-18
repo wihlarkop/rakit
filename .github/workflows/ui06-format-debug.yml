@@ -1,9 +1,9 @@
 name: UI-06A format diagnostic
 
 on:
-  push:
+  pull_request:
     branches:
-      - ui-06a-actions-bulk
+      - ui-06-advanced-operations
 
 permissions:
   contents: read
