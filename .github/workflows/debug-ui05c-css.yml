@@ -21,14 +21,16 @@ jobs:
           bun-version: latest
       - run: bun install --frozen-lockfile
       - run: bun run css:build
-      - name: Commit generated CSS when changed
+      - name: Record verified build result
         run: |
           if git diff --quiet -- packages/rakit-web/src/rakit_web/static/rakit.css; then
-            echo "Generated CSS is already current."
-            exit 0
+            result="generated CSS already current"
+          else
+            result="generated CSS updated"
           fi
+          printf '%s\n' "$result" > .github/ui05c-css-result
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/rakit-web/src/rakit_web/static/rakit.css
-          git commit -m "build(web): regenerate UI-05C CSS"
+          git add packages/rakit-web/src/rakit_web/static/rakit.css .github/ui05c-css-result
+          git commit -m "build(web): verify UI-05C generated CSS"
           git push origin HEAD:ui-05c-resource-detail-forms
