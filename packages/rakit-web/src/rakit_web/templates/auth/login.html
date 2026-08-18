@@ -8,7 +8,7 @@
     <p class="mt-2 text-sm leading-6 text-rakit-text-muted">Use your account credentials to continue to the admin.</p>
 
     {% if reason_message %}
-      <div class="rakit-alert mt-5{% if reason_message[0] == 'success' %} rakit-alert-success{% endif %}" role="status">{{ reason_message[1] }}</div>
+      <div class="rakit-alert mt-5{% if reason_message[0] == 'success' %} rakit-alert-success{% elif reason_message[0] == 'warning' %} rakit-alert-warning{% endif %}" role="status">{{ reason_message[1] }}</div>
     {% endif %}
     {% if error %}
       <div class="rakit-alert rakit-alert-danger mt-5" role="alert">{{ error }}</div>
