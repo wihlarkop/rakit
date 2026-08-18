@@ -11,7 +11,13 @@ from .capabilities import CapabilityRequirement
 from .datasource import DataSource, resolve_resource_field_definitions
 from .definitions import ResourceDefinition
 from .errors import ErrorCode, RakitError
-from .generated_api import ApiExposure, CompiledResourceApi
+from .filters import LegacyFieldFilter, effective_resource_filters
+from .generated_api import (
+    ApiExposure,
+    ApiFilterDefinition,
+    CompiledApiFilterDefinition,
+    CompiledResourceApi,
+)
 
 
 def _invalid_generated_api(resource_id: str, reason: str) -> RakitError:
@@ -58,12 +64,51 @@ def compile_generated_resource_apis(
                 resource.resource_id, "generated_api_identity_field_writable"
             )
 
-        filterable_fields = set(resource.field_policy.filter_fields)
+        effective_filters = effective_resource_filters(
+            resource.filters,
+            resource.field_policy.filter_fields,
+        )
+        filters_by_id = {definition.filter_id: definition for definition in effective_filters}
+        legacy_filterable_fields = set(resource.field_policy.filter_fields)
+        compiled_filters: list[CompiledApiFilterDefinition] = []
         for item in api.filters:
-            if item.field not in known_fields or item.field not in filterable_fields:
+            if isinstance(item, str):
+                definition = filters_by_id.get(item)
+                if definition is None:
+                    raise _invalid_generated_api(
+                        resource.resource_id, "generated_api_filter_not_found"
+                    )
+                compiled_filters.append(
+                    CompiledApiFilterDefinition(
+                        name=item,
+                        filter=definition,
+                        operators=definition.operators,
+                    )
+                )
+                continue
+
+            if not isinstance(item, ApiFilterDefinition):
+                raise _invalid_generated_api(
+                    resource.resource_id, "generated_api_filter_definition_invalid"
+                )
+            if item.field not in known_fields or item.field not in legacy_filterable_fields:
                 raise _invalid_generated_api(
                     resource.resource_id, "generated_api_filter_field_not_allowed"
                 )
+            definition = LegacyFieldFilter(
+                filter_id=item.name,
+                label=item.name.replace("_", " ").capitalize(),
+                field=item.field,
+                operators=item.operators,
+                strip_in_values=True,
+            )
+            compiled_filters.append(
+                CompiledApiFilterDefinition(
+                    name=item.name,
+                    filter=definition,
+                    operators=item.operators,
+                )
+            )
 
         field_definitions = ()
         if api.exposure is ApiExposure.CRUD:
@@ -125,7 +170,8 @@ def compile_generated_resource_apis(
                 create_fields=api.create_fields,
                 update_fields=api.update_fields,
                 identity_fields=identity_fields,
-                filters=api.filters,
+                filters=tuple(compiled_filters),
+                pagination=resource.pagination,
                 field_definitions=field_definitions,
             )
         )
