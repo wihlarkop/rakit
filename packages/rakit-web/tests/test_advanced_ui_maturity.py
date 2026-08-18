@@ -113,9 +113,7 @@ def _resource_action(action_id: str, scope: ActionScope) -> ActionDefinition:
         resource_id="orders",
         executor=_executor(),
         bulk_policy=(
-            BulkPolicy(require_concurrency_snapshot=False)
-            if scope is ActionScope.BULK
-            else None
+            BulkPolicy(require_concurrency_snapshot=False) if scope is ActionScope.BULK else None
         ),
     )
 
@@ -313,9 +311,7 @@ async def test_context_action_views_hide_disable_and_authorize_entry_points(
             path=f"{route_prefix}/_actions/{action_id}",
             owner_id=owner_id,
         )
-        pairs.append(
-            (route, CompiledActionDefinition(definition=action, permission=permission))
-        )
+        pairs.append((route, CompiledActionDefinition(definition=action, permission=permission)))
 
     make_action("available")
     make_action(
@@ -459,8 +455,7 @@ class _BulkHarness:
 
     def encoded(self, *record_ids: int) -> list[str]:
         return [
-            self.codec.encode(RecordIdentity(values={"id": record_id}))
-            for record_id in record_ids
+            self.codec.encode(RecordIdentity(values={"id": record_id})) for record_id in record_ids
         ]
 
     def app(self) -> Starlette:
@@ -487,9 +482,7 @@ class _BulkHarness:
             token_service=self.token_service,
             idempotency_store=_MemoryIdempotencyStore(),
             concurrency=concurrency,
-            concurrency_resource_id=(
-                "orders" if policy.require_concurrency_snapshot else None
-            ),
+            concurrency_resource_id=("orders" if policy.require_concurrency_snapshot else None),
             record_version=record_version,
         )
         return Starlette(routes=build_mature_bulk_action_routes(binding))
@@ -754,9 +747,7 @@ async def test_action_form_and_confirmation_render_semantic_intent_aware_html() 
         needs_preview=True,
         needs_confirmation=True,
     )
-    danger_confirm = safe_confirm.model_copy(
-        update={"action_id": "purge", "label": "Purge orders"}
-    )
+    danger_confirm = safe_confirm.model_copy(update={"action_id": "purge", "label": "Purge orders"})
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=_action_app(form_action)),

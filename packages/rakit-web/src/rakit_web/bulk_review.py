@@ -80,9 +80,7 @@ async def _render_review(
 ) -> Response:
     encoded_selection = tuple(binding.codec.encode(identity) for identity in selection.identities)
     executable = availability == "available"
-    concurrency_tokens = (
-        _concurrency_tokens(binding, action, selection) if executable else ()
-    )
+    concurrency_tokens = _concurrency_tokens(binding, action, selection) if executable else ()
     policy = action.bulk_policy
     assert policy is not None
     confirmation_token = (
@@ -141,7 +139,9 @@ def build_mature_bulk_action_routes(binding: BulkActionBinding) -> list[Route]:
 
         async def endpoint(
             request: Request,
-            original_endpoint: Callable[[Request], Response | Awaitable[Response]] = original_endpoint,
+            original_endpoint: Callable[
+                [Request], Response | Awaitable[Response]
+            ] = original_endpoint,
             action: ActionDefinition = action,
             compiled: CompiledActionDefinition = compiled,
             route_path: str = route_path,
@@ -174,10 +174,7 @@ def build_mature_bulk_action_routes(binding: BulkActionBinding) -> list[Route]:
             )
             if len(decisions) != len(selection.targets):
                 return _rejected_response(request, "Forbidden", 403)
-            if any(
-                decision.availability is ActionAvailability.HIDDEN
-                for _, decision in decisions
-            ):
+            if any(decision.availability is ActionAvailability.HIDDEN for _, decision in decisions):
                 return _rejected_response(request, "Resource was not found", 404)
             disabled = next(
                 (
