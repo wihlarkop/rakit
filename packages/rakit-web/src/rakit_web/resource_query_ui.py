@@ -490,7 +490,9 @@ def filter_groups(
                     {
                         "value": raw_value,
                         "label": label,
-                        "selected": any(selection.value == resolved.selection.value for selection in active),
+                        "selected": any(
+                            selection.value == resolved.selection.value for selection in active
+                        ),
                         "url": resource_url(
                             path,
                             validated_query_params(next_query, explicit, definitions),
@@ -502,8 +504,14 @@ def filter_groups(
     return groups
 
 
-def page_size_options(query: ResourceQuery, policy: ResourcePaginationPolicy) -> list[dict[str, Any]]:
-    current = query.pagination.per_page if isinstance(query.pagination, PagePagination) else query.pagination.limit
+def page_size_options(
+    query: ResourceQuery, policy: ResourcePaginationPolicy
+) -> list[dict[str, Any]]:
+    current = (
+        query.pagination.per_page
+        if isinstance(query.pagination, PagePagination)
+        else query.pagination.limit
+    )
     return [
         {"value": value, "label": str(value), "selected": value == current}
         for value in policy.size.allowed
