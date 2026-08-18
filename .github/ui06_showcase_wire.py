@@ -35,6 +35,11 @@ replace_once(
 )
 replace_once(
     advanced,
+    '''            create_layout=relationship_layout,\n            update_layout=relationship_layout,\n''',
+    '''            layout=relationship_layout,\n            update_layout=relationship_layout,\n''',
+)
+replace_once(
+    advanced,
     '        description="Writable TO_ONE/TO_MANY, pagination, inline reorder, and unlink-only UI-06B states.",\n',
     '''        description=(\n            "Writable TO_ONE/TO_MANY, pagination, inline reorder, "\n            "and unlink-only UI-06B states."\n        ),\n''',
 )
