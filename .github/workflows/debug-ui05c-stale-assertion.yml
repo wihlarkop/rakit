@@ -1,0 +1,46 @@
+name: Debug UI-05C stale assertion
+
+on:
+  pull_request:
+    branches:
+      - ui-05-resource-experience
+
+permissions:
+  contents: write
+
+jobs:
+  fix-stale-assertion:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ui-05c-resource-detail-forms
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-packages --dev --locked
+      - name: Update semantic tab error assertion
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("packages/rakit-web/tests/test_write_forms.py")
+          text = path.read_text(encoding="utf-8")
+          old = '    assert "(1)</span>" in response.text\n'
+          new = '    assert \'<span class="rakit-status rakit-status-danger">1</span>\' in response.text\n'
+          if text.count(old) != 1:
+              raise SystemExit(f"expected exactly one stale assertion, found {text.count(old)}")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
+          uv run ruff format packages/rakit-web/tests/test_write_forms.py
+          uv run ruff check packages/rakit-web/tests/test_write_forms.py
+          uv run pytest packages/rakit-web/tests/test_write_forms.py::test_invalid_layout_form_links_errors_and_opens_invalid_tab -q
+      - name: Commit test adaptation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/rakit-web/tests/test_write_forms.py
+          git commit -m "test(web): align form tab error badge contract"
+          git pull --rebase origin ui-05c-resource-detail-forms
+          git push origin HEAD:ui-05c-resource-detail-forms
