@@ -156,4 +156,5 @@ async def test_default_resource_filter_ui_renders_rail_mobile_fallback_and_share
     assert "Status: Paid" in response.text
     assert "Clear all filters" in response.text
     assert "divide-y divide-rakit-border" in response.text
+    assert "border-t border-b border-rakit-border py-3" in response.text
     assert "data-rakit-filter-panel" not in response.text

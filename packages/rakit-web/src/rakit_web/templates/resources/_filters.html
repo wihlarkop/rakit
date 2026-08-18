@@ -1,5 +1,5 @@
 {% macro render_filter_groups(groups, resource, resource_path, filter_hidden_inputs, filter_presentations, policy, instance_id) %}
-  <div class="divide-y divide-rakit-border" data-rakit-filter-groups>
+  <div class="divide-y divide-rakit-border{% if instance_id == 'desktop' %} border-t border-b border-rakit-border py-3{% endif %}" data-rakit-filter-groups>
     {% for group in groups %}
       {% set override = policy.groups.get(group.filter_id) %}
       {% set active_state = namespace(count=0) %}
