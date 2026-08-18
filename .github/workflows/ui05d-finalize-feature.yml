@@ -23,13 +23,10 @@ jobs:
           python-version: '3.12'
       - name: Sync workspace
         run: uv sync --all-packages --dev --locked
-      - name: Apply deterministic test migrations
+      - name: Apply SQLAlchemy test migration
         run: |
           set -o pipefail
-          {
-            python .github/ui05d_test_migrate.py
-            python .github/ui05d_migrate_sqlalchemy_tests.py
-          } 2>&1 | tee .github/ui05d-migration.log
+          python .github/ui05d_migrate_sqlalchemy_tests.py 2>&1 | tee .github/ui05d-migration.log
       - name: Upload migration diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -37,24 +34,12 @@ jobs:
           name: ui05d-migration-diagnostics
           path: .github/ui05d-migration.log
           if-no-files-found: ignore
-      - name: Normalize migration batches
+      - name: Normalize SQLAlchemy tests
         run: |
           uv run ruff format \
-            packages/rakit/src/rakit/core.py \
-            examples/fastapi_sqlalchemy/relationship_review.py \
-            packages/rakit-core/tests/test_query.py \
-            packages/rakit-core/tests/test_resource_service.py \
-            packages/rakit-core/tests/testing/test_datasource_contract.py \
-            packages/rakit-core/tests/test_generated_api_query.py \
             packages/rakit-sqlalchemy/tests/test_datasource.py \
             packages/rakit-sqlalchemy/tests/test_query_translation.py
           uv run ruff check --fix \
-            packages/rakit/src/rakit/core.py \
-            examples/fastapi_sqlalchemy/relationship_review.py \
-            packages/rakit-core/tests/test_query.py \
-            packages/rakit-core/tests/test_resource_service.py \
-            packages/rakit-core/tests/testing/test_datasource_contract.py \
-            packages/rakit-core/tests/test_generated_api_query.py \
             packages/rakit-sqlalchemy/tests/test_datasource.py \
             packages/rakit-sqlalchemy/tests/test_query_translation.py
       - name: Capture full type-check diagnostics
@@ -74,12 +59,6 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add \
-            packages/rakit/src/rakit/core.py \
-            examples/fastapi_sqlalchemy/relationship_review.py \
-            packages/rakit-core/tests/test_query.py \
-            packages/rakit-core/tests/test_resource_service.py \
-            packages/rakit-core/tests/testing/test_datasource_contract.py \
-            packages/rakit-core/tests/test_generated_api_query.py \
             packages/rakit-sqlalchemy/tests/test_datasource.py \
             packages/rakit-sqlalchemy/tests/test_query_translation.py
           if git diff --cached --quiet; then
