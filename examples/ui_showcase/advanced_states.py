@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import hashlib
-import io
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, cast
 
 from pydantic import BaseModel, Field
@@ -25,7 +23,6 @@ from rakit import (
     RelationshipDefinition,
     RelationshipKind,
     ResourceAdmin,
-    TransactionPolicy,
 )
 from rakit_core.actions import ActionSuccess
 from rakit_core.di import ServiceScope
@@ -33,8 +30,10 @@ from rakit_core.fields import FieldDefinition, FileField
 from rakit_core.forms import FormLayout, FormSchema, RelationshipPanel
 from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import MutationAuthorization, OperationAuthorizationSet
+from rakit_core.operations import OperationContext
 from rakit_core.pages import DomainPageHandler, PageContext, PageRedirect, PageRejected
-from rakit_core.pagination import PagePagination, PageResult as ResourcePage
+from rakit_core.pagination import PagePagination
+from rakit_core.pagination import PageResult as ResourcePage
 from rakit_core.permissions import PermissionRequirement
 from rakit_core.query import ResourceQuery
 from rakit_core.relationship_mutations import RelationshipCandidate, RelationshipEditorRow
@@ -45,6 +44,7 @@ from rakit_core.relationships import (
     RelationshipOrderingDefinition,
 )
 from rakit_core.resources import ResourceService
+from rakit_core.transactions import TransactionPolicy
 from rakit_storage import FileAccess, FileStorage, StoredFile, TemporaryUpload
 from rakit_web.form_routes import WriteResourceBinding
 from rakit_web.relationship_routes import RelationshipEditorBinding, RelationshipFormBinding
@@ -88,7 +88,9 @@ class _ShowcaseDataSource:
         if query.search:
             needle = query.search.casefold()
             rows = tuple(
-                row for row in rows if any(needle in str(value).casefold() for value in row.values())
+                row
+                for row in rows
+                if any(needle in str(value).casefold() for value in row.values())
             )
         pagination = query.pagination
         if not isinstance(pagination, PagePagination):
@@ -209,7 +211,15 @@ _UNLINK_ONLY = RelationshipDefinition(
     destructive_policy=RelationshipDestructivePolicy(),
     record_label_field="name",
 )
-RELATIONSHIPS = (_CUSTOMER, _TAGS, _PARTICIPANTS, _LINE_ITEMS, _LARGE_ORDER, _READ_ONLY, _UNLINK_ONLY)
+RELATIONSHIPS = (
+    _CUSTOMER,
+    _TAGS,
+    _PARTICIPANTS,
+    _LINE_ITEMS,
+    _LARGE_ORDER,
+    _READ_ONLY,
+    _UNLINK_ONLY,
+)
 
 
 class AcceptancePeopleAdmin(ResourceAdmin):
@@ -361,38 +371,71 @@ class _RelationshipMutationService:
 
 
 class _MemoryFileStorage:
+    storage_id = "showcase-documents"
     production_safe = False
 
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
         self._counter = 0
 
-    async def put(self, upload: TemporaryUpload) -> StoredFile:
+    async def save(
+        self,
+        upload: TemporaryUpload,
+        *,
+        prefix: str | None = None,
+        max_size: int | None = None,
+        operation_context: OperationContext | None = None,
+    ) -> StoredFile:
+        del operation_context
         chunks: list[bytes] = []
-        async for chunk in upload.stream:
+        async for chunk in upload.stream():
             chunks.append(chunk)
         payload = b"".join(chunks)
+        if max_size is not None and len(payload) > max_size:
+            raise ValueError("showcase upload exceeds max_size")
         self._counter += 1
-        key = f"showcase/private/upload-{self._counter}.pdf"
+        base = f"upload-{self._counter}.pdf"
+        key = f"{prefix}/{base}" if prefix else f"showcase/private/{base}"
         self.objects[key] = payload
         return StoredFile(
-            storage_id="showcase-documents",
+            storage_id=self.storage_id,
             key=key,
-            original_name=upload.filename,
+            original_name=upload.original_name,
             content_type=upload.content_type,
             size=len(payload),
             checksum=f"sha256:{hashlib.sha256(payload).hexdigest()}",
         )
 
-    async def open(self, file: StoredFile) -> io.BytesIO:
-        return io.BytesIO(self.objects[file.key])
+    def open(
+        self,
+        file: StoredFile,
+        *,
+        operation_context: OperationContext | None = None,
+    ) -> AsyncIterator[bytes]:
+        del operation_context
 
-    async def delete(self, file: StoredFile) -> None:
+        async def stream() -> AsyncIterator[bytes]:
+            yield self.objects[file.key]
+
+        return stream()
+
+    async def delete(
+        self,
+        file: StoredFile,
+        *,
+        operation_context: OperationContext | None = None,
+    ) -> None:
+        del operation_context
         self.objects.pop(file.key, None)
 
-    async def url(self, file: StoredFile, *, expires_in: int) -> str:
-        del expires_in
-        return f"/showcase-storage/{file.original_name}"
+    async def resolve_access(
+        self,
+        file: StoredFile,
+        *,
+        operation_context: OperationContext | None = None,
+    ) -> FileAccess:
+        del file, operation_context
+        return FileAccess(public=False)
 
 
 FILE_STORAGE = _MemoryFileStorage()
@@ -406,9 +449,7 @@ _SEEDED_FILE = StoredFile(
     checksum=f"sha256:{hashlib.sha256(_SEEDED_PDF).hexdigest()}",
 )
 FILE_STORAGE.objects[_SEEDED_FILE.key] = _SEEDED_PDF
-DOCUMENT_ROWS = (
-    {"id": 1, "attachment": _SEEDED_FILE.model_dump(mode="python")},
-)
+DOCUMENT_ROWS = ({"id": 1, "attachment": _SEEDED_FILE.model_dump(mode="python")},)
 DOCUMENT_SOURCE = _ShowcaseDataSource(DOCUMENT_ROWS, ("id", "attachment"))
 
 
@@ -606,13 +647,17 @@ ADVANCED_LAUNCHERS = (
         launcher_id="relationship_states",
         label="Relationship states",
         path="/relationship-states",
-        description="Writable TO_ONE/TO_MANY, pagination, inline reorder, and unlink-only UI-06B states.",
+        description=(
+            "Writable TO_ONE/TO_MANY, pagination, inline reorder, and unlink-only UI-06B states."
+        ),
     ),
     LauncherItem(
         launcher_id="upload_states",
         label="Upload states",
         path="/acceptance-documents",
-        description="Create and edit FileField flows with a real in-memory development storage descriptor.",
+        description=(
+            "Create and edit FileField flows with a real in-memory development storage descriptor."
+        ),
     ),
     LauncherItem(
         launcher_id="page_payload_states",
@@ -658,7 +703,7 @@ def configure_ui06_acceptance(admin: Admin) -> None:
                     required=True,
                 ),
             ),
-            create_layout=relationship_layout,
+            layout=relationship_layout,
             update_layout=relationship_layout,
         ),
         mutation_service=_RelationshipMutationService(),
@@ -684,12 +729,13 @@ def configure_ui06_acceptance(admin: Admin) -> None:
                     field_id="attachment",
                     storage_id="showcase-documents",
                     label="PDF attachment",
-                    description="Replace the current PDF or leave it empty to keep the existing file.",
+                    description=(
+                        "Replace the current PDF or leave it empty to keep the existing file."
+                    ),
                     required=True,
                     max_size=10 * 1024 * 1024,
                     allowed_extensions=(".pdf",),
                     allowed_mime_types=("application/pdf",),
-                    access=FileAccess.PRIVATE,
                 ),
             )
         ),

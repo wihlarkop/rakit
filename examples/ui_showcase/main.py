@@ -61,6 +61,7 @@ from rakit_core.actions import ActionAvailabilityDecision, ActionContext, Action
 from rakit_core.fields import FieldDefinition
 from rakit_core.forms import FormSchema
 
+from .advanced_states import ADVANCED_LAUNCHERS, configure_ui06_acceptance
 from .data import CATEGORIES, CUSTOMERS, INVENTORY, ORDERS, PRODUCTS, TEAMS
 
 
@@ -680,6 +681,8 @@ for resource_admin in (
     else:
         admin.register(resource_admin)
 
+configure_ui06_acceptance(admin)
+
 
 async def pending_orders(_context: object) -> StatWidgetResult:
     count = sum(1 for order in ORDERS if order["status"] == "Pending review")
@@ -832,6 +835,7 @@ admin.register_dashboard(
                 path="/operations",
                 description="Exercise page action hierarchy, disabled state, and hidden state.",
             ),
+            *ADVANCED_LAUNCHERS,
             LauncherItem(
                 launcher_id="ui_lab",
                 label="UI Lab",
