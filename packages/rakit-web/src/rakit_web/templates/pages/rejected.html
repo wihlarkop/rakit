@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Page request · {{ binding_label }}{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-3xl space-y-5">
+  <nav class="flex items-center gap-2 text-sm text-rakit-text-muted" aria-label="Breadcrumb">
+    <a class="font-medium hover:text-rakit-text" href="{{ dashboard_url }}">Dashboard</a>
+    <span aria-hidden="true">/</span>
+    <span aria-current="page">Page request</span>
+  </nav>
+  <section class="rakit-panel p-5" aria-labelledby="rakit-page-rejection-title">
+    <h1 id="rakit-page-rejection-title" class="text-xl font-semibold tracking-tight text-rakit-text">This page request could not be completed</h1>
+    <div class="rakit-alert rakit-alert-danger mt-4" role="alert">{{ rejection_message }}</div>
+    <div class="mt-5"><a class="rakit-button rakit-button-secondary" href="{{ dashboard_url }}">Back to dashboard</a></div>
+  </section>
+</div>
+{% endblock %}
