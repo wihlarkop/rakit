@@ -25,6 +25,13 @@ jobs:
         run: uv sync --all-packages --dev --locked
       - name: Normalize focused query coverage
         run: |
+          uv run ruff format \
+            packages/rakit-core/tests/test_resource_filters.py \
+            packages/rakit-sqlalchemy/tests/test_resource_query_configuration.py \
+            packages/rakit-web/tests/test_resource_query_configuration.py \
+            packages/rakit-web/tests/test_generated_rest_pagination.py \
+            packages/rakit/tests/test_query_configuration_facade.py \
+            tests/test_ui_showcase.py
           uv run ruff check --fix \
             packages/rakit-core/tests/test_resource_filters.py \
             packages/rakit-sqlalchemy/tests/test_resource_query_configuration.py \
