@@ -48,7 +48,16 @@ jobs:
             packages/rakit/src/rakit/__init__.py \
             examples/ui_showcase/main.py
       - name: Type-check feature surface
-        run: uv run ty check
+        run: |
+          set -o pipefail
+          uv run ty check 2>&1 | tee .github/ui05d-ty.log
+      - name: Upload type-check diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui05d-ty-diagnostics
+          path: .github/ui05d-ty.log
+          if-no-files-found: ignore
       - name: Build committed Tailwind CSS
         run: |
           bun install --frozen-lockfile
