@@ -102,7 +102,9 @@ def test_page_payload_classifier_accepts_only_closed_safe_shapes() -> None:
     assert table.rows == (("alpha", 1), ("beta", 2))
 
 
-def test_page_payload_classifier_rejects_nested_mixed_and_custom_values_without_stringifying() -> None:
+def test_page_payload_classifier_rejects_nested_mixed_and_custom_values_without_stringifying() -> (
+    None
+):
     secret = _SeededSecret()
 
     assert page_payload_view(secret).kind is PagePayloadKind.UNSUPPORTED
@@ -200,7 +202,7 @@ def test_default_page_template_never_interpolates_raw_payload_and_keeps_page_act
     assert "|safe" not in page_template
     assert "This page returned content that requires a custom template." in page_template
     assert "action_group(page_actions" in page_template
-    assert 'aria-describedby="{{ described | join(\' \') }}"' in page_template
+    assert "aria-describedby=\"{{ described | join(' ') }}\"" in page_template
     assert 'aria-invalid="true"' in page_template
     assert "rejection_message" in rejected_template
     assert "|safe" not in rejected_template
