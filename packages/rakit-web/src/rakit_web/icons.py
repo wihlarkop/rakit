@@ -11,6 +11,10 @@ from html import escape
 from markupsafe import Markup
 
 _ICON_BODY: dict[str, str] = {
+    "arrow-up-down": (
+        '<path d="m21 16-4 4-4-4" /><path d="M17 20V4" />'
+        '<path d="m3 8 4-4 4 4" /><path d="M7 4v16" />'
+    ),
     "check": '<path d="M20 6 9 17l-5-5" />',
     "chevron-down": '<path d="m6 9 6 6 6-6" />',
     "chevron-right": '<path d="m9 18 6-6-6-6" />',
