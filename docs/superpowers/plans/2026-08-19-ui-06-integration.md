@@ -4,7 +4,7 @@
 
 **Goal:** Integrate UI-06A/B/C/D in a controlled sequence, verify the combined security/runtime/UI contract, obtain maintainer browser acceptance, and only then make the integration branch eligible for merge to `main`.
 
-**Architecture:** `ui-06-advanced-operations` is the sole integration branch. Each child slice starts from the latest integration head, lands through a PR back to that branch, and must pass its own focused/full CI + browser acceptance first. After UI-06D lands, run a fresh combined matrix across actions, bulk, relationships, uploads, auth/system surfaces, custom pages, API error format, themes, mount paths, and no-JS flows. No direct feature commit or slice PR targets `main`.
+**Architecture:** `ui-06-advanced-operations` is the sole integration branch. Each child slice starts from the latest integration head, lands through a PR back to that branch, and must pass its own focused/full CI + browser acceptance first. After UI-06D lands, run one fresh deterministic matrix across actions, bulk, relationships, uploads, auth/system surfaces, custom pages, API error format, themes, mount paths, and no-JS flows. No direct feature commit or slice PR targets `main`.
 
 **Tech Stack:** Git/GitHub PRs, Python 3.12–3.14 CI matrix, Starlette/Jinja2/HTMX/Tailwind Rakit runtime, pytest/pytest-cov, Ruff, ty, MkDocs, artifact checks, browser/manual acceptance.
 
@@ -19,36 +19,33 @@
 ## Global Constraints
 
 - Keep `main` unchanged until all four slices are integrated and the maintainer explicitly approves the combined browser experience.
-- Child branch names are fixed for the plan:
+- Child branch names:
   - `ui-06a-actions-bulk`
   - `ui-06b-relationships-uploads`
   - `ui-06c-auth-system-surfaces`
   - `ui-06d-custom-pages-feedback`
-- Every child branch is created from the **current integration head at the time work starts**, never from stale `main`.
-- UI-06B starts only after UI-06A is merged into integration; UI-06C after B; UI-06D after C. This avoids parallel presentation/runtime conflicts in shared templates/CSS.
+- Every child branch is created from the **current integration head at the time that slice starts**, never stale `main`.
+- Required order: A -> integration -> B -> integration -> C -> integration -> D -> integration. Shared templates/CSS/runtime wiring make sequential integration safer than parallel slice development.
 - Feature-first/tests-last workflow applies inside each slice exactly as documented in its plan.
-- A slice is not complete merely because local tests pass; its PR must receive fresh GitHub CI and maintainer browser acceptance where visual behavior is involved.
-- Do not squash away planning/spec artifacts. Keep the approved design spec and UI-06 plans in the branch through implementation; final planning-doc cleanup belongs to UI-08.
-- Generated CSS must be rebuilt from source and committed whenever source CSS changes.
-- Never hand-edit generated `static/rakit.css`.
-- Do not use `main` push CI as evidence if the connected GitHub tooling cannot retrieve that push run. PR-triggered CI is the authoritative connected evidence.
+- A slice is not complete merely because local tests pass; its PR needs fresh GitHub PR CI and maintainer browser acceptance where visual behavior is involved.
+- Do not squash away approved design/planning artifacts. Planning-doc cleanup belongs to UI-08.
+- Rebuild generated CSS whenever source CSS changes; never hand-edit `static/rakit.css`.
+- Do not claim push-to-main CI success if connected tooling cannot retrieve that push run. PR-triggered CI is the authoritative connected evidence available here.
 - No tag, GitHub Release, TestPyPI, or PyPI action.
-- After UI-06 merges to `main`, `examples/reference_app` is a separate follow-up. Do not smuggle it into UI-06 integration.
+- `examples/reference_app` begins only after UI-06 is merged; do not smuggle it into UI-06.
 
 ---
 
-### Task 1: Establish the Sequential Slice Branch Workflow
+### Task 1: Execute the Sequential Slice Branch/PR Workflow
 
 **Files:**
-- No product files; branch/PR orchestration only.
+- Branch/PR orchestration only.
 
 **Interfaces:**
 - Consumes: latest `ui-06-advanced-operations` head.
-- Produces: one child branch at a time targeting the integration branch.
+- Produces: one reviewed child PR at a time targeting integration.
 
-- [ ] **Step 1: Verify integration branch is current and clean before UI-06A**
-
-Local workflow:
+- [ ] **Step 1: Verify integration branch before UI-06A**
 
 ```powershell
 git fetch origin
@@ -58,51 +55,37 @@ git status --short
 git rev-parse HEAD
 ```
 
-Expected: clean working tree. Record the HEAD used as UI-06A base.
+Expected: clean tree. Record this SHA as UI-06A base.
 
-- [ ] **Step 2: Create UI-06A child branch from that exact integration head**
+- [ ] **Step 2: Create UI-06A from the exact integration head**
 
 ```powershell
 git checkout -b ui-06a-actions-bulk
 git push -u origin ui-06a-actions-bulk
 ```
 
-Execute `2026-08-19-ui-06a-actions-bulk.md` completely.
+Execute `2026-08-19-ui-06a-actions-bulk.md` fully.
 
 - [ ] **Step 3: Open UI-06A PR with base `ui-06-advanced-operations`**
 
-PR body must summarize:
-- public Web presentation contract added;
-- action/bulk UI states exercised;
-- security/runtime semantics intentionally unchanged;
-- focused/full local verification evidence;
-- browser acceptance checklist.
+PR body records public Web contract, runtime/security non-goals, local verification, and browser checklist. Never target `main`.
 
-Do not target `main`.
+- [ ] **Step 4: Require fresh UI-06A CI + maintainer browser acceptance**
 
-- [ ] **Step 4: Require fresh UI-06A CI and maintainer visual approval before merge**
+Require green Python matrix, dependency compatibility, PR release gate, and artifact dry-run jobs before merging into integration.
 
-Minimum connected evidence:
-- Python test matrix green;
-- dependency compatibility green;
-- PR release gate green;
-- artifact dry run green.
+- [ ] **Step 5: Refresh integration after each slice and branch the next slice from it**
 
-Then merge PR into `ui-06-advanced-operations` only.
-
-- [ ] **Step 5: Repeat from the new integration head for B, C, D**
-
-After each merge:
+After every merge:
 
 ```powershell
 git checkout ui-06-advanced-operations
 git pull --ff-only origin ui-06-advanced-operations
 git rev-parse HEAD
+git status --short
 ```
 
-Then create the next child branch from that head and execute only its approved plan.
-
-The required order is:
+Then create the next branch and execute only its approved plan:
 
 ```text
 UI-06A -> integration
@@ -111,30 +94,30 @@ UI-06C -> integration
 UI-06D -> integration
 ```
 
-- [ ] **Step 6: Do not reuse stale child branches**
+- [ ] **Step 6: Do not start from stale pre-existing child refs**
 
-If a child branch already exists but was created before the preceding slice merged, rebase/fast-forward it onto the latest integration branch before implementation begins. Never resolve shared-template conflicts by silently dropping prior slice behavior.
+If a named child branch already exists from an older integration head, rebase/fast-forward it to the current integration head **before implementation**. Do not resolve shared-template conflicts by dropping behavior from previous slices.
 
 ---
 
-### Task 2: Verify Public Contract and Backward Compatibility After All Four Slices Land
+### Task 2: Verify Public Contract and Backward Compatibility After A/B/C/D Land
 
 **Files:**
-- Verification only unless a regression fix is required; any fix must be made on a dedicated integration-fix child branch/PR, not directly on `main`.
+- Verification only unless a regression-fix child PR is required.
 
 **Interfaces:**
 - Consumes: combined integration head.
-- Produces: evidence that UI-06 is additive and core-neutral.
+- Produces: evidence UI-06 remains additive/core-neutral.
 
-- [ ] **Step 1: Confirm `rakit-core` has no Web dependency**
+- [ ] **Step 1: Confirm core does not depend on Web**
 
 ```powershell
-rg "rakit_web" packages/rakit-core
+git grep -n "rakit_web" -- packages/rakit-core
 ```
 
-Expected: no production import from `rakit-core` to `rakit_web`.
+Expected: **no output**. `git grep` exits 1 when there are no matches; that exit code is expected for this check.
 
-- [ ] **Step 2: Run a public API import smoke**
+- [ ] **Step 2: Run public API import smoke**
 
 ```powershell
 uv run python -c "from rakit import Admin, ActionDefinition, ActionIntent, ActionPresentation, ResourceWebPresentation, PageDefinition, PageWebPresentation; print('ui06-public-api-ok')"
@@ -142,9 +125,9 @@ uv run python -c "from rakit import Admin, ActionDefinition, ActionIntent, Actio
 
 Expected: `ui06-public-api-ok`.
 
-- [ ] **Step 3: Verify legacy construction paths**
+- [ ] **Step 3: Reassert legacy construction paths**
 
-Use a tiny script or existing tests to prove all remain valid:
+Use existing/new tests to prove these remain valid:
 
 ```python
 admin.register(MyAdmin)
@@ -155,43 +138,41 @@ ActionDefinition(...)
 PageDefinition(template="my_page.html", ...)
 ```
 
-The new `web=` page parameter is optional.
+`register_page(..., web=...)` is additive and optional.
 
-- [ ] **Step 4: Confirm no new core presentation fields**
-
-Inspect:
+- [ ] **Step 4: Confirm no UI presentation contract leaked into core**
 
 ```powershell
-git diff main...ui-06-advanced-operations -- packages/rakit-core/src/rakit_core/actions.py packages/rakit-core/src/rakit_core/relationships.py packages/rakit-core/src/rakit_core/fields.py packages/rakit-core/src/rakit_core/definitions.py
+git diff origin/main...HEAD -- packages/rakit-core/src/rakit_core/actions.py packages/rakit-core/src/rakit_core/relationships.py packages/rakit-core/src/rakit_core/fields.py packages/rakit-core/src/rakit_core/definitions.py
 ```
 
-Expected: no UI-06 change adding action intent, relationship presentation, file presentation, or page-builder fields to core. If an unrelated conflict changed these files, review it explicitly before continuing.
+Expected: no UI-06 additions such as action intent, relationship presentation, upload presentation, or page-builder fields. Any unrelated diff must be explained/reviewed before continuing.
 
-- [ ] **Step 5: Confirm custom templates still receive raw page payload**
+- [ ] **Step 5: Confirm custom page templates still receive raw payload**
 
-Run the UI-06D compatibility test and inspect page context code. The default page may use `payload_view`, but `payload` must remain present for explicit custom templates.
+Run UI-06D compatibility test and inspect `page_routes.py`; `payload_view` is additive while raw `payload` remains in custom-template context.
 
 ---
 
 ### Task 3: Run the Combined Automated Verification Matrix
 
 **Files:**
-- Verification only unless regression fix PR is required.
+- Verification only unless a dedicated integration-fix child PR is required.
 
 **Interfaces:**
-- Consumes: integrated UI-06 application.
-- Produces: fresh local evidence before final PR/main consideration.
+- Consumes: combined UI-06 integration head.
+- Produces: fresh local evidence from exactly that SHA.
 
-- [ ] **Step 1: Rebuild CSS from source and verify no drift**
+- [ ] **Step 1: Rebuild CSS and verify no generated drift**
 
 ```powershell
 bun run css:build
 git status --short
 ```
 
-If `static/rakit.css` changes unexpectedly, determine whether source CSS was not rebuilt in a slice. Commit the generated update through an integration-fix PR before proceeding.
+Unexpected generated CSS changes mean a slice failed to commit its build output; fix through an integration child PR before continuing.
 
-- [ ] **Step 2: Run formatting, linting, and typing**
+- [ ] **Step 2: Run format/lint/type checks**
 
 ```powershell
 uv run ruff format --check .
@@ -199,31 +180,21 @@ uv run ruff check .
 uv run ty check
 ```
 
-Expected: all clean.
-
-- [ ] **Step 3: Run focused UI-06 maturity modules together**
+- [ ] **Step 3: Run all four new UI-06 maturity modules together**
 
 ```powershell
 uv run pytest packages/rakit-web/tests/test_advanced_ui_maturity.py packages/rakit-web/tests/test_relationship_upload_ui_maturity.py packages/rakit-web/tests/test_auth_ui_maturity.py packages/rakit-web/tests/test_custom_page_ui_maturity.py -q
 ```
 
-Expected: PASS.
+- [ ] **Step 4: Run the exact authoritative existing behavior suites**
 
-- [ ] **Step 4: Run authoritative behavior suites together**
+```powershell
+uv run pytest packages/rakit-web/tests/test_actions.py packages/rakit-web/tests/test_bulk_actions.py packages/rakit-web/tests/test_bulk_list_ui.py packages/rakit-web/tests/test_relationship_ui.py packages/rakit-web/tests/test_files.py packages/rakit-web/tests/test_write_forms.py packages/rakit-web/tests/test_resource_detail_form_ui_maturity.py packages/rakit-web/tests/test_auth_enforcement.py packages/rakit-web/tests/test_login_security.py packages/rakit-web/tests/test_csrf.py packages/rakit-web/tests/test_generated_rest_http_errors.py packages/rakit-web/tests/test_pages.py packages/rakit-web/tests/test_page_admin_runtime.py packages/rakit-web/tests/test_page_input_guardrails.py packages/rakit-web/tests/test_page_runtime_validation.py packages/rakit-web/tests/test_public_resource_composition.py packages/rakit-web/tests/test_public_page_composition.py packages/rakit-web/tests/test_resource_pages.py -q
+```
 
-At minimum include existing modules for:
-- actions;
-- bulk actions/list selection;
-- relationship routes/forms/graph mutation;
-- file uploads/forms;
-- authentication/CSRF/session enforcement;
-- pages/page guardrails;
-- resource runtime;
-- generated API error contracts.
+Expected: PASS. These suites protect the real operation/security/runtime contracts behind the new presentation tests.
 
-Use discovered concrete test module names from the branch. Do not rely only on maturity/markup tests.
-
-- [ ] **Step 5: Run the complete repository suite**
+- [ ] **Step 5: Run complete repository suite**
 
 ```powershell
 uv run pytest
@@ -239,112 +210,57 @@ uv run mkdocs build --strict
 uv run python scripts/check_artifacts.py
 ```
 
-Expected: PASS.
+- [ ] **Step 7: Record exact evidence**
 
-- [ ] **Step 7: Record exact verification evidence**
-
-Capture:
-- integration commit SHA;
-- total pytest pass count/warnings;
-- Ruff/ty result;
-- MkDocs/artifact result;
-- CSS clean status.
-
-Do not describe the integration as complete without fresh output from this head.
+Capture integration SHA, pytest pass/warning count, Ruff/ty result, MkDocs/artifact result, and clean CSS/worktree status. Do not call integration complete without fresh output from this head.
 
 ---
 
 ### Task 4: Run the Combined Browser Acceptance Matrix
 
 **Files:**
-- No code changes unless an issue is found. Fixes go through a dedicated child PR back to integration.
+- No changes unless a problem is found; fixes use a dedicated child PR back to integration.
 
 **Interfaces:**
-- Consumes: `examples/ui_showcase` running from the combined integration head.
-- Produces: maintainer acceptance across the complete user journey.
+- Consumes: `examples/ui_showcase` at the combined integration SHA.
+- Produces: explicit maintainer acceptance of the combined product experience.
 
-- [ ] **Step 1: Start the showcase from the exact integration head**
+- [ ] **Step 1: Start showcase from exact integration head**
 
 ```powershell
+git rev-parse HEAD
 uv run python -m examples.ui_showcase.main
 ```
 
-Record the SHA shown by `git rev-parse HEAD` before review.
+Record SHA before review.
 
 - [ ] **Step 2: Review Actions & Bulk together**
 
-Verify:
-- normal/default action;
-- primary hierarchy if configured;
-- danger action separated visually;
-- disabled availability + safe reason;
-- form validation;
-- preview/confirmation;
-- success/rejection;
-- one selected vs many selected bulk state;
-- safe vs danger bulk action;
-- no action hidden by permission becomes exposed in overflow markup.
+Verify normal/default, primary hierarchy, danger separation, HIDDEN omission where context exists, DISABLED safe reason/non-invokable state, form validation, preview/confirmation, success/rejection, bulk one/many selected, safe/danger bulk, and permission-hidden actions absent from markup.
 
 - [ ] **Step 3: Review Relationships & Uploads together**
 
-Verify:
-- TO_ONE current/empty/change/clear;
-- compact TO_MANY;
-- result-driven paginated TO_MANY;
-- read-only;
-- inline/nested if present;
-- unlink vs delete wording/treatment;
-- reorder available/unavailable;
-- current file + replace;
-- file policy help;
-- no field-level file Remove button without explicit clear capability;
-- validation keeps current file visible.
+Verify TO_ONE current/empty/change/clear, compact and real-paginated TO_MANY, read-only/inline/nested where configured, unlink vs delete, reorder available/unavailable, current-file replacement, policy help, no field-level Remove without clear capability, and validation retaining current file.
 
 - [ ] **Step 4: Review Auth & System surfaces**
 
-Verify:
-- login normal;
-- invalid credentials;
-- signed-out message;
-- session-expired message;
-- 403;
-- 404;
-- production 500 using test fixture/evidence;
-- no sidebar on auth/system pages;
-- Light and Dark theme control works;
-- mounted paths are correct where tested.
+Verify login, invalid credentials, signed-out/session-expired messages, 403, 404, Light/Dark, mounted path behavior where applicable, and production 500 using automated debug=False fixture/evidence. Auth/system pages have no admin sidebar.
 
 - [ ] **Step 5: Review Custom Pages**
 
-Verify:
-- scalar;
-- flat mapping;
-- table-like sequence;
-- empty;
-- unsupported/deep safe fallback;
-- explicit custom template still works;
-- mutating page validation/rejection/redirect;
-- PAGE actions use the same hierarchy.
+Verify scalar, flat mapping, table sequence, empty, unsupported/deep safe fallback, explicit custom template compatibility, mutating validation/rejection/redirect, and PAGE action hierarchy.
 
 - [ ] **Step 6: Review no-JS critical flows**
 
-Disable JavaScript and verify ordinary navigation/forms remain usable for:
-- login;
-- resource/action GET -> POST flow;
-- action preview/confirmation;
-- bulk selection/action form;
-- relationship link/unlink/reorder fallback;
-- mutating custom page.
+Disable JavaScript and verify ordinary forms/navigation remain usable for login, action GET->POST, preview/confirmation, bulk select+submit, relationship link/unlink/reorder fallback, and mutating custom page. Enhancements may be less convenient but operations must remain possible.
 
-HTMX/dialog/selection enhancements may be less convenient without JS, but the operation must not become impossible solely because enhancement is absent.
+- [ ] **Step 7: Review narrow + desktop widths in both themes**
 
-- [ ] **Step 7: Review narrow viewport and both themes**
+UI-07 owns exhaustive responsive/a11y hardening, but UI-06 may not ship blocker-level mobile overflow/unusable action/auth/system controls.
 
-UI-07 owns exhaustive responsive/a11y hardening, but UI-06 integration must have no blocker-level mobile overflow or unusable auth/system/action controls. Check at least one narrow phone-like viewport and one desktop viewport in Light/Dark.
+- [ ] **Step 8: Obtain explicit combined maintainer acceptance**
 
-- [ ] **Step 8: Maintainer records explicit combined acceptance**
-
-Do not infer acceptance from individual slice approvals. The maintainer must review the combined integration head and explicitly approve it before main merge.
+Individual slice approvals do not substitute for acceptance of the final integrated SHA.
 
 ---
 
@@ -354,51 +270,46 @@ Do not infer acceptance from individual slice approvals. The maintainer must rev
 - Verification only.
 
 **Interfaces:**
-- Consumes: integrated authorization/error renderer.
-- Produces: explicit security acceptance evidence.
+- Consumes: integrated security/error renderer.
+- Produces: explicit status/format/leakage evidence.
 
-- [ ] **Step 1: Run the browser/API status-format matrix**
-
-Confirm:
+- [ ] **Step 1: Confirm status/format matrix**
 
 ```text
 browser unauthenticated protected -> 303 login
-API unauthenticated              -> JSON 401
-browser forbidden                -> HTML 403
-API forbidden                    -> JSON 403
-browser missing after access     -> HTML 404
-API missing                      -> JSON 404
-browser unexpected production    -> HTML 500
-API unexpected                   -> JSON 500
+API unauthenticated               -> JSON 401
+browser forbidden                 -> HTML 403
+API forbidden                     -> JSON 403
+browser missing after access      -> HTML 404
+API missing                       -> JSON 404
+browser unexpected production     -> HTML 500
+API unexpected                    -> JSON 500
 ```
 
-- [ ] **Step 2: Confirm security ordering for unknown routes**
+- [ ] **Step 2: Confirm unknown-route security ordering**
 
-Use the tests/browser fixture to prove:
-- anonymous unknown protected path does not get informative 404;
-- principal without admin access gets 403, not route information;
-- only an authorized admin-shell principal reaches the normal 404 surface.
+Anonymous unknown protected path must not get informative 404; principal lacking admin access gets 403; authorized admin-shell principal reaches normal 404.
 
-- [ ] **Step 3: Confirm 500 redaction**
+- [ ] **Step 3: Confirm production 500 redaction**
 
-Search the rendered production 500 fixture response for seeded exception secrets/path text and verify absence. Confirm request id remains present.
+Seed exception fixture with credential/path text; verify rendered browser/API production response excludes it and request id remains available.
 
-- [ ] **Step 4: Confirm unknown login reason cannot reflect user input**
+- [ ] **Step 4: Confirm arbitrary login reason is never reflected**
 
-Request an arbitrary encoded `reason` value and ensure it is absent from rendered HTML.
+Request encoded arbitrary `reason` input and verify it is absent from HTML.
 
 ---
 
-### Task 6: Open the UI-06 Integration PR to `main` Only After Local/Browser Approval
+### Task 6: Open Final UI-06 PR to `main` Only After Combined Approval
 
 **Files:**
 - PR metadata only.
 
 **Interfaces:**
-- Consumes: approved, fully integrated branch.
+- Consumes: approved integration branch.
 - Produces: one final UI-06 PR targeting `main`.
 
-- [ ] **Step 1: Confirm integration branch is not behind `main`**
+- [ ] **Step 1: Ensure integration is current with `main`**
 
 ```powershell
 git fetch origin
@@ -407,52 +318,41 @@ git status --short
 git rev-list --left-right --count origin/main...HEAD
 ```
 
-If `main` advanced during UI-06, rebase/merge according to repository policy, rerun the **entire** automated + browser integration matrix, and only then continue.
+If `main` advanced, update integration according to repository policy and rerun the **entire automated + browser integration matrix** before continuing.
 
-- [ ] **Step 2: Compare the complete UI-06 diff**
+- [ ] **Step 2: Inspect complete UI-06 diff**
 
 ```powershell
 git diff --stat origin/main...HEAD
 git diff --name-status origin/main...HEAD
 ```
 
-Confirm:
-- expected UI-06 source/templates/tests/examples/plans/spec only;
-- no `.env`, credentials, local files, release metadata, or unrelated refactor;
-- planning/spec docs remain present.
+Confirm expected UI-06 source/templates/tests/examples/spec/plans only; no `.env`, credentials, local files, release metadata, or unrelated refactor.
 
 - [ ] **Step 3: Open final PR with base `main`**
 
-PR description must summarize four slices separately and include:
-- combined integration SHA;
-- local full-suite result;
-- CI expectations;
-- browser acceptance statement;
-- explicit security compatibility notes;
-- note that `examples/reference_app` is intentionally deferred until after UI-06.
+PR body summarizes A/B/C/D separately and records combined SHA, local full-suite result, browser acceptance, security compatibility, and deliberate deferral of `examples/reference_app`.
 
 - [ ] **Step 4: Require fresh final PR CI**
 
-Because CI is PR-triggered, use this final PR as authoritative connected evidence for the integrated head. Require all jobs green before considering merge.
+Use this PR-triggered CI as authoritative connected evidence for the integrated head. Require all jobs green.
 
 - [ ] **Step 5: Do not merge automatically**
 
-Report the final PR status and evidence to the maintainer. Merge to `main` only after the maintainer explicitly says to merge.
+Report status/evidence to maintainer. Merge only after explicit instruction.
 
 ---
 
 ### Task 7: Post-Merge Boundary
 
 **Files:**
-- No UI-06 code changes.
+- No UI-06 feature work.
 
 **Interfaces:**
-- Consumes: maintainer-approved main merge.
-- Produces: clean handoff to the next project step.
+- Consumes: explicit maintainer-approved main merge.
+- Produces: clean handoff to reference app.
 
-- [ ] **Step 1: Verify main points at the merged UI-06 commit**
-
-After an explicit merge instruction and merge completion:
+- [ ] **Step 1: Verify local main after merge**
 
 ```powershell
 git checkout main
@@ -461,14 +361,14 @@ git rev-parse HEAD
 git status --short
 ```
 
-- [ ] **Step 2: Do not claim push-to-main CI success without retrievable evidence**
+- [ ] **Step 2: Do not fabricate post-merge push CI evidence**
 
-If connected tooling cannot retrieve push-triggered runs, state only that the final PR CI was green and that the merge completed. Do not fabricate post-merge CI evidence.
+If connected tooling cannot retrieve push-triggered runs, state only that final PR CI was green and merge completed.
 
-- [ ] **Step 3: Start `examples/reference_app` as a separate architectural/bounded workflow**
+- [ ] **Step 3: Start `examples/reference_app` separately**
 
-Do not implement it as part of this plan. Its approved purpose is to consume only public Rakit APIs for a realistic mini backoffice, then serve as a second acceptance target for UI-07/UI-08.
+Do not implement it inside this plan. It must consume public Rakit APIs as the realistic mini-backoffice acceptance app agreed for post-UI-06 work.
 
-- [ ] **Step 4: Keep all UI maturity planning/spec docs until UI-08**
+- [ ] **Step 4: Keep UI maturity spec/plans through UI-08**
 
-No cleanup/deletion of UI-06 spec/plans during this integration.
+Do not delete UI-06 design/planning docs during integration.
