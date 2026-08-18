@@ -5,10 +5,7 @@
     <div class="flex w-full flex-col gap-2 sm:flex-row sm:items-start lg:max-w-3xl">
       {% if search_enabled %}
       <form class="w-full sm:max-w-lg" method="get" data-rakit-search action="{{ resource_path }}" role="search">
-        {% for filter_value in filter_values %}<input type="hidden" name="filter" value="{{ filter_value }}" />{% endfor %}
-        {% if sort_value %}<input type="hidden" name="sort" value="{{ sort_value }}" />{% endif %}
-        <input type="hidden" name="per_page" value="{{ per_page_value }}" />
-        {% if query.count_policy.value != "exact" %}<input type="hidden" name="count_policy" value="{{ query.count_policy.value }}" />{% endif %}
+        {% for input in search_hidden_inputs %}<input type="hidden" name="{{ input.name }}" value="{{ input.value }}" />{% endfor %}
         <div class="relative">
           <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-rakit-text-subtle" aria-hidden="true">{{ rakit_icon("search", class_name="size-4") }}</span>
           <input
@@ -33,33 +30,69 @@
           <span>Filters{% if active_filter_count %} {{ active_filter_count }}{% endif %}</span>
           {{ rakit_icon("chevron-down", class_name="size-4 transition group-open:rotate-180") }}
         </summary>
-        <div class="mt-3 rounded-rakit-md border border-rakit-border bg-rakit-surface p-4 shadow-rakit-sm sm:min-w-[36rem]">
-          <form class="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.3fr)_auto] md:items-end" method="get" action="{{ resource_path }}" data-rakit-filter-builder>
-            {% for filter_value in filter_values %}<input type="hidden" name="filter" value="{{ filter_value }}" />{% endfor %}
-            {% if search_value %}<input type="hidden" name="search" value="{{ search_value }}" />{% endif %}
-            {% if sort_value %}<input type="hidden" name="sort" value="{{ sort_value }}" />{% endif %}
-            <input type="hidden" name="per_page" value="{{ per_page_value }}" />
-            {% if query.count_policy.value != "exact" %}<input type="hidden" name="count_policy" value="{{ query.count_policy.value }}" />{% endif %}
-            <div class="space-y-1.5">
-              <label class="block text-sm font-medium text-rakit-text" for="rakit-filter-field-{{ resource.resource_id }}">Field</label>
-              <select class="rakit-select" id="rakit-filter-field-{{ resource.resource_id }}" name="filter_field" required>
-                <option value="">Choose field</option>
-                {% for field_name in filter_fields %}<option value="{{ field_name }}">{{ field_name }}</option>{% endfor %}
-              </select>
-            </div>
-            <div class="space-y-1.5">
-              <label class="block text-sm font-medium text-rakit-text" for="rakit-filter-operator-{{ resource.resource_id }}">Condition</label>
-              <select class="rakit-select" id="rakit-filter-operator-{{ resource.resource_id }}" name="filter_operator" required>
-                {% for operator in filter_operators %}<option value="{{ operator.value }}">{{ operator.label }}</option>{% endfor %}
-              </select>
-            </div>
-            <div class="space-y-1.5">
-              <label class="block text-sm font-medium text-rakit-text" for="rakit-filter-value-{{ resource.resource_id }}">Value</label>
-              <input class="rakit-input" id="rakit-filter-value-{{ resource.resource_id }}" name="filter_value" placeholder="Value; use commas for ‘is one of’" required />
-              <p class="rakit-field-help">For empty/not-empty checks, use <code>true</code> or <code>false</code>.</p>
-            </div>
-            <button class="rakit-button" type="submit">Apply filter</button>
-          </form>
+        <div class="mt-3 rounded-rakit-md border border-rakit-border bg-rakit-surface p-4 shadow-rakit-sm sm:min-w-[36rem] lg:min-w-[44rem]" data-rakit-filter-groups>
+          <div class="grid gap-5 md:grid-cols-2">
+            {% for group in filter_groups %}
+            <section class="min-w-0 space-y-2" data-rakit-filter-group="{{ group.filter_id }}">
+              <div class="flex items-center justify-between gap-3">
+                <h3 class="text-sm font-semibold text-rakit-text">{{ group.label }}</h3>
+                {% if group.active %}<a class="text-xs font-medium text-rakit-brand-700 hover:underline dark:text-rakit-brand-300" href="{{ group.all_url }}">Clear</a>{% endif %}
+              </div>
+
+              {% if group.control in ("choice", "boolean") %}
+              <div class="flex flex-wrap gap-1.5" aria-label="{{ group.label }} filter options">
+                <a class="rakit-chip{% if not group.active %} border-rakit-border-strong text-rakit-text{% endif %}" href="{{ group.all_url }}">All</a>
+                {% for choice in group.choices %}
+                <a class="rakit-chip{% if choice.selected %} border-rakit-brand-500 bg-rakit-brand-50 text-rakit-brand-800 dark:bg-rakit-brand-950 dark:text-rakit-brand-200{% endif %}" href="{{ choice.url }}"{% if choice.selected %} aria-current="true"{% endif %}>{{ choice.label }}</a>
+                {% endfor %}
+              </div>
+
+              {% elif group.control == "date_range" %}
+              <form class="space-y-2" method="get" action="{{ resource_path }}" data-rakit-filter-builder>
+                {% for input in filter_hidden_inputs %}<input type="hidden" name="{{ input.name }}" value="{{ input.value }}" />{% endfor %}
+                <input type="hidden" name="filter_id" value="{{ group.filter_id }}" />
+                <div class="grid gap-2 sm:grid-cols-2">
+                  <div class="space-y-1">
+                    <label class="text-xs font-medium text-rakit-text-muted" for="rakit-filter-{{ resource.resource_id }}-{{ group.filter_id }}-from">From</label>
+                    <input class="rakit-input" id="rakit-filter-{{ resource.resource_id }}-{{ group.filter_id }}-from" name="filter_start" type="date" />
+                  </div>
+                  <div class="space-y-1">
+                    <label class="text-xs font-medium text-rakit-text-muted" for="rakit-filter-{{ resource.resource_id }}-{{ group.filter_id }}-to">To</label>
+                    <input class="rakit-input" id="rakit-filter-{{ resource.resource_id }}-{{ group.filter_id }}-to" name="filter_end" type="date" />
+                  </div>
+                </div>
+                <button class="rakit-button rakit-button-secondary" type="submit">Apply {{ group.label | lower }}</button>
+              </form>
+
+              {% else %}
+              <form class="space-y-2" method="get" action="{{ resource_path }}" data-rakit-filter-builder>
+                {% for input in filter_hidden_inputs %}<input type="hidden" name="{{ input.name }}" value="{{ input.value }}" />{% endfor %}
+                <input type="hidden" name="filter_id" value="{{ group.filter_id }}" />
+                <div class="grid gap-2 sm:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+                  <div class="space-y-1">
+                    <label class="text-xs font-medium text-rakit-text-muted" for="rakit-filter-{{ resource.resource_id }}-{{ group.filter_id }}-operator">Condition</label>
+                    <select class="rakit-select" id="rakit-filter-{{ resource.resource_id }}-{{ group.filter_id }}-operator" name="filter_operator" required>
+                      {% for operator in group.operators %}<option value="{{ operator.value }}">{{ operator.label }}</option>{% endfor %}
+                    </select>
+                  </div>
+                  <div class="space-y-1">
+                    <label class="text-xs font-medium text-rakit-text-muted" for="rakit-filter-{{ resource.resource_id }}-{{ group.filter_id }}-value">Value</label>
+                    <input
+                      class="rakit-input"
+                      id="rakit-filter-{{ resource.resource_id }}-{{ group.filter_id }}-value"
+                      name="filter_value"
+                      {% if group.control == "number" %}type="number" step="any"{% elif group.control == "date" %}type="date"{% else %}type="text"{% endif %}
+                      required
+                    />
+                  </div>
+                </div>
+                {% if group.control == "legacy" %}<p class="rakit-field-help">Legacy field filter. Available conditions follow the existing resource policy.</p>{% endif %}
+                <button class="rakit-button rakit-button-secondary" type="submit">Apply {{ group.label | lower }}</button>
+              </form>
+              {% endif %}
+            </section>
+            {% endfor %}
+          </div>
         </div>
       </details>
       {% endif %}
@@ -80,8 +113,8 @@
   {% if filter_presentations %}
   <div class="flex flex-wrap items-center gap-2" data-rakit-active-filters aria-label="Active filters">
     {% for filter in filter_presentations %}
-    <a class="rakit-chip transition hover:border-rakit-border-strong hover:text-rakit-text" href="{{ filter.remove_url }}" aria-label="Remove filter {{ filter.field }} {{ filter.operator_label }}{% if filter.value %} {{ filter.value }}{% endif %}">
-      <span>{{ filter.field }} {{ filter.operator_label }}{% if filter.value %} {{ filter.value }}{% endif %}</span>
+    <a class="rakit-chip transition hover:border-rakit-border-strong hover:text-rakit-text" href="{{ filter.remove_url }}" aria-label="Remove filter {{ filter.chip_label }}">
+      <span>{{ filter.chip_label }}</span>
       {{ rakit_icon("x", class_name="size-3.5") }}
     </a>
     {% endfor %}
@@ -90,10 +123,7 @@
   {% endif %}
 
   <form id="rakit-sort-{{ resource.resource_id }}" method="get" action="{{ resource_path }}" class="hidden" aria-hidden="true">
-    {% for filter_value in filter_values %}<input type="hidden" name="filter" value="{{ filter_value }}" />{% endfor %}
-    {% if search_value %}<input type="hidden" name="search" value="{{ search_value }}" />{% endif %}
-    <input type="hidden" name="per_page" value="{{ per_page_value }}" />
-    {% if query.count_policy.value != "exact" %}<input type="hidden" name="count_policy" value="{{ query.count_policy.value }}" />{% endif %}
+    {% for input in sort_hidden_inputs %}<input type="hidden" name="{{ input.name }}" value="{{ input.value }}" />{% endfor %}
   </form>
 
   {% if bulk_actions %}
@@ -123,10 +153,18 @@
                 name="sort"
                 value="{{ header.sort_value }}"
                 class="inline-flex items-center gap-1.5 font-semibold uppercase tracking-wide transition hover:text-rakit-text"
-                aria-label="Sort by {{ header.field }}"
+                aria-label="Sort by {{ header.field }}{% if header.state == 'ascending' %}, currently ascending{% elif header.state == 'descending' %}, currently descending{% endif %}"
               >
                 <span>{{ header.field }}</span>
-                {% if header.aria_sort == "ascending" %}{{ rakit_icon("chevron-down", class_name="size-3.5 rotate-180") }}{% elif header.aria_sort == "descending" %}{{ rakit_icon("chevron-down", class_name="size-3.5") }}{% endif %}
+                {% if header.state == "unsorted" %}
+                  {{ rakit_icon("arrow-up-down", class_name="size-3.5 text-rakit-text-subtle") }}
+                {% elif header.state == "ascending" %}
+                  {{ rakit_icon("chevron-down", class_name="size-3.5 rotate-180") }}
+                {% elif header.state == "descending" %}
+                  {{ rakit_icon("chevron-down", class_name="size-3.5") }}
+                {% elif header.state == "secondary" %}
+                  {{ rakit_icon("arrow-up-down", class_name="size-3.5") }}
+                {% endif %}
               </button>
               {% else %}
               {{ header.field }}
@@ -180,42 +218,49 @@
   </form>
   {% endif %}
 
-  <div class="flex flex-col gap-3 border-t border-rakit-border pt-4 lg:flex-row lg:items-center lg:justify-between" data-rakit-pagination>
+  <div class="flex flex-col gap-3 border-t border-rakit-border pt-4 lg:flex-row lg:items-center lg:justify-between" data-rakit-pagination data-rakit-pagination-strategy="{{ pagination.strategy }}">
     <p class="text-sm tabular-nums text-rakit-text-muted">
-      {% if query.count_policy.value == "exact" and pagination.total_count is not none %}
-        {% if pagination.total_count %}Showing {{ pagination.range_start }}–{{ pagination.range_end }} of {{ pagination.total_count }}{% else %}0 records{% endif %}
-      {% elif query.count_policy.value == "deferred" %}
-      Page {{ pagination.current_page }} · total calculating
+      {% if pagination.strategy == "page" %}
+        {% if query.count_policy.value == "exact" and pagination.total_count is not none %}
+          {% if pagination.total_count %}Showing {{ pagination.range_start }}–{{ pagination.range_end }} of {{ pagination.total_count }}{% else %}0 records{% endif %}
+        {% elif query.count_policy.value == "deferred" %}
+        Page {{ pagination.current_page }} · total calculating
+        {% else %}
+        Page {{ pagination.current_page }} · total unavailable
+        {% endif %}
+      {% elif pagination.strategy == "limit_offset" %}
+        {% if pagination.total_count is not none %}Showing {{ pagination.range_start }}–{{ pagination.range_end }} of {{ pagination.total_count }}{% else %}Showing {{ pagination.range_start }}–{{ pagination.range_end }}{% endif %}
       {% else %}
-      Page {{ pagination.current_page }} · total unavailable
+      Cursor navigation
       {% endif %}
     </p>
 
     <nav class="rakit-pagination" aria-label="Resource pagination">
-      {% if pagination.previous_url %}<a class="rakit-pagination-item" aria-label="Previous page" href="{{ pagination.previous_url }}" rel="prev">Previous</a>{% else %}<span class="rakit-pagination-item" aria-disabled="true">Previous</span>{% endif %}
-      {% if pagination["items"] %}
-        {% for item in pagination["items"] %}
-          {% if item.ellipsis %}<span class="rakit-pagination-ellipsis" aria-hidden="true">…</span>{% elif item.current %}<a class="rakit-pagination-item rakit-pagination-current" href="{{ item.href }}" aria-current="page">{{ item.label }}</a>{% else %}<a class="rakit-pagination-item" href="{{ item.href }}">{{ item.label }}</a>{% endif %}
-        {% endfor %}
-      {% else %}
-      <span class="rakit-pagination-item rakit-pagination-current" aria-current="page">{{ pagination.current_page }}</span>
+      {% if pagination.previous_url %}<a class="rakit-pagination-item" aria-label="Previous results" href="{{ pagination.previous_url }}" rel="prev">Previous</a>{% else %}<span class="rakit-pagination-item" aria-disabled="true">Previous</span>{% endif %}
+      {% if pagination.strategy == "page" %}
+        {% if pagination["items"] %}
+          {% for item in pagination["items"] %}
+            {% if item.ellipsis %}<span class="rakit-pagination-ellipsis" aria-hidden="true">…</span>{% elif item.current %}<a class="rakit-pagination-item rakit-pagination-current" href="{{ item.href }}" aria-current="page">{{ item.label }}</a>{% else %}<a class="rakit-pagination-item" href="{{ item.href }}">{{ item.label }}</a>{% endif %}
+          {% endfor %}
+        {% else %}
+        <span class="rakit-pagination-item rakit-pagination-current" aria-current="page">{{ pagination.current_page }}</span>
+        {% endif %}
       {% endif %}
-      {% if pagination.next_url %}<a class="rakit-pagination-item" aria-label="Next page" href="{{ pagination.next_url }}" rel="next">Next</a>{% else %}<span class="rakit-pagination-item" aria-disabled="true">Next</span>{% endif %}
+      {% if pagination.next_url %}<a class="rakit-pagination-item" aria-label="Next results" href="{{ pagination.next_url }}" rel="next">Next</a>{% else %}<span class="rakit-pagination-item" aria-disabled="true">Next</span>{% endif %}
     </nav>
 
+    {% if show_page_size_selector %}
     <form class="flex items-center gap-2" method="get" action="{{ resource_path }}" data-rakit-page-size>
-      {% for filter_value in filter_values %}<input type="hidden" name="filter" value="{{ filter_value }}" />{% endfor %}
-      {% if search_value %}<input type="hidden" name="search" value="{{ search_value }}" />{% endif %}
-      {% if sort_value %}<input type="hidden" name="sort" value="{{ sort_value }}" />{% endif %}
-      {% if query.count_policy.value != "exact" %}<input type="hidden" name="count_policy" value="{{ query.count_policy.value }}" />{% endif %}
+      {% for input in page_size_hidden_inputs %}<input type="hidden" name="{{ input.name }}" value="{{ input.value }}" />{% endfor %}
       <label class="text-sm font-medium text-rakit-text" for="rakit-page-size-{{ resource.resource_id }}">Rows per page</label>
       <span class="relative inline-flex">
-        <select class="rakit-pagination-size appearance-none pl-3 pr-9" id="rakit-page-size-{{ resource.resource_id }}" name="per_page">
+        <select class="rakit-pagination-size appearance-none pl-3 pr-9" id="rakit-page-size-{{ resource.resource_id }}" name="{{ page_size_param }}">
           {% for option in page_size_options %}<option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>{% endfor %}
         </select>
         {{ rakit_icon("chevron-down", class_name="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-rakit-text-muted") }}
       </span>
       <button class="rakit-button rakit-button-quiet" type="submit">Apply</button>
     </form>
+    {% endif %}
   </div>
 </section>
