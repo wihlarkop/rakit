@@ -7,9 +7,13 @@ from typing import Any, cast
 
 from rakit import (
     ActionDefinition,
+    ActionIntent,
+    ActionPresentation,
     ActionScope,
     ActionSuccess,
     Admin,
+    BulkExecutionPolicy,
+    BulkPolicy,
     ChoiceFilter,
     DashboardDefinition,
     DataSourceCapabilities,
@@ -27,6 +31,7 @@ from rakit import (
     PagePagination,
     PageResult,
     PageSizePolicy,
+    PageWebPresentation,
     RelationshipCardinality,
     RelationshipDefinition,
     RelationshipKind,
@@ -52,7 +57,9 @@ from rakit.core import (
     SessionRecord,
     TransactionPolicy,
 )
-from rakit_core.actions import ActionContext, ActionPreview
+from rakit_core.actions import ActionAvailabilityDecision, ActionContext, ActionPreview
+from rakit_core.fields import FieldDefinition
+from rakit_core.forms import FormSchema
 
 from .data import CATEGORIES, CUSTOMERS, INVENTORY, ORDERS, PRODUCTS, TEAMS
 
@@ -207,6 +214,47 @@ def refund_preview(_context: ActionContext) -> ActionPreview:
     )
 
 
+class ShowcaseAction:
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+    async def execute(self, context: ActionContext) -> ActionSuccess[dict[str, object]]:
+        return ActionSuccess(
+            payload={"action": str(context.definition.action_id)},
+            message=self.message,
+        )
+
+
+class AddOrderNote:
+    async def execute(self, context: ActionContext) -> ActionSuccess[dict[str, object]]:
+        note = context.values["note"] if context.values is not None else ""
+        return ActionSuccess(
+            payload={"note": note},
+            message="Operator note accepted for the UI showcase",
+        )
+
+
+ORDER_NOTE_FORM = FormSchema(
+    fields=(
+        FieldDefinition(
+            field_id="note",
+            python_type=str,
+            label="Operator note",
+            required=True,
+            description="Required so the action form has a deterministic validation state.",
+        ),
+    )
+)
+
+
+def warehouse_sync_disabled(_context: ActionContext) -> ActionAvailabilityDecision:
+    return ActionAvailabilityDecision.disabled("Warehouse sync is currently unavailable.")
+
+
+def hidden_action(_context: ActionContext) -> ActionAvailabilityDecision:
+    return ActionAvailabilityDecision.hidden()
+
+
 class CustomersAdmin(ResourceAdmin):
     resource_id = "customers"
     path = "/customers"
@@ -337,6 +385,49 @@ class OrdersAdmin(ResourceAdmin):
     )
     actions = (
         ActionDefinition(
+            action_id="export_orders",
+            label="Export orders",
+            scope=ActionScope.RESOURCE,
+            resource_id="orders",
+            description="Primary resource action for UI-06A hierarchy QA.",
+            executor=ShowcaseAction("Order export queued in the UI showcase"),
+        ),
+        ActionDefinition(
+            action_id="warehouse_sync",
+            label="Sync warehouse",
+            scope=ActionScope.RESOURCE,
+            resource_id="orders",
+            description="Deterministic disabled resource action.",
+            availability=warehouse_sync_disabled,
+            executor=ShowcaseAction("Warehouse sync completed"),
+        ),
+        ActionDefinition(
+            action_id="internal_reindex",
+            label="Internal reindex",
+            scope=ActionScope.RESOURCE,
+            resource_id="orders",
+            availability=hidden_action,
+            executor=ShowcaseAction("Internal reindex completed"),
+        ),
+        ActionDefinition(
+            action_id="add_order_note",
+            label="Add operator note",
+            scope=ActionScope.RECORD,
+            resource_id="orders",
+            description="Typed record action with required input.",
+            input_schema=ORDER_NOTE_FORM,
+            executor=AddOrderNote(),
+            needs_form=True,
+        ),
+        ActionDefinition(
+            action_id="hidden_risk_diagnostics",
+            label="Risk diagnostics",
+            scope=ActionScope.RECORD,
+            resource_id="orders",
+            availability=hidden_action,
+            executor=ShowcaseAction("Diagnostics complete"),
+        ),
+        ActionDefinition(
             action_id="refund_order",
             label="Refund order",
             scope=ActionScope.RECORD,
@@ -348,6 +439,40 @@ class OrdersAdmin(ResourceAdmin):
             needs_confirmation=True,
             mutating=True,
             transaction_policy=TransactionPolicy.DISABLED,
+        ),
+        ActionDefinition(
+            action_id="bulk_mark_reviewed",
+            label="Mark reviewed",
+            scope=ActionScope.BULK,
+            resource_id="orders",
+            description="Safe bulk action for no-JavaScript selection QA.",
+            executor=ShowcaseAction("Selected orders marked reviewed in the UI showcase"),
+        ),
+        ActionDefinition(
+            action_id="bulk_cancel_orders",
+            label="Cancel orders",
+            scope=ActionScope.BULK,
+            resource_id="orders",
+            description="Danger bulk action with confirmation review.",
+            executor=ShowcaseAction("Selected orders cancelled in the UI showcase"),
+            needs_confirmation=True,
+            bulk_policy=BulkPolicy(execution=BulkExecutionPolicy.BEST_EFFORT),
+        ),
+        ActionDefinition(
+            action_id="bulk_warehouse_sync",
+            label="Sync selected with warehouse",
+            scope=ActionScope.BULK,
+            resource_id="orders",
+            availability=warehouse_sync_disabled,
+            executor=ShowcaseAction("Selected orders synchronized"),
+        ),
+        ActionDefinition(
+            action_id="bulk_hidden_hold",
+            label="Internal bulk hold",
+            scope=ActionScope.BULK,
+            resource_id="orders",
+            availability=hidden_action,
+            executor=ShowcaseAction("Selected orders held"),
         ),
     )
 
@@ -534,6 +659,18 @@ for resource_admin in (
                 )
             ),
         )
+    elif resource_admin is OrdersAdmin:
+        admin.register(
+            resource_admin,
+            web=ResourceWebPresentation(
+                actions={
+                    "export_orders": ActionPresentation(intent=ActionIntent.PRIMARY),
+                    "refund_order": ActionPresentation(intent=ActionIntent.DANGER),
+                    "bulk_mark_reviewed": ActionPresentation(intent=ActionIntent.PRIMARY),
+                    "bulk_cancel_orders": ActionPresentation(intent=ActionIntent.DANGER),
+                }
+            ),
+        )
     else:
         admin.register(resource_admin)
 
@@ -684,6 +821,12 @@ admin.register_dashboard(
                 description="Browse the product catalogue and publication state.",
             ),
             LauncherItem(
+                launcher_id="operations",
+                label="Action states",
+                path="/operations",
+                description="Exercise page action hierarchy, disabled state, and hidden state.",
+            ),
+            LauncherItem(
                 launcher_id="ui_lab",
                 label="UI Lab",
                 path="/ui-lab",
@@ -703,6 +846,15 @@ def ui_lab_page(_context: object) -> PageResult[dict[str, object]]:
     )
 
 
+def operations_page(_context: object) -> PageResult[dict[str, object]]:
+    return PageResult(
+        payload={
+            "purpose": "UI-06A page action states",
+            "expected": "Primary direct, disabled in More, hidden omitted",
+        }
+    )
+
+
 admin.register_page(
     PageDefinition(
         page_id="ui_lab",
@@ -711,6 +863,44 @@ admin.register_page(
         handler=ui_lab_page,
         template="ui_lab.html",
     )
+)
+admin.register_page(
+    PageDefinition(
+        page_id="operations",
+        path="/operations",
+        label="Action states",
+        handler=operations_page,
+    ),
+    actions=(
+        ActionDefinition(
+            action_id="refresh_operations",
+            label="Refresh operations",
+            scope=ActionScope.PAGE,
+            page_id="operations",
+            executor=ShowcaseAction("Operations refreshed"),
+        ),
+        ActionDefinition(
+            action_id="page_warehouse_sync",
+            label="Sync warehouse",
+            scope=ActionScope.PAGE,
+            page_id="operations",
+            availability=warehouse_sync_disabled,
+            executor=ShowcaseAction("Warehouse synchronized"),
+        ),
+        ActionDefinition(
+            action_id="page_hidden_diagnostics",
+            label="Internal diagnostics",
+            scope=ActionScope.PAGE,
+            page_id="operations",
+            availability=hidden_action,
+            executor=ShowcaseAction("Diagnostics completed"),
+        ),
+    ),
+    web=PageWebPresentation(
+        actions={
+            "refresh_operations": ActionPresentation(intent=ActionIntent.PRIMARY),
+        }
+    ),
 )
 
 app = admin.asgi()
