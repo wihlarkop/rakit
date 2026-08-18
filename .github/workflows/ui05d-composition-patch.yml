@@ -1,9 +1,9 @@
 name: UI-05D composition patch
 
 on:
-  push:
+  pull_request:
     branches:
-      - ui-05d-resource-query-configuration
+      - ui-05-resource-experience
 
 permissions:
   contents: write
