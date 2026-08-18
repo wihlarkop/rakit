@@ -17,16 +17,17 @@
 - Do not create `RelationshipPresentation` or `UploadPresentation` public APIs in UI-06B.
 - `RelationshipDefinition.cardinality`, `edit_mode`, `effective_writable`, compiled permissions, destructive policy, and ordering capability remain authoritative.
 - Compact-vs-paginated TO_MANY rendering is driven by the existing relationship result: when `has_previous_page` or `has_next_page` is true, use the paginated/table presentation; when the entire current linked set is available in one result, use the compact presentation. Do not introduce another cardinality threshold.
+- Existing relationship editor page size/candidate limits remain runtime policy; UI-06B does not add a second Web threshold.
 - `INLINE` / `NESTED` remain editable-row modes only when explicitly declared; `LINK` is not silently converted into an inline editor.
 - `READ_ONLY` renders information only; `HIDDEN` remains absent.
 - Unlink/remove membership and persistent child delete must remain visibly and semantically distinct.
 - Persistent delete controls appear only when `delete_available` is true from the existing compiled policy + permission + preview/confirmation capability.
-- Reorder controls appear only when `reorderable` is true. `reorder_unavailable` must explain why ordering cannot be changed instead of showing fake controls.
+- Reorder controls appear only when `reorderable` is true. `reorder_unavailable` explains why ordering cannot be changed instead of showing fake controls.
 - Drag-and-drop is optional enhancement only; the existing move-up/move-down form transport is the SSR baseline.
-- Candidate search/pagination remains server-side and permission-scoped.
-- `FileField.delete_behavior` controls cleanup when a record/replacement lifecycle deletes stored objects; it is **not** permission to clear a file field during edit. UI-06B must not expose a field-level “Remove file” control unless an explicit field-clear mutation capability exists. No such capability is added in this slice.
+- Candidate search remains server-side and permission-scoped through the existing relationship helper route. Do not add browser-side full-resource filtering or an unbounded candidate fetch.
+- `FileField.delete_behavior` controls cleanup when an owning record/replacement lifecycle deletes stored objects; it is **not** permission to clear a file field during edit. UI-06B must not expose a field-level “Remove file” control unless an explicit field-clear mutation capability exists. No such capability is added in this slice.
 - File validation and storage remain server-authoritative; client-visible hints are explanatory only.
-- Do not expose storage keys, internal paths, checksums, or backend configuration as UI help text.
+- Do not expose storage keys, internal paths, checksums, storage ids, or backend configuration as UI help text.
 - Do not show fake upload progress.
 - Edit `packages/rakit-web/src/rakit_web/assets/rakit.css`; regenerate `packages/rakit-web/src/rakit_web/static/rakit.css` with `bun run css:build`. Never hand-edit generated CSS.
 - No JavaScript-only critical relationship path.
@@ -37,13 +38,12 @@
 ## File Map
 
 ### Create
-- `packages/rakit-web/src/rakit_web/file_presentation.py` — internal, Web-only safe file metadata/hint formatting; not exported as a public customization API.
+- `packages/rakit-web/src/rakit_web/file_presentation.py` — internal Web-only safe file metadata/hint formatting; not exported as a public customization API.
 - `packages/rakit-web/tests/test_relationship_upload_ui_maturity.py` — slice-level UI contract tests, created only after the feature exists.
 
 ### Modify
 - `packages/rakit-web/src/rakit_web/relationship_routes.py` — add explicit result-driven presentation flags to the existing panel view; no mutation semantics changes.
 - `packages/rakit-web/src/rakit_web/form_routes.py` — attach safe `FileField` policy/current-file presentation metadata to field controls.
-- `packages/rakit-web/src/rakit_web/file_uploads.py` — reuse existing stored-file parsing; no storage lifecycle behavior changes.
 - `packages/rakit-web/src/rakit_web/templates/relationships/panel.html`
 - `packages/rakit-web/src/rakit_web/templates/relationships/to_one.html`
 - `packages/rakit-web/src/rakit_web/templates/relationships/to_many.html`
@@ -52,12 +52,12 @@
 - `packages/rakit-web/src/rakit_web/templates/relationships/error_summary.html`
 - `packages/rakit-web/src/rakit_web/templates/relationships/preview_confirm.html`
 - `packages/rakit-web/src/rakit_web/templates/relationships/preview_dialog.html`
-- `packages/rakit-web/src/rakit_web/templates/forms/form.html` — mature file field current/replace presentation.
+- `packages/rakit-web/src/rakit_web/templates/forms/form.html` — mature file current/replace presentation.
 - `packages/rakit-web/src/rakit_web/assets/rakit.css`
 - `packages/rakit-web/src/rakit_web/static/rakit.css` — generated output.
 - `packages/rakit-web/src/rakit_web/static/rakit-ui.js` — only if needed for non-critical disclosure/dialog polish; existing relationship state transport stays authoritative.
-- `examples/ui_showcase/main.py` — deterministic relationship/upload states.
-- Existing regression suites covering relationship forms/routes, graph mutation, file uploads, and form routes.
+- `examples/ui_showcase/main.py` and `examples/ui_showcase/data.py` only as needed for deterministic states.
+- Existing regression suites: `test_relationship_ui.py`, `test_files.py`, `test_write_forms.py`, `test_resource_detail_form_ui_maturity.py`.
 
 ---
 
@@ -71,8 +71,6 @@
 - Produces: template-only flags `presentation_mode`, `paginated`, and `empty` while preserving all existing panel keys.
 
 - [ ] **Step 1: Add a private presentation resolver without changing graph semantics**
-
-Add near `relationship_panel_view()`:
 
 ```python
 def _relationship_presentation_mode(
@@ -90,11 +88,11 @@ def _relationship_presentation_mode(
     return "compact"
 ```
 
-Import `RelationshipDefinition` only if needed for annotation. This function must not inspect record count against a new number.
+The resolver must not inspect total count against a new UI number.
 
-- [ ] **Step 2: Extend the panel view with template-only state**
+- [ ] **Step 2: Extend the panel view with presentation-only state**
 
-Before returning from `relationship_panel_view()`, calculate:
+Before return:
 
 ```python
 presentation_mode = _relationship_presentation_mode(
@@ -104,7 +102,7 @@ presentation_mode = _relationship_presentation_mode(
 )
 ```
 
-Add only:
+Add:
 
 ```python
 "presentation_mode": presentation_mode,
@@ -112,9 +110,9 @@ Add only:
 "empty": not bool(rows) and not bool(draft_rows),
 ```
 
-Keep `rows`, `total_label`, pagination URLs, destructive flags, order values, pending inputs, and confirmation state unchanged.
+Keep `rows`, `total_label`, pagination URLs, destructive flags, order values, pending inputs, concurrency token, and confirmation state unchanged.
 
-- [ ] **Step 3: Verify the change is presentation-only**
+- [ ] **Step 3: Verify the diff is presentation-only**
 
 ```powershell
 uv run ruff format packages/rakit-web/src/rakit_web/relationship_routes.py
@@ -124,7 +122,7 @@ uv run ty check
 
 Inspect the diff and confirm no code inside `build_relationship_changes`, confirmation issuance/verification, authorization, or graph-mutation construction changed.
 
-- [ ] **Step 4: Commit the relationship view state**
+- [ ] **Step 4: Commit**
 
 ```powershell
 git add packages/rakit-web/src/rakit_web/relationship_routes.py
@@ -142,48 +140,45 @@ git commit -m "feat(web): expose adaptive relationship presentation state"
 - Modify: `packages/rakit-web/src/rakit_web/templates/relationships/error_summary.html`
 
 **Interfaces:**
-- Consumes: `panel.presentation_mode`, existing panel rows/options/selected/clear/unlink state.
-- Produces: compact relationship UI that preserves every existing field name and submission value.
+- Consumes: `panel.presentation_mode`, existing rows/options/selected/clear/unlink state.
+- Produces: compact relationship UI preserving every existing form field name/value.
 
-- [ ] **Step 1: Make `panel.html` the calm relationship container**
+- [ ] **Step 1: Make `panel.html` a calm relationship container**
 
-Keep the existing hidden concurrency/pending/error inputs exactly. Restructure visible chrome to:
+Keep hidden concurrency/pending/error inputs exactly. Visible structure:
 - title + `total_label` in one header;
-- concise edit-mode/read-only context;
+- concise edit/read-only context;
 - semantic error summary using `rakit-alert rakit-alert-danger`;
-- divider-based body rather than nested cards;
+- divider-based body rather than nested-card noise;
 - pagination controls only when `panel.paginated`.
-
-Do not add a second nested panel around `to_one.html` / `to_many.html`.
 
 - [ ] **Step 2: Refine TO_ONE LINK**
 
-For `RelationshipEditMode.LINK`:
-- selected/current row renders as plain record label with Change/Clear affordances;
-- empty state uses `No <label-lower> linked yet.`;
-- Clear appears only when `panel.clear_available`;
-- candidate `<select>` / search helper keeps existing `name="{{ panel.prefix }}set"` and option identity values;
-- read-only mode shows the current label or a neutral empty state and no controls.
+For LINK:
+- current row renders as a plain record label with Change/Clear affordances;
+- empty state says no record linked yet;
+- Clear only when `panel.clear_available`;
+- candidate select/search keeps the existing names and encoded identity values;
+- READ_ONLY shows current label/empty state with no mutation controls.
 
-Do not reinterpret Clear as child delete. If clear/unlink has destructive cascade semantics, keep the existing preview/confirmation flow.
+Do not reinterpret Clear as child delete. Existing destructive cascade preview/confirmation remains authoritative when relevant.
 
 - [ ] **Step 3: Refine compact TO_MANY LINK**
 
-When `panel.presentation_mode == "compact"`:
-- render linked rows as a vertical list with record label and compact per-row actions;
-- use “Remove from relationship” for unlink controls;
-- use “Delete record” only when `panel.delete_available` and keep it visually in danger treatment;
-- empty state is explicit;
+When `presentation_mode == "compact"`:
+- linked rows render as a divided vertical list;
+- unlink control copy is `Remove from relationship` or resource-specific equivalent;
+- persistent child deletion uses explicit `Delete record` wording and danger treatment only when `delete_available`;
 - candidate add/connect controls stay separate from existing membership;
-- pending unlink/delete state remains visually obvious but keeps existing input transport.
+- pending unlink/delete intent remains visible while keeping existing form transport.
 
-Keep all names such as `unlink__<identity>`, `delete_intent__<identity>`, confirmation inputs, and link fields unchanged.
+Keep names such as `unlink__<identity>`, `delete_intent__<identity>`, confirmation inputs, and link fields unchanged.
 
 - [ ] **Step 4: Use semantic tokens only**
 
-Replace direct slate/red/amber palette utility usage in these templates with `text-rakit-*`, `border-rakit-*`, `rakit-alert-*`, `rakit-button-*`, and existing semantic status primitives.
+Replace direct slate/red/amber palette usage in touched relationship templates with Rakit semantic tokens/primitives.
 
-- [ ] **Step 5: Render templates in a structural smoke check**
+- [ ] **Step 5: Template smoke check**
 
 ```powershell
 uv run python -c "from rakit_web.resource_routes import build_templates; t=build_templates(()); [t.env.get_template(p) for p in ('relationships/panel.html','relationships/to_one.html','relationships/to_many.html')]"
@@ -191,9 +186,7 @@ uv run ruff format --check .
 uv run ruff check .
 ```
 
-Expected: templates load without Jinja syntax errors.
-
-- [ ] **Step 6: Commit compact relationship UI**
+- [ ] **Step 6: Commit**
 
 ```powershell
 git add packages/rakit-web/src/rakit_web/templates/relationships/panel.html packages/rakit-web/src/rakit_web/templates/relationships/to_one.html packages/rakit-web/src/rakit_web/templates/relationships/to_many.html packages/rakit-web/src/rakit_web/templates/relationships/error_summary.html
@@ -202,7 +195,7 @@ git commit -m "feat(web): refine compact relationship editors"
 
 ---
 
-### Task 3: Mature Paginated, Inline/Nested, Ordering, and Destructive Relationship States
+### Task 3: Mature Paginated, Inline/Nested, Ordering, and Destructive States
 
 **Files:**
 - Modify: `packages/rakit-web/src/rakit_web/templates/relationships/to_many.html`
@@ -214,74 +207,41 @@ git commit -m "feat(web): refine compact relationship editors"
 - Regenerate: `packages/rakit-web/src/rakit_web/static/rakit.css`
 
 **Interfaces:**
-- Consumes: existing `panel.page`, `has_previous_page`, `has_next_page`, `page_path`, `rows`, `inline_fields`, `reorderable`, `order_values`, `reorder_unavailable`, `unlink_destructive`, `delete_available`, preview paths.
-- Produces: scalable table/list UI with server-side paging and accessible ordering controls.
+- Consumes: existing page/rows/reorder/destructive/preview state.
+- Produces: scalable server-paginated relationship UI with accessible ordering fallback.
 
-- [ ] **Step 1: Render result-driven paginated TO_MANY as a compact table/list**
+- [ ] **Step 1: Render paginated TO_MANY from real editor pagination state**
 
-When `panel.presentation_mode == "paginated"`, render:
-- current linked members in a semantic table or divided list;
-- total/page label;
-- Previous/Next buttons using the existing relationship page helper route;
-- existing membership controls per row according to editability/destructive flags.
+When `presentation_mode == "paginated"`, render current linked members as a semantic table/divided list plus server Previous/Next controls using the existing `page_path`. Do not add browser-local pagination or fetch the entire relationship client-side.
 
-Do not introduce local client-side pagination; navigation must continue using the server helper route and form state.
+- [ ] **Step 2: Keep candidate discovery bounded and server-scoped**
 
-- [ ] **Step 2: Keep candidate discovery server-scoped**
-
-Refine `options.html` so search results are readable and selectable, but do not preload the full target resource or filter options in JavaScript. Existing server candidate query remains authoritative.
-
-Keep encoded identity values and selected state unchanged.
+Refine `options.html` presentation only. Continue using the existing `/options` helper, encoded identity values, selected state, query parameter, and bounded server candidate page. UI-06B does not add a new candidate pagination protocol.
 
 - [ ] **Step 3: Refine INLINE/NESTED rows without converting modes**
 
-In `inline_rows.html`:
-- use a clear row/table hierarchy;
-- preserve create/update/association input names exactly;
-- retain row-level validation messages;
-- keep “Add row” only when target create capability/schema exists;
-- keep update controls only for writable rows;
-- distinguish unlink vs permanent delete labels.
+Preserve create/update/association input names, row validation, add-row capability checks, and target update permissions. Do not introduce deeper recursion or another nested data model.
 
-`NESTED` uses the same existing runtime data model; do not introduce deeper recursion beyond the already compiled `max_nested_depth` behavior.
+- [ ] **Step 4: Make ordering accessible and capability-bound**
 
-- [ ] **Step 4: Make reorder controls accessible and capability-bound**
+If `panel.reorderable`, retain hidden `order__NNNN` values and provide native Move up/Move down submit controls through the existing `move__<identity>__up|down` transport. Drag/drop is optional and not required.
 
-If `panel.reorderable`:
-- keep hidden `order__NNNN` inputs;
-- expose native submit buttons for Move up / Move down using the existing `move__<identity>__up|down` transport;
-- disable/impossible-direction buttons at first/last row where the template can determine position;
-- add drag handles only if an existing JS enhancement can map back to the same complete order transport. Dragging is not required for UI-06B.
+If `panel.reorder_unavailable`, show neutral explanatory text and no fake move controls.
 
-If `panel.reorder_unavailable`, show neutral help text such as `Reordering is unavailable for this relationship view.` and no move controls.
+- [ ] **Step 5: Mature destructive confirmation copy**
 
-- [ ] **Step 5: Mature destructive preview/confirmation copy**
+`preview_confirm.html` / `preview_dialog.html` distinguish relationship removal from persistent child deletion. Keep confirmation tokens/intents/impact fields and data attributes unchanged.
 
-`preview_confirm.html` and `preview_dialog.html` must name the operation accurately:
-- unlink/cascade-removal: “Remove from relationship”;
-- persistent child deletion: “Delete record” / “Delete related record permanently”.
-
-Use semantic warning/danger styling, but keep every confirmation token/intent/impact data attribute and hidden field unchanged.
-
-- [ ] **Step 6: Add only reusable relationship CSS primitives**
-
-If repeated across compact and paginated modes, add stable primitives such as `.rakit-relationship-row` or `.rakit-relationship-actions`. Do not create page-specific classes for one template.
-
-Rebuild:
+- [ ] **Step 6: Add only reusable CSS, rebuild, verify**
 
 ```powershell
 bun run css:build
-```
-
-- [ ] **Step 7: Run structural verification**
-
-```powershell
 uv run ruff format --check .
 uv run ruff check .
 uv run ty check
 ```
 
-- [ ] **Step 8: Commit scalable relationship states**
+- [ ] **Step 7: Commit**
 
 ```powershell
 git add packages/rakit-web/src/rakit_web/templates/relationships packages/rakit-web/src/rakit_web/assets/rakit.css packages/rakit-web/src/rakit_web/static/rakit.css
@@ -295,30 +255,23 @@ git commit -m "feat(web): mature advanced relationship states"
 **Files:**
 - Create: `packages/rakit-web/src/rakit_web/file_presentation.py`
 - Modify: `packages/rakit-web/src/rakit_web/form_routes.py`
-- Reuse: `packages/rakit-web/src/rakit_web/file_uploads.py`
+- Reuse unchanged lifecycle helpers in: `packages/rakit-web/src/rakit_web/file_uploads.py`
 
 **Interfaces:**
-- Consumes: `FileField`, `stored_file_from_value()`, current update-record value.
-- Produces: internal `FileFieldPresentation` containing only user-safe policy/current-file information.
+- Consumes: `FileField`, `StoredFile`, `record_stored_file()`, current update record.
+- Produces: safe internal metadata for the Jinja form control.
 
 - [ ] **Step 1: Create internal immutable file presentation types**
 
-Use:
-
 ```python
-from __future__ import annotations
-
 from dataclasses import dataclass
-
-from rakit_core.fields import FileField
-from rakit_storage import StoredFile
 
 
 @dataclass(frozen=True, slots=True)
 class CurrentFilePresentation:
     name: str
     size_label: str
-    content_type: str | None
+    content_type: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,74 +281,39 @@ class FileFieldPresentation:
     current: CurrentFilePresentation | None = None
 ```
 
-Do not export these from `rakit` public API.
+Do not export them through `rakit`.
 
-- [ ] **Step 2: Add deterministic byte-size formatting**
+- [ ] **Step 2: Add deterministic file-size formatting**
 
-Implement:
-
-```python
-def format_file_size(size: int) -> str:
-    if size < 1024:
-        return f"{size} B"
-    if size < 1024 * 1024:
-        return f"{size / 1024:.1f} KB"
-    return f"{size / (1024 * 1024):.1f} MB"
-```
-
-Strip trailing `.0` if desired, but use one deterministic formatter everywhere.
+Use one internal formatter for B/KB/MB and strip unnecessary `.0` consistently.
 
 - [ ] **Step 3: Build only safe policy hints**
 
-`file_field_presentation(field, current)` constructs copy like:
-- extension labels from `allowed_extensions` when present (`PDF`, `JPG` etc.);
-- otherwise a generic MIME label only when it is human-readable enough;
-- maximum size using `format_file_size(field.max_size)`;
-- optional filename limit only when unusually constrained and useful.
+`file_field_presentation(field, current)` may expose:
+- human-readable allowed extension labels;
+- MIME wording only when useful;
+- maximum size;
+- a filename-length hint only when materially constrained;
+- current original filename, content type, and size.
 
-Example result: `PDF only · Maximum 10 MB`.
+Never expose `storage_id`, `prefix`, stored `key`, `checksum`, or metadata.
 
-Never include `storage_id`, `prefix`, stored key, checksum, or backend path.
-
-- [ ] **Step 4: Pass the actual existing file separately from submitted scalar display state**
+- [ ] **Step 4: Pass actual current stored file separately from submitted display values**
 
 Extend `_form_response(..., current_record: object | None = None)`.
 
-For each `FileField`, derive:
+For every `FileField`, use existing `record_stored_file(current_record, field)` and include a `file` presentation value in the control mapping. `update_get` passes the loaded record. Update validation re-renders pass the same previously loaded record so a failed replacement still shows the current file. Create routes pass no current record.
 
-```python
-current = record_stored_file(current_record, field) if current_record is not None else None
-```
+- [ ] **Step 5: Explicitly do not add a clear/delete field transport**
 
-and include:
+Do not add names such as `delete_file`, `clear_file`, or `remove_file`, and do not reinterpret an empty upload as deletion. Existing `prepare_file_submission()` keeps the previous file when no replacement is uploaded; that behavior remains unchanged.
 
-```python
-"file": file_field_presentation(field, current),
-```
-
-inside the existing control dict.
-
-For `update_get`, pass `current_record=record` to `_form_response`.
-
-For update validation re-render paths, pass the same `record` that was loaded before parsing/mutation so the current stored file remains visible even after a failed replacement attempt.
-
-Create routes use `current_record=None`.
-
-- [ ] **Step 5: Do not add field-clear transport**
-
-Do **not** add form names such as `delete_file`, `clear_file`, `remove_file`, or reinterpret empty upload as deletion. Existing `prepare_file_submission()` intentionally preserves the previous file when no replacement is submitted; keep that behavior unchanged.
-
-- [ ] **Step 6: Run static verification**
+- [ ] **Step 6: Verify and commit**
 
 ```powershell
 uv run ruff format packages/rakit-web/src/rakit_web/file_presentation.py packages/rakit-web/src/rakit_web/form_routes.py
 uv run ruff check packages/rakit-web/src/rakit_web/file_presentation.py packages/rakit-web/src/rakit_web/form_routes.py
 uv run ty check
-```
-
-- [ ] **Step 7: Commit file presentation metadata**
-
-```powershell
 git add packages/rakit-web/src/rakit_web/file_presentation.py packages/rakit-web/src/rakit_web/form_routes.py
 git commit -m "feat(web): expose safe file field presentation"
 ```
@@ -410,51 +328,26 @@ git commit -m "feat(web): expose safe file field presentation"
 - Regenerate: `packages/rakit-web/src/rakit_web/static/rakit.css`
 
 **Interfaces:**
-- Consumes: `field.file.current`, `field.file.policy_hint`, existing `field.accept`, `field.required`, validation issues.
+- Consumes: `field.file.current`, `field.file.policy_hint`, existing file input metadata/issues.
 - Produces: empty/current/replace file states without changing form transport.
 
 - [ ] **Step 1: Render empty file state**
 
-When `field.is_file` and `not field.file.current`:
-- label remains a normal form label;
-- file input stays a native `<input type="file">` with the same field name;
-- show `field.file.policy_hint` in `rakit-field-help`;
-- preserve `accept`, `required`, `aria-describedby`, and `aria-invalid`.
+Keep the native `<input type="file">` field name, `accept`, required state, `aria-describedby`, and `aria-invalid`; show policy hint as field help.
 
 - [ ] **Step 2: Render current + replace state**
 
-When `field.file.current` exists, show before the input:
+Show current `original_name`, formatted size, and content type. Keep the same native file input and explain that choosing a new file replaces the current one. Empty submission still means keep current.
 
-```text
-<original_name>
-<size_label>[ · <content_type>]
-```
+- [ ] **Step 3: Explicitly omit a field-level Remove button**
 
-Label the upload control contextually as replacement, e.g. visible helper `Choose a new file to replace the current file.` The underlying field name stays unchanged; an empty native upload continues to mean “keep current file”.
+No Remove/Delete control appears because the write contract has no explicit file-clear mutation.
 
-Do not render stored keys or download URLs unless the existing write route already provides a separately authorized file-download capability to this template. UI-06B does not add that link.
+- [ ] **Step 4: Keep validation server-authoritative**
 
-- [ ] **Step 3: Explicitly omit a Remove button**
+Render existing server field issues; do not duplicate upload validation in JS.
 
-There must be no field-level Remove/Delete button in this baseline because the current mutation contract has no explicit clear-file operation. Record deletion/replacement cleanup policy is not presented as field clearing.
-
-- [ ] **Step 4: Keep validation user-correctable**
-
-Use existing field-local messages from the server (`File extension is not allowed.`, `File exceeds...`) and the existing global form summary. Do not duplicate validation in client JS.
-
-- [ ] **Step 5: Add stable upload surface CSS only if needed**
-
-Possible reusable class:
-
-```css
-.rakit-file-current {
-  @apply rounded-rakit-sm border border-rakit-border bg-rakit-surface-subtle px-3 py-2;
-}
-```
-
-Keep local spacing in Jinja utilities.
-
-- [ ] **Step 6: Rebuild and visually inspect**
+- [ ] **Step 5: Add only stable CSS, rebuild, verify**
 
 ```powershell
 bun run css:build
@@ -463,7 +356,7 @@ uv run ruff check .
 uv run ty check
 ```
 
-- [ ] **Step 7: Commit file UI**
+- [ ] **Step 6: Commit**
 
 ```powershell
 git add packages/rakit-web/src/rakit_web/templates/forms/form.html packages/rakit-web/src/rakit_web/assets/rakit.css packages/rakit-web/src/rakit_web/static/rakit.css
@@ -476,69 +369,45 @@ git commit -m "feat(web): mature file upload fields"
 
 **Files:**
 - Modify: `examples/ui_showcase/main.py`
-- Modify if deterministic records are needed: `examples/ui_showcase/data.py`
+- Modify if needed: `examples/ui_showcase/data.py`
 
 **Interfaces:**
 - Consumes: existing public relationship/FileField/form APIs only.
-- Produces: browser-reachable acceptance states without private CSS or private presentation hooks.
+- Produces: deterministic browser acceptance states without private UI hooks.
 
-- [ ] **Step 1: Add relationship scenarios through existing public declarations**
+- [ ] **Step 1: Add relationship scenarios through existing public declarations/runtime**
 
-Ensure the showcase exposes:
-- TO_ONE selected;
-- TO_ONE empty;
-- writable TO_ONE clear/change;
-- TO_MANY all-on-one-page compact state;
-- TO_MANY where editor page reports previous/next and therefore renders paginated mode;
+Exercise:
+- TO_ONE selected and empty;
+- writable TO_ONE change/clear;
+- compact TO_MANY whose linked result fits one editor page;
+- paginated TO_MANY where the actual editor result reports previous/next;
 - READ_ONLY;
-- INLINE or NESTED writable rows if the existing showcase mutation service supports them;
-- ordered/reorderable;
-- an ordering-unavailable state;
+- INLINE/NESTED only if the existing graph mutation fixture supports them;
+- reorderable and reorder-unavailable;
 - unlink-only;
-- persistent delete only where the explicit destructive policy + permission/preview runtime supports it.
-
-Do not use a new presentation configuration to force these modes.
+- persistent delete only where explicit destructive policy + permission/preview runtime permits it.
 
 - [ ] **Step 2: Add a deterministic FileField write form**
 
-Use existing public `FileField` / write-resource setup already supported by Rakit. Configure at least:
+Use public `FileField` and the existing development storage/test infrastructure, with a representative PDF field such as 10 MB max. Provide one edit scenario with an actual `StoredFile` descriptor and one create/empty scenario. Do not fake current-file metadata only in the template.
 
-```python
-FileField(
-    field_id="invoice",
-    label="Invoice",
-    max_size=10 * 1024 * 1024,
-    allowed_extensions=(".pdf",),
-    allowed_mime_types=("application/pdf",),
-)
-```
-
-Provide a deterministic current stored-file descriptor on one edit scenario and an empty state on create. Use development-only storage already supported by the showcase/test infrastructure; do not create a browser-only fake file object.
-
-- [ ] **Step 3: Manually exercise the slice before adding tests**
+- [ ] **Step 3: Manual browser review before tests**
 
 ```powershell
 uv run python -m examples.ui_showcase.main
 ```
 
-Browser checklist:
-- compact and paginated TO_MANY switch because of actual result pagination state;
-- relationship candidate search/paging remains usable;
-- no-JS TO_ONE/TO_MANY submission works;
-- unlink wording differs from delete wording;
-- delete only where allowed;
-- move up/down works without drag/drop;
-- current file + replacement hint;
-- file policy help is readable;
-- no file Remove button;
-- validation re-render keeps the previous current file visible.
+Verify compact/paginated switching is result-driven, no-JS relationship submission works, unlink/delete wording differs, move up/down works without drag/drop, current-file replacement is clear, policy help is readable, no field Remove button appears, and validation re-render retains current-file context.
 
-- [ ] **Step 4: Commit showcase states**
+- [ ] **Step 4: Commit**
 
 ```powershell
 git add examples/ui_showcase/main.py examples/ui_showcase/data.py
 git commit -m "feat(examples): cover relationship and upload states"
 ```
+
+Only stage `data.py` if it changed.
 
 ---
 
@@ -546,87 +415,39 @@ git commit -m "feat(examples): cover relationship and upload states"
 
 **Files:**
 - Create: `packages/rakit-web/tests/test_relationship_upload_ui_maturity.py`
-- Modify existing relationship/file/form tests only for new presentation assertions.
+- Modify existing relationship/file/form suites only when needed for new presentation assertions.
 
 **Interfaces:**
 - Consumes: completed UI-06B behavior.
-- Produces: contract coverage proving visual maturity did not change graph/storage semantics.
+- Produces: durable graph/storage/presentation regression coverage.
 
 - [ ] **Step 1: Test result-driven adaptive relationship mode**
 
-Directly cover the private resolver or rendered panel state:
-
-```python
-assert _relationship_presentation_mode(
-    definition=to_many_link,
-    has_previous=False,
-    has_next=False,
-) == "compact"
-assert _relationship_presentation_mode(
-    definition=to_many_link,
-    has_previous=False,
-    has_next=True,
-) == "paginated"
-```
-
-Also assert INLINE/NESTED are `inline` regardless of page size so the renderer never silently changes edit semantics.
+Cover compact vs paginated from `has_previous/has_next`, and prove INLINE/NESTED remain inline regardless of pagination state.
 
 - [ ] **Step 2: Test destructive and ordering visibility boundaries**
 
-Render panels and assert:
-- unlink text exists independently of child delete;
-- permanent-delete control is absent when `delete_available` is false;
-- reorder controls are absent when `reorderable` is false;
-- `reorder_unavailable` copy appears when the existing state provider cannot return the complete ordering state;
-- hidden relationship does not render.
-
-Keep existing graph mutation tests green; do not rewrite them around UI markup.
+Assert unlink exists independently of persistent delete, delete control is absent when `delete_available` is false, reorder controls are absent when `reorderable` is false, unavailable-ordering copy is shown when appropriate, and HIDDEN relationship panels are absent.
 
 - [ ] **Step 3: Test safe FileField presentation**
 
-```python
-def test_file_presentation_exposes_safe_policy_not_storage_details() -> None:
-    field = FileField(
-        field_id="invoice",
-        storage_id="private-bucket",
-        prefix="orders/invoices",
-        max_size=10 * 1024 * 1024,
-        allowed_extensions=(".pdf",),
-        allowed_mime_types=("application/pdf",),
-    )
-    view = file_field_presentation(field, current=None)
-
-    assert "PDF" in view.policy_hint
-    assert "10 MB" in view.policy_hint
-    assert "private-bucket" not in view.policy_hint
-    assert "orders/invoices" not in view.policy_hint
-```
+Construct a `FileField` with non-public `storage_id`/`prefix` and assert the presentation contains user-safe extension/size information but never storage id/prefix/key/checksum.
 
 - [ ] **Step 4: Test current-file + replace semantics**
 
-Render an update form with an existing `StoredFile` and assert:
-- original filename and size are shown;
-- the native upload input still has `name="invoice"`;
-- there is no `name="remove_file"`, `clear_file`, or field-level Remove/Delete button;
-- a failed replacement validation re-render still shows the original current file.
+Render an update form with a real `StoredFile` and assert filename/size/type are visible, the native field name is unchanged, no file-clear transport/button exists, and a failed replacement validation re-render keeps the old current file visible.
 
-- [ ] **Step 5: Confirm storage lifecycle behavior is unchanged**
+- [ ] **Step 5: Reassert existing storage lifecycle semantics**
 
-Run existing file upload tests covering:
-- previous file preserved when no replacement uploaded;
-- replacement cleanup after durable success;
-- compensation after failure;
-- record delete cleanup according to `delete_behavior`.
+Do not alter expectations for no-replacement preservation, replacement cleanup after durable success, failed-upload compensation, or owning-record delete cleanup according to `delete_behavior`.
 
-Do not change expected semantics to satisfy UI tests.
-
-- [ ] **Step 6: Run focused relationship/upload tests**
+- [ ] **Step 6: Run the exact focused suite**
 
 ```powershell
-uv run pytest packages/rakit-web/tests/test_relationship_upload_ui_maturity.py packages/rakit-web/tests -q -k "relationship or file_upload or file_field or form"
+uv run pytest packages/rakit-web/tests/test_relationship_upload_ui_maturity.py packages/rakit-web/tests/test_relationship_ui.py packages/rakit-web/tests/test_files.py packages/rakit-web/tests/test_write_forms.py packages/rakit-web/tests/test_resource_detail_form_ui_maturity.py -q
 ```
 
-If the `-k` selection is too broad, run the concrete existing relationship/file test modules discovered in the branch plus the new maturity module. Expected: PASS.
+Expected: PASS.
 
 - [ ] **Step 7: Run full verification**
 
@@ -641,17 +462,15 @@ uv run python scripts/check_artifacts.py
 git status --short
 ```
 
-Expected: all green; no generated CSS drift.
-
 - [ ] **Step 8: Commit tests**
 
 ```powershell
-git add packages/rakit-web/tests/test_relationship_upload_ui_maturity.py packages/rakit-web/tests
+git add packages/rakit-web/tests/test_relationship_upload_ui_maturity.py packages/rakit-web/tests/test_relationship_ui.py packages/rakit-web/tests/test_files.py packages/rakit-web/tests/test_write_forms.py packages/rakit-web/tests/test_resource_detail_form_ui_maturity.py
 git commit -m "test(web): cover mature relationship and upload UI"
 ```
 
-Before committing, inspect `git diff --cached --name-only` and unstage any unrelated existing test file; only actual new/updated relationship/file presentation tests belong in this commit.
+Only stage existing files that actually changed.
 
-- [ ] **Step 9: Open the UI-06B PR against `ui-06-advanced-operations`**
+- [ ] **Step 9: Open UI-06B PR against `ui-06-advanced-operations`**
 
 Require fresh PR CI and maintainer browser acceptance. Merge only into the integration branch, never directly to `main`.
