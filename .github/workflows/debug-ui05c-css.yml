@@ -1,0 +1,34 @@
+name: Debug UI-05C CSS build
+
+on:
+  push:
+    branches:
+      - ui-05c-resource-detail-forms
+
+permissions:
+  contents: write
+
+jobs:
+  build-css:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ui-05c-resource-detail-forms
+      - uses: oven-sh/setup-bun@6f2f149d776f0fafd5ab339f3d10c56cfb5fcb6c # v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun run css:build
+      - name: Commit generated CSS when changed
+        run: |
+          if git diff --quiet -- packages/rakit-web/src/rakit_web/static/rakit.css; then
+            echo "Generated CSS is already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/rakit-web/src/rakit_web/static/rakit.css
+          git commit -m "build(web): regenerate UI-05C CSS"
+          git push origin HEAD:ui-05c-resource-detail-forms
