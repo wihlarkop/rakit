@@ -17,7 +17,9 @@ from rakit import (
     Filter,
     FilterChoice,
     FilterControl,
+    FilterGroupPresentation,
     FilterOperator,
+    FilterPanelPresentation,
     LauncherItem,
     ListWidgetItem,
     ListWidgetResult,
@@ -32,6 +34,7 @@ from rakit import (
     ResourceFilter,
     ResourcePageResult,
     ResourcePaginationPolicy,
+    ResourceWebPresentation,
     SecretValue,
     StatWidgetResult,
     TableWidgetResult,
@@ -231,7 +234,43 @@ class ProductsAdmin(ResourceAdmin):
     )
     list_fields = ("id", "name", "category", "sku", "status", "price")
     detail_fields = ("id", "name", "category", "sku", "status", "price")
-    filter_fields = ("category", "status")
+    filters = (
+        ChoiceFilter(
+            filter_id="category",
+            label="Category",
+            field="category",
+            choices=(
+                FilterChoice(value="Workspace", label="Workspace"),
+                FilterChoice(value="Input devices", label="Input devices"),
+                FilterChoice(value="Displays", label="Displays"),
+                FilterChoice(value="Accessories", label="Accessories"),
+                FilterChoice(value="Audio & conferencing", label="Audio & conferencing"),
+                FilterChoice(
+                    value="Ergonomic workspace accessories",
+                    label="Ergonomic workspace accessories",
+                ),
+                FilterChoice(value="Power and charging", label="Power and charging"),
+                FilterChoice(value="Networking", label="Networking"),
+                FilterChoice(value="Storage", label="Storage"),
+                FilterChoice(value="Travel workspace", label="Travel workspace"),
+            ),
+        ),
+        ChoiceFilter(
+            filter_id="status",
+            label="Status",
+            field="status",
+            choices=(
+                FilterChoice(value="Published", label="Published"),
+                FilterChoice(value="Draft", label="Draft"),
+                FilterChoice(value="Review", label="Review"),
+                FilterChoice(value="Archived", label="Archived"),
+            ),
+        ),
+        TextFilter(filter_id="name", label="Name", field="name"),
+        TextFilter(filter_id="sku", label="SKU", field="sku"),
+        TextFilter(filter_id="price", label="Price label", field="price"),
+    )
+    filter_fields = ()
     search_fields = ("id", "name", "sku")
     sort_fields = ("id", "name", "category", "status")
 
@@ -484,7 +523,19 @@ for resource_admin in (
     InventoryAdmin,
     TeamsAdmin,
 ):
-    admin.register(resource_admin)
+    if resource_admin is ProductsAdmin:
+        admin.register(
+            resource_admin,
+            web=ResourceWebPresentation(
+                filters=FilterPanelPresentation(
+                    groups={
+                        "category": FilterGroupPresentation(choice_preview_count=5),
+                    }
+                )
+            ),
+        )
+    else:
+        admin.register(resource_admin)
 
 
 async def pending_orders(_context: object) -> StatWidgetResult:
