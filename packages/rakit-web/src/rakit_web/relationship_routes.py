@@ -42,6 +42,7 @@ from rakit_core.relationship_mutations import (
 from rakit_core.relationships import (
     CompiledRelationship,
     RelationshipCardinality,
+    RelationshipDefinition,
     RelationshipEditMode,
     RelationshipKind,
     resolve_record_label,
@@ -748,6 +749,23 @@ async def _candidate_options(
     )
 
 
+def _relationship_presentation_mode(
+    *,
+    definition: RelationshipDefinition,
+    has_previous: bool,
+    has_next: bool,
+) -> str:
+    """Choose a Web presentation only from compiled semantics and page state."""
+
+    if definition.cardinality is RelationshipCardinality.TO_ONE:
+        return "to_one"
+    if definition.edit_mode in {RelationshipEditMode.INLINE, RelationshipEditMode.NESTED}:
+        return "inline"
+    if has_previous or has_next:
+        return "paginated"
+    return "compact"
+
+
 async def relationship_panel_view(
     editor: RelationshipEditorBinding,
     *,
@@ -971,8 +989,16 @@ async def relationship_panel_view(
             for message in messages
         ),
     )
+    presentation_mode = _relationship_presentation_mode(
+        definition=definition,
+        has_previous=editor_page.has_previous,
+        has_next=editor_page.has_next,
+    )
     return {
         "relationship": definition,
+        "presentation_mode": presentation_mode,
+        "paginated": bool(editor_page.has_previous or editor_page.has_next),
+        "empty": not bool(rows) and not bool(draft_rows),
         "relationship_id": editor.relationship_id,
         "prefix": prefix,
         "rows": tuple(row_views),

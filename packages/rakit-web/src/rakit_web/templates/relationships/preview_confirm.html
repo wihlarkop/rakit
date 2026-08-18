@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block title %}{{ title }}{% endblock %}
 {% block content %}
-<header class="mb-6 flex flex-wrap items-end justify-between gap-3 border-b border-slate-200 pb-4">
-  <div><p class="text-sm font-medium text-slate-500">Confirm change</p><h1 class="mt-1 text-2xl font-semibold tracking-tight text-slate-950">{{ title }}</h1></div>
+<header class="mb-6 flex flex-wrap items-end justify-between gap-3 border-b border-rakit-border pb-4">
+  <div><p class="text-sm font-medium text-rakit-text-muted">Confirm change</p><h1 class="mt-1 text-2xl font-semibold tracking-tight text-rakit-text">{{ title }}</h1></div>
 </header>
 <form class="space-y-5" method="post" action="{{ confirm_action }}" novalidate>
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
@@ -29,11 +29,11 @@
     <input type="hidden" name="{{ clear_prefix }}confirmation_impact" value="{{ impact }}" />
   {% endif %}
   <section class="rakit-panel p-4">
-    <p class="text-sm leading-6 text-slate-600">{{ description }}</p>
-    {% if impact %}<div class="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950"><p class="font-medium">Impact</p><p class="mt-1">{{ impact }}</p></div>{% endif %}
-    <p class="mt-4 text-sm text-slate-600">This is applied only when you save the {{ resource_label }}.</p>
+    <p class="text-sm leading-6 text-rakit-text-muted">{{ description }}</p>
+    {% if impact %}<div class="mt-4 rounded-md border border-rakit-border bg-rakit-surface-subtle p-3 text-sm text-rakit-text"><p class="font-medium">Impact</p><p class="mt-1">{{ impact }}</p></div>{% endif %}
+    <p class="mt-4 text-sm text-rakit-text-muted">This is applied only when you save the {{ resource_label }}.</p>
   </section>
-  <footer class="flex justify-end gap-3 border-t border-slate-200 pt-4">
+  <footer class="flex justify-end gap-3 border-t border-rakit-border pt-4">
     <button class="rakit-button rakit-button-secondary" type="submit" name="cancel" value="cancel">Cancel</button>
     <button class="rakit-button rakit-button-danger" type="submit">{{ confirm_label }}</button>
   </footer>
