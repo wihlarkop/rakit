@@ -1,31 +1,49 @@
+{% set presentation = rakit_action_web_presentation(action) %}
+{% set danger = presentation.intent.value == 'danger' %}
 <div id="rakit-action-root">
-  <header class="mb-6 flex flex-wrap items-end justify-between gap-3 border-b border-slate-200 pb-4">
-    <div><p class="text-sm font-medium text-slate-500">{{ binding_label }}</p><h1 class="mt-1 text-2xl font-semibold tracking-tight text-slate-950">{{ preview.title if preview else action.label }}</h1></div>
+  <header class="mb-6 border-b border-rakit-border pb-4">
+    <p class="text-sm font-medium text-rakit-text-muted">{{ binding_label }}</p>
+    <h1 class="mt-1 text-2xl font-semibold tracking-tight text-rakit-text">{{ preview.title if preview else action.label }}</h1>
+    {% if preview and preview.description %}<p class="mt-2 max-w-3xl text-sm leading-6 text-rakit-text-muted">{{ preview.description }}</p>{% elif action.description %}<p class="mt-2 max-w-3xl text-sm leading-6 text-rakit-text-muted">{{ action.description }}</p>{% endif %}
   </header>
   {% if availability.availability.value == "disabled" %}
-    <section class="rakit-panel p-4">
-      <p class="text-sm text-slate-600">This action is currently unavailable.</p>
-      {% if availability.reason %}<p class="mt-1 text-sm text-slate-500">{{ availability.reason }}</p>{% endif %}
+    <section class="rakit-panel p-5" role="status">
+      <p class="text-sm font-semibold text-rakit-text">This action is currently unavailable</p>
+      {% if availability.reason %}<p class="mt-2 max-w-2xl text-sm leading-6 text-rakit-text-muted">{{ availability.reason }}</p>{% endif %}
+      <div class="mt-5"><a class="rakit-button rakit-button-secondary" href="{{ cancel_url }}">Back</a></div>
     </section>
   {% else %}
-    <section class="rakit-panel p-4">
-      {% if preview %}
-        <p class="text-sm leading-6 text-slate-600">{{ preview.description }}</p>
-        {% if preview.impact %}<div class="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950"><p class="font-medium">Impact</p><p class="mt-1">{{ preview.impact }}</p></div>{% endif %}
-      {% else %}
-        <p class="text-sm leading-6 text-slate-600">{{ action.description }}</p>
+    <section class="rakit-panel space-y-5 p-5">
+      {% if preview and preview.impact %}
+      <div class="rounded-rakit-md border border-amber-300 bg-amber-50 p-4 text-sm leading-6 text-amber-950" role="note">
+        <p class="font-semibold">Impact</p>
+        <p class="mt-1">{{ preview.impact }}</p>
+      </div>
       {% endif %}
-      <p class="mt-4 text-sm text-slate-600">This change is applied only when you confirm and submit.</p>
+      {% if confirmation_fields %}
+      <div>
+        <h2 class="text-sm font-semibold text-rakit-text">Submitted values</h2>
+        <dl class="mt-3 divide-y divide-rakit-border rounded-rakit-md border border-rakit-border">
+          {% for field in confirmation_fields %}
+          <div class="grid gap-1 px-4 py-3 sm:grid-cols-3 sm:gap-4">
+            <dt class="text-sm font-medium text-rakit-text-muted">{{ field.label }}</dt>
+            <dd class="min-w-0 text-sm text-rakit-text sm:col-span-2">{{ field.value }}</dd>
+          </div>
+          {% endfor %}
+        </dl>
+      </div>
+      {% endif %}
+      <p class="text-sm leading-6 text-rakit-text-muted">Nothing is applied until you confirm this action.</p>
     </section>
-    <form class="space-y-5" method="post" action="{{ form_action }}" novalidate>
+    <form class="mt-5 space-y-5" method="post" action="{{ form_action }}" novalidate>
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <input type="hidden" name="submission_token" value="{{ submission_token }}" />
       {% if concurrency_token %}<input type="hidden" name="concurrency_token" value="{{ concurrency_token }}" />{% endif %}
       {% if confirmation_token %}<input type="hidden" name="confirmation_token" value="{{ confirmation_token }}" />{% endif %}
       {% for field in confirmation_fields %}<input type="hidden" name="{{ field.name }}" value="{{ field.value }}" />{% endfor %}
-      <footer class="flex justify-end gap-3 border-t border-slate-200 pt-4">
-        <a class="rakit-button rakit-button-secondary" href="{{ cancel_url }}">Cancel</a>
-        <button class="rakit-button rakit-button-danger" type="submit">{{ action.label }}</button>
+      <footer class="flex flex-wrap justify-end gap-3 border-t border-rakit-border pt-4">
+        <a class="rakit-button rakit-button-secondary" href="{{ cancel_url }}">Back</a>
+        <button class="rakit-button{% if danger %} rakit-button-danger{% endif %}" type="submit">{{ action.label }}</button>
       </footer>
     </form>
   {% endif %}
