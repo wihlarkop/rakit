@@ -1,0 +1,33 @@
+name: UI-06A format diagnostic
+
+on:
+  push:
+    branches:
+      - ui-06a-actions-bulk
+
+permissions:
+  contents: read
+
+jobs:
+  format-diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-packages --dev
+      - name: Show exact Ruff format diff
+        run: |
+          uv run ruff format .
+          git diff -- \
+            examples/ui_showcase/main.py \
+            packages/rakit-web/src/rakit_web/action_presentation.py \
+            packages/rakit-web/src/rakit_web/action_views.py \
+            packages/rakit-web/src/rakit_web/bulk_admin.py \
+            packages/rakit-web/src/rakit_web/bulk_review.py \
+            packages/rakit-web/src/rakit_web/dashboard_admin.py \
+            packages/rakit-web/src/rakit_web/page_admin.py \
+            packages/rakit-web/tests/test_advanced_ui_maturity.py
+          test -z "$(git status --short)"
