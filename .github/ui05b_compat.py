@@ -30,13 +30,17 @@ examples = Path("tests/examples/test_read_examples.py")
 text = examples.read_text(encoding="utf-8")
 if text.count('assert "Total unknown" in fragment.text') != 2:
     raise SystemExit("unexpected Total unknown assertion count")
-examples.write_text(
-    text.replace(
-        'assert "Total unknown" in fragment.text',
-        'assert "Total unavailable" in fragment.text',
-    ),
-    encoding="utf-8",
+text = text.replace(
+    'assert "Total unknown" in fragment.text',
+    'assert "Total unavailable" in fragment.text',
 )
+if text.count('assert "Calculating total" in deferred.text') != 2:
+    raise SystemExit("unexpected example deferred-count assertion count")
+text = text.replace(
+    'assert "Calculating total" in deferred.text',
+    'assert "data-rakit-total-deferred" in deferred.text\n    assert "Calculating" in deferred.text',
+)
+examples.write_text(text, encoding="utf-8")
 
 showcase = Path("tests/test_ui_showcase.py")
 text = showcase.read_text(encoding="utf-8")
@@ -87,15 +91,19 @@ new_sort_helper = '''def _sort_link(document: str, field: str) -> tuple[str, lis
     )
     assert form_match is not None
     form_id, action, body = form_match.groups()
-    button = re.search(
+    buttons = re.finditer(
         rf'<button\\s+type="submit"\\s+form="{re.escape(form_id)}"\\s+name="sort"\\s+value="([^"]+)"[^>]*>(.*?)</button>',
         document,
         flags=re.DOTALL,
     )
-    assert button is not None
-    button_value, button_body = button.groups()
-    button_text = html.unescape(re.sub(r"<[^>]+>", "", button_body)).strip()
-    assert button_text == field
+    button_value: str | None = None
+    for button in buttons:
+        candidate_value, candidate_body = button.groups()
+        candidate_text = html.unescape(re.sub(r"<[^>]+>", "", candidate_body)).strip()
+        if candidate_text == field:
+            button_value = candidate_value
+            break
+    assert button_value is not None
     hidden = re.findall(
         r'<input\\s+type="hidden"\\s+name="([^"]+)"\\s+value="([^"]*)"\\s*/?>',
         body,
@@ -151,8 +159,9 @@ for old, new in (
     ('    assert ">Page 1<" in first.text\n', '    assert _has_current_page(first.text, 1)\n'),
     ('    assert ">Page 2<" in middle.text\n', '    assert _has_current_page(middle.text, 2)\n'),
     ('    assert ">Page 3<" in last.text\n', '    assert _has_current_page(last.text, 3)\n'),
+    ('    assert "Calculating total" in page.text\n', '    assert "data-rakit-total-deferred" in page.text\n    assert "Calculating" in page.text\n'),
 ):
-    text = replace_once(text, old, new, label=f"pagination assertion {old!r}")
+    text = replace_once(text, old, new, label=f"semantic assertion {old!r}")
 
 old_sort_assertions = '''    assert re.search(
         r'aria-sort="descending"[^>]*>\\s*<button[^>]*>\\s*name\\s*</button>', response.text
@@ -171,3 +180,13 @@ text = replace_once(
     label="aria-sort assertions",
 )
 query_tests.write_text(text, encoding="utf-8")
+
+resource_maturity = Path("packages/rakit-web/tests/test_resource_list_ui_maturity.py")
+text = resource_maturity.read_text(encoding="utf-8")
+text = replace_once(
+    text,
+    '    assert "Calculating total…" in deferred.text\n',
+    '    assert "data-rakit-total-deferred" in deferred.text\n    assert "Calculating" in deferred.text\n',
+    label="resource maturity deferred-count assertion",
+)
+resource_maturity.write_text(text, encoding="utf-8")
