@@ -3,10 +3,12 @@
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
+from rakit_core.admin_types import ResourceAdmin
 from rakit_core.dashboard import DashboardDefinition, WidgetDefinition
 from rakit_core.definitions import RouteDefinition
 from rakit_core.di import ServiceResolver
 from rakit_core.errors import ErrorCode, RakitError
+from rakit_core.filters import ResourceFilter, effective_resource_filters
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -15,6 +17,7 @@ from .admin import RequestContextMiddleware
 from .dashboard_routes import DashboardBinding, build_dashboard_routes, widget_path
 from .endpoint_admin import Admin as _EndpointAdmin
 from .navigation import AdminNavigation, build_navigation_provider
+from .resource_presentation import ResourceWebPresentation, bind_resource_web_presentation
 from .resource_routes import build_templates
 from .security.authentication import (
     AuthorizationMiddleware,
@@ -68,6 +71,58 @@ class _AdminNavigationMiddleware:
 
 class Admin(_EndpointAdmin):
     """Public Admin facade with an automatic, permission-aware dashboard."""
+
+    def register(
+        self,
+        admin_cls: type[ResourceAdmin],
+        *,
+        web: ResourceWebPresentation | None = None,
+    ) -> None:
+        """Register a resource plus optional Web-only presentation policy."""
+
+        if web is not None and not isinstance(web, ResourceWebPresentation):
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+                message="Invalid resource Web presentation declaration",
+                status_code=500,
+                details={
+                    "resource_id": getattr(admin_cls, "resource_id", ""),
+                    "reason": "invalid_web_presentation",
+                },
+            )
+        presentation = web or ResourceWebPresentation()
+
+        raw_filters = getattr(admin_cls, "filters", ())
+        raw_filter_fields = getattr(admin_cls, "filter_fields", ())
+        if (
+            isinstance(raw_filters, list | tuple)
+            and all(isinstance(definition, ResourceFilter) for definition in raw_filters)
+            and isinstance(raw_filter_fields, list | tuple)
+            and all(isinstance(field_name, str) for field_name in raw_filter_fields)
+        ):
+            known_filter_ids = {
+                definition.filter_id
+                for definition in effective_resource_filters(
+                    tuple(raw_filters),
+                    tuple(raw_filter_fields),
+                )
+            }
+            unknown = sorted(set(presentation.filters.groups).difference(known_filter_ids))
+            if unknown:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+                    message="Invalid resource Web presentation declaration",
+                    status_code=500,
+                    details={
+                        "resource_id": getattr(admin_cls, "resource_id", ""),
+                        "reason": "unknown_web_filter_presentation",
+                        "filter_ids": unknown,
+                    },
+                )
+
+        super().register(admin_cls)
+        definition = self._resource_definitions[admin_cls.resource_id]
+        bind_resource_web_presentation(definition, presentation)
 
     def _dashboard_widget_registry(self) -> dict[str, WidgetDefinition]:
         registry = self.__dict__.get("_dashboard_widgets")

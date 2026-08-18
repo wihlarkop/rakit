@@ -95,6 +95,11 @@ from rakit_core.relationships import (
     RelationshipKind,
 )
 from rakit_web.dashboard_admin import Admin
+from rakit_web.resource_presentation import (
+    FilterGroupPresentation,
+    FilterPanelPresentation,
+    ResourceWebPresentation,
+)
 
 from ._server import run
 
@@ -134,7 +139,9 @@ __all__ = [
     "Filter",
     "FilterChoice",
     "FilterControl",
+    "FilterGroupPresentation",
     "FilterOperator",
+    "FilterPanelPresentation",
     "FilterSelection",
     "GeneratedCrudOperation",
     "GeneratedCrudRequest",
@@ -172,6 +179,7 @@ __all__ = [
     "ResourcePageResult",
     "ResourcePagination",
     "ResourcePaginationPolicy",
+    "ResourceWebPresentation",
     "SecretValue",
     "StatWidgetResult",
     "TableWidgetResult",

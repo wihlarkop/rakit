@@ -93,13 +93,22 @@ def test_ui_showcase_exposes_realistic_application_and_ui_lab() -> None:
     assert "Commerce operations" in resources["teams"].text
 
     assert 'data-rakit-filter-group="status"' in resources["orders"].text
-    assert ">Paid</a>" in resources["orders"].text
-    assert ">Pending review</a>" in resources["orders"].text
+    assert ">Paid</span>" in resources["orders"].text
+    assert ">Pending review</span>" in resources["orders"].text
     assert '<option value="20" selected>20</option>' in resources["orders"].text
     assert '<option value="40">40</option>' in resources["orders"].text
     assert '<option value="80">80</option>' in resources["orders"].text
     assert 'data-rakit-filter-group="stock_level"' in resources["inventory"].text
-    assert ">Needs attention</a>" in resources["inventory"].text
+    assert ">Needs attention</span>" in resources["inventory"].text
+
+    products = resources["products"].text
+    for filter_id in ("category", "status", "name", "sku", "price"):
+        assert f'data-rakit-filter-group="{filter_id}"' in products
+    assert "Show 5 more" in products
+    assert "Ergonomic workspace accessories" in products
+    assert "data-rakit-filter-rail" in products
+    assert "data-rakit-filter-mobile-fallback" in products
+    assert "data-rakit-filter-drawer" in products
 
     assert orders_page_two.status_code == 200
     assert "ORD-1060" in orders_page_two.text

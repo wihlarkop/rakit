@@ -6,6 +6,8 @@ def test_resource_query_configuration_types_are_publicly_reexported() -> None:
         DateFilter,
         DateRangeFilter,
         FilterChoice,
+        FilterGroupPresentation,
+        FilterPanelPresentation,
         FilterSelection,
         LimitOffsetPagination,
         NumberFilter,
@@ -14,6 +16,7 @@ def test_resource_query_configuration_types_are_publicly_reexported() -> None:
         PaginationStrategy,
         ResourceFilter,
         ResourcePaginationPolicy,
+        ResourceWebPresentation,
         TextFilter,
     )
     from rakit_core.filters import (
@@ -61,6 +64,15 @@ def test_resource_query_configuration_types_are_publicly_reexported() -> None:
     from rakit_core.pagination import (
         ResourcePaginationPolicy as RealResourcePaginationPolicy,
     )
+    from rakit_web.resource_presentation import (
+        FilterGroupPresentation as RealFilterGroupPresentation,
+    )
+    from rakit_web.resource_presentation import (
+        FilterPanelPresentation as RealFilterPanelPresentation,
+    )
+    from rakit_web.resource_presentation import (
+        ResourceWebPresentation as RealResourceWebPresentation,
+    )
 
     assert BooleanFilter is RealBooleanFilter
     assert ChoiceFilter is RealChoiceFilter
@@ -68,6 +80,8 @@ def test_resource_query_configuration_types_are_publicly_reexported() -> None:
     assert DateFilter is RealDateFilter
     assert DateRangeFilter is RealDateRangeFilter
     assert FilterChoice is RealFilterChoice
+    assert FilterGroupPresentation is RealFilterGroupPresentation
+    assert FilterPanelPresentation is RealFilterPanelPresentation
     assert FilterSelection is RealFilterSelection
     assert LimitOffsetPagination is RealLimitOffsetPagination
     assert NumberFilter is RealNumberFilter
@@ -76,6 +90,7 @@ def test_resource_query_configuration_types_are_publicly_reexported() -> None:
     assert PaginationStrategy is RealPaginationStrategy
     assert ResourceFilter is RealResourceFilter
     assert ResourcePaginationPolicy is RealResourcePaginationPolicy
+    assert ResourceWebPresentation is RealResourceWebPresentation
     assert TextFilter is RealTextFilter
 
 
