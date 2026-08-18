@@ -1,6 +1,6 @@
 === FOCUSED UI-06A REGRESSION ===
 ........                                                                 [100%]
-8 passed in 0.10s
+8 passed in 0.08s
 focused_exit=0
 
 === SHOWCASE IMPORT ===
@@ -32,9 +32,9 @@ E        +  where '<!doctype html>\n<html lang="en">\n  <head>\n    <meta charse
 
 tests/test_ui_showcase.py:251: AssertionError
 ----------------------------- Captured stderr call -----------------------------
-[2m2026-08-18T19:40:35.732102Z[0m [[32m[1minfo     [0m] [1mhttp.request.started          [0m [36madmin_id[0m=[35mui_showcase[0m [36mpath[0m=[35m/auth/login[0m [36mrequest_id[0m=[35m9e04a7ed-4005-4d5b-afc5-b92a1b4480db[0m
-[2m2026-08-18T19:40:35.740122Z[0m [[32m[1minfo     [0m] [1mhttp.request.started          [0m [36madmin_id[0m=[35mui_showcase[0m [36mpath[0m=[35m/auth/login[0m [36mrequest_id[0m=[35m7d17aaa7-6ce4-425b-aa8c-3f811e605220[0m
-[2m2026-08-18T19:40:35.741684Z[0m [[32m[1minfo     [0m] [1mhttp.request.started          [0m [36madmin_id[0m=[35mui_showcase[0m [36mpath[0m=[35m/orders/eyJpZCI6eyJ0eXBlIjoic3RyIiwidmFsdWUiOiJPUkQtMTA4MCJ9fQ/_actions/refund_order[0m [36mrequest_id[0m=[35m8d79b724-0673-48f6-a788-43f6d32f7ad7[0m
+[2m2026-08-18T19:48:34.585556Z[0m [[32m[1minfo     [0m] [1mhttp.request.started          [0m [36madmin_id[0m=[35mui_showcase[0m [36mpath[0m=[35m/auth/login[0m [36mrequest_id[0m=[35m958bf497-df5d-4d02-b3c2-076aabf75c6d[0m
+[2m2026-08-18T19:48:34.591109Z[0m [[32m[1minfo     [0m] [1mhttp.request.started          [0m [36madmin_id[0m=[35mui_showcase[0m [36mpath[0m=[35m/auth/login[0m [36mrequest_id[0m=[35me5f4a079-d2c7-4fd9-b3ec-ec4bc6616dee[0m
+[2m2026-08-18T19:48:34.592262Z[0m [[32m[1minfo     [0m] [1mhttp.request.started          [0m [36madmin_id[0m=[35mui_showcase[0m [36mpath[0m=[35m/orders/eyJpZCI6eyJ0eXBlIjoic3RyIiwidmFsdWUiOiJPUkQtMTA4MCJ9fQ/_actions/refund_order[0m [36mrequest_id[0m=[35mb66b2758-548a-4065-af87-9d1b08bf95dc[0m
 =============================== warnings summary ===============================
 tests/test_ui_showcase.py:7
   /home/runner/work/rakit/rakit/tests/test_ui_showcase.py:7: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
@@ -45,5 +45,5 @@ tests/test_ui_showcase.py:7
 FAILED tests/test_ui_showcase.py::test_ui_showcase_exposes_record_confirmation_action_and_relationship_contracts - assert 'This change is applied only when you confirm and submit.' in '<!doctype html>\n<html lang="en">\n  <head>\n    <meta charset="utf-8" />\n    <meta name="viewport" content="width=d...94299a.js" defer></script>\n    <script src="/_system/static/rakit-ui.e53db041.js" defer></script>\n  </body>\n</html>'
  +  where '<!doctype html>\n<html lang="en">\n  <head>\n    <meta charset="utf-8" />\n    <meta name="viewport" content="width=d...94299a.js" defer></script>\n    <script src="/_system/static/rakit-ui.e53db041.js" defer></script>\n  </body>\n</html>' = <Response [200 OK]>.text
 !!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
-1 failed, 97 passed, 1 warning in 29.15s
+1 failed, 97 passed, 1 warning in 35.87s
 full_exit=1
