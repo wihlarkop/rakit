@@ -150,8 +150,8 @@ def build_mature_bulk_action_routes(binding: BulkActionBinding) -> list[Route]:
             if request.method == "POST":
                 response = original_endpoint(request)
                 if inspect.isawaitable(response):
-                    response = await response
-                return response
+                    return cast(Response, await response)
+                return cast(Response, response)
 
             root_authorization = await binding.authorize_action(request, compiled, None)
             if root_authorization is None:
