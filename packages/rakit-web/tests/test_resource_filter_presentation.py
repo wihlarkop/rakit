@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any, cast
+
 import httpx
 import pytest
 from rakit import (
@@ -78,8 +80,9 @@ def test_filter_panel_presentation_defaults_and_group_overrides_are_immutable() 
     assert policy.choice_preview_count == 6
     assert policy.groups["status"] is group
 
+    mutable_view = cast(Any, policy.groups)
     with pytest.raises(TypeError):
-        policy.groups["other"] = group  # type: ignore[index]
+        mutable_view["other"] = group
 
 
 def test_filter_panel_presentation_rejects_invalid_thresholds_and_group_ids() -> None:
@@ -93,8 +96,9 @@ def test_filter_panel_presentation_rejects_invalid_thresholds_and_group_ids() ->
         FilterPanelPresentation(choice_collapse_after=4, choice_preview_count=5)
     with pytest.raises(ValueError, match="group ids"):
         FilterPanelPresentation(groups={"": FilterGroupPresentation()})
+    invalid_groups = cast(Any, {"status": object()})
     with pytest.raises(TypeError, match="FilterGroupPresentation"):
-        FilterPanelPresentation(groups={"status": object()})  # type: ignore[dict-item]
+        FilterPanelPresentation(groups=invalid_groups)
 
 
 def test_public_admin_register_binds_web_presentation_without_changing_resource_definition() -> (
