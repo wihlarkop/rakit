@@ -63,7 +63,7 @@
 {% if issues %}
 <div id="form-errors" class="rakit-alert rakit-alert-danger mb-5" data-rakit-focus-target="form-errors" role="alert" tabindex="-1">
   <p class="font-semibold">There are problems with this form</p>
-  <ul class="mt-2 list-disc space-y-1 pl-5">{% for issue in summary_issues %}<li>{% if issue.anchor %}<a class="font-medium underline underline-offset-2" href="#{{ issue.anchor }}">{{ issue.label }}: {{ issue.message }}</a>{% else %}{{ issue.message }}{% endif %}</li>{% endfor %}</ul>
+  <ul class="mt-2 list-disc space-y-1 pl-5">{% for issue in summary_issues %}<li>{% if issue.anchor %}<a class="font-medium underline" href="#{{ issue.anchor }}">{{ issue.label }}: {{ issue.message }}</a>{% else %}{{ issue.message }}{% endif %}</li>{% endfor %}</ul>
 </div>
 {% endif %}
 <form class="space-y-5" method="post" action="{{ action_url }}"{% if has_file_fields %} enctype="multipart/form-data"{% endif %} novalidate{% if first_invalid_id %} data-rakit-first-invalid="{{ first_invalid_id }}"{% endif %}>
@@ -72,7 +72,7 @@
   {% if concurrency_token %}<input type="hidden" name="concurrency_token" value="{{ concurrency_token }}" />{% endif %}
   {% for node in layout %}{{ render_node(node) }}{% endfor %}
   <div id="rakit-dialog-root" aria-live="polite"></div>
-  <footer class="sticky bottom-0 z-10 flex flex-col-reverse gap-2 border-t border-rakit-border bg-rakit-surface px-4 py-3 sm:flex-row sm:justify-end">
+  <footer class="sticky bottom-0 z-10 flex flex-col justify-end gap-2 border-t border-rakit-border bg-rakit-surface px-4 py-3 sm:flex-row">
     <a class="rakit-button rakit-button-secondary" href="{{ cancel_url }}">Cancel</a>
     <button class="rakit-button" type="submit">{{ 'Create' if operation == 'create' else 'Save changes' }}</button>
   </footer>
