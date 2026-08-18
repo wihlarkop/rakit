@@ -22,6 +22,7 @@ from rakit import (
     ListWidgetItem,
     ListWidgetResult,
     PageDefinition,
+    PagePagination,
     PageResult,
     PageSizePolicy,
     RelationshipCardinality,
@@ -29,6 +30,7 @@ from rakit import (
     RelationshipKind,
     ResourceAdmin,
     ResourceFilter,
+    ResourcePageResult,
     ResourcePaginationPolicy,
     SecretValue,
     StatWidgetResult,
@@ -76,6 +78,14 @@ def _matches(item: dict[str, object], filter_: Any) -> bool:
         return str(actual) in {str(value) for value in expected}
     if operator == "is_null":
         return (actual is None) is bool(expected)
+    if operator == "lt":
+        return str(actual) < str(expected)
+    if operator == "lte":
+        return str(actual) <= str(expected)
+    if operator == "gt":
+        return str(actual) > str(expected)
+    if operator == "gte":
+        return str(actual) >= str(expected)
     return False
 
 
@@ -109,15 +119,18 @@ class _MemoryDataSource:
             )
         return items
 
-    async def list(self, query: Any) -> _Page:
+    async def list(self, query: Any) -> ResourcePageResult[dict[str, object]]:
+        pagination = query.pagination
+        if not isinstance(pagination, PagePagination):
+            raise ValueError("UI showcase memory data source supports page pagination only")
         items = self._filtered(query)
-        start = query.pagination.offset
-        end = start + query.pagination.per_page
-        return _Page(
+        start = pagination.offset
+        end = start + pagination.per_page
+        return ResourcePageResult(
             items=tuple(items[start:end]),
-            page=query.pagination.page,
-            per_page=query.pagination.per_page,
-            has_previous=query.pagination.page > 1,
+            page=pagination.page,
+            per_page=pagination.per_page,
+            has_previous=pagination.page > 1,
             has_next=end < len(items),
             total_count=len(items) if query.count_policy.value == "exact" else None,
         )
