@@ -39,8 +39,8 @@ from rakit_core.operations import (
     new_operation_id,
     run_operation_plan,
 )
+from rakit_core.pagination import CursorPageResult, LimitOffsetResult, PageResult
 from rakit_core.permissions import PermissionRequirement
-from rakit_core.query import PageResult
 from rakit_core.resources import ResourceService
 from rakit_core.schema import SchemaAdapter
 from rakit_core.transactions import OperationUnitOfWorkFactory
@@ -339,7 +339,29 @@ async def _run_mutation(
 
 
 def _list_response(binding: GeneratedRestBinding, result: object) -> JSONResponse:
-    if not isinstance(result, PageResult):
+    if isinstance(result, PageResult):
+        meta: dict[str, object] = {
+            "page": result.page,
+            "per_page": result.per_page,
+            "has_previous": result.has_previous,
+            "has_next": result.has_next,
+            "total": result.total_count,
+        }
+    elif isinstance(result, LimitOffsetResult):
+        meta = {
+            "offset": result.offset,
+            "limit": result.limit,
+            "has_previous": result.has_previous,
+            "has_next": result.has_next,
+            "total": result.total_count,
+        }
+    elif isinstance(result, CursorPageResult):
+        meta = {
+            "limit": result.limit,
+            "previous_cursor": result.previous_cursor,
+            "next_cursor": result.next_cursor,
+        }
+    else:
         raise RakitError(
             code=ErrorCode.INTERNAL_ERROR,
             message="Generated list executor returned an invalid result.",
@@ -355,13 +377,7 @@ def _list_response(binding: GeneratedRestBinding, result: object) -> JSONRespons
                 )
                 for item in result.items
             ],
-            "meta": {
-                "page": result.page,
-                "per_page": result.per_page,
-                "has_previous": result.has_previous,
-                "has_next": result.has_next,
-                "total": result.total_count,
-            },
+            "meta": meta,
         },
         headers={"Cache-Control": "no-store"},
     )
