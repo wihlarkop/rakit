@@ -22,6 +22,8 @@ jobs:
         with:
           python-version: '3.12'
       - uses: oven-sh/setup-bun@v2
+      - name: Sync workspace
+        run: uv sync --all-packages --dev --locked
       - name: Apply deterministic feature finalization
         run: python .github/ui05d_finalize_feature.py
       - name: Normalize Python
@@ -31,6 +33,7 @@ jobs:
             packages/rakit-core/src/rakit_core/filters.py \
             packages/rakit-core/src/rakit_core/generated_api.py \
             packages/rakit-core/src/rakit_core/pagination.py \
+            packages/rakit-core/src/rakit_core/testing/datasource_contract.py \
             packages/rakit/src/rakit/__init__.py \
             examples/ui_showcase/main.py
           uv run ruff check --fix \
@@ -38,6 +41,7 @@ jobs:
             packages/rakit-core/src/rakit_core/filters.py \
             packages/rakit-core/src/rakit_core/generated_api.py \
             packages/rakit-core/src/rakit_core/pagination.py \
+            packages/rakit-core/src/rakit_core/testing/datasource_contract.py \
             packages/rakit/src/rakit/__init__.py \
             examples/ui_showcase/main.py
           uv run ruff check \
@@ -45,6 +49,7 @@ jobs:
             packages/rakit-core/src/rakit_core/filters.py \
             packages/rakit-core/src/rakit_core/generated_api.py \
             packages/rakit-core/src/rakit_core/pagination.py \
+            packages/rakit-core/src/rakit_core/testing/datasource_contract.py \
             packages/rakit/src/rakit/__init__.py \
             examples/ui_showcase/main.py
       - name: Type-check feature surface
@@ -71,6 +76,7 @@ jobs:
             packages/rakit-core/src/rakit_core/filters.py \
             packages/rakit-core/src/rakit_core/generated_api.py \
             packages/rakit-core/src/rakit_core/pagination.py \
+            packages/rakit-core/src/rakit_core/testing/datasource_contract.py \
             packages/rakit/src/rakit/__init__.py \
             examples/ui_showcase/main.py \
             packages/rakit-web/src/rakit_web/static/rakit.css
