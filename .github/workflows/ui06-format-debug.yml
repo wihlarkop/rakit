@@ -1,4 +1,4 @@
-name: UI-06A format diagnostic
+name: UI-06A final cleanup
 
 on:
   pull_request:
@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  format-branch:
+  cleanup-branch:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,71 +20,14 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --all-packages --dev
-      - name: Align bulk confirmation with compiled BULK policy
+      - name: Fix import order and remove temporary workflow
         run: |
-          python - <<'PY'
-          from pathlib import Path
-          import re
-
-          showcase = Path("examples/ui_showcase/main.py")
-          text = showcase.read_text()
-          pattern = re.compile(
-              r'(?P<prefix>            description="Danger bulk action with confirmation review\.\",\n)'
-              r'            preview=lambda _context: ActionPreview\(.*?'
-              r'            needs_confirmation=True,\n'
-              r'(?P<policy>            bulk_policy=BulkPolicy\(\n'
-              r'                execution=BulkExecutionPolicy\.BEST_EFFORT,\n)'
-              r'(?P<snapshot>                require_concurrency_snapshot=False,\n)',
-              re.S,
-          )
-          text, count = pattern.subn(
-              r'\g<prefix>            executor=ShowcaseAction("Selected orders cancelled in the UI showcase"),\n'
-              r'\g<policy>                confirmation_threshold=1,\n\g<snapshot>',
-              text,
-              count=1,
-          )
-          assert count == 1, f"showcase replacements={count}"
-          text = text.replace(
-              '            executor=ShowcaseAction("Selected orders cancelled in the UI showcase"),\n'
-              '            executor=ShowcaseAction("Selected orders cancelled in the UI showcase"),\n',
-              '            executor=ShowcaseAction("Selected orders cancelled in the UI showcase"),\n',
-              1,
-          )
-          showcase.write_text(text)
-
-          tests = Path("packages/rakit-web/tests/test_advanced_ui_maturity.py")
-          text = tests.read_text()
-          pattern = re.compile(
-              r'(?P<prefix>            availability=availability,\n)'
-              r'            preview=\(.*?'
-              r'            needs_confirmation=needs_confirmation,\n'
-              r'            bulk_policy=BulkPolicy\(require_concurrency_snapshot=require_snapshot\),',
-              re.S,
-          )
-          text, count = pattern.subn(
-              r'\g<prefix>            executor=DomainActionExecutor(execute),\n'
-              r'            bulk_policy=BulkPolicy(\n'
-              r'                confirmation_threshold=1 if needs_confirmation else 20,\n'
-              r'                require_concurrency_snapshot=require_snapshot,\n'
-              r'            ),',
-              text,
-              count=1,
-          )
-          assert count == 1, f"test replacements={count}"
-          text = text.replace(
-              '            executor=DomainActionExecutor(execute),\n'
-              '            executor=DomainActionExecutor(execute),\n',
-              '            executor=DomainActionExecutor(execute),\n',
-              1,
-          )
-          tests.write_text(text)
-          PY
-      - name: Apply exact Ruff formatting to child branch
-        run: |
-          uv run ruff format .
+          uv run ruff check --fix packages/rakit-web/tests/test_advanced_ui_maturity.py
+          uv run ruff format packages/rakit-web/tests/test_advanced_ui_maturity.py
+          git rm .github/workflows/ui06-format-debug.yml
           git diff --check
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .
-          git commit -m "fix(web): align bulk confirmation policy"
+          git add packages/rakit-web/tests/test_advanced_ui_maturity.py
+          git commit -m "style(web): fix UI-06A regression imports"
           git push origin HEAD:ui-06a-actions-bulk
