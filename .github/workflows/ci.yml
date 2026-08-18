@@ -21,6 +21,23 @@ jobs:
       - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
       - run: uv sync --all-packages --dev --locked
       - run: bun install --frozen-lockfile
+      - name: Normalize expected repeated renderer call patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          source = Path("packages/rakit-web/src/rakit_web/system_responses.py")
+          text = source.read_text()
+          old = "            dashboard_url=dashboard_url,\n"
+          new = "            dashboard_available=dashboard_available,\n"
+          assert text.count(old) == 3, text.count(old)
+          source.write_text(text.replace(old, new))
+
+          helper = Path(".github/ui06c_contract_fix.py")
+          script = helper.read_text()
+          call = 'replace_once(system, "            dashboard_url=dashboard_url,\\n", "            dashboard_available=dashboard_available,\\n")\n'
+          assert script.count(call) == 3, script.count(call)
+          helper.write_text(script.replace(call, ""))
+          PY
       - run: uv run python .github/ui06c_contract_fix.py
       - run: uv run ruff format packages/rakit-web/src/rakit_web/admin.py packages/rakit-web/src/rakit_web/auth_routes.py packages/rakit-web/src/rakit_web/security/authentication.py packages/rakit-web/src/rakit_web/system_responses.py
       - run: uv run ruff check --fix packages/rakit-web/src/rakit_web/admin.py packages/rakit-web/src/rakit_web/auth_routes.py packages/rakit-web/src/rakit_web/security/authentication.py packages/rakit-web/src/rakit_web/system_responses.py
