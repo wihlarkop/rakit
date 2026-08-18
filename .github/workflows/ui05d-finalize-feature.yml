@@ -1,4 +1,4 @@
-name: UI-05D test migration
+name: UI-05D focused verification
 
 on:
   pull_request:
@@ -6,78 +6,56 @@ on:
       - ui-05-resource-experience
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  migrate-and-diagnose:
-    if: github.actor != 'github-actions[bot]'
+  focused:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ui-05d-resource-query-configuration
-          fetch-depth: 0
       - uses: astral-sh/setup-uv@v6
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: Sync workspace
         run: uv sync --all-packages --dev --locked
-      - name: Apply Web test migration
+      - name: Static verification
+        run: |
+          uv run ruff check .
+          uv run ty check
+      - name: Run focused regression suites
         run: |
           set -o pipefail
-          python .github/ui05d_migrate_web_tests.py 2>&1 | tee .github/ui05d-migration.log
-      - name: Upload migration diagnostics
+          status=0
+          {
+            echo '=== rakit-core query suites ==='
+            uv run pytest \
+              packages/rakit-core/tests/test_query.py \
+              packages/rakit-core/tests/test_generated_api_query.py \
+              packages/rakit-core/tests/testing/test_datasource_contract.py \
+              -q || status=1
+            echo '=== rakit-sqlalchemy query suites ==='
+            uv run pytest \
+              packages/rakit-sqlalchemy/tests/test_datasource.py \
+              packages/rakit-sqlalchemy/tests/test_query_translation.py \
+              -q || status=1
+            echo '=== rakit-web query suites ==='
+            uv run pytest \
+              packages/rakit-web/tests/test_query_ui.py \
+              packages/rakit-web/tests/test_resource_list_ui_maturity.py \
+              packages/rakit-web/tests/test_generated_rest_contracts.py \
+              packages/rakit-web/tests/test_bulk_list_ui.py \
+              packages/rakit-web/tests/test_relationship_ui.py \
+              packages/rakit-web/tests/test_resource_detail_form_ui_maturity.py \
+              -q || status=1
+            echo '=== release-level security regression ==='
+            uv run pytest tests/integration/test_security_regressions.py -q || status=1
+            exit "$status"
+          } 2>&1 | tee .github/ui05d-pytest.log
+      - name: Upload focused pytest diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ui05d-migration-diagnostics
-          path: .github/ui05d-migration.log
+          name: ui05d-pytest-diagnostics
+          path: .github/ui05d-pytest.log
           if-no-files-found: ignore
-      - name: Normalize Web tests
-        run: |
-          uv run ruff format \
-            packages/rakit-web/tests/test_bulk_list_ui.py \
-            packages/rakit-web/tests/test_generated_rest_contracts.py \
-            packages/rakit-web/tests/test_query_ui.py \
-            packages/rakit-web/tests/test_relationship_ui.py \
-            packages/rakit-web/tests/test_resource_detail_form_ui_maturity.py \
-            packages/rakit-web/tests/test_resource_list_ui_maturity.py \
-            tests/integration/test_security_regressions.py
-          uv run ruff check --fix \
-            packages/rakit-web/tests/test_bulk_list_ui.py \
-            packages/rakit-web/tests/test_generated_rest_contracts.py \
-            packages/rakit-web/tests/test_query_ui.py \
-            packages/rakit-web/tests/test_relationship_ui.py \
-            packages/rakit-web/tests/test_resource_detail_form_ui_maturity.py \
-            packages/rakit-web/tests/test_resource_list_ui_maturity.py \
-            tests/integration/test_security_regressions.py
-      - name: Capture full type-check diagnostics
-        continue-on-error: true
-        run: |
-          set -o pipefail
-          uv run ty check 2>&1 | tee .github/ui05d-ty.log
-      - name: Upload type-check diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ui05d-ty-diagnostics
-          path: .github/ui05d-ty.log
-          if-no-files-found: ignore
-      - name: Commit migration batch
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add \
-            packages/rakit-web/tests/test_bulk_list_ui.py \
-            packages/rakit-web/tests/test_generated_rest_contracts.py \
-            packages/rakit-web/tests/test_query_ui.py \
-            packages/rakit-web/tests/test_relationship_ui.py \
-            packages/rakit-web/tests/test_resource_detail_form_ui_maturity.py \
-            packages/rakit-web/tests/test_resource_list_ui_maturity.py \
-            tests/integration/test_security_regressions.py
-          if git diff --cached --quiet; then
-            exit 0
-          fi
-          git commit -m 'test(query): migrate Web pagination contracts'
-          git push origin HEAD:ui-05d-resource-query-configuration
