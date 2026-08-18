@@ -107,12 +107,22 @@ def _identity_values(item: object, identity_fields: Sequence[str]) -> dict[str, 
 
 
 @dataclass(frozen=True)
+class ResourceCrudPaths:
+    """Registered built-in CRUD routes available to resource presentation."""
+
+    create_path: str
+    update_path: str | None = None
+    delete_path: str | None = None
+
+
+@dataclass(frozen=True)
 class ResourceBinding:
     """Everything a request handler needs to serve one resource's pages."""
 
     definition: ResourceDefinition
     service: ResourceService
     templates: Jinja2Templates
+    crud_paths: ResourceCrudPaths | None = None
     codec: IdentityCodec = field(default_factory=IdentityCodec)
 
     @property
@@ -612,6 +622,11 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
             "fields": fields,
             "rows": rows,
             "resource_path": resource_path,
+            "create_url": (
+                _mounted_path(request, binding.crud_paths.create_path)
+                if binding.crud_paths is not None
+                else ""
+            ),
             "count_url": count_url,
             "sort_headers": _sort_headers(
                 fields,
@@ -686,11 +701,31 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
             )
         record = await binding.service.detail(identity)
         fields = binding.detail_fields
+        cells = {field_name: _field_value(record, field_name) for field_name in fields}
+        encoded_identity = binding.codec.encode(identity)
+        edit_url = ""
+        delete_url = ""
+        if binding.crud_paths is not None:
+            if binding.crud_paths.update_path:
+                edit_url = _mounted_path(
+                    request,
+                    binding.crud_paths.update_path.replace("{identity}", encoded_identity),
+                )
+            if binding.crud_paths.delete_path:
+                delete_url = _mounted_path(
+                    request,
+                    binding.crud_paths.delete_path.replace("{identity}", encoded_identity),
+                )
         context = {
             "resource": binding.definition,
             "record": record,
             "fields": fields,
-            "cells": {field_name: _field_value(record, field_name) for field_name in fields},
+            "cells": cells,
+            "display_cells": {
+                field_name: _display_value(value) for field_name, value in cells.items()
+            },
+            "edit_url": edit_url,
+            "delete_url": delete_url,
         }
         return binding.templates.TemplateResponse(
             request,
