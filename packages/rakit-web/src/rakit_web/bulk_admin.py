@@ -21,6 +21,7 @@ from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 
 from ._paths import mounted_path
+from .action_presentation import action_web_presentation
 from .bulk_routes import BulkActionBinding, build_bulk_action_routes
 
 
@@ -54,6 +55,7 @@ def build_admin_bulk_action_routes(
             {
                 "label": str(compiled_action.definition.label),
                 "url": mounted_path(request, route.path),
+                "intent": action_web_presentation(compiled_action.definition).intent.value,
             }
             for route, compiled_action in compiled.action_routes
             if compiled_action.definition.scope is ActionScope.BULK
