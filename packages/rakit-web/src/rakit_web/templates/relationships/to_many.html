@@ -31,10 +31,15 @@
               {% if panel.relationship.effective_writable %}
                 <div class="flex flex-wrap items-center justify-end gap-2">
                   {% if panel.unlink_destructive %}
-                    {% if encoded in panel.pending_unlinks %}<input type="hidden" name="{{ panel.prefix }}unlink__{{ encoded }}" value="{{ encoded }}" />{% endif %}
-                    <button class="rakit-button rakit-button-secondary" type="submit" name="{{ panel.prefix }}unlink_preview" value="{{ encoded }}" formaction="{{ panel.preview_path }}" formmethod="post" data-rakit-unlink-action data-rakit-unlink-prefix="{{ panel.prefix }}" data-rakit-unlink-identity="{{ encoded }}" data-rakit-unlink-destructive data-rakit-preview-unlink hx-post="{{ panel.preview_path }}" hx-include="closest form" hx-vals='{"{{ panel.prefix }}unlink__{{ encoded }}":"{{ encoded }}"}' hx-target="#rakit-dialog-root" hx-swap="innerHTML">Remove from relationship</button>
+                    {% if encoded in panel.pending_unlinks %}
+                      <label class="inline-flex items-center gap-2 text-sm font-medium text-rakit-text"><input class="size-4 rounded border-rakit-border" data-rakit-unlink-input type="checkbox" name="{{ panel.prefix }}unlink__{{ encoded }}" value="{{ encoded }}" checked />Undo removal</label>
+                      <button class="sr-only" type="button" data-rakit-unlink-action data-rakit-unlink-prefix="{{ panel.prefix }}" data-rakit-unlink-identity="{{ encoded }}" data-rakit-unlink-destructive aria-pressed="true" tabindex="-1">Undo removal</button>
+                    {% else %}
+                      <button class="rakit-button rakit-button-secondary" type="submit" name="{{ panel.prefix }}unlink_preview" value="{{ encoded }}" formaction="{{ panel.preview_path }}" formmethod="post" data-rakit-unlink-action data-rakit-unlink-prefix="{{ panel.prefix }}" data-rakit-unlink-identity="{{ encoded }}" data-rakit-unlink-destructive data-rakit-preview-unlink aria-pressed="false" hx-post="{{ panel.preview_path }}" hx-include="closest form" hx-vals='{"{{ panel.prefix }}unlink__{{ encoded }}":"{{ encoded }}"}' hx-target="#rakit-dialog-root" hx-swap="innerHTML">Remove from relationship</button>
+                    {% endif %}
                   {% else %}
-                    <label class="inline-flex items-center gap-2 text-sm font-medium text-rakit-text"><input class="size-4 rounded border-rakit-border" data-rakit-unlink-input type="checkbox" name="{{ panel.prefix }}unlink__{{ encoded }}" value="{{ encoded }}"{% if encoded in panel.pending_unlinks %} checked{% endif %} />Remove from relationship</label>
+                    <label class="inline-flex items-center gap-2 text-sm font-medium text-rakit-text"><input class="size-4 rounded border-rakit-border" data-rakit-unlink-input type="checkbox" name="{{ panel.prefix }}unlink__{{ encoded }}" value="{{ encoded }}"{% if encoded in panel.pending_unlinks %} checked{% endif %} />{{ 'Undo removal' if encoded in panel.pending_unlinks else 'Remove from relationship' }}</label>
+                    <button class="sr-only" type="button" data-rakit-unlink-action data-rakit-unlink-prefix="{{ panel.prefix }}" data-rakit-unlink-identity="{{ encoded }}" aria-pressed="{{ 'true' if encoded in panel.pending_unlinks else 'false' }}" tabindex="-1">Toggle relationship removal</button>
                   {% endif %}
                   {% if panel.delete_available %}
                     {% if row.delete_intent %}<input type="hidden" name="{{ panel.prefix }}delete_intent__{{ encoded }}" value="true" />{% endif %}
