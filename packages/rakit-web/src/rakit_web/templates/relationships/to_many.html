@@ -1,20 +1,64 @@
-<fieldset class="space-y-4" {% if not panel.relationship.effective_writable %}disabled{% endif %}>
-  {% if panel.concurrency_token %}<input type="hidden" name="{{ panel.prefix }}concurrency" value="{{ panel.concurrency_token }}" />{% endif %}
-  <input type="hidden" name="{{ panel.prefix }}selection_present" value="true" />
-  <label class="block text-sm font-medium text-slate-800" for="rakit-relationship-{{ panel.relationship_id }}-search">Search {{ panel.relationship.label }}</label>
-  <input class="rakit-input" id="rakit-relationship-{{ panel.relationship_id }}-search" name="{{ panel.prefix }}search" type="search" placeholder="Search {{ panel.relationship.label | lower }}" autocomplete="off"
-    {% if panel.options_path %}hx-get="{{ panel.options_path }}" hx-trigger="input changed delay:250ms" hx-include="closest form" hx-target="#rakit-relationship-{{ panel.relationship_id }}-options" hx-swap="outerHTML"{% endif %} />
-  <div><p class="mb-2 text-sm font-medium text-slate-700">Selected</p><ul class="flex flex-wrap gap-2" aria-label="Selected {{ panel.relationship.label }}">
-    {% for row in panel.rows %}
-      {% set encoded = codec.encode(row.candidate.identity) %}
-      <li class="rakit-chip{% if encoded in panel.pending_unlinks %} opacity-55 line-through{% endif %}">
-        <span>{{ row.candidate.label }}</span>
-        <input class="sr-only" data-rakit-unlink-input type="checkbox" name="{{ panel.prefix }}unlink__{{ encoded }}" value="{{ encoded }}"{% if encoded in panel.pending_unlinks %} checked{% endif %} />
-        {% if panel.unlink_destructive and encoded not in panel.pending_unlinks %}<button class="inline-flex size-6 items-center justify-center rounded-full text-slate-500 hover:bg-slate-200 hover:text-slate-900" data-rakit-unlink-action data-rakit-unlink-prefix="{{ panel.prefix }}" data-rakit-unlink-identity="{{ encoded }}" data-rakit-unlink-destructive data-rakit-preview-unlink type="submit" name="{{ panel.prefix }}unlink_preview" value="{{ encoded }}" formaction="{{ panel.preview_path }}" formmethod="post" hx-post="{{ panel.preview_path }}" hx-include="closest form" hx-vals='{"{{ panel.prefix }}unlink_preview":"{{ encoded }}","{{ panel.prefix }}unlink__{{ encoded }}":"{{ encoded }}"}' hx-target="#rakit-dialog-root" hx-swap="innerHTML" aria-label="Remove {{ row.candidate.label }} from {{ panel.relationship.label }}"><span aria-hidden="true">×</span></button>{% else %}<button class="inline-flex size-6 items-center justify-center rounded-full text-slate-500 hover:bg-slate-200 hover:text-slate-900" data-rakit-unlink-action data-rakit-unlink-prefix="{{ panel.prefix }}" data-rakit-unlink-identity="{{ encoded }}"{% if panel.unlink_destructive %} data-rakit-unlink-destructive{% endif %} type="button" aria-label="{{ 'Undo removal of' if encoded in panel.pending_unlinks else 'Remove' }} {{ row.candidate.label }} from {{ panel.relationship.label }}" aria-pressed="{{ 'true' if encoded in panel.pending_unlinks else 'false' }}"><span aria-hidden="true">×</span></button>{% endif %}
-      </li>
-    {% endfor %}
-  </ul></div>
-  <ul id="rakit-relationship-{{ panel.relationship_id }}-options" class="divide-y divide-slate-100 overflow-hidden rounded-md border border-slate-200 bg-white" aria-label="Available {{ panel.relationship.label }}">
-    <li class="px-3 py-2 text-sm text-slate-500">Start typing to find {{ panel.relationship.label | lower }}.</li>
-  </ul>
-</fieldset>
+{% if panel.concurrency_token %}<input type="hidden" name="{{ panel.prefix }}concurrency" value="{{ panel.concurrency_token }}" />{% endif %}
+{% if panel.relationship.effective_writable %}<input type="hidden" name="{{ panel.prefix }}selection_present" value="true" />{% endif %}
+<div class="space-y-4">
+  <div>
+    <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+      <p class="text-sm font-medium text-rakit-text">Linked records</p>
+      {% if panel.presentation_mode == "paginated" %}<span class="text-xs text-rakit-text-subtle">Server-paginated</span>{% endif %}
+    </div>
+    {% if panel.rows %}
+      {% if panel.presentation_mode == "paginated" %}
+        <div class="overflow-x-auto rounded-rakit-sm border border-rakit-border">
+          <table class="min-w-full divide-y divide-rakit-border text-sm">
+            <thead class="bg-rakit-surface-subtle"><tr><th class="px-3 py-2 text-left font-medium text-rakit-text-muted">Record</th>{% if panel.relationship.effective_writable %}<th class="px-3 py-2 text-right font-medium text-rakit-text-muted">Relationship actions</th>{% endif %}</tr></thead>
+            <tbody class="divide-y divide-rakit-border bg-rakit-surface">
+              {% for row in panel.rows %}
+                {% set encoded = codec.encode(row.candidate.identity) %}
+                <tr{% if encoded in panel.pending_unlinks %} data-rakit-pending-unlink="true"{% endif %}>
+                  <td class="px-3 py-2.5 text-rakit-text"><span class="font-medium">{{ row.candidate.label }}</span>{% if encoded in panel.pending_unlinks %}<span class="ml-2 text-xs text-rakit-text-muted">Pending relationship removal</span>{% endif %}</td>
+                  {% if panel.relationship.effective_writable %}<td class="px-3 py-2.5 text-right">{% include "relationships/_row_actions.html" ignore missing %}</td>{% endif %}
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <ul class="divide-y divide-rakit-border rounded-rakit-sm border border-rakit-border bg-rakit-surface" aria-label="Linked {{ panel.relationship.label }}">
+          {% for row in panel.rows %}
+            {% set encoded = codec.encode(row.candidate.identity) %}
+            <li class="flex flex-col gap-3 px-3 py-3 sm:flex-row sm:items-center sm:justify-between"{% if encoded in panel.pending_unlinks %} data-rakit-pending-unlink="true"{% endif %}>
+              <div><p class="text-sm font-medium text-rakit-text">{{ row.candidate.label }}</p>{% if encoded in panel.pending_unlinks %}<p class="mt-1 text-xs text-rakit-text-muted">Pending relationship removal</p>{% endif %}</div>
+              {% if panel.relationship.effective_writable %}
+                <div class="flex flex-wrap items-center justify-end gap-2">
+                  {% if panel.unlink_destructive %}
+                    {% if encoded in panel.pending_unlinks %}<input type="hidden" name="{{ panel.prefix }}unlink__{{ encoded }}" value="{{ encoded }}" />{% endif %}
+                    <button class="rakit-button rakit-button-secondary" type="submit" name="{{ panel.prefix }}unlink_preview" value="{{ encoded }}" formaction="{{ panel.preview_path }}" formmethod="post" data-rakit-unlink-action data-rakit-unlink-prefix="{{ panel.prefix }}" data-rakit-unlink-identity="{{ encoded }}" data-rakit-unlink-destructive data-rakit-preview-unlink hx-post="{{ panel.preview_path }}" hx-include="closest form" hx-vals='{"{{ panel.prefix }}unlink__{{ encoded }}":"{{ encoded }}"}' hx-target="#rakit-dialog-root" hx-swap="innerHTML">Remove from relationship</button>
+                  {% else %}
+                    <label class="inline-flex items-center gap-2 text-sm font-medium text-rakit-text"><input class="size-4 rounded border-rakit-border" data-rakit-unlink-input type="checkbox" name="{{ panel.prefix }}unlink__{{ encoded }}" value="{{ encoded }}"{% if encoded in panel.pending_unlinks %} checked{% endif %} />Remove from relationship</label>
+                  {% endif %}
+                  {% if panel.delete_available %}
+                    {% if row.delete_intent %}<input type="hidden" name="{{ panel.prefix }}delete_intent__{{ encoded }}" value="true" />{% endif %}
+                    <button class="rakit-button rakit-button-danger" type="submit" name="{{ panel.prefix }}delete_preview" value="{{ encoded }}" formaction="{{ panel.preview_path }}" formmethod="post" data-rakit-preview-delete hx-post="{{ panel.preview_path }}" hx-include="closest form" hx-target="#rakit-dialog-root" hx-swap="innerHTML"{% if encoded in panel.pending_unlinks %} disabled{% endif %}>Delete record</button>
+                    {% if row.delete_confirmation %}<input type="hidden" name="{{ panel.prefix }}delete__{{ encoded }}" value="{{ row.delete_confirmation }}" />{% endif %}
+                    {% if row.delete_impact %}<input type="hidden" name="{{ panel.prefix }}delete_impact__{{ encoded }}" value="{{ row.delete_impact }}" />{% endif %}
+                  {% endif %}
+                </div>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    {% else %}
+      <div class="rounded-rakit-sm border border-dashed border-rakit-border px-4 py-6 text-sm text-rakit-text-muted">No records are linked yet.</div>
+    {% endif %}
+  </div>
+
+  {% if panel.relationship.effective_writable %}
+    <div class="border-t border-rakit-border pt-4">
+      <label class="block text-sm font-medium text-rakit-text" for="rakit-relationship-{{ panel.relationship_id }}-search">Connect {{ panel.relationship.label }}</label>
+      <p class="mt-1 text-sm text-rakit-text-muted">Candidate discovery stays bounded and permission-scoped on the server.</p>
+      <input class="rakit-input mt-2" id="rakit-relationship-{{ panel.relationship_id }}-search" name="{{ panel.prefix }}search" type="search" placeholder="Search {{ panel.relationship.label | lower }}" autocomplete="off"{% if panel.options_path %} hx-get="{{ panel.options_path }}" hx-trigger="input changed delay:250ms" hx-include="closest form" hx-target="#rakit-relationship-{{ panel.relationship_id }}-options" hx-swap="outerHTML"{% endif %} />
+      {% set options = panel.options %}{% set selected = panel.selected %}{% set prefix = panel.prefix %}{% set options_id = "rakit-relationship-" ~ panel.relationship_id ~ "-options" %}{% include "relationships/options.html" %}
+    </div>
+  {% endif %}
+</div>
