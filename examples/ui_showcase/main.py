@@ -1,5 +1,6 @@
 """Rakit Commerce: deterministic visual QA application for the default UI."""
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -21,7 +22,6 @@ from rakit import (
     ListWidgetItem,
     ListWidgetResult,
     PageDefinition,
-    PagePagination,
     PageResult,
     PageSizePolicy,
     RelationshipCardinality,
@@ -29,7 +29,6 @@ from rakit import (
     RelationshipKind,
     ResourceAdmin,
     ResourceFilter,
-    ResourcePageResult,
     ResourcePaginationPolicy,
     SecretValue,
     StatWidgetResult,
@@ -53,6 +52,16 @@ from rakit_core.actions import ActionContext, ActionPreview
 from .data import CATEGORIES, CUSTOMERS, INVENTORY, ORDERS, PRODUCTS, TEAMS
 
 
+@dataclass(frozen=True)
+class _Page:
+    items: tuple[dict[str, object], ...]
+    page: int
+    per_page: int
+    has_previous: bool
+    has_next: bool
+    total_count: int | None
+
+
 def _matches(item: dict[str, object], filter_: Any) -> bool:
     actual = item.get(filter_.field)
     operator = filter_.operator.value
@@ -67,14 +76,6 @@ def _matches(item: dict[str, object], filter_: Any) -> bool:
         return str(actual) in {str(value) for value in expected}
     if operator == "is_null":
         return (actual is None) is bool(expected)
-    if operator == "lt":
-        return str(actual) < str(expected)
-    if operator == "lte":
-        return str(actual) <= str(expected)
-    if operator == "gt":
-        return str(actual) > str(expected)
-    if operator == "gte":
-        return str(actual) >= str(expected)
     return False
 
 
@@ -108,18 +109,15 @@ class _MemoryDataSource:
             )
         return items
 
-    async def list(self, query: Any) -> ResourcePageResult[dict[str, object]]:
-        pagination = query.pagination
-        if not isinstance(pagination, PagePagination):
-            raise ValueError("UI showcase memory data source supports page pagination only")
+    async def list(self, query: Any) -> _Page:
         items = self._filtered(query)
-        start = pagination.offset
-        end = start + pagination.per_page
-        return ResourcePageResult(
+        start = query.pagination.offset
+        end = start + query.pagination.per_page
+        return _Page(
             items=tuple(items[start:end]),
-            page=pagination.page,
-            per_page=pagination.per_page,
-            has_previous=pagination.page > 1,
+            page=query.pagination.page,
+            per_page=query.pagination.per_page,
+            has_previous=query.pagination.page > 1,
             has_next=end < len(items),
             total_count=len(items) if query.count_policy.value == "exact" else None,
         )
@@ -433,29 +431,19 @@ class DemoSessionStore:
         self._tokens[raw_token] = session_id
         return raw_token, record
 
-    async def touch(self, session_id: str) -> None:
-        record = self._records.get(session_id)
-        if record is None:
-            return
-        now = datetime.now(UTC)
-        self._records[session_id] = SessionRecord(
-            session_id=record.session_id,
-            subject_id=record.subject_id,
-            created_at=record.created_at,
-            last_seen_at=now,
-            idle_expires_at=now + timedelta(hours=1),
-            absolute_expires_at=record.absolute_expires_at,
-        )
 
-
-class _MemoryIdempotencyStore:
+class DemoIdempotencyStore:
     production_safe = False
 
     async def begin(self, token_hash: str, *, fingerprint: str) -> IdempotencyReservation:
         del token_hash, fingerprint
         return IdempotencyReservation(1, IdempotencyStatus.IN_PROGRESS)
 
-    async def complete(self, reservation: IdempotencyReservation, receipt: OperationReceipt) -> None:
+    async def complete(
+        self,
+        reservation: IdempotencyReservation,
+        receipt: OperationReceipt,
+    ) -> None:
         del reservation, receipt
 
     async def release(self, reservation: IdempotencyReservation) -> None:
@@ -465,121 +453,206 @@ class _MemoryIdempotencyStore:
         del reservation
 
 
-async def revenue_widget(_context: Any) -> StatWidgetResult:
-    return StatWidgetResult(value="$1.28M", trend_label="+12.4% vs last month", tone="positive")
+admin = Admin(
+    admin_id="ui_showcase",
+    title="Rakit Commerce",
+    debug=True,
+    secret_key=SecretValue("development-only-ui-showcase-key"),
+    template_dirs=(Path(__file__).parent / "templates",),
+    auth_backend=DemoAuthBackend(),
+    session_store=DemoSessionStore(),
+    operation_idempotency_store=DemoIdempotencyStore(),
+)
+for resource_admin in (
+    CustomersAdmin,
+    ProductsAdmin,
+    OrdersAdmin,
+    CategoriesAdmin,
+    InventoryAdmin,
+    TeamsAdmin,
+):
+    admin.register(resource_admin)
 
 
-async def orders_widget(_context: Any) -> StatWidgetResult:
-    return StatWidgetResult(value="1,248", trend_label="+8.1% vs last month", tone="positive")
-
-
-async def customers_widget(_context: Any) -> StatWidgetResult:
-    return StatWidgetResult(value="328", trend_label="+24 this month", tone="positive")
-
-
-async def open_returns_widget(_context: Any) -> StatWidgetResult:
-    return StatWidgetResult(value="14", trend_label="3 need review", tone="warning")
-
-
-async def attention_widget(_context: Any) -> ListWidgetResult:
-    return ListWidgetResult(
-        items=(
-            ListWidgetItem(title="Inventory below threshold", meta="3 SKUs · Fulfilment"),
-            ListWidgetItem(title="Orders pending manual review", meta="7 orders · Operations"),
-            ListWidgetItem(title="Catalog entries in review", meta="2 products · Catalog"),
-        )
+async def pending_orders(_context: object) -> StatWidgetResult:
+    count = sum(1 for order in ORDERS if order["status"] == "Pending review")
+    return StatWidgetResult(
+        label="Pending review",
+        value=count,
+        description="Orders waiting for an operator decision.",
     )
 
 
-async def recent_orders_widget(_context: Any) -> TableWidgetResult:
+async def recent_orders(_context: object) -> TableWidgetResult:
     return TableWidgetResult(
+        label="Recent orders",
         columns=("Order", "Customer", "Status", "Total"),
         rows=tuple(
-            (str(order["id"]), str(order["customer"]), str(order["status"]), str(order["total"]))
+            (order["id"], order["customer"], order["status"], order["total"])
             for order in ORDERS[:5]
         ),
     )
 
 
-async def broken_widget(_context: Any) -> WidgetErrorResult:
-    return WidgetErrorResult(
-        title="Shipping sync unavailable",
-        message="Carrier data could not be loaded. Other dashboard widgets remain available.",
+async def low_inventory(_context: object) -> ListWidgetResult:
+    low_items = tuple(item for item in INVENTORY if item["status"] in {"Low stock", "Out of stock"})
+    return ListWidgetResult(
+        label="Inventory attention",
+        items=tuple(
+            ListWidgetItem(
+                label=str(item["product"]),
+                value=f"{item['on_hand']} on hand",
+                href="/inventory",
+            )
+            for item in low_items
+        ),
+        empty_message="No inventory items need attention.",
     )
 
 
-DASHBOARD = DashboardDefinition(
-    dashboard_id="commerce_operations",
-    title="Commerce operations",
-    description="Monitor revenue, fulfilment, inventory, and customer activity.",
-    launchers=(
-        LauncherItem(resource_id="orders", label="Orders", description="Review and manage orders."),
-        LauncherItem(resource_id="customers", label="Customers", description="Manage customer accounts."),
-        LauncherItem(resource_id="products", label="Products", description="Maintain the catalog."),
-        LauncherItem(resource_id="inventory", label="Inventory", description="Track stock health."),
-    ),
-    widgets=(
-        WidgetDefinition(
-            widget_id="revenue",
-            title="Revenue",
-            resolver=revenue_widget,
-            layout=WidgetLayout(row=1, column=1),
+async def recent_activity(_context: object) -> ListWidgetResult:
+    return ListWidgetResult(
+        label="Recent activity",
+        items=tuple(
+            ListWidgetItem(
+                label=f"{order['id']} · {order['customer']}",
+                value=str(order["status"]),
+                href="/orders",
+            )
+            for order in ORDERS[:4]
         ),
-        WidgetDefinition(
-            widget_id="orders",
-            title="Orders",
-            resolver=orders_widget,
-            layout=WidgetLayout(row=1, column=2),
+    )
+
+
+async def returns_queue(_context: object) -> ListWidgetResult:
+    return ListWidgetResult(
+        label="Returns queue",
+        items=(),
+        empty_message="No returns need review right now.",
+    )
+
+
+async def warehouse_sync(_context: object) -> WidgetErrorResult:
+    return WidgetErrorResult(
+        label="Warehouse sync",
+        message="The warehouse sync is unavailable in this deterministic demo.",
+    )
+
+
+admin.register_widget(
+    WidgetDefinition(
+        widget_id="pending_orders",
+        label="Pending review",
+        loader=pending_orders,
+        layout=WidgetLayout(size="small", priority=10),
+    )
+)
+admin.register_widget(
+    WidgetDefinition(
+        widget_id="recent_orders",
+        label="Recent orders",
+        loader=recent_orders,
+        layout=WidgetLayout(size="large", priority=20),
+    )
+)
+admin.register_widget(
+    WidgetDefinition(
+        widget_id="low_inventory",
+        label="Inventory attention",
+        loader=low_inventory,
+        layout=WidgetLayout(size="medium", priority=30),
+    )
+)
+admin.register_widget(
+    WidgetDefinition(
+        widget_id="recent_activity",
+        label="Recent activity",
+        loader=recent_activity,
+        loading=WidgetLoadingMode.LAZY,
+        layout=WidgetLayout(size="medium", priority=40),
+    )
+)
+admin.register_widget(
+    WidgetDefinition(
+        widget_id="returns_queue",
+        label="Returns queue",
+        loader=returns_queue,
+        layout=WidgetLayout(size="medium", priority=50),
+    )
+)
+admin.register_widget(
+    WidgetDefinition(
+        widget_id="warehouse_sync",
+        label="Warehouse sync",
+        loader=warehouse_sync,
+        layout=WidgetLayout(size="medium", priority=60),
+    )
+)
+admin.register_dashboard(
+    DashboardDefinition(
+        dashboard_id="main",
+        title="Commerce operations",
+        widgets=(
+            "pending_orders",
+            "recent_orders",
+            "low_inventory",
+            "recent_activity",
+            "returns_queue",
+            "warehouse_sync",
         ),
-        WidgetDefinition(
-            widget_id="customers",
-            title="Customers",
-            resolver=customers_widget,
-            layout=WidgetLayout(row=1, column=3),
+        launchers=(
+            LauncherItem(
+                launcher_id="orders",
+                label="Orders",
+                path="/orders",
+                description="Review incoming orders, fulfilment state, and customer activity.",
+            ),
+            LauncherItem(
+                launcher_id="inventory",
+                label="Inventory",
+                path="/inventory",
+                description="Monitor stock levels and replenish items that need attention.",
+            ),
+            LauncherItem(
+                launcher_id="products",
+                label="Products",
+                path="/products",
+                description="Browse the product catalogue and publication state.",
+            ),
+            LauncherItem(
+                launcher_id="ui_lab",
+                label="UI Lab",
+                path="/ui-lab",
+                description="Inspect default Rakit component states for deterministic visual QA.",
+            ),
         ),
-        WidgetDefinition(
-            widget_id="returns",
-            title="Open returns",
-            resolver=open_returns_widget,
-            layout=WidgetLayout(row=1, column=4),
-        ),
-        WidgetDefinition(
-            widget_id="attention",
-            title="Needs attention",
-            resolver=attention_widget,
-            layout=WidgetLayout(row=2, column=1, column_span=2),
-        ),
-        WidgetDefinition(
-            widget_id="recent_orders",
-            title="Recent orders",
-            resolver=recent_orders_widget,
-            layout=WidgetLayout(row=2, column=3, column_span=2),
-        ),
-        WidgetDefinition(
-            widget_id="shipping_sync",
-            title="Shipping sync",
-            resolver=broken_widget,
-            loading=WidgetLoadingMode.LAZY,
-            layout=WidgetLayout(row=3, column=1, column_span=2),
-        ),
-    ),
+    )
 )
 
 
-admin = Admin(
-    admin_id="ui_showcase",
-    title="Rakit Commerce",
-    debug=True,
-    secret_key=SecretValue("ui-showcase-secret-key-material"),
-    auth_backend=DemoAuthBackend(),
-    session_store=DemoSessionStore(),
-    operation_idempotency_store=_MemoryIdempotencyStore(),
+def ui_lab_page(_context: object) -> PageResult[dict[str, object]]:
+    return PageResult(
+        payload={
+            "purpose": "Deterministic visual QA for the default Rakit UI",
+            "order_count": len(ORDERS),
+        }
+    )
+
+
+admin.register_page(
+    PageDefinition(
+        page_id="ui_lab",
+        path="/ui-lab",
+        label="UI Lab",
+        handler=ui_lab_page,
+        template="ui_lab.html",
+    )
 )
-admin.register(CustomersAdmin)
-admin.register(ProductsAdmin)
-admin.register(OrdersAdmin)
-admin.register(CategoriesAdmin)
-admin.register(InventoryAdmin)
-admin.register(TeamsAdmin)
-admin.register_page(PageDefinition(page_id="ui_lab", path="/ui-lab", title="UI Lab"))
-admin.register_dashboard(DASHBOARD)
+
+app = admin.asgi()
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="127.0.0.1", port=8000)
