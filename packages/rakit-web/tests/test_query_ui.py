@@ -46,6 +46,7 @@ class UserAdmin(ModelAdmin):
     filter_fields = ("id", "name", "email")
     search_fields = ("name", "email")
     sort_fields = ("id", "name", "email")
+    pagination = ResourcePaginationPolicy(size=PageSizePolicy(default=2, allowed=(1, 2, 3)))
     pagination = ResourcePaginationPolicy(size=PageSizePolicy(default=1, allowed=(1, 2, 3)))
 
 
@@ -191,15 +192,15 @@ async def _assert_pagination_controls(
     assert first.status_code == 200
     assert _has_pagination_landmark(first.text)
     assert _has_current_page(first.text, 1)
-    assert _pagination_link(first.text, "Previous page") is None
-    first_next = _pagination_link(first.text, "Next page")
+    assert _pagination_link(first.text, "Previous results") is None
+    first_next = _pagination_link(first.text, "Next results")
     assert first_next is not None
 
     middle = await client.get(f"{prefix}/users", params=[*params, ("page", "2")])
     assert middle.status_code == 200
     assert _has_current_page(middle.text, 2)
-    previous = _pagination_link(middle.text, "Previous page")
-    next_ = _pagination_link(middle.text, "Next page")
+    previous = _pagination_link(middle.text, "Previous results")
+    next_ = _pagination_link(middle.text, "Next results")
     assert previous is not None
     assert next_ is not None
 
@@ -217,8 +218,8 @@ async def _assert_pagination_controls(
     last = await client.get(f"{prefix}/users", params=[*params, ("page", "3")])
     assert last.status_code == 200
     assert _has_current_page(last.text, 3)
-    assert _pagination_link(last.text, "Previous page") is not None
-    assert _pagination_link(last.text, "Next page") is None
+    assert _pagination_link(last.text, "Previous results") is not None
+    assert _pagination_link(last.text, "Next results") is None
 
 
 async def _assert_controls_preserve_active_query(

@@ -188,7 +188,7 @@ async def test_search_and_active_filters_render_validated_server_state() -> None
     assert ">Search</button>" not in response.text
     assert "data-rakit-filter-panel open" in response.text
     assert "Filters 1" in response.text
-    assert "status = pending" in response.text
+    assert "Status = pending" in response.text
     assert "Clear all filters" in response.text
     assert 'aria-label="Clear search"' in response.text
     assert 'name="filter" value="status:eq:pending"' in response.text
