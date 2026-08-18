@@ -1,10 +1,23 @@
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .filters import Filter, FilterOperator, FilterSelection
+from .pagination import (
+    CursorPageResult,
+    CursorPagination,
+    LimitOffsetPagination,
+    LimitOffsetResult,
+    OffsetPagination,
+    PagePagination,
+    PageResult,
+    PageSizePolicy,
+    PaginationStrategy,
+    ResourceListResult,
+    ResourcePagination,
+    ResourcePaginationPolicy,
+)
 
 
 class SortDirection(StrEnum):
@@ -31,33 +44,18 @@ class Sort(BaseModel):
     nulls: NullPlacement = NullPlacement.AUTO
 
 
-class OffsetPagination(BaseModel):
-    model_config = ConfigDict(frozen=True)
-    page: int = Field(default=1, ge=1)
-    per_page: int = Field(default=25, ge=1, le=200)
-
-    @property
-    def offset(self) -> int:
-        return (self.page - 1) * self.per_page
-
-
 class ResourceQuery(BaseModel):
     """Immutable, typed representation of a resource listing request.
 
-    Instances are normally produced via `from_params()`, which parses raw
-    query-string-shaped input (e.g. `sort="-created_at,status"`) and enforces
-    the allowed-sort-fields whitelist. Direct construction (`ResourceQuery()`)
-    is also supported and yields an unfiltered, unsorted, first-page query.
+    Instances are normally produced via `from_params()`, which preserves the
+    historical page-number constructor, or `from_components()`, which accepts
+    an already-validated pagination strategy. Direct construction remains
+    supported and defaults to page-number pagination.
 
     `sorting` holds only explicit, user-requested sort columns -- the ones a
     data-source adapter validates against its resource's `sort_fields` policy.
     `identity_tie_breakers` is a separate, backend-neutral record of the
-    stable identity ordering `from_params()` derived from `identity_fields`;
-    adapters append it to the SQL `ORDER BY` after explicit sorting but never
-    validate it against the user-sort whitelist and never expose it as
-    selected UI sorting. Keeping the two lists apart lets a datasource enforce
-    "only whitelisted fields may be explicitly sorted on" without rejecting
-    the very tie-breaker composition this contract promises.
+    stable identity ordering derived from `identity_fields`.
 
     `filter_selections` retains validated semantic request provenance for
     presentation and transport reconstruction. Data-source adapters execute
@@ -71,7 +69,7 @@ class ResourceQuery(BaseModel):
     filters: tuple[Filter, ...] = ()
     filter_selections: tuple[FilterSelection, ...] = ()
     search: str | None = None
-    pagination: OffsetPagination = Field(default_factory=OffsetPagination)
+    pagination: ResourcePagination = Field(default_factory=PagePagination)
     count_policy: CountPolicy = CountPolicy.EXACT
 
     @classmethod
@@ -88,29 +86,34 @@ class ResourceQuery(BaseModel):
         search: str | None = None,
         count_policy: CountPolicy = CountPolicy.EXACT,
     ) -> "ResourceQuery":
-        """Parse raw query-string-shaped input into a `ResourceQuery`.
+        """Compatibility constructor for page-number resource queries."""
+        return cls.from_components(
+            sort=sort,
+            pagination=PagePagination(page=page, per_page=per_page),
+            allowed_sort_fields=allowed_sort_fields,
+            identity_fields=identity_fields,
+            filters=filters,
+            filter_selections=filter_selections,
+            search=search,
+            count_policy=count_policy,
+        )
 
-        `sort` is a comma-separated list of fields, each optionally prefixed
-        with `-` for descending order (e.g. "-created_at,status"). Every
-        parsed field must be present in `allowed_sort_fields`, otherwise a
-        `ValueError` is raised before any `ResourceQuery` is constructed.
-        These parsed fields become `sorting` -- the explicit, policy-checked
-        sort the caller asked for.
-
-        After parsing explicit sort items, an ascending `Sort` is recorded in
-        `identity_tie_breakers` for each field in `identity_fields` not
-        already present among the parsed sort fields. Tie-breakers are kept
-        out of `sorting` deliberately: a datasource that validates `sorting`
-        against a resource's `sort_fields` policy must not reject a query
-        just because an internal stable-ordering field (e.g. the primary
-        key) isn't itself a user-sortable column.
-        """
+    @classmethod
+    def from_components(
+        cls,
+        *,
+        pagination: ResourcePagination,
+        allowed_sort_fields: Iterable[str],
+        sort: str | None = None,
+        identity_fields: Sequence[str] = (),
+        filters: tuple[Filter, ...] = (),
+        filter_selections: tuple[FilterSelection, ...] = (),
+        search: str | None = None,
+        count_policy: CountPolicy = CountPolicy.EXACT,
+    ) -> "ResourceQuery":
         allowed = set(allowed_sort_fields)
         sort_items = cls._parse_sort(sort, allowed)
 
-        # A blank/whitespace-only free-text search is equivalent to "no search":
-        # normalise it to None so downstream layers never build an empty
-        # `contains("")` predicate (which would match every row) from it.
         if search is not None:
             search = search.strip() or None
 
@@ -127,7 +130,7 @@ class ResourceQuery(BaseModel):
             filters=filters,
             filter_selections=filter_selections,
             search=search,
-            pagination=OffsetPagination(page=page, per_page=per_page),
+            pagination=pagination,
             count_policy=count_policy,
         )
 
@@ -163,31 +166,24 @@ class ResourceQuery(BaseModel):
         return items
 
 
-@dataclass(frozen=True)
-class PageResult[T]:
-    """A page of arbitrary domain records, plus pagination metadata.
-
-    Deliberately a plain dataclass rather than a Pydantic model: `items` must
-    hold arbitrary Python objects (dicts, ORM instances, etc.) as-is, without
-    Pydantic attempting to validate or coerce them.
-    """
-
-    items: tuple[T, ...]
-    page: int
-    per_page: int
-    has_previous: bool
-    has_next: bool
-    total_count: int | None = None
-
-
 __all__ = [
     "CountPolicy",
+    "CursorPageResult",
+    "CursorPagination",
     "Filter",
     "FilterOperator",
     "FilterSelection",
+    "LimitOffsetPagination",
+    "LimitOffsetResult",
     "NullPlacement",
     "OffsetPagination",
+    "PagePagination",
     "PageResult",
+    "PageSizePolicy",
+    "PaginationStrategy",
+    "ResourceListResult",
+    "ResourcePagination",
+    "ResourcePaginationPolicy",
     "ResourceQuery",
     "Sort",
     "SortDirection",
