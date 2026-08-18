@@ -52,10 +52,16 @@ jobs:
             packages/rakit-core/src/rakit_core/testing/datasource_contract.py \
             packages/rakit/src/rakit/__init__.py \
             examples/ui_showcase/main.py
-      - name: Type-check feature surface
+      - name: Type-check feature source surface
         run: |
           set -o pipefail
-          uv run ty check 2>&1 | tee .github/ui05d-ty.log
+          uv run ty check \
+            packages/rakit-core/src \
+            packages/rakit-sqlalchemy/src \
+            packages/rakit-web/src \
+            packages/rakit/src \
+            examples/ui_showcase/main.py \
+            2>&1 | tee .github/ui05d-ty.log
       - name: Upload type-check diagnostics
         if: always()
         uses: actions/upload-artifact@v4
