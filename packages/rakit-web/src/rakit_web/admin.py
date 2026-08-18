@@ -58,7 +58,6 @@ from starlette.routing import Mount, Route
 from starlette.templating import Jinja2Templates
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from ._paths import mounted_path
 from .action_routes import (
     ActionBinding,
     AdvancedActionResponseAdapter,
@@ -96,7 +95,9 @@ from .security.authentication import (
     LOGOUT_PATH,
     AuthorizationMiddleware,
     PrincipalMiddleware,
+    admin_relative_path,
     build_requirement_resolver,
+    is_generated_api_path,
 )
 from .security.csrf import CsrfService
 from .security.middleware import SecurityMiddleware
@@ -806,17 +807,10 @@ class Admin:
                 return JSONResponse({"status": "ready"})
             return JSONResponse({"status": "not_ready"}, status_code=503)
 
-        def _relative_request_path(request: Request) -> str:
-            relative_path = request.url.path
-            root_path = request.scope.get("root_path", "").rstrip("/")
-            if root_path and relative_path.startswith(root_path):
-                return relative_path[len(root_path) :] or "/"
-            return relative_path
-
         async def http_error_handler(request: Request, exc: Exception) -> Response:
             assert isinstance(exc, HTTPException)
-            relative_path = _relative_request_path(request)
-            if relative_path == "/api" or relative_path.startswith("/api/"):
+            relative_path = admin_relative_path(request)
+            if is_generated_api_path(relative_path):
                 request_id = request.scope.get("state", {}).get("request_id", "")
                 code = (
                     "http.method_not_allowed"
@@ -835,7 +829,9 @@ class Admin:
                     headers=headers,
                 )
             if exc.status_code == 404:
-                return system_pages.not_found(request, dashboard_url=_safe_dashboard_url(request))
+                return system_pages.not_found(
+                    request, dashboard_available=dashboard_available(request)
+                )
             return PlainTextResponse(
                 str(exc.detail),
                 status_code=exc.status_code,
@@ -844,16 +840,32 @@ class Admin:
 
         async def unexpected_error_handler(request: Request, exc: Exception) -> Response:
             del exc
-            relative_path = _relative_request_path(request)
-            if relative_path == "/api" or relative_path.startswith("/api/"):
+            if is_generated_api_path(admin_relative_path(request)):
                 return unexpected_api_error(request)
-            return system_pages.internal_error(request, dashboard_url=_safe_dashboard_url(request))
+            return system_pages.internal_error(
+                request, dashboard_available=dashboard_available(request)
+            )
 
-        async def rakit_error_handler(_request: Request, exc: Exception) -> JSONResponse:
-            # Minimal error-to-HTTP translation: a RakitError already carries the
-            # HTTP status it intends (e.g. RESOURCE_NOT_FOUND -> 404), so honour it
-            # rather than letting it surface as an unhandled 500.
+        async def rakit_error_handler(request: Request, exc: Exception) -> Response:
             assert isinstance(exc, RakitError)
+            if is_generated_api_path(admin_relative_path(request)):
+                return JSONResponse(
+                    exc.to_public_dict(),
+                    status_code=exc.status_code,
+                    headers={"Cache-Control": "no-store"},
+                )
+            if exc.status_code == 404:
+                return system_pages.not_found(
+                    request, dashboard_available=dashboard_available(request)
+                )
+            if exc.status_code == 403:
+                return system_pages.forbidden(
+                    request, dashboard_available=dashboard_available(request)
+                )
+            if exc.status_code >= 500 and not self.config.debug:
+                return system_pages.internal_error(
+                    request, dashboard_available=dashboard_available(request)
+                )
             return JSONResponse(
                 exc.to_public_dict(),
                 status_code=exc.status_code,
@@ -1117,19 +1129,16 @@ class Admin:
             ),
         )
 
-        def _safe_dashboard_url(request: Request) -> str | None:
-            if self._auth_backend is None or self._session_store is None:
-                return mounted_path(request, "/")
-            principal = request.scope.get("state", {}).get("principal")
+        def dashboard_available(request: Request) -> bool:
             requirement = requirement_resolver("/", "GET")
-            if (
+            if requirement is None:
+                return True
+            principal = request.scope.get("state", {}).get("principal")
+            return bool(
                 principal is not None
                 and principal.authenticated
-                and requirement is not None
                 and requirement.matches(principal, superuser_bypass=self._superuser_bypass)
-            ):
-                return mounted_path(request, "/")
-            return None
+            )
 
         if self._session_store is not None and self.config.security.secret_key is not None:
             write_token_service = TokenService.single_key(
@@ -1580,8 +1589,8 @@ class Admin:
                 inner_app,
                 requirement_for=requirement_resolver,
                 superuser_bypass=self._superuser_bypass,
-                browser_forbidden=lambda request: system_pages.forbidden(
-                    request, dashboard_url=_safe_dashboard_url(request)
+                render_forbidden=lambda request, can_return: system_pages.forbidden(
+                    request, dashboard_available=can_return
                 ),
             )
             inner_app = PrincipalMiddleware(

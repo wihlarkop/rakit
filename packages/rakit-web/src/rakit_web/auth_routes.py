@@ -156,7 +156,7 @@ def build_auth_routes(
             {
                 "error": error,
                 "reason_message": reason_message,
-                "label": label,
+                "binding_label": label,
                 "login_url": _mounted_path(request, "/auth/login"),
                 "login_csrf_token": token,
                 "login_csrf_field": LOGIN_CSRF_FORM_FIELD,

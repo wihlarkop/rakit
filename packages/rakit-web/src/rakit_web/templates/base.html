@@ -33,7 +33,7 @@
     {% elif shell_mode in ('auth', 'system') %}
       <header class="border-b border-rakit-border bg-rakit-surface">
         <div class="mx-auto flex min-h-16 w-full max-w-5xl items-center justify-between gap-4 px-4 sm:px-6">
-          <span class="truncate text-base font-semibold tracking-tight text-rakit-text">{{ label | default('Rakit') }}</span>
+          <span class="truncate text-base font-semibold tracking-tight text-rakit-text">{{ binding_label | default(label | default('Rakit')) }}</span>
           <div class="w-36">{% set theme_control_id = "rakit-theme-system" %}{% include "components/theme_control.html" %}</div>
         </div>
       </header>

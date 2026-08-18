@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Sign in · {{ label }}{% endblock %}
+{% block title %}Sign in · {{ binding_label }}{% endblock %}
 {% block content %}
 <section class="mx-auto flex min-h-[60vh] max-w-md items-center py-8" aria-labelledby="rakit-login-title">
   <div class="w-full rounded-rakit-lg border border-rakit-border bg-rakit-surface p-6 shadow-rakit-sm sm:p-8">
-    <p class="text-sm font-semibold text-rakit-text-muted">{{ label }}</p>
+    <p class="text-sm font-semibold text-rakit-text-muted">{{ binding_label }}</p>
     <h1 id="rakit-login-title" class="mt-2 text-2xl font-semibold tracking-tight text-rakit-text">Sign in</h1>
     <p class="mt-2 text-sm leading-6 text-rakit-text-muted">Use your account credentials to continue to the admin.</p>
 

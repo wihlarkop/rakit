@@ -6,6 +6,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.templating import Jinja2Templates
 
+from ._paths import mounted_path
 from .auth_state import AuthReason
 
 _REASON_MESSAGES: dict[AuthReason, tuple[str, str]] = {
@@ -44,17 +45,17 @@ class SystemPageRenderer:
         status_code: int,
         title: str,
         message: str,
-        dashboard_url: str | None = None,
+        dashboard_available: bool,
         request_id: str | None = None,
     ) -> Response:
         return self.templates.TemplateResponse(
             request,
             template,
             {
-                "label": self.label,
+                "binding_label": self.label,
                 "system_title": title,
                 "system_message": message,
-                "dashboard_url": dashboard_url,
+                "dashboard_url": mounted_path(request, "/") if dashboard_available else None,
                 "request_id": request_id,
                 "rakit_shell_enabled": False,
                 "rakit_shell_mode": "system",
@@ -63,27 +64,27 @@ class SystemPageRenderer:
             headers={"Cache-Control": "no-store"},
         )
 
-    def forbidden(self, request: Request, *, dashboard_url: str | None = None) -> Response:
+    def forbidden(self, request: Request, *, dashboard_available: bool) -> Response:
         return self._response(
             request,
             template="system/403.html",
             status_code=403,
             title="Access denied",
             message="You don't have permission to view this page.",
-            dashboard_url=dashboard_url,
+            dashboard_available=dashboard_available,
         )
 
-    def not_found(self, request: Request, *, dashboard_url: str | None = None) -> Response:
+    def not_found(self, request: Request, *, dashboard_available: bool) -> Response:
         return self._response(
             request,
             template="system/404.html",
             status_code=404,
             title="Page not found",
             message="The page you're looking for doesn't exist or may have been moved.",
-            dashboard_url=dashboard_url,
+            dashboard_available=dashboard_available,
         )
 
-    def internal_error(self, request: Request, *, dashboard_url: str | None = None) -> Response:
+    def internal_error(self, request: Request, *, dashboard_available: bool) -> Response:
         raw_request_id = request.scope.get("state", {}).get("request_id")
         request_id = raw_request_id if isinstance(raw_request_id, str) and raw_request_id else None
         return self._response(
@@ -92,7 +93,7 @@ class SystemPageRenderer:
             status_code=500,
             title="Something went wrong",
             message="We couldn't complete this request.",
-            dashboard_url=dashboard_url,
+            dashboard_available=dashboard_available,
             request_id=request_id,
         )
 
