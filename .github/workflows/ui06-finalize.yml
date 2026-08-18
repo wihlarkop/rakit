@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - ui-06-advanced-operations
+      - ui-06a-actions-bulk
   push:
     branches:
       - ui-06a-actions-bulk
