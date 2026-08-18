@@ -5,7 +5,6 @@ import json
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from html import escape
 from typing import Any
 
 import anyio
@@ -42,11 +41,12 @@ from rakit_core.pages import (
 from rakit_core.schema import SchemaAdapter, SchemaValidationError
 from rakit_core.transactions import OperationUnitOfWorkFactory, TransactionPolicy
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, RedirectResponse, Response
+from starlette.responses import RedirectResponse, Response
 from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 
 from ._paths import mounted_path
+from .page_payload import page_payload_view
 from .security.cookies import CSRF_COOKIE_NAME
 
 _MAX_PAGE_FIELDS = 500
@@ -125,6 +125,8 @@ def _field_views(
             "name": field.name,
             "label": field.title or field.name.replace("_", " ").title(),
             "description": field.description,
+            "description_id": f"rakit-page-{field.name}-description",
+            "error_id": f"rakit-page-{field.name}-error",
             "value": submitted.get(field.name, ""),
             "issues": issues.get(field.name, ()),
         }
@@ -166,6 +168,8 @@ def _template_args(
         "binding_label": binding.label,
         "page": page,
         "payload": result.payload if result is not None else None,
+        "payload_view": page_payload_view(result.payload if result is not None else None),
+        "dashboard_url": mounted_path(request, "/"),
         "message": message
         if message is not None
         else (result.message if result is not None else None),
@@ -212,12 +216,17 @@ def _render_page(
     )
 
 
-def _rejected_response(message: str, status_code: int) -> Response:
-    safe = escape(message, quote=True)
-    return HTMLResponse(
-        "<main class='mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8'>"
-        f"<section class='rakit-panel p-4'><p class='text-sm text-red-900'>{safe}</p>"
-        "</section></main>",
+def _rejected_response(
+    binding: PageBinding, request: Request, message: str, status_code: int
+) -> Response:
+    return binding.templates.TemplateResponse(
+        request,
+        "pages/rejected.html",
+        {
+            "binding_label": binding.label,
+            "dashboard_url": mounted_path(request, "/"),
+            "rejection_message": message,
+        },
         status_code=status_code,
         headers={"Cache-Control": "no-store"},
     )
@@ -265,15 +274,23 @@ def _validated_redirect(location: str | None) -> str | None:
         return None
 
 
-def _completed_response(request: Request, receipt: OperationReceipt | None) -> Response:
+def _completed_response(
+    binding: PageBinding, request: Request, receipt: OperationReceipt | None
+) -> Response:
     if receipt is None or receipt.result_kind != "page_redirect":
         return _rejected_response(
-            "Page submission already completed, but its response cannot be replayed", 409
+            binding,
+            request,
+            "Page submission already completed, but its response cannot be replayed",
+            409,
         )
     location = _validated_redirect(receipt.redirect_route)
     if location is None:
         return _rejected_response(
-            "Page submission already completed, but its response cannot be replayed", 409
+            binding,
+            request,
+            "Page submission already completed, but its response cannot be replayed",
+            409,
         )
     return RedirectResponse(
         mounted_path(request, location),
@@ -414,7 +431,7 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
             page = compiled_page.definition
             authorization = await binding.authorize_page(request, compiled_page)
             if authorization is None:
-                return _rejected_response("Forbidden", 403)
+                return _rejected_response(binding, request, "Forbidden", 403)
             if page.mutating:
                 # GET is presentation-only. Application mutation code is never
                 # invoked until POST passes CSRF, typed parsing, and idempotency.
@@ -466,7 +483,7 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
                 plan = build_page_operation_plan(context)
                 result = await _run_page_operation(binding, request, plan, authorization)
             except RakitError as exc:
-                return _rejected_response(exc.message, exc.status_code)
+                return _rejected_response(binding, request, exc.message, exc.status_code)
             return _result_response(binding, request, compiled_page, result, submitted=submitted)
 
         async def page_post(
@@ -480,10 +497,10 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
             assert binding.verify_submission_token is not None
             assert binding.idempotency_store is not None
             if not await binding.verify_csrf(request):
-                return _rejected_response("Invalid CSRF token", 403)
+                return _rejected_response(binding, request, "Invalid CSRF token", 403)
             authorization = await binding.authorize_page(request, compiled_page)
             if authorization is None:
-                return _rejected_response("Forbidden", 403)
+                return _rejected_response(binding, request, "Forbidden", 403)
 
             submitted, tokens, pre_issues = await _form_input(request)
             if pre_issues:
@@ -521,7 +538,7 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
 
             submission_token = tokens.get("submission_token")
             if not submission_token or not await binding.verify_submission_token(request):
-                return _rejected_response("Invalid submission token", 409)
+                return _rejected_response(binding, request, "Invalid submission token", 409)
             fingerprint = _page_fingerprint(str(page.page_id), submitted)
             try:
                 reservation = await binding.idempotency_store.begin(
@@ -529,15 +546,22 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
                     fingerprint=fingerprint,
                 )
             except ValueError:
-                return _rejected_response("Submission token is bound to another page request", 409)
+                return _rejected_response(
+                    binding, request, "Submission token is bound to another page request", 409
+                )
             if reservation.status is IdempotencyStatus.COMPLETED:
-                return _completed_response(request, reservation.completed_receipt)
+                return _completed_response(binding, request, reservation.completed_receipt)
             if reservation.status is IdempotencyStatus.FAILED_FINAL:
                 return _rejected_response(
-                    "This submission has already failed and cannot be retried", 409
+                    binding,
+                    request,
+                    "This submission has already failed and cannot be retried",
+                    409,
                 )
             if not reservation.claimed:
-                return _rejected_response("Page submission is already in progress", 409)
+                return _rejected_response(
+                    binding, request, "Page submission is already in progress", 409
+                )
 
             async def release() -> None:
                 assert binding.idempotency_store is not None
@@ -559,7 +583,7 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
                 result = await _run_page_operation(binding, request, plan, authorization)
             except RakitError as exc:
                 await _fail_final(binding.idempotency_store, reservation)
-                return _rejected_response(exc.message, exc.status_code)
+                return _rejected_response(binding, request, exc.message, exc.status_code)
             except BaseException:
                 await _fail_final(binding.idempotency_store, reservation)
                 raise
