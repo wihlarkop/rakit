@@ -37,9 +37,18 @@ jobs:
 
           path = Path("tests/test_ui_showcase.py")
           text = path.read_text(encoding="utf-8")
-          text = text.replace('assert ">Paid</a>" in resources["orders"].text', 'assert ">Paid</span>" in resources["orders"].text')
-          text = text.replace('assert ">Pending review</a>" in resources["orders"].text', 'assert ">Pending review</span>" in resources["orders"].text')
-          text = text.replace('assert ">Needs attention</a>" in resources["inventory"].text', 'assert ">Needs attention</span>" in resources["inventory"].text')
+          text = text.replace(
+              'assert ">Paid</a>" in resources["orders"].text',
+              'assert ">Paid</span>" in resources["orders"].text',
+          )
+          text = text.replace(
+              'assert ">Pending review</a>" in resources["orders"].text',
+              'assert ">Pending review</span>" in resources["orders"].text',
+          )
+          text = text.replace(
+              'assert ">Needs attention</a>" in resources["inventory"].text',
+              'assert ">Needs attention</span>" in resources["inventory"].text',
+          )
           marker = '''    assert 'data-rakit-filter-group="stock_level"' in resources["inventory"].text\n    assert ">Needs attention</span>" in resources["inventory"].text'''
           addition = '''    assert 'data-rakit-filter-group="stock_level"' in resources["inventory"].text\n    assert ">Needs attention</span>" in resources["inventory"].text\n\n    products = resources["products"].text\n    for filter_id in ("category", "status", "name", "sku", "price"):\n        assert f'data-rakit-filter-group="{filter_id}"' in products\n    assert "Show 5 more" in products\n    assert "Ergonomic workspace accessories" in products\n    assert "data-rakit-filter-rail" in products\n    assert "data-rakit-filter-mobile-fallback" in products\n    assert "data-rakit-filter-drawer" in products'''
           if marker in text and "Show 5 more" not in text:
@@ -77,14 +86,6 @@ jobs:
             packages/rakit-web/tests/test_resource_list_ui_maturity.py \
             packages/rakit/tests/test_query_configuration_facade.py \
             tests/test_ui_showcase.py
-      - name: Run focused UI-05E regression suite
-        run: |
-          uv run pytest \
-            packages/rakit-web/tests/test_resource_filter_presentation.py \
-            packages/rakit-web/tests/test_resource_list_ui_maturity.py \
-            packages/rakit/tests/test_query_configuration_facade.py \
-            tests/test_ui_showcase.py \
-            -q
       - name: Commit test migration
         shell: bash
         run: |
@@ -94,11 +95,17 @@ jobs:
             packages/rakit-web/tests/test_resource_list_ui_maturity.py \
             packages/rakit/tests/test_query_configuration_facade.py \
             tests/test_ui_showcase.py
-          if git diff --cached --quiet; then
-            echo "No test migration changes to commit."
-            exit 0
+          if ! git diff --cached --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "test(web): cover responsive filter presentation"
+            git push origin HEAD:ui-05e-filter-rail-responsive-filters
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "test(web): cover responsive filter presentation"
-          git push origin HEAD:ui-05e-filter-rail-responsive-filters
+      - name: Run focused UI-05E regression suite
+        run: |
+          uv run pytest \
+            packages/rakit-web/tests/test_resource_filter_presentation.py \
+            packages/rakit-web/tests/test_resource_list_ui_maturity.py \
+            packages/rakit/tests/test_query_configuration_facade.py \
+            tests/test_ui_showcase.py \
+            -q
