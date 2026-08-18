@@ -1,15 +1,17 @@
 from rakit_core.datasource import DataSource
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.identity import RecordIdentity
-from rakit_core.query import PageResult, ResourceQuery
+from rakit_core.pagination import ResourceListResult
+from rakit_core.query import ResourceQuery
 
 
 class ResourceService:
     """Thin read-only pass-through over a `DataSource`.
 
-    Query translation and whitelisting happen upstream (`ResourceQuery.from_params()`),
-    and actually executing the query is the data source's responsibility. This service
-    only forwards calls and normalizes `detail()`'s "not found" case into a `RakitError`.
+    Query translation and whitelisting happen upstream (`ResourceQuery`), and
+    actually executing the query is the data source's responsibility. This
+    service only forwards calls and normalizes `detail()`'s "not found" case
+    into a `RakitError`.
     """
 
     def __init__(self, data_source: DataSource) -> None:
@@ -19,7 +21,7 @@ class ResourceService:
     def data_source(self) -> DataSource:
         return self._data_source
 
-    async def list(self, query: ResourceQuery) -> PageResult:
+    async def list(self, query: ResourceQuery) -> ResourceListResult:
         return await self._data_source.list(query)
 
     async def count(self, query: ResourceQuery) -> int:
