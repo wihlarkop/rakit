@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 from .fields import FieldDefinition
@@ -117,7 +117,7 @@ class CompiledResourceApi:
     update_fields: tuple[str, ...]
     identity_fields: tuple[str, ...]
     filters: tuple[CompiledApiFilterDefinition, ...]
-    pagination: ResourcePaginationPolicy = ResourcePaginationPolicy()
+    pagination: ResourcePaginationPolicy = field(default_factory=ResourcePaginationPolicy)
     field_definitions: tuple[FieldDefinition, ...] = ()
 
 

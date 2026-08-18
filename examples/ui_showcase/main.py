@@ -10,19 +10,30 @@ from rakit import (
     ActionScope,
     ActionSuccess,
     Admin,
+    ChoiceFilter,
     DashboardDefinition,
+    DataSourceCapabilities,
+    DateRangeFilter,
+    Filter,
+    FilterChoice,
+    FilterControl,
+    FilterOperator,
     LauncherItem,
     ListWidgetItem,
     ListWidgetResult,
     PageDefinition,
     PageResult,
+    PageSizePolicy,
     RelationshipCardinality,
     RelationshipDefinition,
     RelationshipKind,
     ResourceAdmin,
+    ResourceFilter,
+    ResourcePaginationPolicy,
     SecretValue,
     StatWidgetResult,
     TableWidgetResult,
+    TextFilter,
     WidgetDefinition,
     WidgetErrorResult,
     WidgetLayout,
@@ -69,7 +80,7 @@ def _matches(item: dict[str, object], filter_: Any) -> bool:
 
 
 class _MemoryDataSource:
-    capabilities = type("Capabilities", (), {"read": True})()
+    capabilities = DataSourceCapabilities(read=True)
 
     def __init__(
         self,
@@ -125,6 +136,43 @@ class _MemoryDataSource:
         association_target_data_source: object | None,
     ) -> None:
         del definition, target_data_source, association_target_data_source
+
+
+class StockLevelFilter(ResourceFilter):
+    """Semantic showcase filter resolved without datasource-specific query objects."""
+
+    def parse_value(self, *, operator: FilterOperator, raw_value: object) -> object:
+        if operator is not FilterOperator.EQ or not isinstance(raw_value, str):
+            raise ValueError("Stock-level filter accepts one named choice")
+        if raw_value not in {choice.value for choice in self.choices}:
+            raise ValueError("Stock-level filter choice is not allowed")
+        return raw_value
+
+    def resolve_predicates(
+        self,
+        *,
+        operator: FilterOperator,
+        value: object,
+    ) -> tuple[Filter, ...]:
+        if operator is not FilterOperator.EQ or not isinstance(value, str):
+            raise ValueError("Stock-level filter selection is invalid")
+        if value == "attention":
+            return (
+                Filter(
+                    field="status",
+                    operator=FilterOperator.IN,
+                    value=("Low stock", "Out of stock"),
+                ),
+            )
+        if value == "out":
+            return (
+                Filter(
+                    field="status",
+                    operator=FilterOperator.EQ,
+                    value="Out of stock",
+                ),
+            )
+        raise ValueError("Stock-level filter choice is not allowed")
 
 
 class RefundOrder:
@@ -186,9 +234,36 @@ class OrdersAdmin(ResourceAdmin):
     )
     list_fields = ("id", "customer", "status", "items", "total", "created")
     detail_fields = ("id", "customer", "status", "items", "total", "created")
-    filter_fields = ("customer", "status")
+    filters = (
+        TextFilter(
+            filter_id="customer",
+            label="Customer",
+            field="customer",
+            operators=(FilterOperator.CONTAINS, FilterOperator.EQ),
+        ),
+        ChoiceFilter(
+            filter_id="status",
+            label="Status",
+            field="status",
+            choices=(
+                FilterChoice(value="Paid", label="Paid"),
+                FilterChoice(value="Pending review", label="Pending review"),
+                FilterChoice(value="Processing", label="Processing"),
+                FilterChoice(value="Fulfilled", label="Fulfilled"),
+                FilterChoice(value="Refunded", label="Refunded"),
+                FilterChoice(value="Cancelled", label="Cancelled"),
+            ),
+        ),
+        DateRangeFilter(
+            filter_id="created",
+            label="Created",
+            field="created",
+        ),
+    )
+    filter_fields = ()
     search_fields = ("id", "customer")
     sort_fields = ("id", "customer", "status", "created")
+    pagination = ResourcePaginationPolicy(size=PageSizePolicy(default=20, allowed=(20, 40, 80)))
     relationships = (
         RelationshipDefinition(
             relationship_id="customer",
@@ -252,7 +327,20 @@ class InventoryAdmin(ResourceAdmin):
     )
     list_fields = ("id", "sku", "product", "on_hand", "reorder_at", "status")
     detail_fields = ("id", "sku", "product", "on_hand", "reorder_at", "status")
-    filter_fields = ("status",)
+    filters = (
+        StockLevelFilter(
+            filter_id="stock_level",
+            label="Stock level",
+            predicate_fields=("status",),
+            control=FilterControl.CHOICE,
+            operators=(FilterOperator.EQ,),
+            choices=(
+                FilterChoice(value="attention", label="Needs attention"),
+                FilterChoice(value="out", label="Out of stock"),
+            ),
+        ),
+    )
+    filter_fields = ()
     search_fields = ("id", "sku", "product")
     sort_fields = ("id", "sku", "product", "on_hand", "status")
 

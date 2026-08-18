@@ -64,6 +64,7 @@ from rakit_core.query import (
     Filter,
     FilterOperator,
     OffsetPagination,
+    PageResult,
     ResourceQuery,
     Sort,
 )
@@ -449,6 +450,7 @@ class DataSourceContractSuite(ABC):
                     count_policy=CountPolicy.DISABLED,
                 )
             )
+            assert isinstance(page, PageResult)
             seen.extend(
                 tuple(self.record_field(item, field) for field in self.identity_fields)
                 for item in page.items
@@ -493,6 +495,7 @@ class DataSourceContractSuite(ABC):
                     count_policy=CountPolicy.DISABLED,
                 )
             )
+            assert isinstance(page, PageResult)
             seen.extend(
                 tuple(self.record_field(item, field) for field in self.identity_fields)
                 for item in page.items
@@ -520,11 +523,14 @@ class DataSourceContractSuite(ABC):
         records = await self._records()
         total = len(records)
         exact = await ds.list(ResourceQuery(count_policy=CountPolicy.EXACT))
+        assert isinstance(exact, PageResult)
         assert exact.total_count == total, "EXACT count must report the full filtered total"
         deferred = await ds.list(ResourceQuery(count_policy=CountPolicy.DEFERRED))
+        assert isinstance(deferred, PageResult)
         assert deferred.total_count is None, "DEFERRED count must not run a total count"
         assert len(deferred.items) == total
         disabled = await ds.list(ResourceQuery(count_policy=CountPolicy.DISABLED))
+        assert isinstance(disabled, PageResult)
         assert disabled.total_count is None, "DISABLED count must not run a total count"
         assert len(disabled.items) == total
         counted = await ds.count(ResourceQuery(count_policy=CountPolicy.EXACT))

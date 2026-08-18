@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -53,7 +53,7 @@ class FilterChoice(BaseModel):
     label: str
 
     @model_validator(mode="after")
-    def _validate_choice(self) -> "FilterChoice":
+    def _validate_choice(self) -> FilterChoice:
         if not self.value.strip():
             raise ValueError("Filter choice value must not be empty")
         if not self.label.strip():
@@ -100,7 +100,7 @@ class ResourceFilter(BaseModel):
     choices: tuple[FilterChoice, ...] = ()
 
     @model_validator(mode="after")
-    def _validate_definition(self) -> "ResourceFilter":
+    def _validate_definition(self) -> ResourceFilter:
         if not self.filter_id.strip():
             raise ValueError("Filter id must not be empty")
         if not self.label.strip():
@@ -139,7 +139,7 @@ class ResourceFilter(BaseModel):
         if isinstance(value, str):
             return value
         if isinstance(value, tuple) and all(isinstance(item, str) for item in value):
-            return ",".join(value)
+            return ",".join(cast(tuple[str, ...], value))
         raise ValueError("Filter value cannot be serialized")
 
     def display_value(self, *, operator: FilterOperator, value: object) -> str:
@@ -154,6 +154,7 @@ class ResourceFilter(BaseModel):
 
 
 class _FieldResourceFilter(ResourceFilter):
+    predicate_fields: tuple[str, ...] = ()
     field: str
 
     @model_validator(mode="before")
@@ -166,7 +167,7 @@ class _FieldResourceFilter(ResourceFilter):
         return data
 
     @model_validator(mode="after")
-    def _validate_field(self) -> "_FieldResourceFilter":
+    def _validate_field(self) -> _FieldResourceFilter:
         if not self.field.strip():
             raise ValueError("Filter field must not be empty")
         if self.predicate_fields != (self.field,):
@@ -187,7 +188,7 @@ class ChoiceFilter(_FieldResourceFilter):
     operators: tuple[FilterOperator, ...] = (FilterOperator.EQ,)
 
     @model_validator(mode="after")
-    def _validate_choices(self) -> "ChoiceFilter":
+    def _validate_choices(self) -> ChoiceFilter:
         if not self.choices:
             raise ValueError("ChoiceFilter requires at least one choice")
         return self

@@ -27,6 +27,7 @@ from .errors import ErrorCode, RakitError
 from .generated_api import ApiExposure, CompiledResourceApi, GeneratedCrudOperation
 from .generated_compiler import compile_generated_resource_apis
 from .generated_runtime import GeneratedResourceExecutorProvider, ResourceAdapterRuntime
+from .pagination import PaginationStrategy
 from .permissions import PermissionRequirement
 from .relationships import CompiledRelationship
 
@@ -259,7 +260,12 @@ class ApplicationBuilder:
                 status_code=500,
                 details={"resource_id": definition.resource_id},
             )
-        if definition.pagination.strategy not in data_source.capabilities.pagination_strategies:
+        pagination_strategies = getattr(
+            data_source.capabilities,
+            "pagination_strategies",
+            frozenset({PaginationStrategy.PAGE}),
+        )
+        if definition.pagination.strategy not in pagination_strategies:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
                 message=(

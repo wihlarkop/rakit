@@ -21,7 +21,7 @@ class PageSizePolicy(BaseModel):
     allowed: tuple[int, ...] = (25, 50, 100)
 
     @model_validator(mode="after")
-    def _validate_policy(self) -> "PageSizePolicy":
+    def _validate_policy(self) -> PageSizePolicy:
         if not self.allowed:
             raise ValueError("Page-size choices must not be empty")
         if any(isinstance(value, bool) or value < 1 or value > 200 for value in self.allowed):
@@ -79,7 +79,7 @@ class CursorPagination(BaseModel):
     limit: int = Field(default=25, ge=1, le=200)
 
     @model_validator(mode="after")
-    def _validate_cursor(self) -> "CursorPagination":
+    def _validate_cursor(self) -> CursorPagination:
         if self.cursor is not None and not self.cursor:
             raise ValueError("Cursor must be non-empty when provided")
         return self
