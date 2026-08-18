@@ -27,6 +27,11 @@ replace(
 )
 replace(
     query_ui,
+    "        size=PageSizePolicy(default=1, allowed=(1, 2, 3))\n",
+    "        size=PageSizePolicy(default=2, allowed=(1, 2, 3))\n",
+)
+replace(
+    query_ui,
     "@pytest.mark.parametrize(\"raw_value\", (\"1\", \"yes\", \"maybe\", \"\"))\n"
     "async def test_is_null_rejects_non_boolean_vocabulary_before_query_execution(\n"
     "    client: httpx.AsyncClient,\n"
@@ -51,12 +56,43 @@ replace(
     "    assert \"Grace\" in response.text\n"
     "    assert \"data-rakit-active-filters\" not in response.text\n",
 )
+replace(
+    query_ui,
+    "    assert _pagination_link(first.text, \"Previous page\") is None\n"
+    "    first_next = _pagination_link(first.text, \"Next page\")\n"
+    "    assert first_next is not None\n\n"
+    "    middle = await client.get(f\"{prefix}/users\", params=[*params, (\"page\", \"2\")])\n"
+    "    assert middle.status_code == 200\n"
+    "    assert _has_current_page(middle.text, 2)\n"
+    "    previous = _pagination_link(middle.text, \"Previous page\")\n"
+    "    next_ = _pagination_link(middle.text, \"Next page\")\n",
+    "    assert _pagination_link(first.text, \"Previous results\") is None\n"
+    "    first_next = _pagination_link(first.text, \"Next results\")\n"
+    "    assert first_next is not None\n\n"
+    "    middle = await client.get(f\"{prefix}/users\", params=[*params, (\"page\", \"2\")])\n"
+    "    assert middle.status_code == 200\n"
+    "    assert _has_current_page(middle.text, 2)\n"
+    "    previous = _pagination_link(middle.text, \"Previous results\")\n"
+    "    next_ = _pagination_link(middle.text, \"Next results\")\n",
+)
+replace(
+    query_ui,
+    "    assert _pagination_link(last.text, \"Previous page\") is not None\n"
+    "    assert _pagination_link(last.text, \"Next page\") is None\n",
+    "    assert _pagination_link(last.text, \"Previous results\") is not None\n"
+    "    assert _pagination_link(last.text, \"Next results\") is None\n",
+)
 
 resource_list = "packages/rakit-web/tests/test_resource_list_ui_maturity.py"
 replace(
     resource_list,
     '    assert "status equals pending" in response.text\n',
     '    assert "status = pending" in response.text\n',
+)
+replace(
+    resource_list,
+    '    assert "status = pending" in response.text\n',
+    '    assert "Status = pending" in response.text\n',
 )
 replace(
     resource_list,
