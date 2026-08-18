@@ -21,10 +21,11 @@ jobs:
       - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
       - run: uv sync --all-packages --dev --locked
       - run: bun install --frozen-lockfile
-      - name: Normalize expected repeated renderer call patch
+      - name: Normalize known formatted source differences
         run: |
           python - <<'PY'
           from pathlib import Path
+
           source = Path("packages/rakit-web/src/rakit_web/system_responses.py")
           text = source.read_text()
           old = "            dashboard_url=dashboard_url,\n"
@@ -32,11 +33,19 @@ jobs:
           assert text.count(old) == 3, text.count(old)
           source.write_text(text.replace(old, new))
 
+          auth = Path("packages/rakit-web/src/rakit_web/security/authentication.py")
+          text = auth.read_text()
+          old_get = 'scope.get("state", {}).get("rakit_auth_reason")'
+          assert text.count(old_get) == 1, text.count(old_get)
+          auth.write_text(text.replace(old_get, 'scope.get("state", {}).get(_AUTH_REASON_STATE_KEY)'))
+
           helper = Path(".github/ui06c_contract_fix.py")
           script = helper.read_text()
-          call = 'replace_once(system, "            dashboard_url=dashboard_url,\\n", "            dashboard_available=dashboard_available,\\n")\n'
-          assert script.count(call) == 3, script.count(call)
-          helper.write_text(script.replace(call, ""))
+          renderer_call = 'replace_once(system, "            dashboard_url=dashboard_url,\\n", "            dashboard_available=dashboard_available,\\n")\n'
+          getter_call = '''replace_once(authentication, '                scope.get("state", {}).get("rakit_auth_reason")\\n', '                scope.get("state", {}).get(_AUTH_REASON_STATE_KEY)\\n')\n'''
+          assert script.count(renderer_call) == 3, script.count(renderer_call)
+          assert script.count(getter_call) == 1, script.count(getter_call)
+          helper.write_text(script.replace(renderer_call, "").replace(getter_call, ""))
           PY
       - run: uv run python .github/ui06c_contract_fix.py
       - run: uv run ruff format packages/rakit-web/src/rakit_web/admin.py packages/rakit-web/src/rakit_web/auth_routes.py packages/rakit-web/src/rakit_web/security/authentication.py packages/rakit-web/src/rakit_web/system_responses.py
