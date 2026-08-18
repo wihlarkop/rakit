@@ -42,8 +42,8 @@ replace_once(
 # All rejection calls occur inside scopes that now have binding + request.
 text = page_routes.read_text()
 return_count = text.count("return _rejected_response(")
-if return_count != 10:
-    raise RuntimeError(f"expected 10 rejection return sites, got {return_count}")
+if return_count != 11:
+    raise RuntimeError(f"expected 11 rejection return sites, got {return_count}")
 text = text.replace("return _rejected_response(", "return _rejected_response(binding, request, ")
 if text.count("return _completed_response(request, reservation.completed_receipt)") != 1:
     raise RuntimeError("expected one completed replay call")
