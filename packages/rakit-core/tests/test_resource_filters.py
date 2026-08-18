@@ -129,21 +129,30 @@ def test_builtin_filter_validation_and_value_parsing() -> None:
         Filter(field="status", operator=FilterOperator.EQ, value="paid"),
     )
 
-    assert resolve_filter_selection(
-        BooleanFilter(filter_id="active", label="Active", field="status"),
-        operator=FilterOperator.EQ,
-        raw_value="true",
-    ).selection.value is True
-    assert resolve_filter_selection(
-        NumberFilter(filter_id="score", label="Score", field="risk_min"),
-        operator=FilterOperator.GTE,
-        raw_value="10.50",
-    ).selection.value == "10.50"
-    assert resolve_filter_selection(
-        DateFilter(filter_id="created", label="Created", field="status"),
-        operator=FilterOperator.EQ,
-        raw_value=date(2026, 8, 18),
-    ).selection.value == "2026-08-18"
+    assert (
+        resolve_filter_selection(
+            BooleanFilter(filter_id="active", label="Active", field="status"),
+            operator=FilterOperator.EQ,
+            raw_value="true",
+        ).selection.value
+        is True
+    )
+    assert (
+        resolve_filter_selection(
+            NumberFilter(filter_id="score", label="Score", field="risk_min"),
+            operator=FilterOperator.GTE,
+            raw_value="10.50",
+        ).selection.value
+        == "10.50"
+    )
+    assert (
+        resolve_filter_selection(
+            DateFilter(filter_id="created", label="Created", field="status"),
+            operator=FilterOperator.EQ,
+            raw_value=date(2026, 8, 18),
+        ).selection.value
+        == "2026-08-18"
+    )
 
     with pytest.raises(ValueError):
         resolve_filter_selection(status, operator=FilterOperator.EQ, raw_value="unknown")
@@ -328,19 +337,17 @@ def test_generated_api_reuses_shared_filter_and_does_not_auto_expose_admin_only_
         build_generated_resource_query(
             compiled,
             _resource().field_policy,
-            filters=(
-                GeneratedFilterValue("internal_risk", FilterOperator.EQ, "secret"),
-            ),
+            filters=(GeneratedFilterValue("internal_risk", FilterOperator.EQ, "secret"),),
         )
     assert captured.value.details["reason"] == "generated_api_filter_not_allowed"
 
 
-def test_generated_api_unknown_filter_id_fails_compile_and_legacy_direct_definition_survives() -> None:
+def test_generated_api_unknown_filter_id_fails_compile_and_legacy_direct_definition_survives() -> (
+    None
+):
     unknown = ApplicationBuilder()
     unknown.add_resource(
-        _resource(
-            api=ResourceApiDefinition(exposure=ApiExposure.READ_ONLY, filters=("missing",))
-        ),
+        _resource(api=ResourceApiDefinition(exposure=ApiExposure.READ_ONLY, filters=("missing",))),
         FakeDataSource(),
     )
     with pytest.raises(RakitError) as captured:

@@ -145,9 +145,7 @@ def test_malformed_or_unknown_web_filters_are_ignored_without_widening_query() -
     query = parse_resource_query(
         definition,
         ("id",),
-        QueryParams(
-            "filter=secret:eq:hidden&filter=status:drop:paid&filter=status:eq:unknown"
-        ),
+        QueryParams("filter=secret:eq:hidden&filter=status:drop:paid&filter=status:eq:unknown"),
     )
     assert query.filters == ()
     assert query.filter_selections == ()
@@ -172,10 +170,10 @@ def test_sort_headers_advertise_sortability_without_faking_non_sortable_state() 
     assert by_field["total"]["sort_value"] == ""
 
 
-def test_page_size_policy_normalizes_disallowed_values_and_controls_show_only_allowed_sizes() -> None:
-    policy = ResourcePaginationPolicy(
-        size=PageSizePolicy(default=20, allowed=(20, 40, 80))
-    )
+def test_page_size_policy_normalizes_disallowed_values_and_controls_show_only_allowed_sizes() -> (
+    None
+):
+    policy = ResourcePaginationPolicy(size=PageSizePolicy(default=20, allowed=(20, 40, 80)))
     definition = _definition(pagination=policy, filters=_filters())
     query = parse_resource_query(definition, ("id",), QueryParams("per_page=17"))
     assert isinstance(query.pagination, PagePagination)
@@ -213,9 +211,7 @@ def test_page_navigation_is_numbered_only_when_exact_total_is_truthful() -> None
         has_next=True,
         total_count=None,
     )
-    disabled_controls = pagination_controls(
-        disabled, disabled_result, "/orders", (), definitions
-    )
+    disabled_controls = pagination_controls(disabled, disabled_result, "/orders", (), definitions)
     assert disabled_controls["total_pages"] is None
     assert disabled_controls["items"] == []
 
