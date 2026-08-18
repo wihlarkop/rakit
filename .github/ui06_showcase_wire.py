@@ -27,7 +27,13 @@ replace_once(
 )
 
 advanced = Path("examples/ui_showcase/advanced_states.py")
+replace_once(advanced, "import io\n", "")
 replace_once(advanced, "    TransactionPolicy,\n", "")
+replace_once(
+    advanced,
+    "from rakit_core.pages import DomainPageHandler, PageContext, PageRedirect, PageRejected\n",
+    "from rakit_core.operations import OperationContext\nfrom rakit_core.pages import DomainPageHandler, PageContext, PageRedirect, PageRejected\n",
+)
 replace_once(
     advanced,
     "from rakit_core.resources import ResourceService\n",
@@ -37,6 +43,21 @@ replace_once(
     advanced,
     '''            create_layout=relationship_layout,\n            update_layout=relationship_layout,\n''',
     '''            layout=relationship_layout,\n            update_layout=relationship_layout,\n''',
+)
+replace_once(
+    advanced,
+    '''class _MemoryFileStorage:\n    production_safe = False\n\n    def __init__(self) -> None:\n        self.objects: dict[str, bytes] = {}\n        self._counter = 0\n\n    async def put(self, upload: TemporaryUpload) -> StoredFile:\n        chunks: list[bytes] = []\n        async for chunk in upload.stream:\n            chunks.append(chunk)\n        payload = b"".join(chunks)\n        self._counter += 1\n        key = f"showcase/private/upload-{self._counter}.pdf"\n        self.objects[key] = payload\n        return StoredFile(\n            storage_id="showcase-documents",\n            key=key,\n            original_name=upload.filename,\n            content_type=upload.content_type,\n            size=len(payload),\n            checksum=f"sha256:{hashlib.sha256(payload).hexdigest()}",\n        )\n\n    async def open(self, file: StoredFile) -> io.BytesIO:\n        return io.BytesIO(self.objects[file.key])\n\n    async def delete(self, file: StoredFile) -> None:\n        self.objects.pop(file.key, None)\n\n    async def url(self, file: StoredFile, *, expires_in: int) -> str:\n        del expires_in\n        return f"/showcase-storage/{file.original_name}"\n''',
+    '''class _MemoryFileStorage:\n    storage_id = "showcase-documents"\n    production_safe = False\n\n    def __init__(self) -> None:\n        self.objects: dict[str, bytes] = {}\n        self._counter = 0\n\n    async def save(\n        self,\n        upload: TemporaryUpload,\n        *,\n        prefix: str | None = None,\n        max_size: int | None = None,\n        operation_context: OperationContext | None = None,\n    ) -> StoredFile:\n        del operation_context\n        chunks: list[bytes] = []\n        async for chunk in upload.stream():\n            chunks.append(chunk)\n        payload = b"".join(chunks)\n        if max_size is not None and len(payload) > max_size:\n            raise ValueError("showcase upload exceeds max_size")\n        self._counter += 1\n        base = f"upload-{self._counter}.pdf"\n        key = f"{prefix}/{base}" if prefix else f"showcase/private/{base}"\n        self.objects[key] = payload\n        return StoredFile(\n            storage_id=self.storage_id,\n            key=key,\n            original_name=upload.original_name,\n            content_type=upload.content_type,\n            size=len(payload),\n            checksum=f"sha256:{hashlib.sha256(payload).hexdigest()}",\n        )\n\n    def open(\n        self,\n        file: StoredFile,\n        *,\n        operation_context: OperationContext | None = None,\n    ) -> AsyncIterator[bytes]:\n        del operation_context\n\n        async def stream() -> AsyncIterator[bytes]:\n            yield self.objects[file.key]\n\n        return stream()\n\n    async def delete(\n        self,\n        file: StoredFile,\n        *,\n        operation_context: OperationContext | None = None,\n    ) -> None:\n        del operation_context\n        self.objects.pop(file.key, None)\n\n    async def resolve_access(\n        self,\n        file: StoredFile,\n        *,\n        operation_context: OperationContext | None = None,\n    ) -> FileAccess:\n        del file, operation_context\n        return FileAccess(public=False)\n''',
+)
+replace_once(
+    advanced,
+    '''                    allowed_mime_types=("application/pdf",),\n                    access=FileAccess.PRIVATE,\n''',
+    '''                    allowed_mime_types=("application/pdf",),\n''',
+)
+replace_once(
+    advanced,
+    "            transaction_policy=TransactionPolicy.DISABLED,\n",
+    "            transaction_policy=TransactionPolicy.NONE,\n",
 )
 replace_once(
     advanced,
