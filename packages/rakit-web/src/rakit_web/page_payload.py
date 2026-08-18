@@ -4,10 +4,10 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import TypeAlias, cast
+from typing import cast
 from uuid import UUID
 
-SafePageScalar: TypeAlias = str | int | float | bool | Decimal | date | datetime | UUID | None
+type SafePageScalar = str | int | float | bool | Decimal | date | datetime | UUID | None
 
 
 class PagePayloadKind(StrEnum):
