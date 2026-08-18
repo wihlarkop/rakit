@@ -1,4 +1,4 @@
-name: UI-05D focused verification
+name: UI-05D final cleanup prep
 
 on:
   pull_request:
@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  focused:
+  cleanup-prep:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
@@ -23,177 +23,20 @@ jobs:
           python-version: '3.12'
       - name: Sync workspace
         run: uv sync --all-packages --dev --locked
-      - name: Apply minimal showcase pagination fix
+      - name: Normalize remaining real example
         run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path("examples/ui_showcase/main.py")
-          text = path.read_text()
-
-          def replace_once(old: str, new: str) -> None:
-              global text
-              if new in text:
-                  return
-              if old not in text:
-                  raise SystemExit(f"missing showcase anchor: {old[:100]!r}")
-              text = text.replace(old, new, 1)
-
-          replace_once("from dataclasses import dataclass\n", "")
-          replace_once(
-              "    PageDefinition,\n    PageResult,\n",
-              "    PageDefinition,\n    PagePagination,\n    PageResult,\n",
-          )
-          replace_once(
-              "    ResourceAdmin,\n    ResourceFilter,\n    ResourcePaginationPolicy,\n",
-              "    ResourceAdmin,\n    ResourceFilter,\n    ResourcePageResult,\n    ResourcePaginationPolicy,\n",
-          )
-          replace_once(
-              "@dataclass(frozen=True)\n"
-              "class _Page:\n"
-              "    items: tuple[dict[str, object], ...]\n"
-              "    page: int\n"
-              "    per_page: int\n"
-              "    has_previous: bool\n"
-              "    has_next: bool\n"
-              "    total_count: int | None\n\n\n",
-              "",
-          )
-          replace_once(
-              "    if operator == \"is_null\":\n"
-              "        return (actual is None) is bool(expected)\n"
-              "    return False\n",
-              "    if operator == \"is_null\":\n"
-              "        return (actual is None) is bool(expected)\n"
-              "    if operator == \"lt\":\n"
-              "        return str(actual) < str(expected)\n"
-              "    if operator == \"lte\":\n"
-              "        return str(actual) <= str(expected)\n"
-              "    if operator == \"gt\":\n"
-              "        return str(actual) > str(expected)\n"
-              "    if operator == \"gte\":\n"
-              "        return str(actual) >= str(expected)\n"
-              "    return False\n",
-          )
-          replace_once(
-              "    async def list(self, query: Any) -> _Page:\n"
-              "        items = self._filtered(query)\n"
-              "        start = query.pagination.offset\n"
-              "        end = start + query.pagination.per_page\n"
-              "        return _Page(\n"
-              "            items=tuple(items[start:end]),\n"
-              "            page=query.pagination.page,\n"
-              "            per_page=query.pagination.per_page,\n"
-              "            has_previous=query.pagination.page > 1,\n"
-              "            has_next=end < len(items),\n"
-              "            total_count=len(items) if query.count_policy.value == \"exact\" else None,\n"
-              "        )\n",
-              "    async def list(self, query: Any) -> ResourcePageResult[dict[str, object]]:\n"
-              "        pagination = query.pagination\n"
-              "        if not isinstance(pagination, PagePagination):\n"
-              "            raise ValueError(\n"
-              "                \"UI showcase memory data source supports page pagination only\"\n"
-              "            )\n"
-              "        items = self._filtered(query)\n"
-              "        start = pagination.offset\n"
-              "        end = start + pagination.per_page\n"
-              "        return ResourcePageResult(\n"
-              "            items=tuple(items[start:end]),\n"
-              "            page=pagination.page,\n"
-              "            per_page=pagination.per_page,\n"
-              "            has_previous=pagination.page > 1,\n"
-              "            has_next=end < len(items),\n"
-              "            total_count=len(items) if query.count_policy.value == \"exact\" else None,\n"
-              "        )\n",
-          )
-
-          path.write_text(text)
-          PY
-      - name: Normalize focused query coverage
-        run: |
-          uv run ruff format \
-            examples/ui_showcase/main.py \
-            packages/rakit-core/tests/test_resource_filters.py \
-            packages/rakit-sqlalchemy/tests/test_resource_query_configuration.py \
-            packages/rakit-web/tests/test_resource_query_configuration.py \
-            packages/rakit-web/tests/test_generated_rest_pagination.py \
-            packages/rakit/tests/test_query_configuration_facade.py \
-            tests/test_ui_showcase.py
-          uv run ruff check --fix \
-            examples/ui_showcase/main.py \
-            packages/rakit-core/tests/test_resource_filters.py \
-            packages/rakit-sqlalchemy/tests/test_resource_query_configuration.py \
-            packages/rakit-web/tests/test_resource_query_configuration.py \
-            packages/rakit-web/tests/test_generated_rest_pagination.py \
-            packages/rakit/tests/test_query_configuration_facade.py \
-            tests/test_ui_showcase.py
-          uv run ruff format \
-            examples/ui_showcase/main.py \
-            packages/rakit-core/tests/test_resource_filters.py \
-            packages/rakit-sqlalchemy/tests/test_resource_query_configuration.py \
-            packages/rakit-web/tests/test_resource_query_configuration.py \
-            packages/rakit-web/tests/test_generated_rest_pagination.py \
-            packages/rakit/tests/test_query_configuration_facade.py \
-            tests/test_ui_showcase.py
-          uv run ruff check \
-            examples/ui_showcase/main.py \
-            packages/rakit-core/tests/test_resource_filters.py \
-            packages/rakit-sqlalchemy/tests/test_resource_query_configuration.py \
-            packages/rakit-web/tests/test_resource_query_configuration.py \
-            packages/rakit-web/tests/test_generated_rest_pagination.py \
-            packages/rakit/tests/test_query_configuration_facade.py \
-            tests/test_ui_showcase.py
-          uv run ty check
-      - name: Commit normalized focused coverage
+          uv run ruff format examples/custom_datasource/main.py
+          uv run ruff check --fix examples/custom_datasource/main.py
+          uv run ruff format examples/custom_datasource/main.py
+          uv run ruff check examples/custom_datasource/main.py
+      - name: Check patch whitespace
+        run: git diff --check origin/ui-05-resource-experience...HEAD
+      - name: Commit remaining real formatting
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add \
-            examples/ui_showcase/main.py \
-            packages/rakit-core/tests/test_resource_filters.py \
-            packages/rakit-sqlalchemy/tests/test_resource_query_configuration.py \
-            packages/rakit-web/tests/test_resource_query_configuration.py \
-            packages/rakit-web/tests/test_generated_rest_pagination.py \
-            packages/rakit/tests/test_query_configuration_facade.py \
-            tests/test_ui_showcase.py
+          git add examples/custom_datasource/main.py
           if ! git diff --cached --quiet; then
-            git commit -m 'fix(showcase): use canonical resource page result'
+            git commit -m 'style(examples): format custom datasource query support'
             git push origin HEAD:ui-05d-resource-query-configuration
           fi
-      - name: Run focused Task 8 suites
-        run: |
-          set -o pipefail
-          status=0
-          {
-            echo '=== rakit-core Task 8 ==='
-            uv run pytest \
-              packages/rakit-core/tests/test_resource_filters.py \
-              packages/rakit-core/tests/test_query.py \
-              packages/rakit-core/tests/test_generated_api_definitions.py \
-              packages/rakit-core/tests/test_generated_api_compilation.py \
-              packages/rakit-core/tests/test_generated_api_query.py \
-              -q || status=1
-            echo '=== rakit-web Task 8 ==='
-            uv run pytest \
-              packages/rakit-web/tests/test_resource_query_configuration.py \
-              packages/rakit-web/tests/test_generated_rest_contracts.py \
-              packages/rakit-web/tests/test_generated_rest_pagination.py \
-              packages/rakit-web/tests/test_query_ui.py \
-              -q || status=1
-            echo '=== rakit-sqlalchemy package ==='
-            uv run pytest packages/rakit-sqlalchemy/tests -q || status=1
-            echo '=== public facade ==='
-            uv run pytest packages/rakit/tests/test_query_configuration_facade.py -q || status=1
-            echo '=== UI showcase ==='
-            uv run pytest tests/test_ui_showcase.py -q || status=1
-            echo '=== release-level security regression ==='
-            uv run pytest tests/integration/test_security_regressions.py -q || status=1
-            exit "$status"
-          } 2>&1 | tee .github/ui05d-pytest.log
-      - name: Upload focused pytest diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ui05d-pytest-diagnostics
-          path: .github/ui05d-pytest.log
-          if-no-files-found: ignore
