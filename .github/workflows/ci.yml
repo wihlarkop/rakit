@@ -2,32 +2,94 @@ name: CI
 
 on:
   pull_request:
+  push:
+    branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  ui06b-format-test:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          ref: ui-06b-relationships-uploads
-          fetch-depth: 0
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - run: uv sync --all-packages --dev --locked
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run ty check
+      - run: uv run pytest
+
+  dependency-compatibility:
+    name: Dependencies (${{ matrix.mode }})
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [lowest-direct, latest]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Sync minimum supported direct dependencies
+        if: matrix.mode == 'lowest-direct'
+        run: uv sync --all-packages --dev --resolution lowest-direct
+      - name: Sync latest allowed dependencies
+        if: matrix.mode == 'latest'
+        run: uv sync --all-packages --dev --upgrade
+      - name: Run test suite without re-syncing
+        run: uv run --no-sync pytest -q --tb=short --maxfail=5
+
+  release-gate:
+    name: Plan 07 release gate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --all-packages --dev --locked
-      - run: uv run ruff format packages/rakit-web/tests/test_relationship_upload_ui_maturity.py
-      - name: Restore trusted CI
+      - run: uv run pytest --cov
+      - run: uv run mkdocs build --strict
+      - run: uv run python scripts/check_artifacts.py
+
+  artifact-dry-run:
+    name: Artifact dry run
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-packages --dev --locked
+      - run: uv run pytest tests/release -v
+      - name: Build all official distributions
+        shell: bash
         run: |
-          git fetch origin ui-06-advanced-operations
-          git checkout origin/ui-06-advanced-operations -- .github/workflows/ci.yml
-      - name: Commit formatting
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "style(web): format UI-06B regression test"
-          git push origin HEAD:ui-06b-relationships-uploads
+          set -euo pipefail
+          rm -rf dist
+          mkdir -p dist
+          for project in packages/*; do
+            uv build "$project" --out-dir dist
+          done
+          ls -la dist
+      - name: Upload dry-run artifacts
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: pr-python-distributions
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7

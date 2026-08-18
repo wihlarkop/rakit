@@ -227,7 +227,10 @@ async def test_edit_form_presents_current_file_as_replace_not_remove() -> None:
     assert "Current file" in response.text
     assert "customer-contract.pdf" in response.text
     assert "Maximum size: 2 MB" in response.text
-    assert "Choose a new file to replace the current file; leave this empty to keep it." in response.text
+    assert (
+        "Choose a new file to replace the current file; leave this empty to keep it."
+        in response.text
+    )
     assert stored.key not in response.text
     assert stored.checksum not in response.text
     assert 'name="attachment"' in response.text
