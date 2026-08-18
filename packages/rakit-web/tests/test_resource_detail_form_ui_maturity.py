@@ -27,7 +27,7 @@ class _ResourceDataSource:
     identity_fields = ("id",)
 
     def __init__(self) -> None:
-        self.record = {
+        self.record: dict[str, object] = {
             "id": 1,
             "name": "Visible record",
             "optional": None,
