@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "components/actions.html" import action_group %}
 {% block title %}{{ resource.singular_label }}{% endblock %}
 {% block content %}
 {% set record_view = namespace(title='', identity='', first_value='') %}
@@ -36,10 +37,11 @@
       <p class="mt-1 text-sm font-medium text-rakit-text-muted" data-rakit-record-context>{% if record_view.identity and record_view.title != record_view.identity %}{{ resource.singular_label }} · {{ record_view.identity }}{% else %}{{ resource.singular_label }}{% endif %}</p>
       <p class="mt-2 text-sm leading-6 text-rakit-text-muted">Inspect the fields available for this record.</p>
     </div>
-    {% if edit_url or delete_url %}
-      <div class="flex flex-wrap items-center gap-2" aria-label="Record actions">
+    {% if edit_url or delete_url or record_actions %}
+      <div class="flex flex-wrap items-start gap-2" aria-label="Record actions">
         {% if edit_url %}<a class="rakit-button rakit-button-secondary" href="{{ edit_url }}">Edit</a>{% endif %}
         {% if delete_url %}<a class="rakit-button rakit-button-danger" href="{{ delete_url }}">Delete</a>{% endif %}
+        {{ action_group(record_actions, 'Record actions') }}
       </div>
     {% endif %}
   </header>
