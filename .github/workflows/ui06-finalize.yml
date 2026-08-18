@@ -4,6 +4,9 @@ on:
   pull_request:
     branches:
       - ui-06-advanced-operations
+  push:
+    branches:
+      - ui-06a-actions-bulk
 
 permissions:
   contents: write
