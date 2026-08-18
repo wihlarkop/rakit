@@ -6,28 +6,29 @@ on:
       - ui-06-advanced-operations
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  format-diff:
+  format-branch:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ui-06a-actions-bulk
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --all-packages --dev
-      - name: Show exact Ruff format diff
+      - name: Apply exact Ruff formatting to child branch
         run: |
           uv run ruff format .
-          git diff -- \
-            examples/ui_showcase/main.py \
-            packages/rakit-web/src/rakit_web/action_presentation.py \
-            packages/rakit-web/src/rakit_web/action_views.py \
-            packages/rakit-web/src/rakit_web/bulk_admin.py \
-            packages/rakit-web/src/rakit_web/bulk_review.py \
-            packages/rakit-web/src/rakit_web/dashboard_admin.py \
-            packages/rakit-web/src/rakit_web/page_admin.py \
-            packages/rakit-web/tests/test_advanced_ui_maturity.py
-          test -z "$(git status --short)"
+          if git diff --quiet; then
+            echo "Ruff formatting already clean."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "style: apply Ruff formatting"
+          git push origin HEAD:ui-06a-actions-bulk
