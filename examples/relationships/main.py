@@ -108,22 +108,22 @@ class LineItemsAdmin(ResourceAdmin):
     detail_fields = ("id", "name")
 
 
-class EnrollmentsAdmin(ResourceAdmin):
-    resource_id = "enrollments"
-    path = "/enrollments"
-    label = "Enrollments"
-    singular_label = "Enrollment"
-    data_source = ENROLLMENTS
-    list_fields = ("id", "name")
-    detail_fields = ("id", "name")
-
-
 class CoursesAdmin(ResourceAdmin):
     resource_id = "courses"
     path = "/courses"
     label = "Courses"
     singular_label = "Course"
     data_source = COURSES
+    list_fields = ("id", "name")
+    detail_fields = ("id", "name")
+
+
+class EnrollmentsAdmin(ResourceAdmin):
+    resource_id = "enrollments"
+    path = "/enrollments"
+    label = "Enrollments"
+    singular_label = "Enrollment"
+    data_source = ENROLLMENTS
     list_fields = ("id", "name")
     detail_fields = ("id", "name")
 
@@ -139,56 +139,53 @@ class OrdersAdmin(ResourceAdmin):
     relationships = (
         RelationshipDefinition(
             relationship_id="customer",
+            target_resource_id="customers",
             label="Customer",
-            target_resource="customers",
+            kind=RelationshipKind.MANY_TO_ONE,
             cardinality=RelationshipCardinality.TO_ONE,
-            kind=RelationshipKind.DIRECT,
+            nullable=True,
+            record_label_field="name",
         ),
         RelationshipDefinition(
             relationship_id="tags",
+            target_resource_id="tags",
             label="Tags",
-            target_resource="tags",
+            kind=RelationshipKind.MANY_TO_MANY,
             cardinality=RelationshipCardinality.TO_MANY,
-            kind=RelationshipKind.DIRECT,
+            record_label_field="name",
         ),
         RelationshipDefinition(
             relationship_id="line_items",
+            target_resource_id="line_items",
             label="Line items",
-            target_resource="line_items",
+            kind=RelationshipKind.ONE_TO_MANY,
             cardinality=RelationshipCardinality.TO_MANY,
-            kind=RelationshipKind.DIRECT,
+            record_label_field="name",
         ),
-    )
-
-
-class CustomersWithCoursesAdmin(ResourceAdmin):
-    resource_id = "customers_with_courses"
-    path = "/customers-with-courses"
-    label = "Customers with courses"
-    singular_label = "Customer with courses"
-    data_source = CUSTOMERS
-    list_fields = ("id", "name")
-    detail_fields = ("id", "name")
-    relationships = (
         RelationshipDefinition(
-            relationship_id="courses",
-            label="Courses",
-            target_resource="courses",
-            association_resource="enrollments",
+            relationship_id="enrollments",
+            target_resource_id="enrollments",
+            association_target_resource_id="courses",
+            association_fields=("grade",),
+            label="Course enrollments",
+            kind=RelationshipKind.ASSOCIATION_OBJECT,
             cardinality=RelationshipCardinality.TO_MANY,
-            kind=RelationshipKind.ASSOCIATION,
+            record_label_field="name",
         ),
     )
 
 
 admin = Admin(title="Relationships demo", debug=True)
-admin.register(CustomersAdmin)
-admin.register(TagsAdmin)
-admin.register(LineItemsAdmin)
-admin.register(EnrollmentsAdmin)
-admin.register(CoursesAdmin)
-admin.register(OrdersAdmin)
-admin.register(CustomersWithCoursesAdmin)
+for resource in (
+    CustomersAdmin,
+    TagsAdmin,
+    LineItemsAdmin,
+    CoursesAdmin,
+    EnrollmentsAdmin,
+    OrdersAdmin,
+):
+    admin.register(resource)
+
 app = admin.asgi()
 
 
