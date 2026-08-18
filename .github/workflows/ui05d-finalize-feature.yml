@@ -1,4 +1,4 @@
-name: UI-05D diagnostics
+name: UI-05D test migration
 
 on:
   pull_request:
@@ -6,19 +6,41 @@ on:
       - ui-05-resource-experience
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  diagnostics:
+  migrate-and-diagnose:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ui-05d-resource-query-configuration
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v6
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: Sync workspace
         run: uv sync --all-packages --dev --locked
+      - name: Apply deterministic core test migration
+        run: python .github/ui05d_test_migrate.py
+      - name: Normalize migration batch
+        run: |
+          uv run ruff format \
+            packages/rakit/src/rakit/core.py \
+            examples/fastapi_sqlalchemy/relationship_review.py \
+            packages/rakit-core/tests/test_query.py \
+            packages/rakit-core/tests/test_resource_service.py \
+            packages/rakit-core/tests/testing/test_datasource_contract.py \
+            packages/rakit-core/tests/test_generated_api_query.py
+          uv run ruff check --fix \
+            packages/rakit/src/rakit/core.py \
+            examples/fastapi_sqlalchemy/relationship_review.py \
+            packages/rakit-core/tests/test_query.py \
+            packages/rakit-core/tests/test_resource_service.py \
+            packages/rakit-core/tests/testing/test_datasource_contract.py \
+            packages/rakit-core/tests/test_generated_api_query.py
       - name: Capture full type-check diagnostics
         run: |
           set -o pipefail
@@ -30,3 +52,20 @@ jobs:
           name: ui05d-ty-diagnostics
           path: .github/ui05d-ty.log
           if-no-files-found: ignore
+      - name: Commit migration batch
+        if: success()
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            packages/rakit/src/rakit/core.py \
+            examples/fastapi_sqlalchemy/relationship_review.py \
+            packages/rakit-core/tests/test_query.py \
+            packages/rakit-core/tests/test_resource_service.py \
+            packages/rakit-core/tests/testing/test_datasource_contract.py \
+            packages/rakit-core/tests/test_generated_api_query.py
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'test(query): migrate core pagination contracts'
+          git push origin HEAD:ui-05d-resource-query-configuration
