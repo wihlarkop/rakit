@@ -10,6 +10,17 @@ def replace_once(path: str, old: str, new: str) -> None:
     target.write_text(text.replace(old, new, 1))
 
 
+def replace_count(path: str, old: str, new: str, expected: int) -> None:
+    target = Path(path)
+    text = target.read_text()
+    count = text.count(old)
+    if count != expected:
+        raise SystemExit(
+            f"expected exactly {expected} anchors in {path!r}, found {count}: {old[:100]!r}"
+        )
+    target.write_text(text.replace(old, new))
+
+
 # Backward compatibility: datasource capability objects created before UI-05D
 # implicitly support the historical PAGE strategy.
 compiler = "packages/rakit-core/src/rakit_core/compiler.py"
@@ -32,14 +43,77 @@ replace_once(
     "        if definition.pagination.strategy not in pagination_strategies:\n",
 )
 
-# Dataclass defaults must use a factory even though the Pydantic policy object is
-# immutable; this keeps the public compiled contract lint-clean and conventional.
+# Dataclass defaults use a factory so the compiled contract stays conventional
+# and type-checker friendly.
 generated_api = "packages/rakit-core/src/rakit_core/generated_api.py"
 replace_once(generated_api, "from dataclasses import dataclass\n", "from dataclasses import dataclass, field\n")
 replace_once(
     generated_api,
     "    pagination: ResourcePaginationPolicy = ResourcePaginationPolicy()\n",
     "    pagination: ResourcePaginationPolicy = field(default_factory=ResourcePaginationPolicy)\n",
+)
+
+# Built-in field filters derive predicate_fields from field at validation time.
+# Give the static constructor a default as well, and make tuple serialization
+# explicitly typed after the runtime all(str) guard.
+filters = "packages/rakit-core/src/rakit_core/filters.py"
+replace_once(filters, "from typing import Any\n", "from typing import Any, cast\n")
+replace_once(
+    filters,
+    '            return ",".join(value)\n',
+    '            return ",".join(cast(tuple[str, ...], value))\n',
+)
+replace_once(
+    filters,
+    "class _FieldResourceFilter(ResourceFilter):\n    field: str\n",
+    "class _FieldResourceFilter(ResourceFilter):\n    predicate_fields: tuple[str, ...] = ()\n    field: str\n",
+)
+
+# The reusable datasource contract historically exercises page-number results.
+# UI-05D broadens DataSource.list() to a strategy union, so narrow explicitly in
+# the page-specific contract assertions instead of assuming every result shape.
+contract = "packages/rakit-core/src/rakit_core/testing/datasource_contract.py"
+replace_once(
+    contract,
+    "    OffsetPagination,\n    ResourceQuery,\n",
+    "    OffsetPagination,\n    PageResult,\n    ResourceQuery,\n",
+)
+replace_count(
+    contract,
+    "                    count_policy=CountPolicy.DISABLED,\n"
+    "                )\n"
+    "            )\n"
+    "            seen.extend(\n",
+    "                    count_policy=CountPolicy.DISABLED,\n"
+    "                )\n"
+    "            )\n"
+    "            assert isinstance(page, PageResult)\n"
+    "            seen.extend(\n",
+    2,
+)
+replace_once(
+    contract,
+    "        exact = await ds.list(ResourceQuery(count_policy=CountPolicy.EXACT))\n"
+    "        assert exact.total_count == total, \"EXACT count must report the full filtered total\"\n",
+    "        exact = await ds.list(ResourceQuery(count_policy=CountPolicy.EXACT))\n"
+    "        assert isinstance(exact, PageResult)\n"
+    "        assert exact.total_count == total, \"EXACT count must report the full filtered total\"\n",
+)
+replace_once(
+    contract,
+    "        deferred = await ds.list(ResourceQuery(count_policy=CountPolicy.DEFERRED))\n"
+    "        assert deferred.total_count is None, \"DEFERRED count must not run a total count\"\n",
+    "        deferred = await ds.list(ResourceQuery(count_policy=CountPolicy.DEFERRED))\n"
+    "        assert isinstance(deferred, PageResult)\n"
+    "        assert deferred.total_count is None, \"DEFERRED count must not run a total count\"\n",
+)
+replace_once(
+    contract,
+    "        disabled = await ds.list(ResourceQuery(count_policy=CountPolicy.DISABLED))\n"
+    "        assert disabled.total_count is None, \"DISABLED count must not run a total count\"\n",
+    "        disabled = await ds.list(ResourceQuery(count_policy=CountPolicy.DISABLED))\n"
+    "        assert isinstance(disabled, PageResult)\n"
+    "        assert disabled.total_count is None, \"DISABLED count must not run a total count\"\n",
 )
 
 showcase = "examples/ui_showcase/main.py"
