@@ -604,7 +604,7 @@ async def test_invalid_layout_form_links_errors_and_opens_invalid_tab() -> None:
     assert 'href="#rakit--users-email"' in response.text
     assert 'data-rakit-first-invalid="rakit--users-email"' in response.text
     assert 'aria-selected="true"' in response.text
-    assert "(1)</span>" in response.text
+    assert '<span class="rakit-status rakit-status-danger">1</span>' in response.text
     contact_details = response.text.split('id="contact-details"', 1)[1].split(">", 1)[0]
     assert " open" in contact_details
     assert 'href="#contact"' in response.text
