@@ -23,6 +23,7 @@ from rakit_core.dashboard import (
     WidgetLoadingMode,
     WidgetSize,
 )
+from rakit_core.datasource import DataSourceCapabilities
 from rakit_core.definitions import PageDefinition
 from rakit_core.endpoints import (
     AdminEndpoint,
@@ -46,6 +47,7 @@ from rakit_core.filters import (
     DateRangeFilter,
     Filter,
     FilterChoice,
+    FilterControl,
     FilterOperator,
     FilterSelection,
     NumberFilter,
@@ -112,6 +114,7 @@ __all__ = [
     "CursorPageResult",
     "CursorPagination",
     "DashboardDefinition",
+    "DataSourceCapabilities",
     "DateFilter",
     "DateRangeFilter",
     "DomainEndpointHandler",
@@ -128,6 +131,7 @@ __all__ = [
     "EndpointStreamResult",
     "Filter",
     "FilterChoice",
+    "FilterControl",
     "FilterOperator",
     "FilterSelection",
     "GeneratedCrudOperation",
