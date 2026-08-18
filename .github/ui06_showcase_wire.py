@@ -27,6 +27,12 @@ replace_once(
 )
 
 advanced = Path("examples/ui_showcase/advanced_states.py")
+replace_once(advanced, "    TransactionPolicy,\n", "")
+replace_once(
+    advanced,
+    "from rakit_core.resources import ResourceService\n",
+    "from rakit_core.resources import ResourceService\nfrom rakit_core.transactions import TransactionPolicy\n",
+)
 replace_once(
     advanced,
     '        description="Writable TO_ONE/TO_MANY, pagination, inline reorder, and unlink-only UI-06B states.",\n',
