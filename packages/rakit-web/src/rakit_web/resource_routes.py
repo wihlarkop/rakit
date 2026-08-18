@@ -30,6 +30,7 @@ from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 
 from ._paths import mounted_path as _mounted_path
+from .action_presentation import action_web_presentation
 from .action_views import request_action_views
 from .assets import static_url
 from .icons import render_icon
@@ -84,6 +85,7 @@ def build_templates(template_dirs: Sequence[Path]) -> Jinja2Templates:
     globals_["static_url"] = _template_static_url
     globals_["rakit_icon"] = render_icon
     globals_["rakit_resource_web_presentation"] = resource_web_presentation
+    globals_["rakit_action_web_presentation"] = action_web_presentation
     return Jinja2Templates(env=environment)
 
 
