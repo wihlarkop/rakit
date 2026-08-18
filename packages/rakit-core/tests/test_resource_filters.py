@@ -256,14 +256,14 @@ def test_pagination_contracts_and_compatibility_alias() -> None:
     assert LimitOffsetPagination(offset=25, limit=50).offset == 25
     assert CursorPagination(cursor="opaque", limit=25).cursor == "opaque"
 
-    for kwargs in (
-        {"allowed": ()},
-        {"default": 10, "allowed": (25, 50)},
-        {"default": 25, "allowed": (25, 25)},
-        {"default": 25, "allowed": (0, 25)},
-    ):
-        with pytest.raises(ValidationError):
-            PageSizePolicy(**kwargs)
+    with pytest.raises(ValidationError):
+        PageSizePolicy(allowed=())
+    with pytest.raises(ValidationError):
+        PageSizePolicy(default=10, allowed=(25, 50))
+    with pytest.raises(ValidationError):
+        PageSizePolicy(default=25, allowed=(25, 25))
+    with pytest.raises(ValidationError):
+        PageSizePolicy(default=25, allowed=(0, 25))
 
 
 def test_resource_query_constructs_each_pagination_strategy() -> None:
