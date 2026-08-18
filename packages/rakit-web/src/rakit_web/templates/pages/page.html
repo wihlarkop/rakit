@@ -34,14 +34,16 @@
       <input type="hidden" name="submission_token" value="{{ submission_token }}" />
       <section class="rakit-panel space-y-4 p-4">
         {% for field in fields %}
+          {% set description_id = field.id ~ '-description' %}
+          {% set error_id = field.id ~ '-error' %}
           {% set described = [] %}
-          {% if field.description %}{% set _ = described.append(field.description_id) %}{% endif %}
-          {% if field.issues %}{% set _ = described.append(field.error_id) %}{% endif %}
+          {% if field.description %}{% set _ = described.append(description_id) %}{% endif %}
+          {% if field.issues %}{% set _ = described.append(error_id) %}{% endif %}
           <div class="space-y-1.5">
             <label class="block text-sm font-medium text-rakit-text" for="{{ field.id }}">{{ field.label }}</label>
             <input class="rakit-input" id="{{ field.id }}" name="{{ field.name }}" value="{{ field.value }}"{% if described %} aria-describedby="{{ described | join(' ') }}"{% endif %}{% if field.issues %} aria-invalid="true"{% endif %} />
-            {% if field.description %}<p id="{{ field.description_id }}" class="text-sm text-rakit-text-muted">{{ field.description }}</p>{% endif %}
-            {% if field.issues %}<div id="{{ field.error_id }}" class="rakit-error" role="alert">{% for issue in field.issues %}<p>{{ issue }}</p>{% endfor %}</div>{% endif %}
+            {% if field.description %}<p id="{{ description_id }}" class="text-sm text-rakit-text-muted">{{ field.description }}</p>{% endif %}
+            {% if field.issues %}<div id="{{ error_id }}" class="rakit-error" role="alert">{% for issue in field.issues %}<p>{{ issue }}</p>{% endfor %}</div>{% endif %}
           </div>
         {% endfor %}
         {% if not fields %}<p class="text-sm leading-6 text-rakit-text-muted">Continue to submit this page operation.</p>{% endif %}

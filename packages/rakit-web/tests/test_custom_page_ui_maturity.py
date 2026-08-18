@@ -124,7 +124,7 @@ async def test_default_page_renderer_never_stringifies_unsupported_payload() -> 
         return PageResult(payload=secret)
 
     definition = PageDefinition(
-        page_id="unsafe-payload",
+        page_id="unsafe_payload",
         path="/unsafe-payload",
         label="Unsafe Payload",
         handler=DomainPageHandler(handler),
@@ -184,8 +184,6 @@ def test_mutating_page_field_views_have_stable_accessibility_ids() -> None:
             "name": "reason",
             "label": "Reason",
             "description": "Why this operation is needed",
-            "description_id": "rakit-page-reason-description",
-            "error_id": "rakit-page-reason-error",
             "value": "x",
             "issues": ("String should have at least 2 characters",),
         },
@@ -202,6 +200,8 @@ def test_default_page_template_never_interpolates_raw_payload_and_keeps_page_act
     assert "|safe" not in page_template
     assert "This page returned content that requires a custom template." in page_template
     assert "action_group(page_actions" in page_template
+    assert "{% set description_id = field.id ~ '-description' %}" in page_template
+    assert "{% set error_id = field.id ~ '-error' %}" in page_template
     assert "aria-describedby=\"{{ described | join(' ') }}\"" in page_template
     assert 'aria-invalid="true"' in page_template
     assert "rejection_message" in rejected_template

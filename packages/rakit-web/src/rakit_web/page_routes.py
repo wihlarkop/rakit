@@ -125,8 +125,6 @@ def _field_views(
             "name": field.name,
             "label": field.title or field.name.replace("_", " ").title(),
             "description": field.description,
-            "description_id": f"rakit-page-{field.name}-description",
-            "error_id": f"rakit-page-{field.name}-error",
             "value": submitted.get(field.name, ""),
             "issues": issues.get(field.name, ()),
         }
