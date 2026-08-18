@@ -1,0 +1,55 @@
+name: UI05F temporary framing polish
+
+on:
+  push:
+    branches: [ui-05f-filter-rail-framing-polish]
+
+permissions:
+  contents: write
+
+jobs:
+  polish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ui-05f-filter-rail-framing-polish
+      - name: Add filter rail framing dividers
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("packages/rakit-web/src/rakit_web/templates/resources/_table.html")
+          text = path.read_text(encoding="utf-8")
+
+          old_header = '<div class="mb-3 flex items-center justify-between gap-3">'
+          new_header = '<div class="mb-4 flex items-center justify-between gap-3 border-b border-rakit-border pb-3">'
+          if old_header not in text and new_header not in text:
+              raise SystemExit("desktop filter rail header marker not found")
+          text = text.replace(old_header, new_header, 1)
+
+          old_footer = '''      {{ render_filter_groups(filter_groups, resource, resource_path, filter_hidden_inputs, filter_presentations, filter_policy, "desktop") }}
+    </aside>'''
+          new_footer = '''      {{ render_filter_groups(filter_groups, resource, resource_path, filter_hidden_inputs, filter_presentations, filter_policy, "desktop") }}
+      <div class="mt-4 border-t border-rakit-border" aria-hidden="true"></div>
+    </aside>'''
+          if old_footer not in text and new_footer not in text:
+              raise SystemExit("desktop filter rail footer marker not found")
+          text = text.replace(old_footer, new_footer, 1)
+
+          path.write_text(text, encoding="utf-8")
+          PY
+      - name: Commit framing polish
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add packages/rakit-web/src/rakit_web/templates/resources/_table.html
+          if git diff --cached --quiet; then
+            echo "No framing changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "style(web): frame resource filter rail"
+          git push origin HEAD:ui-05f-filter-rail-framing-polish
