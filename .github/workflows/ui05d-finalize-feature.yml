@@ -23,62 +23,64 @@ jobs:
           python-version: '3.12'
       - name: Sync workspace
         run: uv sync --all-packages --dev --locked
-      - name: Normalize focused query tests
+      - name: Normalize focused query coverage
         run: |
           uv run ruff format \
             packages/rakit-core/tests/test_resource_filters.py \
+            packages/rakit-sqlalchemy/tests/test_resource_query_configuration.py \
             packages/rakit-web/tests/test_resource_query_configuration.py \
-            packages/rakit-web/tests/test_query_ui.py \
-            packages/rakit-web/tests/test_resource_list_ui_maturity.py \
-            packages/rakit-web/tests/test_generated_rest_contracts.py
+            packages/rakit-web/tests/test_generated_rest_pagination.py \
+            packages/rakit/tests/test_query_configuration_facade.py \
+            tests/test_ui_showcase.py
           uv run ruff check \
             packages/rakit-core/tests/test_resource_filters.py \
+            packages/rakit-sqlalchemy/tests/test_resource_query_configuration.py \
             packages/rakit-web/tests/test_resource_query_configuration.py \
-            packages/rakit-web/tests/test_query_ui.py \
-            packages/rakit-web/tests/test_resource_list_ui_maturity.py \
-            packages/rakit-web/tests/test_generated_rest_contracts.py
+            packages/rakit-web/tests/test_generated_rest_pagination.py \
+            packages/rakit/tests/test_query_configuration_facade.py \
+            tests/test_ui_showcase.py
           uv run ty check
-      - name: Commit normalized focused query tests
+      - name: Commit normalized focused coverage
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add \
             packages/rakit-core/tests/test_resource_filters.py \
+            packages/rakit-sqlalchemy/tests/test_resource_query_configuration.py \
             packages/rakit-web/tests/test_resource_query_configuration.py \
-            packages/rakit-web/tests/test_query_ui.py \
-            packages/rakit-web/tests/test_resource_list_ui_maturity.py \
-            packages/rakit-web/tests/test_generated_rest_contracts.py
+            packages/rakit-web/tests/test_generated_rest_pagination.py \
+            packages/rakit/tests/test_query_configuration_facade.py \
+            tests/test_ui_showcase.py
           if ! git diff --cached --quiet; then
-            git commit -m 'test(query): normalize resource query coverage'
+            git commit -m 'test(query): normalize final resource query coverage'
             git push origin HEAD:ui-05d-resource-query-configuration
           fi
-      - name: Run focused regression suites
+      - name: Run focused Task 8 suites
         run: |
           set -o pipefail
           status=0
           {
-            echo '=== rakit-core query suites ==='
+            echo '=== rakit-core Task 8 ==='
             uv run pytest \
               packages/rakit-core/tests/test_resource_filters.py \
               packages/rakit-core/tests/test_query.py \
+              packages/rakit-core/tests/test_generated_api_definitions.py \
+              packages/rakit-core/tests/test_generated_api_compilation.py \
               packages/rakit-core/tests/test_generated_api_query.py \
-              packages/rakit-core/tests/testing/test_datasource_contract.py \
               -q || status=1
-            echo '=== rakit-sqlalchemy query suites ==='
-            uv run pytest \
-              packages/rakit-sqlalchemy/tests/test_datasource.py \
-              packages/rakit-sqlalchemy/tests/test_query_translation.py \
-              -q || status=1
-            echo '=== rakit-web query suites ==='
+            echo '=== rakit-web Task 8 ==='
             uv run pytest \
               packages/rakit-web/tests/test_resource_query_configuration.py \
-              packages/rakit-web/tests/test_query_ui.py \
-              packages/rakit-web/tests/test_resource_list_ui_maturity.py \
               packages/rakit-web/tests/test_generated_rest_contracts.py \
-              packages/rakit-web/tests/test_bulk_list_ui.py \
-              packages/rakit-web/tests/test_relationship_ui.py \
-              packages/rakit-web/tests/test_resource_detail_form_ui_maturity.py \
+              packages/rakit-web/tests/test_generated_rest_pagination.py \
+              packages/rakit-web/tests/test_query_ui.py \
               -q || status=1
+            echo '=== rakit-sqlalchemy package ==='
+            uv run pytest packages/rakit-sqlalchemy/tests -q || status=1
+            echo '=== public facade ==='
+            uv run pytest packages/rakit/tests/test_query_configuration_facade.py -q || status=1
+            echo '=== UI showcase ==='
+            uv run pytest tests/test_ui_showcase.py -q || status=1
             echo '=== release-level security regression ==='
             uv run pytest tests/integration/test_security_regressions.py -q || status=1
             exit "$status"
