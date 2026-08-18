@@ -1,10 +1,33 @@
 {% extends "base.html" %}
+{% block title %}Delete {{ label }}{% endblock %}
 {% block content %}
-<h1>Confirm deletion</h1>
-<form method="post" action="{{ action_url }}">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-  <input type="hidden" name="submission_token" value="{{ submission_token }}" />
-  <input type="hidden" name="delete_token" value="{{ delete_token }}" />
-  <button type="submit">Delete</button>
-</form>
+<nav data-rakit-breadcrumb="resource-delete" class="mb-3 flex flex-wrap items-center gap-1.5 text-sm text-rakit-text-muted" aria-label="Breadcrumb">
+  <a href="{{ request.scope.get('root_path', '').rstrip('/') }}/" class="font-medium transition hover:text-rakit-text">Dashboard</a>
+  <span data-rakit-breadcrumb-separator aria-hidden="true" class="text-rakit-text-subtle">{{ rakit_icon("chevron-right", class_name="size-4") }}</span>
+  <a href="{{ cancel_url }}" class="font-medium transition hover:text-rakit-text">{{ label }}</a>
+  <span data-rakit-breadcrumb-separator aria-hidden="true" class="text-rakit-text-subtle">{{ rakit_icon("chevron-right", class_name="size-4") }}</span>
+  <span aria-current="page">Delete</span>
+</nav>
+<div class="mx-auto max-w-2xl">
+  <header class="mb-6">
+    <p class="text-sm font-medium text-rakit-danger">Destructive action</p>
+    <h1 class="mt-1 text-2xl font-semibold tracking-tight text-rakit-text">Delete {{ label }}?</h1>
+    <p class="mt-2 text-sm leading-6 text-rakit-text-muted">Review this action before continuing.</p>
+  </header>
+  <section class="rakit-panel">
+    <div class="rakit-panel-body space-y-5">
+      <div class="rakit-alert rakit-alert-danger">
+        <p class="font-semibold">This record will be removed through the configured resource adapter.</p>
+        <p class="mt-1">The framework does not assume whether the adapter performs a physical or recoverable deletion.</p>
+      </div>
+      <form method="post" action="{{ action_url }}" class="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <input type="hidden" name="submission_token" value="{{ submission_token }}" />
+        <input type="hidden" name="delete_token" value="{{ delete_token }}" />
+        <a class="rakit-button rakit-button-secondary" href="{{ cancel_url }}">Cancel</a>
+        <button class="rakit-button rakit-button-danger" type="submit">Delete record</button>
+      </form>
+    </div>
+  </section>
+</div>
 {% endblock %}
