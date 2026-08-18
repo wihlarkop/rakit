@@ -23,10 +23,10 @@ jobs:
           python-version: '3.12'
       - name: Sync workspace
         run: uv sync --all-packages --dev --locked
-      - name: Apply SQLAlchemy test migration
+      - name: Apply Web test migration
         run: |
           set -o pipefail
-          python .github/ui05d_migrate_sqlalchemy_tests.py 2>&1 | tee .github/ui05d-migration.log
+          python .github/ui05d_migrate_web_tests.py 2>&1 | tee .github/ui05d-migration.log
       - name: Upload migration diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -34,14 +34,24 @@ jobs:
           name: ui05d-migration-diagnostics
           path: .github/ui05d-migration.log
           if-no-files-found: ignore
-      - name: Normalize SQLAlchemy tests
+      - name: Normalize Web tests
         run: |
           uv run ruff format \
-            packages/rakit-sqlalchemy/tests/test_datasource.py \
-            packages/rakit-sqlalchemy/tests/test_query_translation.py
+            packages/rakit-web/tests/test_bulk_list_ui.py \
+            packages/rakit-web/tests/test_generated_rest_contracts.py \
+            packages/rakit-web/tests/test_query_ui.py \
+            packages/rakit-web/tests/test_relationship_ui.py \
+            packages/rakit-web/tests/test_resource_detail_form_ui_maturity.py \
+            packages/rakit-web/tests/test_resource_list_ui_maturity.py \
+            tests/integration/test_security_regressions.py
           uv run ruff check --fix \
-            packages/rakit-sqlalchemy/tests/test_datasource.py \
-            packages/rakit-sqlalchemy/tests/test_query_translation.py
+            packages/rakit-web/tests/test_bulk_list_ui.py \
+            packages/rakit-web/tests/test_generated_rest_contracts.py \
+            packages/rakit-web/tests/test_query_ui.py \
+            packages/rakit-web/tests/test_relationship_ui.py \
+            packages/rakit-web/tests/test_resource_detail_form_ui_maturity.py \
+            packages/rakit-web/tests/test_resource_list_ui_maturity.py \
+            tests/integration/test_security_regressions.py
       - name: Capture full type-check diagnostics
         continue-on-error: true
         run: |
@@ -59,10 +69,15 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add \
-            packages/rakit-sqlalchemy/tests/test_datasource.py \
-            packages/rakit-sqlalchemy/tests/test_query_translation.py
+            packages/rakit-web/tests/test_bulk_list_ui.py \
+            packages/rakit-web/tests/test_generated_rest_contracts.py \
+            packages/rakit-web/tests/test_query_ui.py \
+            packages/rakit-web/tests/test_relationship_ui.py \
+            packages/rakit-web/tests/test_resource_detail_form_ui_maturity.py \
+            packages/rakit-web/tests/test_resource_list_ui_maturity.py \
+            tests/integration/test_security_regressions.py
           if git diff --cached --quiet; then
             exit 0
           fi
-          git commit -m 'test(query): migrate SQLAlchemy pagination contracts'
+          git commit -m 'test(query): migrate Web pagination contracts'
           git push origin HEAD:ui-05d-resource-query-configuration
