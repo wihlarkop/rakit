@@ -54,7 +54,7 @@ def test_ui_showcase_exposes_realistic_application_and_ui_lab() -> None:
             "inventory": client.get("/inventory"),
             "teams": client.get("/teams"),
         }
-        orders_page_two = client.get("/orders", params={"per_page": "5", "page": "2"})
+        orders_page_two = client.get("/orders", params={"per_page": "20", "page": "2"})
 
     assert dashboard.status_code == 200
     assert "Rakit Commerce" in dashboard.text
@@ -92,8 +92,17 @@ def test_ui_showcase_exposes_realistic_application_and_ui_lab() -> None:
     assert "Low stock" in resources["inventory"].text
     assert "Commerce operations" in resources["teams"].text
 
+    assert 'data-rakit-filter-group="status"' in resources["orders"].text
+    assert ">Paid</a>" in resources["orders"].text
+    assert ">Pending review</a>" in resources["orders"].text
+    assert '<option value="20" selected>20</option>' in resources["orders"].text
+    assert '<option value="40">40</option>' in resources["orders"].text
+    assert '<option value="80">80</option>' in resources["orders"].text
+    assert 'data-rakit-filter-group="stock_level"' in resources["inventory"].text
+    assert ">Needs attention</a>" in resources["inventory"].text
+
     assert orders_page_two.status_code == 200
-    assert "ORD-1075" in orders_page_two.text
+    assert "ORD-1060" in orders_page_two.text
     assert 'aria-current="page">2</a>' in orders_page_two.text
 
 
