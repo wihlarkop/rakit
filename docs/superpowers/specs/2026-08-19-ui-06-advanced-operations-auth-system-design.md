@@ -111,7 +111,7 @@ class ActionPresentation:
 
 ```python
 ResourceWebPresentation(
-    filters=...,
+    filters=FilterPanelPresentation(),
     actions={
         "refund_order": ActionPresentation(intent=ActionIntent.DANGER),
     },
@@ -123,7 +123,7 @@ Page actions use the symmetric Web-only contract:
 ```python
 @dataclass(frozen=True, slots=True)
 class PageWebPresentation:
-    actions: Mapping[str, ActionPresentation] = ...
+    actions: Mapping[str, ActionPresentation] = field(default_factory=dict)
 ```
 
 and registration becomes:
@@ -136,7 +136,7 @@ admin.register_page(
 )
 ```
 
-Existing registration calls without `web=` remain valid.
+The ellipses above are illustrative call-site placeholders, not additional runtime fields. Existing registration calls without `web=` remain valid.
 
 ### 4.3 Intent validation
 
@@ -145,7 +145,9 @@ Presentation configuration fails closed during registration/startup:
 - unknown action ids are invalid;
 - non-`ActionPresentation` values are invalid;
 - invalid presentation enum values are invalid;
-- each owner/scope may have at most one `PRIMARY` action.
+- each owner may have at most one `PRIMARY` action **within each action scope**.
+
+For example, one resource may independently have one primary RESOURCE action, one primary RECORD action, and one primary BULK action, but it may not have two primary RECORD actions.
 
 Rakit does not expose arbitrary action CSS classes, colors, pixel positions, or raw class-name customization through this contract.
 
@@ -225,10 +227,10 @@ Baseline rendering rules:
 TO_ONE + LINK
   -> compact current-selection surface with change/clear affordances
 
-TO_MANY + LINK, low cardinality
+TO_MANY + LINK, complete linked set already available in the current result
   -> compact linked-record list
 
-TO_MANY + LINK, high cardinality
+TO_MANY + LINK, result is paginated or indicates records outside the loaded window
   -> searchable/paginated compact list or table using existing editor/query capability
 
 INLINE / NESTED
@@ -241,7 +243,13 @@ HIDDEN
   -> not rendered
 ```
 
-High-cardinality behavior uses the existing safe relationship-editor pagination/query capability rather than CSS-only heuristics or domain-specific assumptions.
+Rakit does **not** introduce a magic numeric "high-cardinality" threshold in UI-06. The compact-vs-paginated choice is result/capability-driven:
+
+- if the current relationship result proves the complete linked set is loaded, a compact list is allowed;
+- if pagination metadata, `has_next`, a total beyond the loaded window, or equivalent existing relationship-editor state proves additional records exist, use the paginated surface;
+- if the runtime cannot safely establish that the loaded set is complete, prefer the existing paginated/editor surface rather than silently presenting an incomplete compact list.
+
+This rule avoids domain-specific assumptions and keeps the renderer aligned with server-authoritative relationship querying.
 
 ### 5.2 Empty states
 
@@ -346,13 +354,15 @@ HTTP semantics remain:
 
 A stale/invalid session remains resolved as anonymous, revoked/cleared as currently required, and gated by the existing authorization flow.
 
-For browser redirects, Rakit may add a whitelisted auth reason so the login page can explain why the user was redirected:
+When the runtime already knows that a browser arrived with a stale/unusable session cookie, that fact may be carried through request-local state to the existing unauthenticated redirect. The redirect may then add a whitelisted reason:
 
 ```text
 /auth/login?reason=session_expired
 ```
 
 Only fixed internal reason identifiers are accepted. Unknown values are ignored. Query values are never rendered directly as arbitrary message text.
+
+A user who simply visits a protected page without any session continues to receive the ordinary login redirect without a false "session expired" message.
 
 ### 6.4 Logout feedback
 
@@ -381,6 +391,8 @@ It must not disclose:
 - authorization matching internals.
 
 Generated API authorization failure remains JSON and keeps its existing machine-readable contract.
+
+Security-form failures such as invalid CSRF are not reclassified as authorization failures merely to reuse this presentation. Their existing security semantics remain authoritative.
 
 ### 6.6 404 Page Not Found
 
@@ -416,7 +428,7 @@ Production HTML must not expose:
 - secret/token values;
 - internal stack/module details.
 
-A retry CTA is only appropriate for requests whose method and semantics are safe to retry. Blind retry is not offered for failed mutation methods.
+A retry CTA is only appropriate for requests whose HTTP method is semantically safe to retry, limited to GET/HEAD in UI-06. Blind retry is not offered for failed POST/PUT/PATCH/DELETE requests.
 
 Debug mode retains developer diagnostics rather than being replaced by the production 500 surface.
 
@@ -426,8 +438,8 @@ Browser/admin HTML and generated API errors must remain distinct:
 
 ```text
 Browser/admin HTML
-403 -> system HTML
-404 -> system HTML
+403 -> system HTML for authenticated authorization failure
+404 -> system HTML after the applicable security boundary
 500 -> system HTML in production
 
 Generated API
@@ -545,7 +557,7 @@ admin.register(MyAdmin)
 
 admin.register(
     MyAdmin,
-    web=ResourceWebPresentation(filters=...),
+    web=ResourceWebPresentation(filters=FilterPanelPresentation()),
 )
 
 admin.register_page(PageDefinition(...))
@@ -559,6 +571,8 @@ ActionDefinition(...)
 
 PageDefinition(template="my_page.html", ...)
 ```
+
+The ellipses in these examples represent existing constructor arguments and do not imply unspecified UI-06 behavior.
 
 Additional compatibility requirements:
 
@@ -648,8 +662,8 @@ Visual/behavior acceptance must cover:
 - TO_ONE selected;
 - TO_ONE empty;
 - TO_ONE change/clear;
-- TO_MANY small cardinality;
-- TO_MANY high cardinality;
+- TO_MANY complete/compact linked set;
+- TO_MANY paginated linked set;
 - empty TO_MANY;
 - read-only relationship;
 - inline relationship;
@@ -677,6 +691,7 @@ Visual/behavior acceptance must cover:
 - rate-limited login (429);
 - signed-out message;
 - session-expired message;
+- unauthenticated redirect without a false session-expired message;
 - authenticated 403;
 - browser 404;
 - production 500;
@@ -700,6 +715,7 @@ Security regression acceptance must prove:
 - invalid credentials remain non-enumerating;
 - login/logout CSRF behavior is unchanged;
 - unknown auth reason values are ignored;
+- stale-session reason is emitted only when the runtime actually detected a stale/unusable session;
 - 403 does not disclose internal permission identifiers;
 - 404 does not disclose route/resource registry information;
 - production 500 does not leak exception/internal data;
@@ -768,7 +784,7 @@ The completed slice should make these statements true:
 - action hierarchy is explicit without polluting core semantics;
 - destructive presentation never substitutes for confirmation/security policy;
 - bulk operations communicate selection and impact clearly;
-- relationships scale from one linked record to high cardinality without changing declared edit semantics;
+- relationships scale from complete compact sets to paginated sets without changing declared edit semantics;
 - unlink and persistent delete are unmistakably different;
 - upload UI explains real `FileField` policy instead of inventing client rules;
 - login/session/403/404/500 surfaces look intentional and safe;
