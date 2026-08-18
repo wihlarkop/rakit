@@ -1,0 +1,48 @@
+name: UI-06A final verification cleanup
+
+on:
+  pull_request:
+    branches:
+      - ui-06-advanced-operations
+
+permissions:
+  contents: write
+
+jobs:
+  verify-and-clean:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ui-06a-actions-bulk
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-packages --dev
+      - name: Format and lint
+        run: |
+          uv run ruff format .
+          uv run ruff check .
+      - name: Type check
+        run: uv run ty check
+      - name: Focused UI-06A regression
+        run: uv run pytest packages/rakit-web/tests/test_advanced_ui_maturity.py -q
+      - name: Showcase import smoke
+        run: uv run python -c 'from examples.ui_showcase.main import app; print(type(app).__name__)'
+      - name: Full test suite
+        run: uv run pytest -q
+      - name: Remove temporary diagnostics and push clean formatting
+        run: |
+          git rm -f .github/workflows/ui06-ci-debug.yml ui06-ci-debug.txt 2>/dev/null || true
+          git rm -f .github/workflows/ui06-finalize.yml
+          git diff --check
+          if git diff --quiet; then
+            echo "Nothing to commit after verification."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore: finalize UI-06A verification cleanup"
+          git push origin HEAD:ui-06a-actions-bulk
