@@ -23,8 +23,6 @@ jobs:
           python-version: '3.12'
       - name: Sync workspace
         run: uv sync --all-packages --dev --locked
-      - name: Apply focused Web regression fixes
-        run: python .github/ui05d_fix_focused_web_tests.py
       - name: Normalize focused query tests
         run: |
           uv run ruff format \
