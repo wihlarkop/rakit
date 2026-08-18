@@ -7,10 +7,10 @@
     <span data-rakit-breadcrumb-separator aria-hidden="true" class="text-rakit-text-subtle">{{ rakit_icon("chevron-right", class_name="size-4") }}</span>
     <span aria-current="page">{{ resource.label }}</span>
   </nav>
-  <header class="mb-6">
+  <header class="mb-6" data-rakit-resource-heading>
     <p class="text-sm font-medium text-rakit-text-muted">Resource</p>
     <h1 class="mt-1 text-2xl font-semibold tracking-tight text-rakit-text">{{ resource.label }}</h1>
-    <p class="mt-2 text-sm leading-6 text-rakit-text-muted">Browse, search, and inspect the records available in this resource.</p>
+    <p class="mt-2 max-w-2xl text-sm leading-6 text-rakit-text-muted">Browse, search, filter, and inspect the records available in this resource.</p>
   </header>
   {% include table_template %}
 </div>

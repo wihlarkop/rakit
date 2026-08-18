@@ -90,18 +90,25 @@ def _sort_link(document: str, field: str) -> tuple[str, list[tuple[str, str]]]:
     )
     assert form_match is not None
     form_id, action, body = form_match.groups()
-    button = re.search(
-        rf'<button\s+type="submit"\s+form="{re.escape(form_id)}"\s+name="sort"\s+value="([^"]+)"[^>]*>\s*{re.escape(field)}\s*</button>',
+    buttons = re.finditer(
+        rf'<button\s+type="submit"\s+form="{re.escape(form_id)}"\s+name="sort"\s+value="([^"]+)"[^>]*>(.*?)</button>',
         document,
         flags=re.DOTALL,
     )
-    assert button is not None
+    button_value: str | None = None
+    for button in buttons:
+        candidate_value, candidate_body = button.groups()
+        candidate_text = html.unescape(re.sub(r"<[^>]+>", "", candidate_body)).strip()
+        if candidate_text == field:
+            button_value = candidate_value
+            break
+    assert button_value is not None
     hidden = re.findall(
         r'<input\s+type="hidden"\s+name="([^"]+)"\s+value="([^"]*)"\s*/?>',
         body,
     )
     pairs = [(html.unescape(name), html.unescape(value)) for name, value in hidden]
-    pairs.append(("sort", html.unescape(button.group(1))))
+    pairs.append(("sort", html.unescape(button_value)))
     url = f"{html.unescape(action)}?{urlencode(pairs)}"
     return url, pairs
 
@@ -138,6 +145,32 @@ def _pagination_link(document: str, label: str) -> tuple[str, list[tuple[str, st
     return url, parse_qsl(urlsplit(url).query, keep_blank_values=True)
 
 
+def _has_pagination_landmark(document: str) -> bool:
+    return re.search(r'<nav[^>]+aria-label="Resource pagination"', document) is not None
+
+
+def _has_current_page(document: str, page: int) -> bool:
+    return (
+        re.search(
+            rf'aria-current="page"[^>]*>\s*{page}\s*</(?:a|span)>',
+            document,
+        )
+        is not None
+    )
+
+
+def _sorted_header_has_field(document: str, *, aria_sort: str, field: str) -> bool:
+    match = re.search(
+        rf'<th[^>]*aria-sort="{re.escape(aria_sort)}"[^>]*>(.*?)</th>',
+        document,
+        flags=re.DOTALL,
+    )
+    if match is None:
+        return False
+    text_content = html.unescape(re.sub(r"<[^>]+>", "", match.group(1)))
+    return field in text_content.split()
+
+
 async def _assert_pagination_controls(
     client: httpx.AsyncClient,
     *,
@@ -155,15 +188,15 @@ async def _assert_pagination_controls(
 
     first = await client.get(f"{prefix}/users", params=params)
     assert first.status_code == 200
-    assert 'nav aria-label="Resource pagination"' in first.text
-    assert ">Page 1<" in first.text
+    assert _has_pagination_landmark(first.text)
+    assert _has_current_page(first.text, 1)
     assert _pagination_link(first.text, "Previous page") is None
     first_next = _pagination_link(first.text, "Next page")
     assert first_next is not None
 
     middle = await client.get(f"{prefix}/users", params=[*params, ("page", "2")])
     assert middle.status_code == 200
-    assert ">Page 2<" in middle.text
+    assert _has_current_page(middle.text, 2)
     previous = _pagination_link(middle.text, "Previous page")
     next_ = _pagination_link(middle.text, "Next page")
     assert previous is not None
@@ -182,7 +215,7 @@ async def _assert_pagination_controls(
 
     last = await client.get(f"{prefix}/users", params=[*params, ("page", "3")])
     assert last.status_code == 200
-    assert ">Page 3<" in last.text
+    assert _has_current_page(last.text, 3)
     assert _pagination_link(last.text, "Previous page") is not None
     assert _pagination_link(last.text, "Next page") is None
 
@@ -290,7 +323,8 @@ async def client() -> AsyncIterator[httpx.AsyncClient]:
 
 async def test_deferred_count_has_separate_fragment(client: httpx.AsyncClient) -> None:
     page = await client.get("/users?count_policy=deferred")
-    assert "Calculating total" in page.text
+    assert "data-rakit-total-deferred" in page.text
+    assert "Calculating" in page.text
     count = await client.get("/users/_count", headers={"HX-Request": "true"})
     assert count.text.strip() == "2"
 
@@ -478,11 +512,9 @@ async def test_sort_headers_render_only_valid_exact_aria_sort_values(
 
     values = re.findall(r'aria-sort="([^"]+)"', response.text)
     assert set(values) <= {"ascending", "descending", "none", "other"}
-    assert re.search(
-        r'aria-sort="descending"[^>]*>\s*<button[^>]*>\s*name\s*</button>', response.text
-    )
-    assert re.search(r'aria-sort="other"[^>]*>\s*<button[^>]*>\s*email\s*</button>', response.text)
-    assert re.search(r'aria-sort="none"[^>]*>\s*<button[^>]*>\s*id\s*</button>', response.text)
+    assert _sorted_header_has_field(response.text, aria_sort="descending", field="name")
+    assert _sorted_header_has_field(response.text, aria_sort="other", field="email")
+    assert _sorted_header_has_field(response.text, aria_sort="none", field="id")
 
     default_response = await client.get("/users")
     assert set(re.findall(r'aria-sort="([^"]+)"', default_response.text)) == {"none"}
