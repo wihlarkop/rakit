@@ -1,4 +1,4 @@
-name: UI-05D feature finalizer
+name: UI-05D diagnostics
 
 on:
   pull_request:
@@ -6,62 +6,23 @@ on:
       - ui-05-resource-experience
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  finalize:
-    if: github.actor != 'github-actions[bot]'
+  diagnostics:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ui-05d-resource-query-configuration
-          fetch-depth: 0
       - uses: astral-sh/setup-uv@v6
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - uses: oven-sh/setup-bun@v2
       - name: Sync workspace
         run: uv sync --all-packages --dev --locked
-      - name: Apply deterministic feature finalization
-        run: python .github/ui05d_finalize_feature.py
-      - name: Normalize Python
-        run: |
-          uv run ruff format \
-            packages/rakit-core/src/rakit_core/compiler.py \
-            packages/rakit-core/src/rakit_core/filters.py \
-            packages/rakit-core/src/rakit_core/generated_api.py \
-            packages/rakit-core/src/rakit_core/pagination.py \
-            packages/rakit-core/src/rakit_core/testing/datasource_contract.py \
-            packages/rakit/src/rakit/__init__.py \
-            examples/ui_showcase/main.py
-          uv run ruff check --fix \
-            packages/rakit-core/src/rakit_core/compiler.py \
-            packages/rakit-core/src/rakit_core/filters.py \
-            packages/rakit-core/src/rakit_core/generated_api.py \
-            packages/rakit-core/src/rakit_core/pagination.py \
-            packages/rakit-core/src/rakit_core/testing/datasource_contract.py \
-            packages/rakit/src/rakit/__init__.py \
-            examples/ui_showcase/main.py
-          uv run ruff check \
-            packages/rakit-core/src/rakit_core/compiler.py \
-            packages/rakit-core/src/rakit_core/filters.py \
-            packages/rakit-core/src/rakit_core/generated_api.py \
-            packages/rakit-core/src/rakit_core/pagination.py \
-            packages/rakit-core/src/rakit_core/testing/datasource_contract.py \
-            packages/rakit/src/rakit/__init__.py \
-            examples/ui_showcase/main.py
-      - name: Type-check feature source surface
+      - name: Capture full type-check diagnostics
         run: |
           set -o pipefail
-          uv run ty check \
-            packages/rakit-core/src \
-            packages/rakit-sqlalchemy/src \
-            packages/rakit-web/src \
-            packages/rakit/src \
-            examples/ui_showcase/main.py \
-            2>&1 | tee .github/ui05d-ty.log
+          uv run ty check 2>&1 | tee .github/ui05d-ty.log
       - name: Upload type-check diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -69,26 +30,3 @@ jobs:
           name: ui05d-ty-diagnostics
           path: .github/ui05d-ty.log
           if-no-files-found: ignore
-      - name: Build committed Tailwind CSS
-        run: |
-          bun install --frozen-lockfile
-          bun run css:build
-      - name: Commit finalized feature surface
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add \
-            packages/rakit-core/src/rakit_core/compiler.py \
-            packages/rakit-core/src/rakit_core/filters.py \
-            packages/rakit-core/src/rakit_core/generated_api.py \
-            packages/rakit-core/src/rakit_core/pagination.py \
-            packages/rakit-core/src/rakit_core/testing/datasource_contract.py \
-            packages/rakit/src/rakit/__init__.py \
-            examples/ui_showcase/main.py \
-            packages/rakit-web/src/rakit_web/static/rakit.css
-          if git diff --cached --quiet; then
-            echo 'No feature finalization changes to commit.'
-            exit 0
-          fi
-          git commit -m 'feat(query): finalize public query configuration'
-          git push origin HEAD:ui-05d-resource-query-configuration
