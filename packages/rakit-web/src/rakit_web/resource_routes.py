@@ -15,6 +15,7 @@ from uuid import UUID
 from jinja2 import ChoiceLoader, FileSystemLoader, PackageLoader, pass_context, select_autoescape
 from jinja2 import Environment as JinjaEnvironment
 from jinja2.runtime import Context
+from rakit_core.actions import ActionScope
 from rakit_core.definitions import ResourceDefinition
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.filters import ResourceFilter
@@ -29,6 +30,8 @@ from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 
 from ._paths import mounted_path as _mounted_path
+from .action_presentation import action_web_presentation
+from .action_views import request_action_views
 from .assets import static_url
 from .icons import render_icon
 from .resource_presentation import resource_web_presentation
@@ -82,6 +85,7 @@ def build_templates(template_dirs: Sequence[Path]) -> Jinja2Templates:
     globals_["static_url"] = _template_static_url
     globals_["rakit_icon"] = render_icon
     globals_["rakit_resource_web_presentation"] = resource_web_presentation
+    globals_["rakit_action_web_presentation"] = action_web_presentation
     return Jinja2Templates(env=environment)
 
 
@@ -215,6 +219,11 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
             )
 
         page = await binding.service.list(query)
+        resource_actions = await request_action_views(
+            request,
+            owner_id=binding.resource_id,
+            scope=ActionScope.RESOURCE,
+        )
         fields = binding.fields
         rows: list[dict[str, object]] = []
         for item in page.items:
@@ -252,6 +261,7 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
             "fields": fields,
             "rows": rows,
             "resource_path": resource_path,
+            "resource_actions": resource_actions,
             "create_url": (
                 _mounted_path(request, binding.crud_paths.create_path)
                 if binding.crud_paths is not None
@@ -344,6 +354,13 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
                 status_code=400,
             )
         record = await binding.service.detail(identity)
+        record_actions = await request_action_views(
+            request,
+            owner_id=binding.resource_id,
+            scope=ActionScope.RECORD,
+            identity=identity,
+            record=record,
+        )
         fields = binding.detail_fields
         cells = {field_name: _field_value(record, field_name) for field_name in fields}
         encoded_identity = binding.codec.encode(identity)
@@ -368,6 +385,8 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
             "display_cells": {
                 field_name: _display_value(value) for field_name, value in cells.items()
             },
+            "record_actions": record_actions,
+            "encoded_identity": encoded_identity,
             "edit_url": edit_url,
             "delete_url": delete_url,
         }

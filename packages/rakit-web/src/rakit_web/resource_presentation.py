@@ -7,6 +7,11 @@ from types import MappingProxyType
 
 from rakit_core.definitions import ResourceDefinition
 
+from rakit_web.action_presentation import (
+    ActionPresentation,
+    normalize_action_presentations,
+)
+
 
 @dataclass(frozen=True, slots=True)
 class FilterGroupPresentation:
@@ -57,6 +62,14 @@ class ResourceWebPresentation:
     """Web-only presentation configuration for one registered resource."""
 
     filters: FilterPanelPresentation = field(default_factory=FilterPanelPresentation)
+    actions: Mapping[str, ActionPresentation] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "actions",
+            normalize_action_presentations(self.actions),
+        )
 
 
 _DEFAULT_RESOURCE_WEB_PRESENTATION = ResourceWebPresentation()
