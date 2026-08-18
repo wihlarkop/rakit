@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import TypeAlias
+from typing import TypeAlias, cast
 from uuid import UUID
 
 SafePageScalar: TypeAlias = str | int | float | bool | Decimal | date | datetime | UUID | None
@@ -41,7 +41,9 @@ def _mapping_view(payload: dict[object, object]) -> PagePayloadView:
         return PagePayloadView(PagePayloadKind.UNSUPPORTED)
     return PagePayloadView(
         PagePayloadKind.MAPPING,
-        items=tuple((key, value) for key, value in payload.items()),  # type: ignore[misc]
+        items=tuple(
+            (cast(str, key), cast(SafePageScalar, value)) for key, value in payload.items()
+        ),
     )
 
 
@@ -51,28 +53,25 @@ def _table_view(payload: list[object] | tuple[object, ...]) -> PagePayloadView:
     first = payload[0]
     if type(first) is not dict:
         return PagePayloadView(PagePayloadKind.UNSUPPORTED)
-    first_row = first
-    columns = tuple(first_row.keys())
-    if not columns or not all(type(key) is str and key for key in columns):
+    first_row = cast(dict[object, object], first)
+    raw_columns = tuple(first_row.keys())
+    if not raw_columns or not all(type(key) is str and key for key in raw_columns):
         return PagePayloadView(PagePayloadKind.UNSUPPORTED)
+    columns = tuple(cast(str, key) for key in raw_columns)
 
     rows: list[tuple[SafePageScalar, ...]] = []
     for candidate in payload:
         if type(candidate) is not dict:
             return PagePayloadView(PagePayloadKind.UNSUPPORTED)
-        row = candidate
-        if tuple(row.keys()) != columns:
+        row = cast(dict[object, object], candidate)
+        if tuple(row.keys()) != raw_columns:
             return PagePayloadView(PagePayloadKind.UNSUPPORTED)
-        values = tuple(row[column] for column in columns)
+        values = tuple(row[column] for column in raw_columns)
         if not all(_safe_scalar(value) for value in values):
             return PagePayloadView(PagePayloadKind.UNSUPPORTED)
-        rows.append(values)  # type: ignore[arg-type]
+        rows.append(tuple(cast(SafePageScalar, value) for value in values))
 
-    return PagePayloadView(
-        PagePayloadKind.TABLE,
-        columns=columns,  # type: ignore[arg-type]
-        rows=tuple(rows),
-    )
+    return PagePayloadView(PagePayloadKind.TABLE, columns=columns, rows=tuple(rows))
 
 
 def page_payload_view(payload: object) -> PagePayloadView:
@@ -81,11 +80,13 @@ def page_payload_view(payload: object) -> PagePayloadView:
     if payload is None:
         return PagePayloadView(PagePayloadKind.EMPTY)
     if _safe_scalar(payload):
-        return PagePayloadView(PagePayloadKind.SCALAR, scalar=payload)  # type: ignore[arg-type]
+        return PagePayloadView(PagePayloadKind.SCALAR, scalar=cast(SafePageScalar, payload))
     if type(payload) is dict:
-        return _mapping_view(payload)  # type: ignore[arg-type]
-    if type(payload) in {list, tuple}:
-        return _table_view(payload)  # type: ignore[arg-type]
+        return _mapping_view(cast(dict[object, object], payload))
+    if type(payload) is list:
+        return _table_view(cast(list[object], payload))
+    if type(payload) is tuple:
+        return _table_view(cast(tuple[object, ...], payload))
     return PagePayloadView(PagePayloadKind.UNSUPPORTED)
 
 
