@@ -48,10 +48,7 @@ def build_admin_bulk_action_routes(
 
     routes: list[Route] = []
 
-    def bulk_action_views(
-        request: Request,
-        resource_id: str,
-    ) -> tuple[dict[str, str], ...]:
+    def bulk_action_views(request: Request, resource_id: str) -> tuple[dict[str, str], ...]:
         principal = request.scope.get("state", {}).get("principal")
         if principal is None or not principal.authenticated:
             return ()
@@ -64,10 +61,7 @@ def build_admin_bulk_action_routes(
             for route, compiled_action in compiled.action_routes
             if compiled_action.definition.scope is ActionScope.BULK
             and compiled_action.definition.resource_id == resource_id
-            and compiled_action.permission.matches(
-                principal,
-                superuser_bypass=superuser_bypass,
-            )
+            and compiled_action.permission.matches(principal, superuser_bypass=superuser_bypass)
         )
 
     # Resource/action templates are shared across bindings. These helpers are
@@ -84,10 +78,7 @@ def build_admin_bulk_action_routes(
         principal = request.scope.get("state", {}).get("principal")
         if principal is None or not principal.authenticated:
             return None
-        if not compiled_action.permission.matches(
-            principal,
-            superuser_bypass=superuser_bypass,
-        ):
+        if not compiled_action.permission.matches(principal, superuser_bypass=superuser_bypass):
             return None
         if principal.subject_id is None:
             return None
@@ -156,9 +147,7 @@ def build_admin_bulk_action_routes(
             load_record=load_record,
             token_service=token_service,
             idempotency_store=idempotency_store,
-            concurrency=(
-                ConcurrencyTokenService(token_service) if provider is not None else None
-            ),
+            concurrency=ConcurrencyTokenService(token_service) if provider is not None else None,
             concurrency_resource_id=resource_id if provider is not None else None,
             record_version=provider.version_for if provider is not None else None,
             deadline_seconds=deadline_seconds,
