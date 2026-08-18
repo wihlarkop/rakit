@@ -957,8 +957,9 @@ async def test_minimal_example_serves_read_routes_and_actual_query_contract() ->
     assert "<html" in full.text
     assert fragment.status_code == 200
     assert "<html" not in fragment.text
-    assert "Total unknown" in fragment.text
-    assert "Calculating total" in deferred.text
+    assert "Total unavailable" in fragment.text
+    assert "data-rakit-total-deferred" in deferred.text
+    assert "Calculating" in deferred.text
     assert count.text.strip() == "1"
     assert detail.status_code == 200
     assert "Bench Clamp" in detail.text
@@ -1029,8 +1030,9 @@ async def test_fastapi_sqlalchemy_example_mount_serves_full_and_htmx_reads() -> 
     assert sort_response.status_code == 200
     assert fragment.status_code == 200
     assert "<html" not in fragment.text
-    assert "Total unknown" in fragment.text
-    assert "Calculating total" in deferred.text
+    assert "Total unavailable" in fragment.text
+    assert "data-rakit-total-deferred" in deferred.text
+    assert "Calculating" in deferred.text
     assert count.text.strip() == "1"
     assert detail.status_code == 200
     assert "Grace" in detail.text

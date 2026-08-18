@@ -94,7 +94,7 @@ def test_ui_showcase_exposes_realistic_application_and_ui_lab() -> None:
 
     assert orders_page_two.status_code == 200
     assert "ORD-1075" in orders_page_two.text
-    assert "Page 2" in orders_page_two.text
+    assert 'aria-current="page">2</a>' in orders_page_two.text
 
 
 def test_ui_showcase_exposes_core_component_matrix() -> None:

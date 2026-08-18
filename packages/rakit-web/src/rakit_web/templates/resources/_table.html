@@ -67,7 +67,7 @@
 
     <div class="shrink-0 text-sm tabular-nums text-rakit-text-muted" data-rakit-total>
       {% if query.count_policy.value == "deferred" %}
-      <span data-rakit-total-deferred hx-get="{{ count_url }}" hx-trigger="load" hx-swap="outerHTML">Calculating total…</span>
+      <span data-rakit-total-deferred><span hx-get="{{ count_url }}" hx-trigger="load" hx-swap="innerHTML">Calculating</span> total</span>
       {% elif query.count_policy.value == "disabled" %}
       Total unavailable
       {% elif pagination.total_count is not none %}
@@ -123,7 +123,7 @@
                 name="sort"
                 value="{{ header.sort_value }}"
                 class="inline-flex items-center gap-1.5 font-semibold uppercase tracking-wide transition hover:text-rakit-text"
-                aria-label="Change sort for {{ header.field }}"
+                aria-label="Sort by {{ header.field }}"
               >
                 <span>{{ header.field }}</span>
                 {% if header.aria_sort == "ascending" %}{{ rakit_icon("chevron-down", class_name="size-3.5 rotate-180") }}{% elif header.aria_sort == "descending" %}{{ rakit_icon("chevron-down", class_name="size-3.5") }}{% endif %}
