@@ -406,19 +406,11 @@ class _BulkHarness:
             resource_id="orders",
             permission=permission,
             availability=availability,
-            preview=(
-                lambda _context: ActionPreview(
-                    title="Archive selected",
-                    description="Review selected records.",
-                    impact="Selected records will be archived.",
-                )
-                if needs_confirmation
-                else None
-            ),
             executor=DomainActionExecutor(execute),
-            needs_preview=needs_confirmation,
-            needs_confirmation=needs_confirmation,
-            bulk_policy=BulkPolicy(require_concurrency_snapshot=require_snapshot),
+            bulk_policy=BulkPolicy(
+                confirmation_threshold=1 if needs_confirmation else 20,
+                require_concurrency_snapshot=require_snapshot,
+            ),
         )
         bind_action_web_presentation(
             self.action,
