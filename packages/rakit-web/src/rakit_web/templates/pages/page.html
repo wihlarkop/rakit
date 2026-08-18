@@ -2,58 +2,85 @@
 {% from "components/actions.html" import action_group %}
 {% block title %}{{ page.label }} · {{ binding_label }}{% endblock %}
 {% block content %}
-<div id="rakit-page-root">
-  {% include "components/dashboard_navigation.html" %}
-  <header class="mb-6 flex flex-wrap items-end justify-between gap-3 border-b border-rakit-border pb-4">
+<div id="rakit-page-root" class="space-y-6">
+  <nav class="flex items-center gap-2 text-sm text-rakit-text-muted" aria-label="Breadcrumb">
+    <a class="font-medium hover:text-rakit-text" href="{{ dashboard_url }}">Dashboard</a>
+    <span aria-hidden="true">/</span>
+    <span aria-current="page">{{ page.label }}</span>
+  </nav>
+
+  <header class="flex flex-wrap items-end justify-between gap-4 border-b border-rakit-border pb-4">
     <div>
       <p class="text-sm font-medium text-rakit-text-muted">{{ binding_label }}</p>
       <h1 class="mt-1 text-2xl font-semibold tracking-tight text-rakit-text">{{ page.label }}</h1>
     </div>
-    {{ action_group(page_actions, 'Page actions') }}
+    {{ action_group(page_actions | default(()), 'Page actions') }}
   </header>
 
   {% if message %}
-  <div class="mb-5 rounded-rakit-md border border-emerald-300 bg-emerald-50 p-4 text-sm text-emerald-950" role="status">{{ message }}</div>
+    <div class="rakit-alert rakit-alert-success" role="status">{{ message }}</div>
   {% endif %}
 
   {% if issues %}
-  <div class="rakit-alert-danger mb-5" role="alert" tabindex="-1">
-    <p class="font-semibold">There are problems with this page input.</p>
-    <ul class="mt-2 list-disc pl-5">
-      {% for field_name, messages in issues.items() %}
-        {% for issue in messages %}<li>{{ issue }}</li>{% endfor %}
-      {% endfor %}
-    </ul>
-  </div>
+    <div class="rakit-alert rakit-alert-danger" role="alert" tabindex="-1">
+      <p class="font-semibold">There are problems with this page input.</p>
+      <ul class="mt-2 list-disc space-y-1 pl-5">
+        {% for field_name, messages in issues.items() %}
+          {% for issue in messages %}<li>{{ issue }}</li>{% endfor %}
+        {% endfor %}
+      </ul>
+    </div>
   {% endif %}
 
   {% if page.mutating %}
-  <form class="space-y-5" method="post" action="{{ form_action }}" novalidate>
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-    <input type="hidden" name="submission_token" value="{{ submission_token }}" />
-    <section class="rakit-panel space-y-4 p-4">
-      {% for field in fields %}
-      <div class="space-y-1.5">
-        <label class="block text-sm font-medium text-rakit-text" for="{{ field.id }}">{{ field.label }}</label>
-        <input class="rakit-input" id="{{ field.id }}" name="{{ field.name }}" value="{{ field.value }}"{% if field.issues %} aria-invalid="true"{% endif %} />
-        {% if field.description %}<p class="text-sm text-rakit-text-muted">{{ field.description }}</p>{% endif %}
-        {% if field.issues %}<div class="rakit-error" role="alert">{% for issue in field.issues %}<p>{{ issue }}</p>{% endfor %}</div>{% endif %}
-      </div>
-      {% endfor %}
-      {% if not fields %}<p class="text-sm leading-6 text-rakit-text-muted">Continue to submit this page operation.</p>{% endif %}
-    </section>
-    <footer class="flex justify-end border-t border-rakit-border pt-4">
-      <button class="rakit-button" type="submit">Submit</button>
-    </footer>
-  </form>
+    <form class="space-y-5" method="post" action="{{ form_action }}" novalidate>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <input type="hidden" name="submission_token" value="{{ submission_token }}" />
+      <section class="rakit-panel space-y-4 p-4">
+        {% for field in fields %}
+          {% set described = [] %}
+          {% if field.description %}{% set _ = described.append(field.description_id) %}{% endif %}
+          {% if field.issues %}{% set _ = described.append(field.error_id) %}{% endif %}
+          <div class="space-y-1.5">
+            <label class="block text-sm font-medium text-rakit-text" for="{{ field.id }}">{{ field.label }}</label>
+            <input class="rakit-input" id="{{ field.id }}" name="{{ field.name }}" value="{{ field.value }}"{% if described %} aria-describedby="{{ described | join(' ') }}"{% endif %}{% if field.issues %} aria-invalid="true"{% endif %} />
+            {% if field.description %}<p id="{{ field.description_id }}" class="text-sm text-rakit-text-muted">{{ field.description }}</p>{% endif %}
+            {% if field.issues %}<div id="{{ field.error_id }}" class="rakit-error" role="alert">{% for issue in field.issues %}<p>{{ issue }}</p>{% endfor %}</div>{% endif %}
+          </div>
+        {% endfor %}
+        {% if not fields %}<p class="text-sm leading-6 text-rakit-text-muted">Continue to submit this page operation.</p>{% endif %}
+      </section>
+      <footer class="flex flex-wrap items-center justify-end gap-2 border-t border-rakit-border pt-4">
+        <a class="rakit-button rakit-button-secondary" href="{{ dashboard_url }}">Cancel</a>
+        <button class="rakit-button rakit-button-primary" type="submit">Submit</button>
+      </footer>
+    </form>
   {% else %}
-  <section class="rakit-panel p-4">
-    {% if payload is not none %}
-      <pre class="whitespace-pre-wrap text-sm leading-6 text-rakit-text-muted">{{ payload }}</pre>
-    {% else %}
-      <p class="text-sm leading-6 text-rakit-text-muted">No page content was returned.</p>
-    {% endif %}
-  </section>
+    <section class="rakit-panel overflow-hidden">
+      {% if payload_view.kind.value == 'empty' %}
+        <div class="p-5"><p class="text-sm leading-6 text-rakit-text-muted">No page content was returned.</p></div>
+      {% elif payload_view.kind.value == 'scalar' %}
+        <div class="p-5"><p class="whitespace-pre-wrap text-sm leading-6 text-rakit-text">{{ payload_view.scalar }}</p></div>
+      {% elif payload_view.kind.value == 'mapping' %}
+        <dl class="divide-y divide-rakit-border">
+          {% for key, value in payload_view.items %}
+            <div class="grid gap-1 px-5 py-3 sm:grid-cols-[minmax(0,12rem)_1fr] sm:gap-4">
+              <dt class="text-sm font-medium text-rakit-text-muted">{{ key }}</dt>
+              <dd class="min-w-0 whitespace-pre-wrap text-sm text-rakit-text">{{ value }}</dd>
+            </div>
+          {% endfor %}
+        </dl>
+      {% elif payload_view.kind.value == 'table' %}
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-rakit-border text-sm">
+            <thead class="bg-rakit-surface-subtle"><tr>{% for column in payload_view.columns %}<th class="px-4 py-2.5 text-left font-medium text-rakit-text-muted" scope="col">{{ column }}</th>{% endfor %}</tr></thead>
+            <tbody class="divide-y divide-rakit-border bg-rakit-surface">{% for row in payload_view.rows %}<tr>{% for value in row %}<td class="px-4 py-3 align-top text-rakit-text">{{ value }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="p-5"><div class="rakit-alert" role="status">This page returned content that requires a custom template.</div></div>
+      {% endif %}
+    </section>
   {% endif %}
 </div>
 {% endblock %}
