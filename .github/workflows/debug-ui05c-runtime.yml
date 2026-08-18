@@ -1,0 +1,50 @@
+name: Debug UI-05C runtime wiring
+
+on:
+  push:
+    branches:
+      - ui-05c-resource-detail-forms
+
+permissions:
+  contents: write
+
+jobs:
+  runtime:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ui-05c-resource-detail-forms
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-packages --dev --locked
+      - name: Apply runtime wiring
+        run: python .github/ui05c_runtime.py
+      - name: Normalize production files
+        run: |
+          uv run ruff format \
+            packages/rakit-web/src/rakit_web/resource_routes.py \
+            packages/rakit-web/src/rakit_web/form_routes.py \
+            packages/rakit-web/src/rakit_web/admin.py
+          uv run ruff check \
+            packages/rakit-web/src/rakit_web/resource_routes.py \
+            packages/rakit-web/src/rakit_web/form_routes.py \
+            packages/rakit-web/src/rakit_web/admin.py
+          uv run ty check
+      - name: Commit runtime feature wiring
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            packages/rakit-web/src/rakit_web/resource_routes.py \
+            packages/rakit-web/src/rakit_web/form_routes.py \
+            packages/rakit-web/src/rakit_web/admin.py
+          if git diff --cached --quiet; then
+            echo "No runtime changes to commit."
+            exit 0
+          fi
+          git commit -m "feat(web): wire UI-05C CRUD presentation context"
+          git push origin HEAD:ui-05c-resource-detail-forms
