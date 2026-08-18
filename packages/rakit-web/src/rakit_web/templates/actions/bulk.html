@@ -1,7 +1,12 @@
 {% extends "base.html" %}
 {% block title %}{{ action.label }} · {{ binding_label }}{% endblock %}
 {% block content %}
-{% set danger = action_presentation.intent.value == 'danger' %}
+{% set presentation = action_presentation if action_presentation is defined else rakit_action_web_presentation(action) %}
+{% set availability_state = availability if availability is defined else 'available' %}
+{% set availability_message = availability_reason if availability_reason is defined else none %}
+{% set policy_name = execution_policy if execution_policy is defined else action.bulk_policy.execution.value %}
+{% set sync_max = synchronous_maximum if synchronous_maximum is defined else action.bulk_policy.synchronous_maximum %}
+{% set danger = presentation.intent.value == 'danger' %}
 <div id="rakit-action-root">
   <nav class="mb-3 text-sm text-rakit-text-muted" aria-label="Breadcrumb">
     <a class="font-medium transition hover:text-rakit-text" href="{{ cancel_url }}">Back to resource</a>
@@ -11,17 +16,17 @@
     <h1 class="mt-1 text-2xl font-semibold tracking-tight text-rakit-text">{{ action.label }}</h1>
     <div class="mt-3 flex flex-wrap items-center gap-2 text-sm text-rakit-text-muted">
       <strong class="font-semibold text-rakit-text">{{ selected_count }} selected {{ 'record' if selected_count == 1 else 'records' }}</strong>
-      {% if selected_count > 1 %}<span aria-hidden="true">·</span><span>{{ execution_policy | replace('_', ' ') | title }}</span>{% endif %}
-      <span aria-hidden="true">·</span><span>Maximum {{ synchronous_maximum }} per synchronous run</span>
+      {% if selected_count > 1 %}<span aria-hidden="true">·</span><span>{{ policy_name | replace('_', ' ') | title }}</span>{% endif %}
+      <span aria-hidden="true">·</span><span>Maximum {{ sync_max }} per synchronous run</span>
     </div>
   </header>
 
   {% if action.description %}<p class="mb-5 max-w-3xl text-sm leading-6 text-rakit-text-muted">{{ action.description }}</p>{% endif %}
 
-  {% if availability == 'disabled' %}
+  {% if availability_state == 'disabled' %}
     <section class="rakit-panel p-5" role="status" aria-labelledby="rakit-bulk-unavailable-title">
       <h2 id="rakit-bulk-unavailable-title" class="text-sm font-semibold text-rakit-text">This bulk action is currently unavailable</h2>
-      {% if availability_reason %}<p class="mt-2 max-w-2xl text-sm leading-6 text-rakit-text-muted">{{ availability_reason }}</p>{% endif %}
+      {% if availability_message %}<p class="mt-2 max-w-2xl text-sm leading-6 text-rakit-text-muted">{{ availability_message }}</p>{% endif %}
       <div class="mt-5"><a class="rakit-button rakit-button-secondary" href="{{ cancel_url }}">Back to {{ binding_label }}</a></div>
     </section>
   {% else %}
