@@ -455,7 +455,13 @@ class OrdersAdmin(ResourceAdmin):
             scope=ActionScope.BULK,
             resource_id="orders",
             description="Danger bulk action with confirmation review.",
+            preview=lambda _context: ActionPreview(
+                title="Cancel selected orders",
+                description="Review the selected orders before cancellation.",
+                impact="The selected orders will be cancelled in this development-only showcase.",
+            ),
             executor=ShowcaseAction("Selected orders cancelled in the UI showcase"),
+            needs_preview=True,
             needs_confirmation=True,
             bulk_policy=BulkPolicy(
                 execution=BulkExecutionPolicy.BEST_EFFORT,
