@@ -44,7 +44,6 @@ jobs:
               count=1,
           )
           assert count == 1, f"showcase replacements={count}"
-          # Remove the original executor if the regex retained it through the preview span.
           text = text.replace(
               '            executor=ShowcaseAction("Selected orders cancelled in the UI showcase"),\n'
               '            executor=ShowcaseAction("Selected orders cancelled in the UI showcase"),\n',
@@ -59,9 +58,7 @@ jobs:
               r'(?P<prefix>            availability=availability,\n)'
               r'            preview=\(.*?'
               r'            needs_confirmation=needs_confirmation,\n'
-              r'            bulk_policy=BulkPolicy\(\n'
-              r'                require_concurrency_snapshot=require_snapshot\n'
-              r'            \),',
+              r'            bulk_policy=BulkPolicy\(require_concurrency_snapshot=require_snapshot\),',
               re.S,
           )
           text, count = pattern.subn(
@@ -86,10 +83,6 @@ jobs:
         run: |
           uv run ruff format .
           git diff --check
-          if git diff --quiet; then
-            echo "UI-06A source is already clean."
-            exit 0
-          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .
