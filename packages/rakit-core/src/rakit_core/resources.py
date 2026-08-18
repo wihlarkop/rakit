@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 from rakit_core.datasource import DataSource
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.identity import RecordIdentity
@@ -20,13 +22,14 @@ def _normalize_legacy_page_result(
     if isinstance(result, PageResult) or not isinstance(query.pagination, PagePagination):
         return result
 
+    legacy = cast(Any, result)
     try:
-        items = tuple(getattr(result, "items"))
-        page = getattr(result, "page")
-        per_page = getattr(result, "per_page")
-        has_previous = getattr(result, "has_previous")
-        has_next = getattr(result, "has_next")
-        total_count = getattr(result, "total_count")
+        items = tuple(legacy.items)
+        page = legacy.page
+        per_page = legacy.per_page
+        has_previous = legacy.has_previous
+        has_next = legacy.has_next
+        total_count = legacy.total_count
     except (AttributeError, TypeError):
         return result
 
