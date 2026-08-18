@@ -447,6 +447,7 @@ class OrdersAdmin(ResourceAdmin):
             resource_id="orders",
             description="Safe bulk action for no-JavaScript selection QA.",
             executor=ShowcaseAction("Selected orders marked reviewed in the UI showcase"),
+            bulk_policy=BulkPolicy(require_concurrency_snapshot=False),
         ),
         ActionDefinition(
             action_id="bulk_cancel_orders",
@@ -456,7 +457,10 @@ class OrdersAdmin(ResourceAdmin):
             description="Danger bulk action with confirmation review.",
             executor=ShowcaseAction("Selected orders cancelled in the UI showcase"),
             needs_confirmation=True,
-            bulk_policy=BulkPolicy(execution=BulkExecutionPolicy.BEST_EFFORT),
+            bulk_policy=BulkPolicy(
+                execution=BulkExecutionPolicy.BEST_EFFORT,
+                require_concurrency_snapshot=False,
+            ),
         ),
         ActionDefinition(
             action_id="bulk_warehouse_sync",
@@ -465,6 +469,7 @@ class OrdersAdmin(ResourceAdmin):
             resource_id="orders",
             availability=warehouse_sync_disabled,
             executor=ShowcaseAction("Selected orders synchronized"),
+            bulk_policy=BulkPolicy(require_concurrency_snapshot=False),
         ),
         ActionDefinition(
             action_id="bulk_hidden_hold",
@@ -473,6 +478,7 @@ class OrdersAdmin(ResourceAdmin):
             resource_id="orders",
             availability=hidden_action,
             executor=ShowcaseAction("Selected orders held"),
+            bulk_policy=BulkPolicy(require_concurrency_snapshot=False),
         ),
     )
 
