@@ -30,7 +30,9 @@ jobs:
           old = '''            preview=lambda _context: ActionPreview(
                 title="Cancel selected orders",
                 description="Review the selected orders before cancellation.",
-                impact="The selected orders will be cancelled in this development-only showcase.",
+                impact=(
+                    "The selected orders will be cancelled in this development-only showcase."
+                ),
             ),
             executor=ShowcaseAction("Selected orders cancelled in the UI showcase"),
             needs_preview=True,
@@ -62,7 +64,9 @@ jobs:
             executor=DomainActionExecutor(execute),
             needs_preview=needs_confirmation,
             needs_confirmation=needs_confirmation,
-            bulk_policy=BulkPolicy(require_concurrency_snapshot=require_snapshot),'''
+            bulk_policy=BulkPolicy(
+                require_concurrency_snapshot=require_snapshot
+            ),'''
           new = '''            executor=DomainActionExecutor(execute),
             bulk_policy=BulkPolicy(
                 confirmation_threshold=1 if needs_confirmation else 20,
