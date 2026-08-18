@@ -1,0 +1,38 @@
+name: UI06B Apply
+
+on:
+  push:
+    branches:
+      - ui-06b-relationships-uploads
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ui-06b-relationships-uploads
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+      - uses: oven-sh/setup-bun@v2
+      - name: Sync locked dependencies
+        run: uv sync --frozen --all-packages --all-groups
+      - name: Apply asserted source patch
+        run: uv run python .github/ui06b_apply.py
+      - name: Format Python
+        run: uv run ruff format packages/rakit-web/src/rakit_web/relationship_routes.py packages/rakit-web/src/rakit_web/form_routes.py packages/rakit-web/src/rakit_web/file_presentation.py
+      - name: Rebuild CSS
+        run: bun run css:build
+      - name: Remove temporary helper
+        run: rm .github/ui06b_apply.py .github/workflows/ui06b-apply.yml
+      - name: Commit applied patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(web): mature relationship and file presentation"
+          git push origin HEAD:ui-06b-relationships-uploads
