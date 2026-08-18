@@ -1,0 +1,50 @@
+name: UI05E temporary finalize
+
+on:
+  push:
+    branches: [ui-05e-filter-rail-responsive-filters]
+
+permissions:
+  contents: write
+
+jobs:
+  format-and-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ui-05e-filter-rail-responsive-filters
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-packages --dev --locked
+      - name: Format UI-05E Python sources
+        run: |
+          uv run ruff format \
+            packages/rakit/src/rakit/__init__.py \
+            packages/rakit-web/src/rakit_web/dashboard_admin.py \
+            packages/rakit-web/src/rakit_web/resource_presentation.py \
+            packages/rakit-web/src/rakit_web/resource_routes.py
+      - name: Build Tailwind asset
+        run: |
+          npm install --no-save --package-lock=false @tailwindcss/cli@4.1.18 tailwindcss@4.1.18
+          npm run css:build
+      - name: Commit generated maintenance changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add \
+            packages/rakit/src/rakit/__init__.py \
+            packages/rakit-web/src/rakit_web/dashboard_admin.py \
+            packages/rakit-web/src/rakit_web/resource_presentation.py \
+            packages/rakit-web/src/rakit_web/resource_routes.py \
+            packages/rakit-web/src/rakit_web/static/rakit.css
+          if git diff --cached --quiet; then
+            echo "No formatter or asset changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "style(web): format UI-05E and rebuild CSS"
+          git push origin HEAD:ui-05e-filter-rail-responsive-filters
