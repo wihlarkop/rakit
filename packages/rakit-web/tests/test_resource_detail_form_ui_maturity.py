@@ -119,9 +119,7 @@ def test_create_only_write_capability_does_not_claim_record_write_routes() -> No
 
 @pytest.mark.anyio
 async def test_create_only_resource_presentation_omits_edit_and_delete() -> None:
-    app, encoded = _resource_app(
-        crud_paths=ResourceCrudPaths(create_path="/records/new")
-    )
+    app, encoded = _resource_app(crud_paths=ResourceCrudPaths(create_path="/records/new"))
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url="http://test",
@@ -144,7 +142,7 @@ async def test_detail_uses_visible_fields_for_title_and_display_only_missing_val
         response = await client.get(f"/records/{encoded}")
 
     assert response.status_code == 200
-    assert 'data-rakit-record-title>Visible record</h1>' in response.text
+    assert "data-rakit-record-title>Visible record</h1>" in response.text
     assert ">—</dd>" in response.text
     assert ">0</dd>" in response.text
     assert ">False</dd>" in response.text
