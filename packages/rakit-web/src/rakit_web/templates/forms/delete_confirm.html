@@ -10,7 +10,7 @@
 </nav>
 <div class="mx-auto max-w-2xl">
   <header class="mb-6">
-    <p class="text-sm font-medium text-rakit-danger">Destructive action</p>
+    <p class="rakit-field-required text-sm font-medium">Destructive action</p>
     <h1 class="mt-1 text-2xl font-semibold tracking-tight text-rakit-text">Delete {{ label }}?</h1>
     <p class="mt-2 text-sm leading-6 text-rakit-text-muted">Review this action before continuing.</p>
   </header>
@@ -20,7 +20,7 @@
         <p class="font-semibold">This record will be removed through the configured resource adapter.</p>
         <p class="mt-1">The framework does not assume whether the adapter performs a physical or recoverable deletion.</p>
       </div>
-      <form method="post" action="{{ action_url }}" class="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+      <form method="post" action="{{ action_url }}" class="flex flex-col justify-end gap-2 sm:flex-row">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
         <input type="hidden" name="submission_token" value="{{ submission_token }}" />
         <input type="hidden" name="delete_token" value="{{ delete_token }}" />
