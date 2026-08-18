@@ -20,6 +20,62 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --all-packages --dev
+      - name: Apply verified UI-06A type fixes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          bulk = Path("packages/rakit-web/src/rakit_web/bulk_review.py")
+          text = bulk.read_text()
+          old = '''            if request.method == "POST":
+                response = original_endpoint(request)
+                if inspect.isawaitable(response):
+                    response = await response
+                return response
+'''
+          new = '''            if request.method == "POST":
+                response = original_endpoint(request)
+                if inspect.isawaitable(response):
+                    return cast(Response, await response)
+                return cast(Response, response)
+'''
+          assert old in text, "bulk POST wrapper shape changed"
+          bulk.write_text(text.replace(old, new, 1))
+
+          tests = Path("packages/rakit-web/tests/test_advanced_ui_maturity.py")
+          text = tests.read_text()
+          old = '''    add_action("available")
+    add_action(
+        "disabled",
+        lambda _context: ActionAvailabilityDecision.disabled("Temporarily unavailable"),
+    )
+    add_action("hidden", lambda _context: ActionAvailabilityDecision.hidden())
+
+    def must_not_run(_context: ActionContext) -> ActionAvailabilityDecision:
+        raise AssertionError("unauthorized availability must not be evaluated")
+
+    add_action("unauthorized", must_not_run, authorized=False)
+'''
+          new = '''    def disabled(context: ActionContext) -> ActionAvailabilityDecision:
+        del context
+        return ActionAvailabilityDecision.disabled("Temporarily unavailable")
+
+    def hidden(context: ActionContext) -> ActionAvailabilityDecision:
+        del context
+        return ActionAvailabilityDecision.hidden()
+
+    def must_not_run(context: ActionContext) -> ActionAvailabilityDecision:
+        del context
+        raise AssertionError("unauthorized availability must not be evaluated")
+
+    add_action("available")
+    add_action("disabled", disabled)
+    add_action("hidden", hidden)
+    add_action("unauthorized", must_not_run, authorized=False)
+'''
+          assert old in text, "availability regression block shape changed"
+          tests.write_text(text.replace(old, new, 1))
+          PY
       - name: Format and lint
         run: |
           uv run ruff format .
@@ -32,17 +88,12 @@ jobs:
         run: uv run python -c 'from examples.ui_showcase.main import app; print(type(app).__name__)'
       - name: Full test suite
         run: uv run pytest -q
-      - name: Remove temporary diagnostics and push clean formatting
+      - name: Remove temporary verification workflow and push verified fixes
         run: |
-          git rm -f .github/workflows/ui06-ci-debug.yml ui06-ci-debug.txt 2>/dev/null || true
           git rm -f .github/workflows/ui06-finalize.yml
           git diff --check
-          if git diff --quiet; then
-            echo "Nothing to commit after verification."
-            exit 0
-          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "chore: finalize UI-06A verification cleanup"
+          git commit -m "fix(web): satisfy UI-06A verification gates"
           git push origin HEAD:ui-06a-actions-bulk
