@@ -68,9 +68,7 @@ def validate_action_presentations(
         scope = declared_by_id[action_id].scope
         primary_counts[scope] = primary_counts.get(scope, 0) + 1
         if primary_counts[scope] > 1:
-            raise ValueError(
-                f"Only one primary {scope.value} action may be configured per owner"
-            )
+            raise ValueError(f"Only one primary {scope.value} action may be configured per owner")
 
 
 def bind_action_web_presentation(
