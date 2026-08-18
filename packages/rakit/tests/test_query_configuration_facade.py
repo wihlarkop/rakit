@@ -21,47 +21,21 @@ def test_resource_query_configuration_types_are_publicly_reexported() -> None:
     )
     from rakit_core.filters import (
         BooleanFilter as RealBooleanFilter,
-    )
-    from rakit_core.filters import (
         ChoiceFilter as RealChoiceFilter,
-    )
-    from rakit_core.filters import (
         DateFilter as RealDateFilter,
-    )
-    from rakit_core.filters import (
         DateRangeFilter as RealDateRangeFilter,
-    )
-    from rakit_core.filters import (
         FilterChoice as RealFilterChoice,
-    )
-    from rakit_core.filters import (
         FilterSelection as RealFilterSelection,
-    )
-    from rakit_core.filters import (
         NumberFilter as RealNumberFilter,
-    )
-    from rakit_core.filters import (
         ResourceFilter as RealResourceFilter,
-    )
-    from rakit_core.filters import (
         TextFilter as RealTextFilter,
     )
     from rakit_core.pagination import (
         CursorPagination as RealCursorPagination,
-    )
-    from rakit_core.pagination import (
         LimitOffsetPagination as RealLimitOffsetPagination,
-    )
-    from rakit_core.pagination import (
         PagePagination as RealPagePagination,
-    )
-    from rakit_core.pagination import (
         PageSizePolicy as RealPageSizePolicy,
-    )
-    from rakit_core.pagination import (
         PaginationStrategy as RealPaginationStrategy,
-    )
-    from rakit_core.pagination import (
         ResourcePaginationPolicy as RealResourcePaginationPolicy,
     )
     from rakit_web.resource_presentation import (
