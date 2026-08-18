@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
@@ -75,7 +75,7 @@ def test_page_payload_classifier_accepts_only_closed_safe_shapes() -> None:
         True,
         Decimal("12.50"),
         date(2026, 8, 19),
-        datetime(2026, 8, 19, 4, 0, tzinfo=timezone.utc),
+        datetime(2026, 8, 19, 4, 0, tzinfo=UTC),
         UUID("12345678-1234-5678-1234-567812345678"),
     )
     for value in scalar_values:
