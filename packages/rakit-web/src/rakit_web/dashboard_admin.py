@@ -3,9 +3,10 @@
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
+from rakit_core.actions import ActionDefinition
 from rakit_core.admin_types import ResourceAdmin
 from rakit_core.dashboard import DashboardDefinition, WidgetDefinition
-from rakit_core.definitions import RouteDefinition
+from rakit_core.definitions import PageDefinition, RouteDefinition
 from rakit_core.di import ServiceResolver
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.filters import ResourceFilter, effective_resource_filters
@@ -13,10 +14,16 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from .action_presentation import (
+    bind_action_web_presentation,
+    validate_action_presentations,
+)
 from .admin import RequestContextMiddleware
 from .dashboard_routes import DashboardBinding, build_dashboard_routes, widget_path
 from .endpoint_admin import Admin as _EndpointAdmin
 from .navigation import AdminNavigation, build_navigation_provider
+from .page_presentation import PageWebPresentation
+from .public_composition import resource_actions
 from .resource_presentation import ResourceWebPresentation, bind_resource_web_presentation
 from .resource_routes import build_templates
 from .security.authentication import (
@@ -120,9 +127,71 @@ class Admin(_EndpointAdmin):
                     },
                 )
 
+        declared_actions = resource_actions(
+            admin_cls,
+            existing_action_ids={str(action.action_id) for action in self.builder.actions},
+        )
+        try:
+            validate_action_presentations(declared_actions, presentation.actions)
+        except (TypeError, ValueError):
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+                message="Invalid resource Web presentation declaration",
+                status_code=500,
+                details={
+                    "resource_id": getattr(admin_cls, "resource_id", ""),
+                    "reason": "invalid_web_action_presentation",
+                },
+            ) from None
+
         super().register(admin_cls)
         definition = self._resource_definitions[admin_cls.resource_id]
         bind_resource_web_presentation(definition, presentation)
+        for action in declared_actions:
+            action_id = str(action.action_id)
+            configured = presentation.actions.get(action_id)
+            if configured is not None:
+                bind_action_web_presentation(action, configured)
+
+    def register_page(
+        self,
+        definition: PageDefinition,
+        *,
+        actions: tuple[ActionDefinition, ...] = (),
+        web: PageWebPresentation | None = None,
+    ) -> None:
+        """Register a public page plus optional Web-only action presentation."""
+
+        if web is not None and not isinstance(web, PageWebPresentation):
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="Invalid page Web presentation declaration",
+                status_code=500,
+                details={
+                    "page_id": str(definition.page_id),
+                    "reason": "invalid_web_action_presentation",
+                },
+            )
+        presentation = web or PageWebPresentation()
+        try:
+            validate_action_presentations(actions, presentation.actions)
+        except (TypeError, ValueError):
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="Invalid page Web presentation declaration",
+                status_code=500,
+                details={
+                    "page_id": str(definition.page_id),
+                    "reason": "invalid_web_action_presentation",
+                },
+            ) from None
+
+        super().register_page(definition, actions=actions)
+        for action in actions:
+            action_id = str(action.action_id)
+            configured = presentation.actions.get(action_id)
+            if configured is not None:
+                bind_action_web_presentation(action, configured)
 
     def _dashboard_widget_registry(self) -> dict[str, WidgetDefinition]:
         registry = self.__dict__.get("_dashboard_widgets")
