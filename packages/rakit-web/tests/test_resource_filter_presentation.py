@@ -129,7 +129,7 @@ def test_public_admin_register_rejects_unknown_web_filter_presentation() -> None
         admin.register(_OrdersAdmin, web=presentation)
 
     error = exc_info.value
-    assert error.code is ErrorCode.CONFIG_INVALID_RESOURCE_POLICY
+    assert error.code == ErrorCode.CONFIG_INVALID_RESOURCE_POLICY
     assert error.details["reason"] == "unknown_web_filter_presentation"
     assert error.details["filter_ids"] == ["secret"]
 
@@ -142,7 +142,7 @@ async def test_default_resource_filter_ui_renders_rail_mobile_fallback_and_share
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
-        base_url="http://test",
+        base_url="http://localhost",
     ) as client:
         response = await client.get("/orders", params={"filter": "status:eq:paid"})
 
