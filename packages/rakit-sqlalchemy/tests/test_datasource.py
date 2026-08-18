@@ -10,6 +10,7 @@ from rakit_core.query import (
     Filter,
     FilterOperator,
     NullPlacement,
+    PageResult,
     ResourceQuery,
     Sort,
     SortDirection,
@@ -247,6 +248,7 @@ async def test_sqlalchemy_datasource_lists_and_loads(session_factory) -> None:
             identity_fields=("id",),
         )
     )
+    assert isinstance(page, PageResult)
     record = await datasource.detail(RecordIdentity(values={"id": 1}))
     assert [item.name for item in page.items] == ["Ada", "Grace"]
     assert isinstance(record, User)
@@ -268,6 +270,7 @@ async def test_sqlalchemy_datasource_applies_eq_filter(session_factory) -> None:
             filters=(Filter(field="name", operator=FilterOperator.EQ, value="Ada"),),
         )
     )
+    assert isinstance(page, PageResult)
     assert [item.name for item in page.items] == ["Ada"]
     assert page.total_count == 1
 
@@ -293,6 +296,7 @@ async def test_sqlalchemy_datasource_pagination(session_factory) -> None:
             per_page=1,
         )
     )
+    assert isinstance(page, PageResult)
     assert [item.name for item in page.items] == ["Ada"]
     assert page.total_count == 2
     assert page.has_previous is False
@@ -307,6 +311,7 @@ async def test_sqlalchemy_datasource_pagination(session_factory) -> None:
             per_page=1,
         )
     )
+    assert isinstance(second_page, PageResult)
     assert [item.name for item in second_page.items] == ["Grace"]
     assert second_page.has_previous is True
     assert second_page.has_next is False

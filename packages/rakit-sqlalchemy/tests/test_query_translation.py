@@ -7,6 +7,7 @@ from rakit_core.query import (
     Filter,
     FilterOperator,
     OffsetPagination,
+    PageResult,
     ResourceQuery,
     Sort,
 )
@@ -131,6 +132,7 @@ async def test_disabled_count_uses_limit_plus_one(datasource: SQLAlchemyDataSour
         count_policy=CountPolicy.DISABLED,
     )
     page = await datasource.list(query)
+    assert isinstance(page, PageResult)
     assert len(page.items) == 1
     assert page.has_next is True
     assert page.total_count is None
@@ -142,6 +144,7 @@ async def test_disabled_count_last_page_has_no_next(datasource: SQLAlchemyDataSo
         count_policy=CountPolicy.DISABLED,
     )
     page = await datasource.list(query)
+    assert isinstance(page, PageResult)
     assert len(page.items) == 1
     assert page.has_next is False
     assert page.has_previous is True
@@ -154,6 +157,7 @@ async def test_deferred_count_defers_total(datasource: SQLAlchemyDataSource) -> 
         count_policy=CountPolicy.DEFERRED,
     )
     page = await datasource.list(query)
+    assert isinstance(page, PageResult)
     assert len(page.items) == 1
     assert page.has_next is True
     assert page.total_count is None
@@ -174,6 +178,7 @@ async def test_count_method_respects_filters(datasource: SQLAlchemyDataSource) -
 async def test_search_matches_across_string_fields(datasource: SQLAlchemyDataSource) -> None:
     # "work" only appears in Grace's email, not her name -> search must span fields.
     page = await datasource.list(_query(search="work"))
+    assert isinstance(page, PageResult)
     assert [item.name for item in page.items] == ["Grace"]
     assert page.total_count == 1
 
@@ -182,6 +187,7 @@ async def test_search_ignores_non_string_columns(datasource: SQLAlchemyDataSourc
     # "1" would match the integer id if search were applied to non-string columns;
     # since it is not present in any string field, the result must be empty.
     page = await datasource.list(_query(search="1"))
+    assert isinstance(page, PageResult)
     assert page.items == ()
     assert page.total_count == 0
 
