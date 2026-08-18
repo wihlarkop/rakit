@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import weakref
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-import weakref
 
 from rakit_core.definitions import ResourceDefinition
 
@@ -45,13 +45,8 @@ class FilterPanelPresentation:
             if not isinstance(filter_id, str) or not filter_id.strip():
                 raise ValueError("Filter presentation group ids must be non-empty strings")
             if not isinstance(presentation, FilterGroupPresentation):
-                raise TypeError("Filter presentation groups must contain FilterGroupPresentation values")
-            if (
-                presentation.choice_preview_count is not None
-                and presentation.choice_preview_count > self.choice_collapse_after
-            ):
-                raise ValueError(
-                    "Filter group choice preview count cannot exceed the panel collapse threshold"
+                raise TypeError(
+                    "Filter presentation groups must contain FilterGroupPresentation values"
                 )
             normalized[filter_id] = presentation
         object.__setattr__(self, "groups", MappingProxyType(normalized))
