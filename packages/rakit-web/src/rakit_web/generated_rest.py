@@ -13,12 +13,19 @@ from rakit_core.fields import FieldDefinition
 from rakit_core.generated_api import CompiledResourceApi, GeneratedCrudOperation
 from rakit_core.generated_input import GeneratedInput, validate_generated_input
 from rakit_core.generated_query import GeneratedFilterValue, build_generated_resource_query
+from rakit_core.pagination import (
+    CursorPagination,
+    LimitOffsetPagination,
+    PagePagination,
+    PaginationStrategy,
+)
 from rakit_core.query import FilterOperator, ResourceQuery
 from rakit_core.schema import SchemaAdapter
 from starlette.datastructures import QueryParams
 
 _FILTER_PATTERN = re.compile(r"^filter\[([^\]]+)\](?:\[([^\]]+)\])?$")
-_SINGLETON_QUERY_PARAMS = frozenset({"page", "per_page", "sort", "search"})
+_COMMON_QUERY_PARAMS = frozenset({"sort", "search"})
+_PAGINATION_QUERY_PARAMS = frozenset({"page", "per_page", "offset", "limit", "cursor"})
 
 
 def _transport_error(
@@ -40,33 +47,73 @@ def _transport_error(
     )
 
 
-def _parse_positive_int(api: CompiledResourceApi, name: str, raw: str | None, default: int) -> int:
+def _parse_int(
+    api: CompiledResourceApi,
+    name: str,
+    raw: str | None,
+    default: int,
+    *,
+    minimum: int,
+) -> int:
     if raw is None:
         return default
     try:
-        return int(raw)
+        value = int(raw)
     except ValueError as exc:
         raise _transport_error(api, "generated_api_invalid_pagination") from exc
+    if value < minimum:
+        raise _transport_error(api, "generated_api_invalid_pagination")
+    return value
 
 
-def _filter_value(
-    api: CompiledResourceApi,
-    operator: FilterOperator,
-    raw_value: str,
-) -> object:
-    if operator is FilterOperator.IN:
-        values = tuple(part.strip() for part in raw_value.split(",") if part.strip())
-        if not values:
-            raise _transport_error(api, "generated_api_filter_value_invalid")
-        return values
-    if operator is FilterOperator.IS_NULL:
-        normalized = raw_value.strip().lower()
-        if normalized == "true":
-            return True
-        if normalized == "false":
-            return False
-        raise _transport_error(api, "generated_api_filter_value_invalid")
-    return raw_value
+def _query_params_for_strategy(api: CompiledResourceApi) -> frozenset[str]:
+    strategy = api.pagination.strategy
+    if strategy is PaginationStrategy.PAGE:
+        return _COMMON_QUERY_PARAMS | {"page", "per_page"}
+    if strategy is PaginationStrategy.LIMIT_OFFSET:
+        return _COMMON_QUERY_PARAMS | {"offset", "limit"}
+    return _COMMON_QUERY_PARAMS | {"cursor", "limit"}
+
+
+def _parse_pagination(api: CompiledResourceApi, params: QueryParams):
+    policy = api.pagination
+    if policy.strategy is PaginationStrategy.PAGE:
+        page = _parse_int(api, "page", params.get("page"), 1, minimum=1)
+        size = _parse_int(
+            api,
+            "per_page",
+            params.get("per_page"),
+            policy.size.default,
+            minimum=1,
+        )
+        if not policy.size.accepts(size):
+            raise _transport_error(api, "generated_api_invalid_pagination")
+        return PagePagination(page=page, per_page=size)
+    if policy.strategy is PaginationStrategy.LIMIT_OFFSET:
+        offset = _parse_int(api, "offset", params.get("offset"), 0, minimum=0)
+        size = _parse_int(
+            api,
+            "limit",
+            params.get("limit"),
+            policy.size.default,
+            minimum=1,
+        )
+        if not policy.size.accepts(size):
+            raise _transport_error(api, "generated_api_invalid_pagination")
+        return LimitOffsetPagination(offset=offset, limit=size)
+    size = _parse_int(
+        api,
+        "limit",
+        params.get("limit"),
+        policy.size.default,
+        minimum=1,
+    )
+    if not policy.size.accepts(size):
+        raise _transport_error(api, "generated_api_invalid_pagination")
+    cursor = params.get("cursor")
+    if cursor == "":
+        raise _transport_error(api, "generated_api_invalid_pagination")
+    return CursorPagination(cursor=cursor, limit=size)
 
 
 def parse_generated_rest_query(
@@ -76,15 +123,19 @@ def parse_generated_rest_query(
 ) -> ResourceQuery:
     items = tuple(params.multi_items())
     raw_names = [name for name, _ in items]
+    allowed_query_params = _query_params_for_strategy(api)
 
-    for name in _SINGLETON_QUERY_PARAMS:
+    for name in raw_names:
+        if name in _PAGINATION_QUERY_PARAMS and name not in allowed_query_params:
+            raise _transport_error(api, "generated_api_query_parameter_not_allowed")
+    for name in allowed_query_params:
         if raw_names.count(name) > 1:
             raise _transport_error(api, "generated_api_query_parameter_duplicated")
 
     filters: list[GeneratedFilterValue] = []
     seen_filter_keys: set[str] = set()
     for name, raw_value in items:
-        if name in _SINGLETON_QUERY_PARAMS:
+        if name in allowed_query_params:
             continue
         match = _FILTER_PATTERN.fullmatch(name)
         if match is None:
@@ -101,7 +152,7 @@ def parse_generated_rest_query(
             GeneratedFilterValue(
                 name=filter_name,
                 operator=operator,
-                value=_filter_value(api, operator, raw_value),
+                value=raw_value,
             )
         )
 
@@ -109,14 +160,11 @@ def parse_generated_rest_query(
     if search is not None and not field_policy.search_fields:
         raise _transport_error(api, "generated_api_search_not_allowed")
 
-    page = _parse_positive_int(api, "page", params.get("page"), 1)
-    per_page = _parse_positive_int(api, "per_page", params.get("per_page"), 25)
     return build_generated_resource_query(
         api,
         field_policy,
         sort=params.get("sort"),
-        page=page,
-        per_page=per_page,
+        pagination=_parse_pagination(api, params),
         filters=tuple(filters),
         search=search,
     )

@@ -26,7 +26,7 @@ from rakit_core.definitions import (
 from rakit_core.di import ServiceResolver
 from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, OperationReceipt
 from rakit_core.identity import IdentityCodec, RecordIdentity
-from rakit_core.query import PageResult, ResourceQuery
+from rakit_core.query import PagePagination, PageResult, ResourceQuery
 from rakit_core.resources import ResourceService
 from rakit_web.bulk_admin import build_admin_bulk_action_routes
 from rakit_web.resource_routes import ResourceBinding, build_resource_routes, build_templates
@@ -40,10 +40,13 @@ class _DataSource:
     identity_fields = ("id",)
 
     async def list(self, query: ResourceQuery) -> PageResult[dict[str, object]]:
+        pagination = query.pagination
+        if not isinstance(pagination, PagePagination):
+            raise ValueError("_DataSource supports page-number pagination only")
         return PageResult(
             items=({"id": 1, "name": "One"}, {"id": 2, "name": "Two"}),
-            page=query.pagination.page,
-            per_page=query.pagination.per_page,
+            page=pagination.page,
+            per_page=pagination.per_page,
             has_previous=False,
             has_next=False,
             total_count=2,

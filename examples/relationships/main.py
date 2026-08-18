@@ -11,7 +11,13 @@ from rakit import (
     RelationshipKind,
     ResourceAdmin,
 )
-from rakit.core import DataSourceCapabilities, PageResult, RecordIdentity, ResourceQuery
+from rakit.core import (
+    DataSourceCapabilities,
+    PagePagination,
+    PageResult,
+    RecordIdentity,
+    ResourceQuery,
+)
 
 
 @dataclass(frozen=True)
@@ -32,13 +38,16 @@ class DemoDataSource:
         return RecordIdentity(values={"id": record.id})
 
     async def list(self, query: ResourceQuery) -> PageResult[DemoRecord]:
-        start = query.pagination.offset
-        items = self.records[start : start + query.pagination.per_page]
+        pagination = query.pagination
+        if not isinstance(pagination, PagePagination):
+            raise ValueError("DemoDataSource supports page-number pagination only")
+        start = pagination.offset
+        items = self.records[start : start + pagination.per_page]
         return PageResult(
             items=items,
-            page=query.pagination.page,
-            per_page=query.pagination.per_page,
-            has_previous=query.pagination.page > 1,
+            page=pagination.page,
+            per_page=pagination.per_page,
+            has_previous=pagination.page > 1,
             has_next=start + len(items) < len(self.records),
             total_count=len(self.records),
         )

@@ -8,7 +8,7 @@ from rakit_core.fields import FieldDefinition, FileField
 from rakit_core.forms import FormSchema
 from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_core.mutations import MutationAuthorization, MutationOperation
-from rakit_core.query import PageResult, ResourceQuery
+from rakit_core.query import PagePagination, PageResult, ResourceQuery
 from rakit_core.resources import ResourceService
 from rakit_web.form_routes import WriteResourceBinding, build_write_routes
 from rakit_web.resource_routes import (
@@ -36,10 +36,13 @@ class _ResourceDataSource:
         }
 
     async def list(self, query: ResourceQuery) -> PageResult[dict[str, object]]:
+        pagination = query.pagination
+        if not isinstance(pagination, PagePagination):
+            raise ValueError("_ResourceDataSource supports page-number pagination only")
         return PageResult(
             items=(self.record,),
-            page=query.pagination.page,
-            per_page=query.pagination.per_page,
+            page=pagination.page,
+            per_page=pagination.per_page,
             has_previous=False,
             has_next=False,
             total_count=1,

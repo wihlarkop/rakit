@@ -2,7 +2,15 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
-from rakit import Admin, ApiExposure, ResourceAdmin, ResourceApiDefinition, SecretValue
+from rakit import (
+    Admin,
+    ApiExposure,
+    PageSizePolicy,
+    ResourceAdmin,
+    ResourceApiDefinition,
+    ResourcePaginationPolicy,
+    SecretValue,
+)
 from rakit_core.auth import Principal, SessionRecord
 from rakit_core.datasource import DataSourceCapabilities
 from rakit_core.generated_api import ApiFilterDefinition
@@ -56,6 +64,9 @@ class UsersAdmin(ResourceAdmin):
     filter_fields = ("status",)
     search_fields = ("email",)
     sort_fields = ("email",)
+    pagination = ResourcePaginationPolicy(
+        size=PageSizePolicy(default=25, allowed=(10, 25, 50, 100))
+    )
     data_source = DATA_SOURCE
     api = ResourceApiDefinition(
         exposure=ApiExposure.READ_ONLY,

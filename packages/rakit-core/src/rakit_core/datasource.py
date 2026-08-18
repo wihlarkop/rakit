@@ -1,10 +1,11 @@
 from typing import Protocol
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from rakit_core.fields import FieldDefinition
 from rakit_core.identity import RecordIdentity
-from rakit_core.query import PageResult, ResourceQuery
+from rakit_core.pagination import PaginationStrategy, ResourceListResult
+from rakit_core.query import ResourceQuery
 
 
 class DataSourceCapabilities(BaseModel):
@@ -15,6 +16,9 @@ class DataSourceCapabilities(BaseModel):
     delete: bool = False
     transactions: bool = False
     optimistic_concurrency: bool = False
+    pagination_strategies: frozenset[PaginationStrategy] = Field(
+        default_factory=lambda: frozenset({PaginationStrategy.PAGE})
+    )
 
 
 class DataSource(Protocol):
@@ -29,7 +33,7 @@ class DataSource(Protocol):
     @property
     def identity_fields(self) -> tuple[str, ...]: ...
 
-    async def list(self, query: ResourceQuery) -> PageResult: ...
+    async def list(self, query: ResourceQuery) -> ResourceListResult: ...
 
     async def count(self, query: ResourceQuery) -> int: ...
 

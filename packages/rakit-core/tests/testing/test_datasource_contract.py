@@ -28,6 +28,7 @@ from rakit_core.query import (
     CountPolicy,
     Filter,
     FilterOperator,
+    PagePagination,
     PageResult,
     ResourceQuery,
     Sort,
@@ -211,16 +212,19 @@ class MemoryDataSource:
 
     async def list(self, query: ResourceQuery) -> PageResult:
         rows = self._sorted(self._filtered(query), query)
-        offset = query.pagination.offset
-        per_page = query.pagination.per_page
+        pagination = query.pagination
+        if not isinstance(pagination, PagePagination):
+            raise ValueError("MemoryDataSource supports page-number pagination only")
+        offset = pagination.offset
+        per_page = pagination.per_page
         items = tuple(rows[offset : offset + per_page])
         has_next = offset + per_page < len(rows)
         total_count = len(rows) if query.count_policy is CountPolicy.EXACT else None
         return PageResult(
             items=items,
-            page=query.pagination.page,
+            page=pagination.page,
             per_page=per_page,
-            has_previous=query.pagination.page > 1,
+            has_previous=pagination.page > 1,
             has_next=has_next,
             total_count=total_count,
         )
@@ -441,15 +445,18 @@ class BrokenDataSourceThatDropsIdentityTieBreaker:
         ]
 
     async def list(self, query: ResourceQuery) -> PageResult:
-        page = query.pagination.page
-        per_page = query.pagination.per_page
+        pagination = query.pagination
+        if not isinstance(pagination, PagePagination):
+            raise ValueError("BrokenDataSource supports page-number pagination only")
+        page = pagination.page
+        per_page = pagination.per_page
         if query.sorting:
             rows = sorted(self._records, key=lambda row: row[query.sorting[0].field])
             if page % 2 == 0:
                 rows = rows[1:] + rows[:1]
         else:
             rows = sorted(self._records, key=lambda row: row["id"])
-        offset = query.pagination.offset
+        offset = pagination.offset
         items = tuple(rows[offset : offset + per_page])
         total = len(self._records)
         return PageResult(

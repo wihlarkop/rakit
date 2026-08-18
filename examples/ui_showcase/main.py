@@ -10,19 +10,32 @@ from rakit import (
     ActionScope,
     ActionSuccess,
     Admin,
+    ChoiceFilter,
     DashboardDefinition,
+    DataSourceCapabilities,
+    DateRangeFilter,
+    Filter,
+    FilterChoice,
+    FilterControl,
+    FilterOperator,
     LauncherItem,
     ListWidgetItem,
     ListWidgetResult,
     PageDefinition,
+    PagePagination,
     PageResult,
+    PageSizePolicy,
     RelationshipCardinality,
     RelationshipDefinition,
     RelationshipKind,
     ResourceAdmin,
+    ResourceFilter,
+    ResourcePageResult,
+    ResourcePaginationPolicy,
     SecretValue,
     StatWidgetResult,
     TableWidgetResult,
+    TextFilter,
     WidgetDefinition,
     WidgetErrorResult,
     WidgetLayout,
@@ -65,11 +78,19 @@ def _matches(item: dict[str, object], filter_: Any) -> bool:
         return str(actual) in {str(value) for value in expected}
     if operator == "is_null":
         return (actual is None) is bool(expected)
+    if operator == "lt":
+        return str(actual) < str(expected)
+    if operator == "lte":
+        return str(actual) <= str(expected)
+    if operator == "gt":
+        return str(actual) > str(expected)
+    if operator == "gte":
+        return str(actual) >= str(expected)
     return False
 
 
 class _MemoryDataSource:
-    capabilities = type("Capabilities", (), {"read": True})()
+    capabilities = DataSourceCapabilities(read=True)
 
     def __init__(
         self,
@@ -98,15 +119,18 @@ class _MemoryDataSource:
             )
         return items
 
-    async def list(self, query: Any) -> _Page:
+    async def list(self, query: Any) -> ResourcePageResult[dict[str, object]]:
+        pagination = query.pagination
+        if not isinstance(pagination, PagePagination):
+            raise ValueError("UI showcase memory data source supports page pagination only")
         items = self._filtered(query)
-        start = query.pagination.offset
-        end = start + query.pagination.per_page
-        return _Page(
+        start = pagination.offset
+        end = start + pagination.per_page
+        return ResourcePageResult(
             items=tuple(items[start:end]),
-            page=query.pagination.page,
-            per_page=query.pagination.per_page,
-            has_previous=query.pagination.page > 1,
+            page=pagination.page,
+            per_page=pagination.per_page,
+            has_previous=pagination.page > 1,
             has_next=end < len(items),
             total_count=len(items) if query.count_policy.value == "exact" else None,
         )
@@ -125,6 +149,43 @@ class _MemoryDataSource:
         association_target_data_source: object | None,
     ) -> None:
         del definition, target_data_source, association_target_data_source
+
+
+class StockLevelFilter(ResourceFilter):
+    """Semantic showcase filter resolved without datasource-specific query objects."""
+
+    def parse_value(self, *, operator: FilterOperator, raw_value: object) -> object:
+        if operator is not FilterOperator.EQ or not isinstance(raw_value, str):
+            raise ValueError("Stock-level filter accepts one named choice")
+        if raw_value not in {choice.value for choice in self.choices}:
+            raise ValueError("Stock-level filter choice is not allowed")
+        return raw_value
+
+    def resolve_predicates(
+        self,
+        *,
+        operator: FilterOperator,
+        value: object,
+    ) -> tuple[Filter, ...]:
+        if operator is not FilterOperator.EQ or not isinstance(value, str):
+            raise ValueError("Stock-level filter selection is invalid")
+        if value == "attention":
+            return (
+                Filter(
+                    field="status",
+                    operator=FilterOperator.IN,
+                    value=("Low stock", "Out of stock"),
+                ),
+            )
+        if value == "out":
+            return (
+                Filter(
+                    field="status",
+                    operator=FilterOperator.EQ,
+                    value="Out of stock",
+                ),
+            )
+        raise ValueError("Stock-level filter choice is not allowed")
 
 
 class RefundOrder:
@@ -186,9 +247,36 @@ class OrdersAdmin(ResourceAdmin):
     )
     list_fields = ("id", "customer", "status", "items", "total", "created")
     detail_fields = ("id", "customer", "status", "items", "total", "created")
-    filter_fields = ("customer", "status")
+    filters = (
+        TextFilter(
+            filter_id="customer",
+            label="Customer",
+            field="customer",
+            operators=(FilterOperator.CONTAINS, FilterOperator.EQ),
+        ),
+        ChoiceFilter(
+            filter_id="status",
+            label="Status",
+            field="status",
+            choices=(
+                FilterChoice(value="Paid", label="Paid"),
+                FilterChoice(value="Pending review", label="Pending review"),
+                FilterChoice(value="Processing", label="Processing"),
+                FilterChoice(value="Fulfilled", label="Fulfilled"),
+                FilterChoice(value="Refunded", label="Refunded"),
+                FilterChoice(value="Cancelled", label="Cancelled"),
+            ),
+        ),
+        DateRangeFilter(
+            filter_id="created",
+            label="Created",
+            field="created",
+        ),
+    )
+    filter_fields = ()
     search_fields = ("id", "customer")
     sort_fields = ("id", "customer", "status", "created")
+    pagination = ResourcePaginationPolicy(size=PageSizePolicy(default=20, allowed=(20, 40, 80)))
     relationships = (
         RelationshipDefinition(
             relationship_id="customer",
@@ -252,7 +340,20 @@ class InventoryAdmin(ResourceAdmin):
     )
     list_fields = ("id", "sku", "product", "on_hand", "reorder_at", "status")
     detail_fields = ("id", "sku", "product", "on_hand", "reorder_at", "status")
-    filter_fields = ("status",)
+    filters = (
+        StockLevelFilter(
+            filter_id="stock_level",
+            label="Stock level",
+            predicate_fields=("status",),
+            control=FilterControl.CHOICE,
+            operators=(FilterOperator.EQ,),
+            choices=(
+                FilterChoice(value="attention", label="Needs attention"),
+                FilterChoice(value="out", label="Out of stock"),
+            ),
+        ),
+    )
+    filter_fields = ()
     search_fields = ("id", "sku", "product")
     sort_fields = ("id", "sku", "product", "on_hand", "status")
 
