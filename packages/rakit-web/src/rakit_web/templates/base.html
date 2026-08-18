@@ -10,7 +10,10 @@
     <script src="{{ static_url('htmx.min.js') }}" defer></script>
   </head>
   <body class="min-h-screen bg-rakit-bg text-rakit-text">
-    <a href="#rakit-main-content" class="sr-only z-50 rounded-rakit-sm bg-rakit-surface px-3 py-2 text-sm font-medium text-rakit-text shadow-rakit-md focus:not-sr-only focus:fixed focus:left-4 focus:top-4">Skip to main content</a>
+    <a
+      href="#rakit-main-content"
+      class="sr-only z-50 rounded-rakit-sm bg-rakit-surface px-3 py-2 text-sm font-medium text-rakit-text shadow-rakit-md focus:not-sr-only focus:fixed focus:left-4 focus:top-4"
+    >Skip to main content</a>
     <div id="rakit-announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 
     {% set navigation_provider = request.scope.get('state', {}).get('rakit_navigation_provider') %}

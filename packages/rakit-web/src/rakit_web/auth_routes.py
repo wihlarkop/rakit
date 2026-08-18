@@ -16,7 +16,6 @@ from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 
 from ._paths import mounted_path as _mounted_path
-from .auth_state import AuthReason
 from .security.cookies import CSRF_COOKIE_NAME, LOGIN_CSRF_COOKIE_NAME, SESSION_COOKIE_NAME
 from .security.csrf import CsrfService
 from .security.middleware import resolve_client_ip
@@ -274,7 +273,7 @@ def build_auth_routes(
             await session_store.revoke(record.session_id)
 
         response = RedirectResponse(
-            url=f"{_mounted_path(request, '/auth/login')}?reason={AuthReason.SIGNED_OUT.value}",
+            url=_mounted_path(request, "/auth/login"),
             status_code=303,
         )
         cookie_path = _mounted_path(request, "/") or "/"

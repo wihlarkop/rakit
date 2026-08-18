@@ -122,7 +122,9 @@ class PrincipalMiddleware:
         self._auth_backend = auth_backend
         self._session_store = session_store
 
-    async def _resolve(self, request: Request) -> tuple[Principal, bool, str | None]:
+    async def _resolve(
+        self, request: Request
+    ) -> tuple[Principal, bool, str | None, AuthReason | None]:
         """Resolve the request's principal, and report whether a session
         cookie was present but no longer usable.
 
@@ -134,10 +136,10 @@ class PrincipalMiddleware:
         """
         raw_token = request.cookies.get(SESSION_COOKIE_NAME)
         if not raw_token:
-            return ANONYMOUS_PRINCIPAL, False, None
+            return ANONYMOUS_PRINCIPAL, False, None, None
         record = await self._session_store.resolve(raw_token)
         if record is None:
-            return ANONYMOUS_PRINCIPAL, True, None
+            return ANONYMOUS_PRINCIPAL, True, None, AuthReason.SESSION_EXPIRED
         principal = await self._auth_backend.resolve_principal(record.subject_id)
         if principal is None or not principal.authenticated:
             # Revoke, don't just ignore. Treating this as anonymous for the
@@ -146,19 +148,19 @@ class PrincipalMiddleware:
             # *same* pre-deactivation session. Disabling an account has to
             # end its sessions, not pause them.
             await self._session_store.revoke(record.session_id)
-            return ANONYMOUS_PRINCIPAL, True, None
-        return principal, False, record.session_id
+            return ANONYMOUS_PRINCIPAL, True, None, None
+        return principal, False, record.session_id, None
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
         request = Request(scope, receive=receive)
-        principal, clear_session_cookie, session_id = await self._resolve(request)
+        principal, clear_session_cookie, session_id, auth_reason = await self._resolve(request)
         scope.setdefault("state", {})
         scope["state"]["principal"] = principal
-        if clear_session_cookie:
-            scope["state"][_AUTH_REASON_STATE_KEY] = AuthReason.SESSION_EXPIRED.value
+        if auth_reason is not None:
+            scope["state"][_AUTH_REASON_STATE_KEY] = auth_reason.value
         if session_id is not None:
             # The opaque identifier is request-private state, not a response
             # field.  Write routes use it to bind CSRF/submission tokens to
