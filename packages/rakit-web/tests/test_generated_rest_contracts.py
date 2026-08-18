@@ -78,13 +78,13 @@ def test_strict_query_parser_builds_resource_query_from_bracket_filters() -> Non
         _api(),
         POLICY,
         QueryParams(
-            "page=2&per_page=20&sort=-created_at,email&search=example.com&filter%5Bstatus%5D=active"
+            "page=2&per_page=25&sort=-created_at,email&search=example.com&filter%5Bstatus%5D=active"
         ),
     )
 
     assert isinstance(query.pagination, PagePagination)
     assert query.pagination.page == 2
-    assert query.pagination.per_page == 20
+    assert query.pagination.per_page == 25
     assert query.search == "example.com"
     assert [(item.field, item.direction) for item in query.sorting] == [
         ("created_at", SortDirection.DESC),
@@ -112,7 +112,7 @@ def test_strict_query_parser_supports_declared_in_operator() -> None:
         ("unknown=value", "generated_api_query_parameter_not_allowed"),
         ("page=1&page=2", "generated_api_query_parameter_duplicated"),
         ("page=nope", "generated_api_invalid_pagination"),
-        ("per_page=0", "generated_api_query_not_allowed"),
+        ("per_page=0", "generated_api_invalid_pagination"),
         ("sort=status", "generated_api_query_not_allowed"),
         ("filter%5Bprivate%5D=x", "generated_api_filter_not_allowed"),
         (

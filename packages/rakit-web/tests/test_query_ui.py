@@ -7,7 +7,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit
 import httpx
 import pytest
 from conftest import LifespanDriver
-from rakit import Admin, ModelAdmin, SecretValue
+from rakit import Admin, ModelAdmin, PageSizePolicy, ResourcePaginationPolicy, SecretValue
 from rakit_core.filters import FilterSelection, LegacyFieldFilter
 from rakit_core.query import FilterOperator
 from rakit_sqlalchemy.plugin import SQLAlchemyPlugin
@@ -46,6 +46,7 @@ class UserAdmin(ModelAdmin):
     filter_fields = ("id", "name", "email")
     search_fields = ("name", "email")
     sort_fields = ("id", "name", "email")
+    pagination = ResourcePaginationPolicy(size=PageSizePolicy(default=1, allowed=(1, 2, 3)))
 
 
 async def _seeded_factory(
@@ -534,19 +535,16 @@ async def test_contradictory_duplicate_sort_is_safe_client_error(
 
 
 @pytest.mark.parametrize("raw_value", ("1", "yes", "maybe", ""))
-async def test_is_null_rejects_non_boolean_vocabulary_before_query_execution(
+async def test_is_null_rejects_non_boolean_vocabulary_without_widening_query(
     client: httpx.AsyncClient,
     raw_value: str,
 ) -> None:
     response = await client.get("/users", params={"filter": f"name:is_null:{raw_value}"})
 
-    assert response.status_code == 400
-    assert response.json() == {
-        "code": "validation.failed",
-        "message": "Invalid filter value",
-        "details": {"field": "name", "operator": "is_null"},
-    }
-    assert response.headers["cache-control"] == "no-store"
+    assert response.status_code == 200
+    assert "Ada" in response.text
+    assert "Grace" in response.text
+    assert "data-rakit-active-filters" not in response.text
 
 
 @pytest.mark.parametrize(("raw_value", "has_records"), (("true", False), ("false", True)))

@@ -188,7 +188,7 @@ async def test_search_and_active_filters_render_validated_server_state() -> None
     assert ">Search</button>" not in response.text
     assert "data-rakit-filter-panel open" in response.text
     assert "Filters 1" in response.text
-    assert "status equals pending" in response.text
+    assert "status = pending" in response.text
     assert "Clear all filters" in response.text
     assert 'aria-label="Clear search"' in response.text
     assert 'name="filter" value="status:eq:pending"' in response.text
@@ -224,8 +224,8 @@ async def test_exact_count_pagination_renders_range_numbered_pages_and_policy_si
     assert 'aria-current="page">2</a>' in page_two.text
     assert ">1</a>" in page_two.text
     assert ">3</a>" in page_two.text
-    assert 'aria-label="Previous page"' in page_two.text
-    assert 'aria-label="Next page"' in page_two.text
+    assert 'aria-label="Previous results"' in page_two.text
+    assert 'aria-label="Next results"' in page_two.text
 
     assert custom.status_code == 200
     assert '<option value="17"' not in custom.text
