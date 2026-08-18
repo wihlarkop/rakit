@@ -252,15 +252,139 @@ function rakitAddDraft(control) {
   row.querySelector("input")?.focus();
 }
 
+function rakitStorageGet(key) {
+  try {
+    return window.sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function rakitStorageSet(key, value) {
+  try {
+    window.sessionStorage.setItem(key, value);
+  } catch {
+    // Presentation persistence is optional; filtering never depends on storage.
+  }
+}
+
+function rakitFilterStorageKey(resourceId, suffix) {
+  return `rakit.filter-ui.${resourceId}.${suffix}`;
+}
+
+function rakitSetFilterRailVisible(root, visible, { persist = false } = {}) {
+  if (!(root instanceof HTMLElement)) return;
+  const resourceId = root.dataset.rakitFilterUi;
+  const rail = root.querySelector("[data-rakit-filter-rail]");
+  const show = root.querySelector("[data-rakit-filter-rail-show]");
+  const hide = root.querySelector("[data-rakit-filter-rail-hide]");
+  if (rail instanceof HTMLElement) rail.hidden = !visible;
+  if (show instanceof HTMLElement) show.hidden = visible;
+  if (hide instanceof HTMLElement) hide.hidden = !visible;
+  if (persist && resourceId) {
+    rakitStorageSet(rakitFilterStorageKey(resourceId, "rail-visible"), String(visible));
+  }
+}
+
+function rakitEnhanceChoiceOverflow(details) {
+  if (!(details instanceof HTMLDetailsElement) || details.dataset.rakitChoiceEnhanced === "true") {
+    return;
+  }
+  details.dataset.rakitChoiceEnhanced = "true";
+  const label = details.querySelector("[data-rakit-choice-overflow-label]");
+  if (!(label instanceof HTMLElement)) return;
+  const moreLabel = details.dataset.rakitChoiceMoreLabel || label.textContent || "Show more";
+  const update = () => {
+    label.textContent = details.open ? "Show less" : moreLabel;
+  };
+  details.addEventListener("toggle", update);
+  update();
+}
+
+function rakitEnhanceFilterGroup(root, details) {
+  if (!(root instanceof HTMLElement) || !(details instanceof HTMLDetailsElement)) return;
+  if (details.dataset.rakitFilterGroupEnhanced === "true") return;
+  details.dataset.rakitFilterGroupEnhanced = "true";
+  const resourceId = root.dataset.rakitFilterUi;
+  const filterId = details.dataset.rakitFilterGroup;
+  if (!resourceId || !filterId) return;
+  const key = rakitFilterStorageKey(resourceId, `group.${filterId}`);
+  const stored = rakitStorageGet(key);
+  if (stored === "true") details.open = true;
+  if (stored === "false") details.open = false;
+  details.addEventListener("toggle", () => {
+    rakitStorageSet(key, String(details.open));
+  });
+}
+
+function rakitEnhanceFilterUi(root) {
+  if (!(root instanceof HTMLElement) || root.dataset.rakitFilterEnhanced === "true") return;
+  root.dataset.rakitFilterEnhanced = "true";
+  const resourceId = root.dataset.rakitFilterUi;
+
+  const mobileFallback = root.querySelector("[data-rakit-filter-mobile-fallback]");
+  const drawerTrigger = root.querySelector("[data-rakit-filter-drawer-trigger]");
+  const drawer = root.querySelector("[data-rakit-filter-drawer]");
+  if (mobileFallback instanceof HTMLElement) mobileFallback.hidden = true;
+  if (drawerTrigger instanceof HTMLElement) drawerTrigger.hidden = false;
+  if (drawer instanceof HTMLDialogElement) drawer.hidden = false;
+
+  let visible = root.dataset.rakitFilterDefaultVisible !== "false";
+  if (resourceId) {
+    const stored = rakitStorageGet(rakitFilterStorageKey(resourceId, "rail-visible"));
+    if (stored === "true") visible = true;
+    if (stored === "false") visible = false;
+  }
+  rakitSetFilterRailVisible(root, visible);
+
+  root.querySelectorAll("details[data-rakit-filter-group]").forEach((details) => {
+    rakitEnhanceFilterGroup(root, details);
+  });
+  root.querySelectorAll("details[data-rakit-choice-overflow]").forEach((details) => {
+    rakitEnhanceChoiceOverflow(details);
+  });
+}
+
+function rakitEnhanceFilterUis(root = document) {
+  const direct = root instanceof HTMLElement && root.hasAttribute("data-rakit-filter-ui")
+    ? [root]
+    : [];
+  const nested = root.querySelectorAll?.("[data-rakit-filter-ui]") || [];
+  [...direct, ...nested].forEach((filterUi) => rakitEnhanceFilterUi(filterUi));
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   rakitShowPreview(document);
   rakitFocusTarget(document);
+  rakitEnhanceFilterUis(document);
   rakitEnhanceGenericDialogs(document);
 });
 
 document.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof Element)) return;
+
+  const filterRailHide = target.closest("[data-rakit-filter-rail-hide]");
+  if (filterRailHide instanceof HTMLElement) {
+    const root = filterRailHide.closest("[data-rakit-filter-ui]");
+    if (root instanceof HTMLElement) {
+      event.preventDefault();
+      rakitSetFilterRailVisible(root, false, { persist: true });
+      root.querySelector("[data-rakit-filter-rail-show]")?.focus();
+    }
+    return;
+  }
+
+  const filterRailShow = target.closest("[data-rakit-filter-rail-show]");
+  if (filterRailShow instanceof HTMLElement) {
+    const root = filterRailShow.closest("[data-rakit-filter-ui]");
+    if (root instanceof HTMLElement) {
+      event.preventDefault();
+      rakitSetFilterRailVisible(root, true, { persist: true });
+      root.querySelector("[data-rakit-filter-rail-hide]")?.focus();
+    }
+    return;
+  }
 
   const dialogTrigger = target.closest("[data-rakit-dialog-trigger]");
   if (dialogTrigger instanceof HTMLElement) {
@@ -369,6 +493,7 @@ document.addEventListener("htmx:afterSwap", (event) => {
   const root = event.target instanceof HTMLElement ? event.target : document;
   rakitShowPreview(root);
   rakitFocusTarget(root);
+  rakitEnhanceFilterUis(root);
   rakitEnhanceGenericDialogs(root);
 });
 
