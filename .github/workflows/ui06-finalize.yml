@@ -30,24 +30,26 @@ jobs:
 
           bulk = Path("packages/rakit-web/src/rakit_web/bulk_review.py")
           text = bulk.read_text()
-          old = '''            if request.method == "POST":
+          old_bulk = '''            if request.method == "POST":
                 response = original_endpoint(request)
                 if inspect.isawaitable(response):
                     response = await response
                 return response
 '''
-          new = '''            if request.method == "POST":
+          new_bulk = '''            if request.method == "POST":
                 response = original_endpoint(request)
                 if inspect.isawaitable(response):
                     return cast(Response, await response)
                 return cast(Response, response)
 '''
-          assert old in text, "bulk POST wrapper shape changed"
-          bulk.write_text(text.replace(old, new, 1))
+          if old_bulk in text:
+              bulk.write_text(text.replace(old_bulk, new_bulk, 1))
+          else:
+              assert new_bulk in text, "bulk POST wrapper shape changed unexpectedly"
 
           tests = Path("packages/rakit-web/tests/test_advanced_ui_maturity.py")
           text = tests.read_text()
-          old = '''    add_action("available")
+          old_tests = '''    add_action("available")
     add_action(
         "disabled",
         lambda _context: ActionAvailabilityDecision.disabled("Temporarily unavailable"),
@@ -59,7 +61,7 @@ jobs:
 
     add_action("unauthorized", must_not_run, authorized=False)
 '''
-          new = '''    def disabled(context: ActionContext) -> ActionAvailabilityDecision:
+          new_tests = '''    def disabled(context: ActionContext) -> ActionAvailabilityDecision:
         del context
         return ActionAvailabilityDecision.disabled("Temporarily unavailable")
 
@@ -76,8 +78,10 @@ jobs:
     add_action("hidden", hidden)
     add_action("unauthorized", must_not_run, authorized=False)
 '''
-          assert old in text, "availability regression block shape changed"
-          tests.write_text(text.replace(old, new, 1))
+          if old_tests in text:
+              tests.write_text(text.replace(old_tests, new_tests, 1))
+          else:
+              assert new_tests in text, "availability regression block shape changed unexpectedly"
           PY
       - name: Format and lint
         run: |
