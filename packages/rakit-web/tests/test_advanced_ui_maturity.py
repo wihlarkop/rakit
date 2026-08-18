@@ -293,16 +293,21 @@ async def test_context_action_views_hide_disable_and_authorize_entry_points(
             )
         )
 
-    add_action("available")
-    add_action(
-        "disabled",
-        lambda _context: ActionAvailabilityDecision.disabled("Temporarily unavailable"),
-    )
-    add_action("hidden", lambda _context: ActionAvailabilityDecision.hidden())
+    def disabled(context: ActionContext) -> ActionAvailabilityDecision:
+        del context
+        return ActionAvailabilityDecision.disabled("Temporarily unavailable")
 
-    def must_not_run(_context: ActionContext) -> ActionAvailabilityDecision:
+    def hidden(context: ActionContext) -> ActionAvailabilityDecision:
+        del context
+        return ActionAvailabilityDecision.hidden()
+
+    def must_not_run(context: ActionContext) -> ActionAvailabilityDecision:
+        del context
         raise AssertionError("unauthorized availability must not be evaluated")
 
+    add_action("available")
+    add_action("disabled", disabled)
+    add_action("hidden", hidden)
     add_action("unauthorized", must_not_run, authorized=False)
     views = await resolve_action_views(
         request=_request(frozenset(permissions)),
