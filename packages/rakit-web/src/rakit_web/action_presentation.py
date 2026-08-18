@@ -59,9 +59,7 @@ def validate_action_presentations(
     declared_by_id = {str(action.action_id): action for action in actions}
     unknown_ids = sorted(set(presentations).difference(declared_by_id))
     if unknown_ids:
-        raise ValueError(
-            "Unknown action presentation ids: " + ", ".join(unknown_ids)
-        )
+        raise ValueError("Unknown action presentation ids: " + ", ".join(unknown_ids))
 
     primary_counts: dict[ActionScope, int] = {}
     for action_id, presentation in presentations.items():
