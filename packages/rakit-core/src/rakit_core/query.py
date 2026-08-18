@@ -2,9 +2,9 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
-from ._immutability import deep_freeze
+from .filters import Filter, FilterOperator, FilterSelection
 
 
 class SortDirection(StrEnum):
@@ -24,35 +24,11 @@ class CountPolicy(StrEnum):
     DISABLED = "disabled"
 
 
-class FilterOperator(StrEnum):
-    EQ = "eq"
-    NEQ = "neq"
-    LT = "lt"
-    LTE = "lte"
-    GT = "gt"
-    GTE = "gte"
-    CONTAINS = "contains"
-    IN = "in"
-    IS_NULL = "is_null"
-
-
 class Sort(BaseModel):
     model_config = ConfigDict(frozen=True)
     field: str
     direction: SortDirection = SortDirection.ASC
     nulls: NullPlacement = NullPlacement.AUTO
-
-
-class Filter(BaseModel):
-    model_config = ConfigDict(frozen=True)
-    field: str
-    operator: FilterOperator
-    value: object
-
-    @field_validator("value")
-    @classmethod
-    def freeze_value(cls, value: object) -> object:
-        return deep_freeze(value)
 
 
 class OffsetPagination(BaseModel):
@@ -82,6 +58,10 @@ class ResourceQuery(BaseModel):
     selected UI sorting. Keeping the two lists apart lets a datasource enforce
     "only whitelisted fields may be explicitly sorted on" without rejecting
     the very tie-breaker composition this contract promises.
+
+    `filter_selections` retains validated semantic request provenance for
+    presentation and transport reconstruction. Data-source adapters execute
+    only the flattened `filters` predicates and may ignore this field.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -89,6 +69,7 @@ class ResourceQuery(BaseModel):
     sorting: tuple[Sort, ...] = ()
     identity_tie_breakers: tuple[Sort, ...] = ()
     filters: tuple[Filter, ...] = ()
+    filter_selections: tuple[FilterSelection, ...] = ()
     search: str | None = None
     pagination: OffsetPagination = Field(default_factory=OffsetPagination)
     count_policy: CountPolicy = CountPolicy.EXACT
@@ -103,6 +84,7 @@ class ResourceQuery(BaseModel):
         allowed_sort_fields: Iterable[str],
         identity_fields: Sequence[str] = (),
         filters: tuple[Filter, ...] = (),
+        filter_selections: tuple[FilterSelection, ...] = (),
         search: str | None = None,
         count_policy: CountPolicy = CountPolicy.EXACT,
     ) -> "ResourceQuery":
@@ -143,6 +125,7 @@ class ResourceQuery(BaseModel):
             sorting=tuple(sort_items),
             identity_tie_breakers=tuple(tie_breakers),
             filters=filters,
+            filter_selections=filter_selections,
             search=search,
             pagination=OffsetPagination(page=page, per_page=per_page),
             count_policy=count_policy,
@@ -195,3 +178,17 @@ class PageResult[T]:
     has_previous: bool
     has_next: bool
     total_count: int | None = None
+
+
+__all__ = [
+    "CountPolicy",
+    "Filter",
+    "FilterOperator",
+    "FilterSelection",
+    "NullPlacement",
+    "OffsetPagination",
+    "PageResult",
+    "ResourceQuery",
+    "Sort",
+    "SortDirection",
+]
