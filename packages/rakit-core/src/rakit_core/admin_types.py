@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 from .datasource import DataSource
 from .filters import ResourceFilter
 from .generated_api import ResourceApiDefinition
+from .pagination import ResourcePaginationPolicy
 
 if TYPE_CHECKING:
     from .actions import ActionDefinition
@@ -29,6 +30,7 @@ class ResourceAdmin:
     filters: tuple[ResourceFilter, ...] = ()
     search_fields: tuple[str, ...] = ()
     sort_fields: tuple[str, ...] = ()
+    pagination: ResourcePaginationPolicy = ResourcePaginationPolicy()
     relationships: tuple["RelationshipDefinition", ...] = ()
     actions: tuple["ActionDefinition", ...] = ()
     api: ResourceApiDefinition = ResourceApiDefinition()
