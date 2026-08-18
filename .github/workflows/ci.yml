@@ -22,6 +22,8 @@ jobs:
       - run: uv sync --all-packages --dev --locked
       - run: bun install --frozen-lockfile
       - run: uv run python .github/ui06_showcase_wire.py
+      - name: Retain supported transaction policy
+        run: sed -i 's/TransactionPolicy.NONE/TransactionPolicy.DISABLED/' examples/ui_showcase/advanced_states.py
       - run: uv run ruff format examples/ui_showcase/main.py examples/ui_showcase/advanced_states.py
       - run: uv run ruff check --fix examples/ui_showcase/main.py examples/ui_showcase/advanced_states.py
       - run: bun run css:build
