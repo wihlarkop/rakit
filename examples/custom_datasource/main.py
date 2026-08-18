@@ -8,6 +8,7 @@ from rakit import Admin, ResourceAdmin
 from rakit.core import (
     CountPolicy,
     DataSourceCapabilities,
+    PagePagination,
     PageResult,
     RecordIdentity,
     ResourceQuery,
@@ -39,6 +40,10 @@ class TicketDataSource:
         return RecordIdentity(values={"id": record.id})
 
     async def list(self, query: ResourceQuery) -> PageResult[Ticket]:
+        pagination = query.pagination
+        if not isinstance(pagination, PagePagination):
+            raise ValueError("TicketDataSource supports page-number pagination only")
+
         visible = list(TICKETS)
         if query.search:
             needle = query.search.casefold()
@@ -56,14 +61,14 @@ class TicketDataSource:
                 reverse=sort.direction.value == "desc",
             )
 
-        start = query.pagination.offset
-        items = tuple(visible[start : start + query.pagination.per_page])
+        start = pagination.offset
+        items = tuple(visible[start : start + pagination.per_page])
         total = len(visible) if query.count_policy is CountPolicy.EXACT else None
         return PageResult(
             items=items,
-            page=query.pagination.page,
-            per_page=query.pagination.per_page,
-            has_previous=query.pagination.page > 1,
+            page=pagination.page,
+            per_page=pagination.per_page,
+            has_previous=pagination.page > 1,
             has_next=start + len(items) < len(visible),
             total_count=total,
         )
