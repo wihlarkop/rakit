@@ -452,9 +452,7 @@ class _BulkHarness:
             token_service=self.token_service,
             idempotency_store=_MemoryIdempotencyStore(),
             concurrency=concurrency,
-            concurrency_resource_id=(
-                "orders" if policy.require_concurrency_snapshot else None
-            ),
+            concurrency_resource_id=("orders" if policy.require_concurrency_snapshot else None),
             record_version=(record_version if policy.require_concurrency_snapshot else None),
         )
         return Starlette(routes=build_mature_bulk_action_routes(binding))

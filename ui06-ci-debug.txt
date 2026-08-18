@@ -1,0 +1,49 @@
+=== FOCUSED UI-06A REGRESSION ===
+........                                                                 [100%]
+8 passed in 0.10s
+focused_exit=0
+
+=== SHOWCASE IMPORT ===
+_AdminNavigationMiddleware
+showcase_exit=0
+
+=== FULL SUITE FIRST FAILURE ===
+........................................................................ [  3%]
+.........................F
+=================================== FAILURES ===================================
+_ test_ui_showcase_exposes_record_confirmation_action_and_relationship_contracts _
+
+    def test_ui_showcase_exposes_record_confirmation_action_and_relationship_contracts() -> None:
+        admin = _fresh_showcase_admin()
+        app = admin.asgi()
+        assert admin.compiled is not None
+        identity = IdentityCodec().encode(RecordIdentity(values={"id": "ORD-1080"}))
+        with _showcase_client(app) as client:
+            login = _login(client)
+            assert login.status_code == 303
+            refund = client.get(f"/orders/{identity}/_actions/refund_order")
+    
+        assert refund.status_code == 200
+        assert "Refund order" in refund.text
+        assert "Impact" in refund.text
+>       assert "This change is applied only when you confirm and submit." in refund.text
+E       assert 'This change is applied only when you confirm and submit.' in '<!doctype html>\n<html lang="en">\n  <head>\n    <meta charset="utf-8" />\n    <meta name="viewport" content="width=d...94299a.js" defer></script>\n    <script src="/_system/static/rakit-ui.e53db041.js" defer></script>\n  </body>\n</html>'
+E        +  where '<!doctype html>\n<html lang="en">\n  <head>\n    <meta charset="utf-8" />\n    <meta name="viewport" content="width=d...94299a.js" defer></script>\n    <script src="/_system/static/rakit-ui.e53db041.js" defer></script>\n  </body>\n</html>' = <Response [200 OK]>.text
+
+tests/test_ui_showcase.py:251: AssertionError
+----------------------------- Captured stderr call -----------------------------
+[2m2026-08-18T19:40:35.732102Z[0m [[32m[1minfo     [0m] [1mhttp.request.started          [0m [36madmin_id[0m=[35mui_showcase[0m [36mpath[0m=[35m/auth/login[0m [36mrequest_id[0m=[35m9e04a7ed-4005-4d5b-afc5-b92a1b4480db[0m
+[2m2026-08-18T19:40:35.740122Z[0m [[32m[1minfo     [0m] [1mhttp.request.started          [0m [36madmin_id[0m=[35mui_showcase[0m [36mpath[0m=[35m/auth/login[0m [36mrequest_id[0m=[35m7d17aaa7-6ce4-425b-aa8c-3f811e605220[0m
+[2m2026-08-18T19:40:35.741684Z[0m [[32m[1minfo     [0m] [1mhttp.request.started          [0m [36madmin_id[0m=[35mui_showcase[0m [36mpath[0m=[35m/orders/eyJpZCI6eyJ0eXBlIjoic3RyIiwidmFsdWUiOiJPUkQtMTA4MCJ9fQ/_actions/refund_order[0m [36mrequest_id[0m=[35m8d79b724-0673-48f6-a788-43f6d32f7ad7[0m
+=============================== warnings summary ===============================
+tests/test_ui_showcase.py:7
+  /home/runner/work/rakit/rakit/tests/test_ui_showcase.py:7: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_ui_showcase.py::test_ui_showcase_exposes_record_confirmation_action_and_relationship_contracts - assert 'This change is applied only when you confirm and submit.' in '<!doctype html>\n<html lang="en">\n  <head>\n    <meta charset="utf-8" />\n    <meta name="viewport" content="width=d...94299a.js" defer></script>\n    <script src="/_system/static/rakit-ui.e53db041.js" defer></script>\n  </body>\n</html>'
+ +  where '<!doctype html>\n<html lang="en">\n  <head>\n    <meta charset="utf-8" />\n    <meta name="viewport" content="width=d...94299a.js" defer></script>\n    <script src="/_system/static/rakit-ui.e53db041.js" defer></script>\n  </body>\n</html>' = <Response [200 OK]>.text
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 97 passed, 1 warning in 29.15s
+full_exit=1
