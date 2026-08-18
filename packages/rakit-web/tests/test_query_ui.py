@@ -47,7 +47,6 @@ class UserAdmin(ModelAdmin):
     search_fields = ("name", "email")
     sort_fields = ("id", "name", "email")
     pagination = ResourcePaginationPolicy(size=PageSizePolicy(default=2, allowed=(1, 2, 3)))
-    pagination = ResourcePaginationPolicy(size=PageSizePolicy(default=1, allowed=(1, 2, 3)))
 
 
 async def _seeded_factory(
@@ -204,7 +203,7 @@ async def _assert_pagination_controls(
     assert previous is not None
     assert next_ is not None
 
-    expected_without_page = params
+    expected_without_page = [pair for pair in params if pair != ("count_policy", "exact")]
     for url, pairs, expected_page in (
         (*previous, "1"),
         (*next_, "3"),
@@ -392,8 +391,8 @@ async def test_search_via_url_param(client: httpx.AsyncClient) -> None:
 
 
 async def test_per_page_over_max_falls_back_to_default(client: httpx.AsyncClient) -> None:
-    # per_page=99999 violates OffsetPagination's le=200 bound; parse_query must
-    # not let it through -- it falls back to the default query (both rows fit).
+    # per_page=99999 is outside this resource's allowlisted page sizes; the
+    # request falls back to the resource default (both seeded rows fit).
     response = await client.get("/users", params={"per_page": "99999"})
     assert response.status_code == 200
     assert "Ada" in response.text
