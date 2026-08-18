@@ -97,7 +97,9 @@ def test_filter_panel_presentation_rejects_invalid_thresholds_and_group_ids() ->
         FilterPanelPresentation(groups={"status": object()})  # type: ignore[dict-item]
 
 
-def test_public_admin_register_binds_web_presentation_without_changing_resource_definition() -> None:
+def test_public_admin_register_binds_web_presentation_without_changing_resource_definition() -> (
+    None
+):
     presentation = ResourceWebPresentation(
         filters=FilterPanelPresentation(
             groups={"status": FilterGroupPresentation(expanded_by_default=False)}
@@ -142,11 +144,11 @@ async def test_default_resource_filter_ui_renders_rail_mobile_fallback_and_share
 
     assert response.status_code == 200
     assert 'data-rakit-filter-ui="orders"' in response.text
-    assert 'data-rakit-filter-rail' in response.text
-    assert 'data-rakit-filter-mobile-fallback' in response.text
-    assert 'data-rakit-filter-drawer' in response.text
+    assert "data-rakit-filter-rail" in response.text
+    assert "data-rakit-filter-mobile-fallback" in response.text
+    assert "data-rakit-filter-drawer" in response.text
     assert 'data-rakit-filter-group="status"' in response.text
-    assert 'data-rakit-active-filters' in response.text
+    assert "data-rakit-active-filters" in response.text
     assert "Status: Paid" in response.text
     assert "Clear all filters" in response.text
     assert "divide-y divide-rakit-border" in response.text
