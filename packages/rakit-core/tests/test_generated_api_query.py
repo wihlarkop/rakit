@@ -1,14 +1,16 @@
 import pytest
 from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.errors import RakitError
+from rakit_core.filters import LegacyFieldFilter
 from rakit_core.generated_api import (
     ApiExposure,
     ApiFilterDefinition,
+    CompiledApiFilterDefinition,
     CompiledResourceApi,
     ResourceApiDefinition,
 )
 from rakit_core.generated_query import GeneratedFilterValue, build_generated_resource_query
-from rakit_core.query import FilterOperator, SortDirection
+from rakit_core.query import FilterOperator, PagePagination, SortDirection
 
 
 def _compiled() -> CompiledResourceApi:
@@ -23,6 +25,13 @@ def _compiled() -> CompiledResourceApi:
             ),
         ),
     )
+    filter_definition = LegacyFieldFilter(
+        filter_id="status",
+        label="Status",
+        field="status",
+        operators=(FilterOperator.EQ, FilterOperator.IN),
+        strip_in_values=True,
+    )
     return CompiledResourceApi(
         resource_id="users",
         definition=definition,
@@ -31,7 +40,13 @@ def _compiled() -> CompiledResourceApi:
         create_fields=(),
         update_fields=(),
         identity_fields=("id",),
-        filters=definition.filters,
+        filters=(
+            CompiledApiFilterDefinition(
+                name="status",
+                filter=filter_definition,
+                operators=filter_definition.operators,
+            ),
+        ),
     )
 
 
@@ -60,6 +75,7 @@ def test_query_projection_reuses_resource_query_and_stable_identity_ordering() -
         ("email", SortDirection.ASC),
     ]
     assert tuple(item.field for item in query.identity_tie_breakers) == ("id",)
+    assert isinstance(query.pagination, PagePagination)
     assert query.pagination.page == 2
     assert query.pagination.per_page == 20
     assert query.search == "example.com"

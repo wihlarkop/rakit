@@ -52,7 +52,9 @@ class MissingDataSource:
 
 async def test_resource_service_reads() -> None:
     service = ResourceService(FakeDataSource())
-    assert (await service.list(ResourceQuery())).total_count == 1
+    result = await service.list(ResourceQuery())
+    assert isinstance(result, PageResult)
+    assert result.total_count == 1
     assert await service.detail(RecordIdentity(values={"id": 1})) == {"id": 1, "name": "Ada"}
 
 

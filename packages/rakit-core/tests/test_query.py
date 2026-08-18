@@ -5,6 +5,7 @@ from rakit_core.query import (
     CountPolicy,
     Filter,
     FilterOperator,
+    PagePagination,
     PageResult,
     ResourceQuery,
     SortDirection,
@@ -26,6 +27,7 @@ def test_query_appends_identity_tie_breaker() -> None:
     assert [(item.field, item.direction) for item in query.identity_tie_breakers] == [
         ("id", SortDirection.ASC),
     ]
+    assert isinstance(query.pagination, PagePagination)
     assert query.pagination.offset == 25
 
 
@@ -62,6 +64,7 @@ def test_default_query_has_sensible_defaults() -> None:
     assert query.identity_tie_breakers == ()
     assert query.filters == ()
     assert query.search is None
+    assert isinstance(query.pagination, PagePagination)
     assert query.pagination.page == 1
     assert query.pagination.per_page == 25
     assert query.count_policy == CountPolicy.EXACT
