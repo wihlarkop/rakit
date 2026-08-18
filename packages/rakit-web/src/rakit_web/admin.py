@@ -81,7 +81,12 @@ from .page_admin import (
 )
 from .public_composition import resource_actions, resource_relationships
 from .relationship_routes import build_relationship_routes
-from .resource_routes import ResourceBinding, build_resource_routes, build_templates
+from .resource_routes import (
+    ResourceBinding,
+    ResourceCrudPaths,
+    build_resource_routes,
+    build_templates,
+)
 from .schema import PydanticSchemaAdapter
 from .security.authentication import (
     LOGIN_PATH,
@@ -810,10 +815,23 @@ class Admin:
         bindings: dict[str, ResourceBinding] = {}
         resource_routes: list[Route] = []
         for resource_id, service in self._resource_services.items():
+            write_binding = self._write_resource_bindings.get(resource_id)
+            crud_paths = None
+            if write_binding is not None:
+                crud_paths = ResourceCrudPaths(
+                    create_path=write_binding.create_path,
+                    update_path=(
+                        write_binding.update_path if write_binding.has_record_write_routes else None
+                    ),
+                    delete_path=(
+                        write_binding.delete_path if write_binding.has_record_write_routes else None
+                    ),
+                )
             binding = ResourceBinding(
                 definition=self._resource_definitions[resource_id],
                 service=service,
                 templates=templates,
+                crud_paths=crud_paths,
             )
             bindings[resource_id] = binding
             resource_routes.extend(build_resource_routes(binding))

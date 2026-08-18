@@ -219,6 +219,14 @@ class WriteResourceBinding:
     def delete_path(self) -> str:
         return f"{self.path}/{{identity}}/delete"
 
+    @property
+    def has_record_write_routes(self) -> bool:
+        service = self.mutation_service
+        return all(
+            callable(getattr(service, name, None))
+            for name in ("get", "issue_update_token", "update", "issue_delete_token", "delete")
+        )
+
 
 async def _parse_form(
     request: Request, binding: WriteResourceBinding
@@ -405,12 +413,17 @@ async def _form_response(
         issue_map,
         relationship_panels,
     )
+    cancel_path = binding.path
+    if operation == "update" and action_path.endswith("/edit"):
+        cancel_path = action_path.removesuffix("/edit")
     return binding.templates.TemplateResponse(
         request,
         "forms/form.html",
         {
             "title": title,
             "label": binding.label,
+            "resource_url": mounted_path(request, binding.path),
+            "cancel_url": mounted_path(request, cancel_path),
             "layout": layout,
             "issues": issues,
             "summary_issues": tuple(
@@ -502,11 +515,7 @@ def _identity(binding: WriteResourceBinding, encoded: str) -> RecordIdentity | N
 
 
 def _write_routes_available(binding: WriteResourceBinding) -> bool:
-    service = binding.mutation_service
-    return all(
-        callable(getattr(service, name, None))
-        for name in ("get", "issue_update_token", "update", "issue_delete_token", "delete")
-    )
+    return binding.has_record_write_routes
 
 
 async def _execute_with_deadline(
@@ -1033,6 +1042,8 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
             request,
             "forms/delete_confirm.html",
             {
+                "label": binding.label,
+                "cancel_url": mounted_path(request, binding.path),
                 "action_url": mounted_path(
                     request, f"{binding.path}/{request.path_params['identity']}/delete"
                 ),
