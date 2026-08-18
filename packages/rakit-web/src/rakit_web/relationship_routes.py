@@ -42,8 +42,8 @@ from rakit_core.relationship_mutations import (
 from rakit_core.relationships import (
     CompiledRelationship,
     RelationshipCardinality,
-    RelationshipEditMode,
     RelationshipDefinition,
+    RelationshipEditMode,
     RelationshipKind,
     resolve_record_label,
 )

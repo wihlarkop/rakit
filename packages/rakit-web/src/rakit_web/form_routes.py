@@ -391,30 +391,32 @@ async def _form_response(
             current_record = await getter(parent_identity)
 
     controls: dict[str, dict[str, object]] = {}
-    for field in binding.form_schema.fields:
-        if not (field.writable and field.readable and not field.sensitive):
+    for schema_field in binding.form_schema.fields:
+        if not (schema_field.writable and schema_field.readable and not schema_field.sensitive):
             continue
         file_view = None
-        if isinstance(field, FileField):
+        if isinstance(schema_field, FileField):
             current_file = (
-                record_stored_file(current_record, field) if current_record is not None else None
+                record_stored_file(current_record, schema_field)
+                if current_record is not None
+                else None
             )
-            file_view = file_field_presentation(field, current_file)
-        controls[field.field_id] = {
-            "id": _field_dom_id(binding, field.field_id),
-            "name": field.field_id,
-            "label": field.label or field.field_id,
-            "description": field.description,
-            "description_id": f"{_field_dom_id(binding, field.field_id)}-description",
-            "error_id": f"{_field_dom_id(binding, field.field_id)}-error",
-            "file_help_id": f"{_field_dom_id(binding, field.field_id)}-file-help",
-            "current_file_id": f"{_field_dom_id(binding, field.field_id)}-current-file",
-            "value": (submitted or {}).get(field.field_id, ""),
-            "issues": issue_map.get(field.field_id, ()),
-            "is_file": isinstance(field, FileField),
+            file_view = file_field_presentation(schema_field, current_file)
+        controls[schema_field.field_id] = {
+            "id": _field_dom_id(binding, schema_field.field_id),
+            "name": schema_field.field_id,
+            "label": schema_field.label or schema_field.field_id,
+            "description": schema_field.description,
+            "description_id": f"{_field_dom_id(binding, schema_field.field_id)}-description",
+            "error_id": f"{_field_dom_id(binding, schema_field.field_id)}-error",
+            "file_help_id": f"{_field_dom_id(binding, schema_field.field_id)}-file-help",
+            "current_file_id": f"{_field_dom_id(binding, schema_field.field_id)}-current-file",
+            "value": (submitted or {}).get(schema_field.field_id, ""),
+            "issues": issue_map.get(schema_field.field_id, ()),
+            "is_file": isinstance(schema_field, FileField),
             "accept": file_view.accept if file_view is not None else "",
             "file": file_view,
-            "required": field.required
+            "required": schema_field.required
             and not (file_view is not None and file_view.current is not None),
         }
     relationship_panels = await render_relationship_panels(
