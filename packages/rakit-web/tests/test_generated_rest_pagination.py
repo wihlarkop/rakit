@@ -13,7 +13,6 @@ from rakit_core.pagination import (
 from rakit_web.generated_rest import parse_generated_rest_query
 from starlette.datastructures import QueryParams
 
-
 POLICY = ResourceFieldPolicy(
     list_fields=("id", "name"),
     detail_fields=("id", "name"),

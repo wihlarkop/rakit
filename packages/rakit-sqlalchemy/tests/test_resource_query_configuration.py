@@ -101,7 +101,9 @@ async def test_first_class_filter_predicate_field_is_claimed_without_legacy_filt
     await engine.dispose()
 
 
-async def test_sqlalchemy_page_metadata_remains_compatible(datasource: SQLAlchemyDataSource) -> None:
+async def test_sqlalchemy_page_metadata_remains_compatible(
+    datasource: SQLAlchemyDataSource,
+) -> None:
     result = await datasource.list(
         ResourceQuery(
             pagination=PagePagination(page=2, per_page=2),
