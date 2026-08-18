@@ -22,7 +22,8 @@ from starlette.templating import Jinja2Templates
 
 from ._paths import mounted_path
 from .action_presentation import action_web_presentation
-from .bulk_routes import BulkActionBinding, build_bulk_action_routes
+from .bulk_review import build_mature_bulk_action_routes
+from .bulk_routes import BulkActionBinding
 
 
 def build_admin_bulk_action_routes(
@@ -66,10 +67,11 @@ def build_admin_bulk_action_routes(
             )
         )
 
-    # Resource list templates are shared across bindings. The helper filters
-    # per request, so action labels/URLs are not exposed to principals that do
-    # not satisfy the exact compiler-resolved permission.
-    cast(dict[str, Any], templates.env.globals)["rakit_bulk_actions"] = bulk_action_views
+    # Resource/action templates are shared across bindings. These helpers are
+    # Web-only and filter exact compiled permissions before exposing launchers.
+    template_globals = cast(dict[str, Any], templates.env.globals)
+    template_globals["rakit_bulk_actions"] = bulk_action_views
+    template_globals["rakit_action_web_presentation"] = action_web_presentation
 
     async def authorize_action(
         request: Request,
@@ -156,7 +158,7 @@ def build_admin_bulk_action_routes(
             unit_of_work_factory=unit_of_work_factory,
             label=label,
         )
-        routes.extend(build_bulk_action_routes(binding))
+        routes.extend(build_mature_bulk_action_routes(binding))
     return routes
 
 
