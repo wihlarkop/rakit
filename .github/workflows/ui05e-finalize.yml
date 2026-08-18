@@ -8,7 +8,7 @@ permissions:
   contents: write
 
 jobs:
-  format-and-assets:
+  finalize:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -19,9 +19,54 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --all-packages --dev --locked
-      - name: Format UI-05E Python sources
+      - name: Expand deterministic filter showcase
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("examples/ui_showcase/main.py")
+          text = path.read_text(encoding="utf-8")
+
+          old_import = '''    FilterControl,\n    FilterOperator,\n    LauncherItem,'''
+          new_import = '''    FilterControl,\n    FilterGroupPresentation,\n    FilterOperator,\n    FilterPanelPresentation,\n    LauncherItem,'''
+          if old_import in text:
+              text = text.replace(old_import, new_import, 1)
+          old_import = '''    ResourcePaginationPolicy,\n    SecretValue,'''
+          new_import = '''    ResourcePaginationPolicy,\n    ResourceWebPresentation,\n    SecretValue,'''
+          if old_import in text:
+              text = text.replace(old_import, new_import, 1)
+
+          old_products = '''    detail_fields = ("id", "name", "category", "sku", "status", "price")\n    filter_fields = ("category", "status")\n    search_fields = ("id", "name", "sku")'''
+          new_products = '''    detail_fields = ("id", "name", "category", "sku", "status", "price")\n    filters = (\n        ChoiceFilter(\n            filter_id="category",\n            label="Category",\n            field="category",\n            choices=(\n                FilterChoice(value="Workspace", label="Workspace"),\n                FilterChoice(value="Input devices", label="Input devices"),\n                FilterChoice(value="Displays", label="Displays"),\n                FilterChoice(value="Accessories", label="Accessories"),\n                FilterChoice(value="Audio & conferencing", label="Audio & conferencing"),\n                FilterChoice(\n                    value="Ergonomic workspace accessories",\n                    label="Ergonomic workspace accessories",\n                ),\n                FilterChoice(value="Power and charging", label="Power and charging"),\n                FilterChoice(value="Networking", label="Networking"),\n                FilterChoice(value="Storage", label="Storage"),\n                FilterChoice(value="Travel workspace", label="Travel workspace"),\n            ),\n        ),\n        ChoiceFilter(\n            filter_id="status",\n            label="Status",\n            field="status",\n            choices=(\n                FilterChoice(value="Published", label="Published"),\n                FilterChoice(value="Draft", label="Draft"),\n                FilterChoice(value="Review", label="Review"),\n                FilterChoice(value="Archived", label="Archived"),\n            ),\n        ),\n        TextFilter(filter_id="name", label="Name", field="name"),\n        TextFilter(filter_id="sku", label="SKU", field="sku"),\n        TextFilter(filter_id="price", label="Price label", field="price"),\n    )\n    filter_fields = ()\n    search_fields = ("id", "name", "sku")'''
+          if old_products not in text and 'filter_id="category"' not in text:
+              raise SystemExit("ProductsAdmin marker not found")
+          if old_products in text:
+              text = text.replace(old_products, new_products, 1)
+
+          old_register = '''for resource_admin in (\n    CustomersAdmin,\n    ProductsAdmin,\n    OrdersAdmin,\n    CategoriesAdmin,\n    InventoryAdmin,\n    TeamsAdmin,\n):\n    admin.register(resource_admin)'''
+          new_register = '''for resource_admin in (\n    CustomersAdmin,\n    ProductsAdmin,\n    OrdersAdmin,\n    CategoriesAdmin,\n    InventoryAdmin,\n    TeamsAdmin,\n):\n    if resource_admin is ProductsAdmin:\n        admin.register(\n            resource_admin,\n            web=ResourceWebPresentation(\n                filters=FilterPanelPresentation(\n                    groups={\n                        "category": FilterGroupPresentation(choice_preview_count=5),\n                    }\n                )\n            ),\n        )\n    else:\n        admin.register(resource_admin)'''
+          if old_register in text:
+              text = text.replace(old_register, new_register, 1)
+          elif "web=ResourceWebPresentation(" not in text:
+              raise SystemExit("Resource registration marker not found")
+
+          path.write_text(text, encoding="utf-8")
+
+          readme = Path("examples/ui_showcase/README.md")
+          readme_text = readme.read_text(encoding="utf-8")
+          marker = "The UI Lab is a baseline, not a separate theme."
+          addition = '''## UI-05E filter rail acceptance\n\nUse `/orders`, `/products`, and `/inventory` together when reviewing resource filtering:\n\n- `/orders` exercises text, choice, and date-range controls in the default rail;\n- `/products` intentionally exposes five filter groups so automatic group collapse is visible, and its Category filter has ten choices so `Show more`/`Show less` behavior can be inspected;\n- `/products` also uses the public Web presentation override to show five Category choices before disclosure;\n- `/inventory` exercises a custom semantic `ResourceFilter` whose friendly selection resolves to backend-neutral predicates;\n- on desktop, verify the right rail, group dividers, Hide/Show filters, active chips, and table expansion;\n- on tablet/mobile, verify the no-JavaScript fallback and the enhanced filter drawer;\n- clearing one filter or all filters must not unexpectedly hide the filtering surface.\n\n'''
+          if "## UI-05E filter rail acceptance" not in readme_text:
+              if marker not in readme_text:
+                  raise SystemExit("README marker not found")
+              readme_text = readme_text.replace(marker, addition + marker, 1)
+              readme.write_text(readme_text, encoding="utf-8")
+          PY
+      - name: Format Python sources
         run: |
           uv run ruff format \
+            examples/ui_showcase/main.py \
             packages/rakit/src/rakit/__init__.py \
             packages/rakit-web/src/rakit_web/dashboard_admin.py \
             packages/rakit-web/src/rakit_web/resource_presentation.py \
@@ -30,21 +75,23 @@ jobs:
         run: |
           npm install --no-save --package-lock=false @tailwindcss/cli@4.1.18 tailwindcss@4.1.18
           npm run css:build
-      - name: Commit generated maintenance changes
+      - name: Commit generated feature changes
         shell: bash
         run: |
           set -euo pipefail
           git add \
+            examples/ui_showcase/main.py \
+            examples/ui_showcase/README.md \
             packages/rakit/src/rakit/__init__.py \
             packages/rakit-web/src/rakit_web/dashboard_admin.py \
             packages/rakit-web/src/rakit_web/resource_presentation.py \
             packages/rakit-web/src/rakit_web/resource_routes.py \
             packages/rakit-web/src/rakit_web/static/rakit.css
           if git diff --cached --quiet; then
-            echo "No formatter or asset changes to commit."
+            echo "No finalizer changes to commit."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "style(web): format UI-05E and rebuild CSS"
+          git commit -m "feat(examples): exercise scalable filter presentation"
           git push origin HEAD:ui-05e-filter-rail-responsive-filters
