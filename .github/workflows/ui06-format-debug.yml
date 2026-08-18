@@ -24,60 +24,68 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
 
           showcase = Path("examples/ui_showcase/main.py")
           text = showcase.read_text()
-          old = '''            preview=lambda _context: ActionPreview(
-                title="Cancel selected orders",
-                description="Review the selected orders before cancellation.",
-                impact=(
-                    "The selected orders will be cancelled in this development-only showcase."
-                ),
-            ),
-            executor=ShowcaseAction("Selected orders cancelled in the UI showcase"),
-            needs_preview=True,
-            needs_confirmation=True,
-            bulk_policy=BulkPolicy(
-                execution=BulkExecutionPolicy.BEST_EFFORT,
-                require_concurrency_snapshot=False,
-            ),'''
-          new = '''            executor=ShowcaseAction("Selected orders cancelled in the UI showcase"),
-            bulk_policy=BulkPolicy(
-                execution=BulkExecutionPolicy.BEST_EFFORT,
-                confirmation_threshold=1,
-                require_concurrency_snapshot=False,
-            ),'''
-          assert old in text
-          showcase.write_text(text.replace(old, new, 1))
+          pattern = re.compile(
+              r'(?P<prefix>            description="Danger bulk action with confirmation review\.\",\n)'
+              r'            preview=lambda _context: ActionPreview\(.*?'
+              r'            needs_confirmation=True,\n'
+              r'(?P<policy>            bulk_policy=BulkPolicy\(\n'
+              r'                execution=BulkExecutionPolicy\.BEST_EFFORT,\n)'
+              r'(?P<snapshot>                require_concurrency_snapshot=False,\n)',
+              re.S,
+          )
+          text, count = pattern.subn(
+              r'\g<prefix>            executor=ShowcaseAction("Selected orders cancelled in the UI showcase"),\n'
+              r'\g<policy>                confirmation_threshold=1,\n\g<snapshot>',
+              text,
+              count=1,
+          )
+          assert count == 1, f"showcase replacements={count}"
+          # Remove the original executor if the regex retained it through the preview span.
+          text = text.replace(
+              '            executor=ShowcaseAction("Selected orders cancelled in the UI showcase"),\n'
+              '            executor=ShowcaseAction("Selected orders cancelled in the UI showcase"),\n',
+              '            executor=ShowcaseAction("Selected orders cancelled in the UI showcase"),\n',
+              1,
+          )
+          showcase.write_text(text)
 
           tests = Path("packages/rakit-web/tests/test_advanced_ui_maturity.py")
           text = tests.read_text()
-          old = '''            preview=(
-                lambda _context: ActionPreview(
-                    title="Archive selected",
-                    description="Review selected records.",
-                    impact="Selected records will be archived.",
-                )
-                if needs_confirmation
-                else None
-            ),
-            executor=DomainActionExecutor(execute),
-            needs_preview=needs_confirmation,
-            needs_confirmation=needs_confirmation,
-            bulk_policy=BulkPolicy(
-                require_concurrency_snapshot=require_snapshot
-            ),'''
-          new = '''            executor=DomainActionExecutor(execute),
-            bulk_policy=BulkPolicy(
-                confirmation_threshold=1 if needs_confirmation else 20,
-                require_concurrency_snapshot=require_snapshot,
-            ),'''
-          assert old in text
-          tests.write_text(text.replace(old, new, 1))
+          pattern = re.compile(
+              r'(?P<prefix>            availability=availability,\n)'
+              r'            preview=\(.*?'
+              r'            needs_confirmation=needs_confirmation,\n'
+              r'            bulk_policy=BulkPolicy\(\n'
+              r'                require_concurrency_snapshot=require_snapshot\n'
+              r'            \),',
+              re.S,
+          )
+          text, count = pattern.subn(
+              r'\g<prefix>            executor=DomainActionExecutor(execute),\n'
+              r'            bulk_policy=BulkPolicy(\n'
+              r'                confirmation_threshold=1 if needs_confirmation else 20,\n'
+              r'                require_concurrency_snapshot=require_snapshot,\n'
+              r'            ),',
+              text,
+              count=1,
+          )
+          assert count == 1, f"test replacements={count}"
+          text = text.replace(
+              '            executor=DomainActionExecutor(execute),\n'
+              '            executor=DomainActionExecutor(execute),\n',
+              '            executor=DomainActionExecutor(execute),\n',
+              1,
+          )
+          tests.write_text(text)
           PY
       - name: Apply exact Ruff formatting to child branch
         run: |
           uv run ruff format .
+          git diff --check
           if git diff --quiet; then
             echo "UI-06A source is already clean."
             exit 0
