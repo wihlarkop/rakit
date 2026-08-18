@@ -22,10 +22,18 @@ jobs:
         with:
           python-version: '3.12'
       - name: Apply deterministic composition patch
-        run: python .github/ui05d_patch_composition.py
+        run: |
+          python .github/ui05d_patch_composition.py
+          python .github/ui05d_fix_composition_lint.py
       - name: Format touched Python files
         run: >-
           uv run ruff format
+          packages/rakit-core/src/rakit_core/compiler.py
+          packages/rakit-web/src/rakit_web/admin.py
+          packages/rakit-sqlalchemy/src/rakit_sqlalchemy/datasource.py
+      - name: Normalize imports
+        run: >-
+          uv run ruff check --fix
           packages/rakit-core/src/rakit_core/compiler.py
           packages/rakit-web/src/rakit_web/admin.py
           packages/rakit-sqlalchemy/src/rakit_sqlalchemy/datasource.py
