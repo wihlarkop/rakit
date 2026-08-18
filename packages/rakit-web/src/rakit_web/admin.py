@@ -58,6 +58,7 @@ from starlette.routing import Mount, Route
 from starlette.templating import Jinja2Templates
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from ._paths import mounted_path
 from .action_routes import (
     ActionBinding,
     AdvancedActionResponseAdapter,
@@ -107,6 +108,7 @@ from .security.validation import (
     validate_rate_limiter_for_production,
     validate_session_store_for_production,
 )
+from .system_responses import SystemPageRenderer, unexpected_api_error
 
 _FIELD_POLICY_NAMES = (
     "list_fields",
@@ -804,12 +806,16 @@ class Admin:
                 return JSONResponse({"status": "ready"})
             return JSONResponse({"status": "not_ready"}, status_code=503)
 
-        async def http_error_handler(request: Request, exc: Exception) -> Response:
-            assert isinstance(exc, HTTPException)
+        def _relative_request_path(request: Request) -> str:
             relative_path = request.url.path
             root_path = request.scope.get("root_path", "").rstrip("/")
             if root_path and relative_path.startswith(root_path):
-                relative_path = relative_path[len(root_path) :] or "/"
+                return relative_path[len(root_path) :] or "/"
+            return relative_path
+
+        async def http_error_handler(request: Request, exc: Exception) -> Response:
+            assert isinstance(exc, HTTPException)
+            relative_path = _relative_request_path(request)
             if relative_path == "/api" or relative_path.startswith("/api/"):
                 request_id = request.scope.get("state", {}).get("request_id", "")
                 code = (
@@ -828,11 +834,20 @@ class Admin:
                     status_code=exc.status_code,
                     headers=headers,
                 )
+            if exc.status_code == 404:
+                return system_pages.not_found(request, dashboard_url=_safe_dashboard_url(request))
             return PlainTextResponse(
                 str(exc.detail),
                 status_code=exc.status_code,
                 headers=exc.headers,
             )
+
+        async def unexpected_error_handler(request: Request, exc: Exception) -> Response:
+            del exc
+            relative_path = _relative_request_path(request)
+            if relative_path == "/api" or relative_path.startswith("/api/"):
+                return unexpected_api_error(request)
+            return system_pages.internal_error(request, dashboard_url=_safe_dashboard_url(request))
 
         async def rakit_error_handler(_request: Request, exc: Exception) -> JSONResponse:
             # Minimal error-to-HTTP translation: a RakitError already carries the
@@ -859,6 +874,7 @@ class Admin:
                 await self._close_application_resolver()
 
         templates = build_templates(self._template_dirs)
+        system_pages = SystemPageRenderer(templates=templates, label=self.config.title)
         bindings: dict[str, ResourceBinding] = {}
         resource_routes: list[Route] = []
         for resource_id, service in self._resource_services.items():
@@ -1100,6 +1116,21 @@ class Admin:
                 admin_id=self.config.admin_id,
             ),
         )
+
+        def _safe_dashboard_url(request: Request) -> str | None:
+            if self._auth_backend is None or self._session_store is None:
+                return mounted_path(request, "/")
+            principal = request.scope.get("state", {}).get("principal")
+            requirement = requirement_resolver("/", "GET")
+            if (
+                principal is not None
+                and principal.authenticated
+                and requirement is not None
+                and requirement.matches(principal, superuser_bypass=self._superuser_bypass)
+            ):
+                return mounted_path(request, "/")
+            return None
+
         if self._session_store is not None and self.config.security.secret_key is not None:
             write_token_service = TokenService.single_key(
                 key_id="primary",
@@ -1492,6 +1523,8 @@ class Admin:
                 HTTPException: http_error_handler,
             },
         )
+        if not self.config.debug:
+            app.add_exception_handler(Exception, unexpected_error_handler)
         app.routes.append(Route("/_system/health", health))
         app.routes.append(Route("/_system/ready", ready))
         app.routes.append(Mount("/_system/static", app=static_files(), name="rakit-static"))
@@ -1525,6 +1558,7 @@ class Admin:
                 csrf_service=csrf_service,
                 rate_limiter=self._login_rate_limiter,
                 templates=templates,
+                label=self.config.title,
                 admin_id=self.config.admin_id,
                 secure_cookies=not self.config.debug,
                 trusted_proxies=self._trusted_proxy_networks,
@@ -1546,6 +1580,9 @@ class Admin:
                 inner_app,
                 requirement_for=requirement_resolver,
                 superuser_bypass=self._superuser_bypass,
+                browser_forbidden=lambda request: system_pages.forbidden(
+                    request, dashboard_url=_safe_dashboard_url(request)
+                ),
             )
             inner_app = PrincipalMiddleware(
                 inner_app,

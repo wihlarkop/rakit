@@ -20,10 +20,11 @@ from urllib.parse import unquote
 from rakit_core.auth import ANONYMOUS_PRINCIPAL, AuthBackend, Principal, SessionStore
 from rakit_core.permissions import PermissionRequirement
 from starlette.requests import Request
-from starlette.responses import JSONResponse, PlainTextResponse, RedirectResponse
+from starlette.responses import JSONResponse, PlainTextResponse, RedirectResponse, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .._paths import mounted_path
+from ..auth_state import AuthReason
 from .cookies import SESSION_COOKIE_NAME
 
 LOGIN_PATH = "/auth/login"
@@ -153,6 +154,8 @@ class PrincipalMiddleware:
         principal, clear_session_cookie, session_id = await self._resolve(request)
         scope.setdefault("state", {})
         scope["state"]["principal"] = principal
+        if clear_session_cookie:
+            scope["state"]["rakit_auth_reason"] = AuthReason.SESSION_EXPIRED.value
         if session_id is not None:
             # The opaque identifier is request-private state, not a response
             # field.  Write routes use it to bind CSRF/submission tokens to
@@ -205,10 +208,12 @@ class AuthorizationMiddleware:
         *,
         requirement_for: Callable[..., PermissionRequirement | None],
         superuser_bypass: bool = True,
+        browser_forbidden: Callable[[Request], Response] | None = None,
     ) -> None:
         self.app = app
         self._requirement_for = requirement_for
         self._superuser_bypass = superuser_bypass
+        self._browser_forbidden = browser_forbidden
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -234,9 +239,13 @@ class AuthorizationMiddleware:
                     message="Authentication is required.",
                 )(scope, receive, send)
                 return
-            # Browser requests retain the existing login redirect behavior.
+            # Browser requests retain the login redirect behavior and expose
+            # only a closed reason code when a previously-present session expired.
+            login_url = mounted_path(request, LOGIN_PATH)
+            if scope.get("state", {}).get("rakit_auth_reason") == AuthReason.SESSION_EXPIRED.value:
+                login_url = f"{login_url}?reason={AuthReason.SESSION_EXPIRED.value}"
             await RedirectResponse(
-                url=mounted_path(request, LOGIN_PATH),
+                url=login_url,
                 status_code=303,
                 headers={"Cache-Control": "no-store"},
             )(scope, receive, send)
@@ -251,9 +260,12 @@ class AuthorizationMiddleware:
                     message="Permission denied.",
                 )(scope, receive, send)
                 return
-            await PlainTextResponse(
-                "Forbidden", status_code=403, headers={"Cache-Control": "no-store"}
-            )(scope, receive, send)
+            if self._browser_forbidden is not None:
+                await self._browser_forbidden(request)(scope, receive, send)
+            else:
+                await PlainTextResponse(
+                    "Forbidden", status_code=403, headers={"Cache-Control": "no-store"}
+                )(scope, receive, send)
             return
 
         await self.app(scope, receive, send)
