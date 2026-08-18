@@ -78,7 +78,9 @@ async def _render_review(
     issues: tuple[FormIssue, ...] = (),
     status_code: int = 200,
 ) -> Response:
-    encoded_selection = tuple(binding.codec.encode(identity) for identity in selection.identities)
+    encoded_selection = tuple(
+        binding.codec.encode(identity) for identity in selection.identities
+    )
     executable = availability == "available"
     concurrency_tokens = (
         _concurrency_tokens(binding, action, selection) if executable else ()
@@ -88,7 +90,10 @@ async def _render_review(
     confirmation_token = (
         _issue_confirmation(binding, request, action, authorization, selection)
         if executable
-        and (action.needs_confirmation or len(selection.targets) >= policy.confirmation_threshold)
+        and (
+            action.needs_confirmation
+            or len(selection.targets) >= policy.confirmation_threshold
+        )
         else ""
     )
     args = _form_args(
