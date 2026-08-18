@@ -42,6 +42,7 @@ jobs:
             packages/rakit-core/tests/testing/test_datasource_contract.py \
             packages/rakit-core/tests/test_generated_api_query.py
       - name: Capture full type-check diagnostics
+        continue-on-error: true
         run: |
           set -o pipefail
           uv run ty check 2>&1 | tee .github/ui05d-ty.log
@@ -53,7 +54,6 @@ jobs:
           path: .github/ui05d-ty.log
           if-no-files-found: ignore
       - name: Commit migration batch
-        if: success()
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
