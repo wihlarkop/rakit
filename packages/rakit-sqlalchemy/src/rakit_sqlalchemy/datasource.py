@@ -11,12 +11,19 @@ from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.fields import FieldDefinition, infer_field_security
 from rakit_core.identity import RecordIdentity
+from rakit_core.pagination import (
+    LimitOffsetPagination,
+    LimitOffsetResult,
+    PagePagination,
+    PageResult,
+    PaginationStrategy,
+    ResourceListResult,
+)
 from rakit_core.query import (
     CountPolicy,
     Filter,
     FilterOperator,
     NullPlacement,
-    PageResult,
     ResourceQuery,
     Sort,
     SortDirection,
@@ -363,7 +370,10 @@ def _coerce_identity_component(type_: TypeEngine[Any], raw_value: object) -> obj
 
 
 class SQLAlchemyDataSource:
-    capabilities = DataSourceCapabilities(read=True)
+    capabilities = DataSourceCapabilities(
+        read=True,
+        pagination_strategies=frozenset({PaginationStrategy.PAGE, PaginationStrategy.LIMIT_OFFSET}),
+    )
 
     def __init__(
         self,
@@ -570,7 +580,7 @@ class SQLAlchemyDataSource:
                 sorted_fields.add(field_name)
         return tuple(sorting)
 
-    async def list(self, query: ResourceQuery) -> PageResult:
+    async def list(self, query: ResourceQuery) -> ResourceListResult:
         self._validate_query_policy(query)
         filtered = self._filtered_statement(query)
         ordered = filtered
@@ -578,28 +588,47 @@ class SQLAlchemyDataSource:
             ordered = self._apply_sort(ordered, sort)
 
         pagination = query.pagination
+        if isinstance(pagination, PagePagination):
+            offset = pagination.offset
+            limit = pagination.per_page
+        elif isinstance(pagination, LimitOffsetPagination):
+            offset = pagination.offset
+            limit = pagination.limit
+        else:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+                message="SQLAlchemy data source does not support cursor pagination.",
+                status_code=500,
+                details={"reason": "pagination_strategy_not_supported"},
+            )
+
         async with self._session_factory() as session:
             if query.count_policy is CountPolicy.EXACT:
                 total_count: int | None = await self._count(session, filtered)
-                paginated = ordered.offset(pagination.offset).limit(pagination.per_page)
+                paginated = ordered.offset(offset).limit(limit)
                 items = tuple((await session.execute(paginated)).scalars().all())
-                has_next = pagination.offset + len(items) < total_count
+                has_next = offset + len(items) < total_count
             else:
-                # DISABLED and DEFERRED both avoid the count query on this page:
-                # fetch one extra row to learn whether a next page exists, then
-                # trim it back off before building the result. DEFERRED's real
-                # total is fetched separately via the dedicated `_count` route.
-                paginated = ordered.offset(pagination.offset).limit(pagination.per_page + 1)
+                paginated = ordered.offset(offset).limit(limit + 1)
                 rows = list((await session.execute(paginated)).scalars().all())
-                has_next = len(rows) > pagination.per_page
-                items = tuple(rows[: pagination.per_page])
+                has_next = len(rows) > limit
+                items = tuple(rows[:limit])
                 total_count = None
 
-        return PageResult(
+        if isinstance(pagination, PagePagination):
+            return PageResult(
+                items=items,
+                page=pagination.page,
+                per_page=pagination.per_page,
+                has_previous=pagination.page > 1,
+                has_next=has_next,
+                total_count=total_count,
+            )
+        return LimitOffsetResult(
             items=items,
-            page=pagination.page,
-            per_page=pagination.per_page,
-            has_previous=pagination.page > 1,
+            offset=pagination.offset,
+            limit=pagination.limit,
+            has_previous=pagination.offset > 0,
             has_next=has_next,
             total_count=total_count,
         )

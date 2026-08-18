@@ -259,6 +259,20 @@ class ApplicationBuilder:
                 status_code=500,
                 details={"resource_id": definition.resource_id},
             )
+        if definition.pagination.strategy not in data_source.capabilities.pagination_strategies:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+                message=(
+                    f'Resource "{definition.resource_id}" requests an unsupported '
+                    "pagination strategy."
+                ),
+                status_code=500,
+                details={
+                    "resource_id": definition.resource_id,
+                    "reason": "pagination_strategy_not_supported",
+                    "strategy": definition.pagination.strategy.value,
+                },
+            )
         self._resources.append(definition)
         self._resource_data_sources[definition.resource_id] = data_source
         if generated_executor_provider is not None:
