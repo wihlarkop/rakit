@@ -25,8 +25,18 @@ jobs:
         run: uv sync --all-packages --dev --locked
       - name: Apply deterministic test migrations
         run: |
-          python .github/ui05d_test_migrate.py
-          python .github/ui05d_migrate_sqlalchemy_tests.py
+          set -o pipefail
+          {
+            python .github/ui05d_test_migrate.py
+            python .github/ui05d_migrate_sqlalchemy_tests.py
+          } 2>&1 | tee .github/ui05d-migration.log
+      - name: Upload migration diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui05d-migration-diagnostics
+          path: .github/ui05d-migration.log
+          if-no-files-found: ignore
       - name: Normalize migration batches
         run: |
           uv run ruff format \
