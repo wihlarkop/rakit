@@ -21,7 +21,9 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - name: Apply review fixes
-        run: python .github/ui06_polish_review.py
+        run: |
+          python .github/ui06_polish_review.py
+          python .github/ui06_polish_compat.py
       - name: Sync dependencies
         run: uv sync --all-packages --dev --locked
       - name: Format changed Python source
@@ -36,7 +38,7 @@ jobs:
       - name: Remove helper and restore normal CI in workspace
         run: |
           git checkout origin/ui-06-advanced-operations -- .github/workflows/ci.yml
-          rm .github/ui06_polish_review.py
+          rm .github/ui06_polish_review.py .github/ui06_polish_compat.py
           git diff --check
       - name: Static source gates
         run: |
