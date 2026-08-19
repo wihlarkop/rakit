@@ -719,13 +719,15 @@ def configure_ui06_acceptance(admin: Admin) -> None:
     )
 
     relationship_layout = FormLayout(
-        children=(FieldLayout("status"),)
-        + tuple(
-            RelationshipPanel(
-                layout_id=f"{definition.relationship_id}-panel",
-                relationship_id=definition.relationship_id,
-            )
-            for definition in RELATIONSHIPS
+        children=(
+            FieldLayout("status"),
+            *(
+                RelationshipPanel(
+                    layout_id=f"{definition.relationship_id}-panel",
+                    relationship_id=definition.relationship_id,
+                )
+                for definition in RELATIONSHIPS
+            ),
         )
     )
     relationship_binding = WriteResourceBinding(
