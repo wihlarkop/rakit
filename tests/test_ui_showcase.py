@@ -248,7 +248,8 @@ def test_ui_showcase_exposes_record_confirmation_action_and_relationship_contrac
     assert refund.status_code == 200
     assert "Refund order" in refund.text
     assert "Impact" in refund.text
-    assert "This change is applied only when you confirm and submit." in refund.text
+    assert "marked as potentially destructive" in refund.text
+    assert "runs only when you confirm and submit" in refund.text
 
     relationship_ids = {
         str(entry.definition.relationship_id)
