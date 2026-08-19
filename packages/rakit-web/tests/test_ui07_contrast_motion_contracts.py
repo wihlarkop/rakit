@@ -17,8 +17,7 @@ def test_danger_controls_use_theme_aware_foreground() -> None:
     source = _read("assets", "rakit.css")
 
     assert (
-        "@apply border-rakit-danger bg-rakit-danger text-rakit-bg "
-        "hover:brightness-90;"
+        "@apply border-rakit-danger bg-rakit-danger text-rakit-bg hover:brightness-90;"
     ) in source
     assert (
         "@apply border-rakit-danger bg-rakit-danger text-rakit-bg "
