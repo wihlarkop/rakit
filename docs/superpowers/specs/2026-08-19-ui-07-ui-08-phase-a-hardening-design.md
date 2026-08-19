@@ -12,6 +12,14 @@ Approved design for completing Rakit Phase A UI maturity after UI-06.
 
 This design supersedes the broad UI-07/UI-08 execution notes in the original UI maturity plan where they conflict with the workflow below. It preserves the visual language and behavior established by UI-01 through UI-06.
 
+## Completion Update — 2026-08-19
+
+- UI-07 merged to `main` at `0ce275b475c94da0152e94bfed343d1decabcf06` after maintainer combined browser acceptance and final PR CI #871.
+- UI-08 final product/source audit found no P0, P1, or material-P2 product UI findings requiring another visual/runtime change.
+- The accepted UI-07 browser result therefore remains the Phase A product baseline; UI-08 intentionally does not invent cosmetic churn.
+- Planning artifacts were classified conservatively and retained because they still provide useful architectural/design history. The older unconditional deletion instruction remains superseded by this design.
+- Phase A UI maturity is complete. The next default roadmap phase is Phase B alpha hardening.
+
 ## Goal
 
 Finish Phase A by making every framework-owned Rakit Web surface release-quality across responsive layouts, keyboard/focus interaction, semantic accessibility, contrast, reduced motion, overflow, and UX copy, then perform one bounded final-polish pass.

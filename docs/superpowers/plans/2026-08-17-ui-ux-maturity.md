@@ -608,6 +608,8 @@ Run the full PR gate.
 
 # UI-08 — Final Impeccable Polish and Planning-Doc Cleanup
 
+> **Completion update (2026-08-19):** The later approved Phase A hardening design supersedes this section where it conflicts with the workflow below. UI-08 found no P0/P1/material-P2 product UI finding after the accepted UI-07 browser matrix and final source audit, so no additional UI source churn was justified. Planning/spec documents are retained when they remain useful architectural history; the unconditional deletion steps below are historical and are not executed.
+
 **Goal:** Resolve final design-quality findings, verify every major surface across themes/viewports, then delete temporary planning docs after copies are confirmed saved.
 
 **Files:** only UI/test files required by final findings, then delete:
