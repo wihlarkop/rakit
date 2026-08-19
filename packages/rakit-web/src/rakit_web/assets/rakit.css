@@ -356,6 +356,111 @@
   }
 }
 
+
+  .rakit-input-affix {
+    @apply flex min-w-0 items-stretch overflow-hidden rounded-rakit-sm border border-rakit-border-strong bg-rakit-surface shadow-rakit-sm focus-within:border-rakit-focus;
+  }
+
+  .rakit-input-affix .rakit-input {
+    @apply min-w-0 flex-1 rounded-none border-0 shadow-none focus:border-transparent;
+  }
+
+  .rakit-input-prefix,
+  .rakit-input-suffix {
+    @apply inline-flex shrink-0 items-center bg-rakit-surface-subtle px-3 text-sm font-medium text-rakit-text-muted;
+  }
+
+  .rakit-boolean-control {
+    @apply inline-flex min-h-9 max-w-full items-center gap-2 rounded-rakit-sm text-sm font-medium text-rakit-text;
+  }
+
+  .rakit-switch-track {
+    @apply relative inline-flex h-6 w-11 shrink-0 rounded-full border border-rakit-border-strong bg-rakit-surface-subtle transition;
+  }
+
+  .rakit-switch-thumb {
+    @apply absolute left-0.5 top-0.5 size-[1.125rem] rounded-full bg-rakit-text-muted shadow-rakit-sm transition;
+  }
+
+  .rakit-switch:has(input:checked) .rakit-switch-track {
+    @apply border-rakit-brand-600 bg-rakit-brand-600;
+  }
+
+  .rakit-switch:has(input:checked) .rakit-switch-thumb {
+    @apply translate-x-5 bg-white;
+  }
+
+  .rakit-segmented {
+    @apply inline-flex max-w-full flex-wrap overflow-hidden rounded-rakit-sm border border-rakit-border-strong bg-rakit-surface;
+  }
+
+  .rakit-segmented-option {
+    @apply relative inline-flex min-h-9 cursor-pointer items-center border-r border-rakit-border px-3 text-sm font-medium text-rakit-text-muted last:border-r-0;
+  }
+
+  .rakit-segmented-option:has(input:checked) {
+    @apply bg-rakit-brand-subtle text-rakit-text;
+  }
+
+  .rakit-segmented-option input {
+    @apply sr-only;
+  }
+
+  .rakit-upload-control {
+    @apply rounded-rakit-sm border border-dashed border-rakit-border-strong bg-rakit-surface-subtle p-3;
+  }
+
+  .rakit-upload-summary {
+    @apply mt-2 text-xs text-rakit-text-muted [overflow-wrap:anywhere];
+  }
+
+  .rakit-image-preview {
+    @apply mb-3 overflow-hidden rounded-rakit-sm border border-rakit-border bg-rakit-surface;
+  }
+
+  .rakit-image-preview img {
+    @apply max-h-56 w-full object-contain;
+  }
+
+  .rakit-choice-chips {
+    @apply flex flex-wrap gap-2;
+  }
+
+  .rakit-choice-chip {
+    @apply inline-flex min-h-8 max-w-full items-center gap-1.5 rounded-full border border-rakit-border bg-rakit-brand-subtle px-3 py-1 text-sm font-medium text-rakit-text [overflow-wrap:anywhere];
+  }
+
+  .rakit-choice-chip-remove {
+    @apply inline-flex size-6 shrink-0 items-center justify-center rounded-full text-rakit-text-muted transition hover:bg-rakit-surface hover:text-rakit-text;
+  }
+
+  .rakit-autocomplete-listbox {
+    @apply z-40 max-h-64 w-full overflow-y-auto rounded-rakit-sm border border-rakit-border bg-rakit-surface p-1 shadow-rakit-lg;
+  }
+
+  .rakit-autocomplete-option {
+    @apply flex cursor-pointer flex-col gap-0.5 rounded-rakit-sm px-3 py-2 text-sm text-rakit-text;
+  }
+
+  .rakit-autocomplete-option:hover,
+  .rakit-autocomplete-option.is-active,
+  .rakit-autocomplete-option[aria-selected="true"] {
+    @apply bg-rakit-brand-subtle;
+  }
+
+  .rakit-autocomplete-option-label {
+    @apply font-medium [overflow-wrap:anywhere];
+  }
+
+  .rakit-autocomplete-option-description,
+  .rakit-autocomplete-empty {
+    @apply text-xs text-rakit-text-muted;
+  }
+
+  .rakit-autocomplete-empty {
+    @apply px-3 py-3;
+  }
+
 @keyframes rakit-spin {
   to {
     transform: rotate(360deg);

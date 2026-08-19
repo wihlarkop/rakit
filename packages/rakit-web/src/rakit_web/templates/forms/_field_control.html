@@ -33,9 +33,9 @@
   </div>
 {% elif key in ('checkbox', 'switch') %}
   <input type="hidden" name="{{ field.name }}" value="false" />
-  <label class="rakit-boolean-control{% if key == 'switch' %} rakit-switch{% endif %}" data-rakit-widget="{{ key }}">
+  <label class="rakit-boolean-control{% if key == 'switch' %} rakit-switch{% endif %}" data-rakit-widget="{{ key }}"{% if key == 'switch' %} data-rakit-on-label="{{ field.presentation.on_label }}" data-rakit-off-label="{{ field.presentation.off_label }}"{% endif %}>
     <input class="rakit-checkbox" id="{{ field.id }}" name="{{ field.name }}" type="checkbox" value="true"{% if field.checked %} checked{% endif %}{% if descriptions %} aria-describedby="{{ descriptions | join(' ') }}"{% endif %}{% if field.issues %} aria-invalid="true"{% endif %} />
-    {% if key == 'switch' %}<span class="rakit-switch-track" aria-hidden="true"><span class="rakit-switch-thumb"></span></span><span data-rakit-switch-label>{{ field.presentation.on_label if field.checked else field.presentation.off_label }}</span>{% else %}<span>{{ field.label }}</span>{% endif %}
+    {% if key == 'switch' %}<span class="rakit-switch-track" aria-hidden="true"><span class="rakit-switch-thumb"></span></span><span data-rakit-switch-label>{{ field.presentation.on_label if field.checked else field.presentation.off_label }}</span>{% endif %}
   </label>
 {% elif key in ('number', 'currency', 'percentage') %}
   <div class="rakit-input-affix" data-rakit-widget="{{ key }}"{% if key == 'currency' %} data-rakit-currency="{{ field.presentation.currency }}"{% if field.presentation.locale %} data-rakit-locale="{{ field.presentation.locale }}"{% endif %}{% elif key == 'percentage' %} data-rakit-percentage-scale="{{ field.presentation.scale }}"{% endif %}>

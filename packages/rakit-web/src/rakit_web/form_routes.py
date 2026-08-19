@@ -247,10 +247,14 @@ async def _parse_form(
     request: Request, binding: WriteResourceBinding
 ) -> tuple[dict[str, object], dict[str, str]] | None:
     file_ids = {field.field_id for field in file_fields(binding.form_schema)}
+    boolean_field_count = sum(
+        field.python_type is bool for field in binding.form_schema.fields
+    )
     try:
         form = await request.form(
             max_files=len(file_ids),
             max_fields=len(binding.form_schema.fields)
+            + boolean_field_count
             + (1_000 if binding.relationship_form else 4),
         )
     except HTTPException:

@@ -187,6 +187,15 @@
       announce(root, `${label} selected.`);
     }
 
+    if (mode === "single") {
+      const select = fallback.querySelector("select");
+      const current = select?.selectedOptions?.[0];
+      if (current && current.value) {
+        input.value = current.textContent.trim();
+        if (selectedLabel) selectedLabel.textContent = current.textContent.trim();
+      }
+    }
+
     for (const hidden of hiddenInputs()) {
       const identity = hidden.value;
       const label = hidden.dataset.rakitAutocompleteLabel || identity;

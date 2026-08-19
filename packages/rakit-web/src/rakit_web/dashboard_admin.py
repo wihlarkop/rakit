@@ -169,18 +169,23 @@ class Admin(_EndpointAdmin):
         super().register(admin_cls)
         definition = self._resource_definitions[admin_cls.resource_id]
         bind_resource_web_presentation(definition, presentation)
+        existing_write_binding = self._write_resource_bindings.get(admin_cls.resource_id)
+        if existing_write_binding is not None:
+            self._write_resource_bindings[admin_cls.resource_id] = self._configured_write_binding(
+                admin_cls.resource_id, existing_write_binding, presentation
+            )
         for action in declared_actions:
             action_id = str(action.action_id)
             configured = presentation.actions.get(action_id)
             if configured is not None:
                 bind_action_web_presentation(action, configured)
 
-    def register_write_resource(self, resource_id: str, binding: WriteResourceBinding) -> None:
-        definition = self._resource_definitions.get(resource_id)
-        if definition is None:
-            super().register_write_resource(resource_id, binding)
-            return
-        web = resource_web_presentation(definition)
+    def _configured_write_binding(
+        self,
+        resource_id: str,
+        binding: WriteResourceBinding,
+        web: ResourceWebPresentation,
+    ) -> WriteResourceBinding:
         known_fields = {field.field_id for field in binding.form_schema.fields}
         unknown_fields = sorted(set(web.fields).difference(known_fields))
         relationship_form = binding.relationship_form
@@ -227,10 +232,19 @@ class Admin(_EndpointAdmin):
                         "reason": "invalid_relationship_widget_presentation",
                     },
                 ) from None
-        configured = replace(
+        return replace(
             binding,
             field_presentations=web.fields,
             relationship_form=relationship_form,
+        )
+
+    def register_write_resource(self, resource_id: str, binding: WriteResourceBinding) -> None:
+        definition = self._resource_definitions.get(resource_id)
+        if definition is None:
+            super().register_write_resource(resource_id, binding)
+            return
+        configured = self._configured_write_binding(
+            resource_id, binding, resource_web_presentation(definition)
         )
         super().register_write_resource(resource_id, configured)
 
