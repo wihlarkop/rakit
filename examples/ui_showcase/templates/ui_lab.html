@@ -103,6 +103,53 @@
     </div>
   </section>
 
+  <section class="rakit-panel" id="ui-lab-advanced-widgets">
+    <header class="rakit-panel-header"><h2 class="text-sm font-semibold text-rakit-text">Advanced field presentations</h2></header>
+    <div class="rakit-panel-body grid gap-5 lg:grid-cols-2">
+      <div class="space-y-1.5" data-rakit-widget="searchable_select">
+        <label class="block text-sm font-medium text-rakit-text" for="lab-searchable-status">Searchable select</label>
+        <input class="rakit-input" type="search" data-rakit-searchable-select-input placeholder="Search status..." autocomplete="off" hidden />
+        <select class="rakit-select" id="lab-searchable-status"><option>Published</option><option>Pending review</option><option>Archived</option></select>
+      </div>
+      <div class="space-y-1.5">
+        <label class="block text-sm font-medium text-rakit-text" for="lab-date">Date picker</label>
+        <input class="rakit-input" data-rakit-widget="date" id="lab-date" type="date" value="2026-08-19" />
+      </div>
+      <div class="space-y-1.5">
+        <label class="block text-sm font-medium text-rakit-text" for="lab-time">Time picker</label>
+        <input class="rakit-input" data-rakit-widget="time" id="lab-time" type="time" value="14:30" />
+      </div>
+      <div class="space-y-1.5">
+        <label class="block text-sm font-medium text-rakit-text" for="lab-datetime">Date and time</label>
+        <input class="rakit-input" data-rakit-widget="datetime" id="lab-datetime" type="datetime-local" value="2026-08-19T14:30" />
+      </div>
+      <div class="space-y-1.5">
+        <label class="block text-sm font-medium text-rakit-text" for="lab-currency">Currency</label>
+        <div class="rakit-input-affix" data-rakit-widget="currency" data-rakit-currency="IDR" data-rakit-locale="id-ID"><span class="rakit-input-prefix" aria-hidden="true">IDR</span><input class="rakit-input" id="lab-currency" type="number" value="1250000" step="1000" /></div>
+      </div>
+      <div class="space-y-1.5">
+        <label class="block text-sm font-medium text-rakit-text" for="lab-percentage">Percentage</label>
+        <div class="rakit-input-affix" data-rakit-widget="percentage" data-rakit-percentage-scale="whole"><input class="rakit-input" id="lab-percentage" type="number" value="15" min="0" max="100" /><span class="rakit-input-suffix" aria-hidden="true">%</span></div>
+      </div>
+      <div class="space-y-1.5">
+        <span class="block text-sm font-medium text-rakit-text">Switch</span>
+        <label class="rakit-boolean-control rakit-switch" data-rakit-widget="switch" data-rakit-on-label="Enabled" data-rakit-off-label="Disabled"><input class="rakit-checkbox" type="checkbox" checked /><span class="rakit-switch-track" aria-hidden="true"><span class="rakit-switch-thumb"></span></span><span data-rakit-switch-label>Enabled</span></label>
+      </div>
+      <fieldset class="space-y-1.5">
+        <legend class="block text-sm font-medium text-rakit-text">Segmented control</legend>
+        <div class="rakit-segmented" data-rakit-widget="segmented" role="radiogroup" aria-label="Priority"><label class="rakit-segmented-option"><input type="radio" name="lab-priority" checked /><span>Normal</span></label><label class="rakit-segmented-option"><input type="radio" name="lab-priority" /><span>High</span></label><label class="rakit-segmented-option"><input type="radio" name="lab-priority" /><span>Urgent</span></label></div>
+      </fieldset>
+      <div class="space-y-1.5" data-rakit-widget="file_upload">
+        <label class="block text-sm font-medium text-rakit-text" for="lab-advanced-file">Advanced file upload</label>
+        <div class="rakit-upload-control"><input class="rakit-file-input" data-rakit-file-input id="lab-advanced-file" type="file" /><div class="rakit-upload-summary" data-rakit-file-summary role="status" aria-live="polite"></div></div>
+      </div>
+      <div class="space-y-1.5" data-rakit-widget="image_upload">
+        <label class="block text-sm font-medium text-rakit-text" for="lab-advanced-image">Image preview</label>
+        <div class="rakit-upload-control"><div class="rakit-image-preview" data-rakit-image-preview hidden><img alt="Selected image preview" data-rakit-image-preview-image /></div><input class="rakit-file-input" data-rakit-file-input id="lab-advanced-image" type="file" accept="image/*" /><div class="rakit-upload-summary" data-rakit-file-summary role="status" aria-live="polite"></div></div>
+      </div>
+    </div>
+  </section>
+
   <section class="rakit-panel">
     <header class="rakit-panel-header"><h2 class="text-sm font-semibold text-rakit-text">Status</h2></header>
     <div class="rakit-panel-body flex flex-wrap gap-3">

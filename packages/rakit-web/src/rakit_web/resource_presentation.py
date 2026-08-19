@@ -11,6 +11,7 @@ from rakit_web.action_presentation import (
     ActionPresentation,
     normalize_action_presentations,
 )
+from rakit_web.field_presentation import Presentation
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,18 +58,43 @@ class FilterPanelPresentation:
         object.__setattr__(self, "groups", MappingProxyType(normalized))
 
 
+def _normalize_presentations(
+    values: Mapping[str, Presentation], *, kind: str
+) -> Mapping[str, Presentation]:
+    normalized: dict[str, Presentation] = {}
+    for item_id, presentation in values.items():
+        if not isinstance(item_id, str) or not item_id.strip():
+            raise ValueError(f"{kind} presentation ids must be non-empty strings")
+        if not isinstance(presentation, Presentation):
+            raise TypeError(f"{kind} presentations must contain Presentation values")
+        normalized[item_id] = presentation
+    return MappingProxyType(normalized)
+
+
 @dataclass(frozen=True, slots=True)
 class ResourceWebPresentation:
     """Web-only presentation configuration for one registered resource."""
 
     filters: FilterPanelPresentation = field(default_factory=FilterPanelPresentation)
     actions: Mapping[str, ActionPresentation] = field(default_factory=dict)
+    fields: Mapping[str, Presentation] = field(default_factory=dict)
+    relationships: Mapping[str, Presentation] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self,
             "actions",
             normalize_action_presentations(self.actions),
+        )
+        object.__setattr__(
+            self,
+            "fields",
+            _normalize_presentations(self.fields, kind="Field"),
+        )
+        object.__setattr__(
+            self,
+            "relationships",
+            _normalize_presentations(self.relationships, kind="Relationship"),
         )
 
 

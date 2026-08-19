@@ -1,0 +1,56 @@
+{% set key = field.presentation_key %}
+{% set value = field.value %}
+{% if field.custom_template %}
+  {% include field.custom_template %}
+{% elif key in ('file_upload', 'image_upload') %}
+  {% if field.file and field.file.current %}
+    <div id="{{ field.current_file_id }}" class="mb-2 rounded-rakit-sm border border-rakit-border bg-rakit-surface-subtle p-3">
+      <p class="text-xs font-medium uppercase tracking-wide text-rakit-text-subtle">Current file</p>
+      <p class="mt-1 text-sm font-medium text-rakit-text [overflow-wrap:anywhere]">{{ field.file.current.name }}</p>
+      <p class="mt-1 text-xs text-rakit-text-muted">{{ field.file.current.size_label }} · {{ field.file.current.content_type }}</p>
+    </div>
+  {% endif %}
+  <div data-rakit-widget="{{ key }}" class="rakit-upload-control">
+    {% if key == 'image_upload' %}<div class="rakit-image-preview" data-rakit-image-preview hidden><img alt="Selected image preview" data-rakit-image-preview-image /></div>{% endif %}
+    <input class="rakit-file-input" data-rakit-file-input type="file" id="{{ field.id }}" name="{{ field.name }}"{% if field.accept %} accept="{{ field.accept }}"{% endif %}{% if field.required %} required{% endif %}{% if descriptions %} aria-describedby="{{ descriptions | join(' ') }}"{% endif %}{% if field.issues %} aria-invalid="true"{% endif %} />
+    <div class="rakit-upload-summary" data-rakit-file-summary role="status" aria-live="polite"></div>
+  </div>
+  {% if field.file %}<p id="{{ field.file_help_id }}" class="rakit-field-help">{{ field.file.policy_hint }}{% if field.file.current %} Choose a new file to replace the current file; leave this empty to keep it.{% endif %}</p>{% endif %}
+{% elif key in ('select', 'searchable_select') %}
+  <div{% if key == 'searchable_select' %} data-rakit-widget="searchable_select"{% endif %}>
+    {% if key == 'searchable_select' %}<input class="rakit-input mb-2" type="search" data-rakit-searchable-select-input placeholder="{{ field.presentation.search_placeholder }}" autocomplete="off" hidden />{% endif %}
+    <select class="rakit-select" id="{{ field.id }}" name="{{ field.name }}"{% if field.required %} required{% endif %}{% if descriptions %} aria-describedby="{{ descriptions | join(' ') }}"{% endif %}{% if field.issues %} aria-invalid="true"{% endif %}>
+      {% if field.presentation.placeholder and not field.required %}<option value="">{{ field.presentation.placeholder }}</option>{% endif %}
+      {% for choice in field.presentation.choices %}<option value="{{ choice.value }}"{% if choice.value|string == value|string %} selected{% endif %}>{{ choice.label }}</option>{% endfor %}
+    </select>
+  </div>
+{% elif key == 'segmented' %}
+  <div class="rakit-segmented" data-rakit-widget="segmented" role="radiogroup" aria-label="{{ field.label }}">
+    {% for choice in field.presentation.choices %}
+      {% set option_id = field.id ~ '-option-' ~ loop.index0 %}
+      <label class="rakit-segmented-option" for="{{ option_id }}"><input id="{{ option_id }}" type="radio" name="{{ field.name }}" value="{{ choice.value }}"{% if choice.value|string == value|string %} checked{% endif %}{% if field.required %} required{% endif %} /><span>{{ choice.label }}</span></label>
+    {% endfor %}
+  </div>
+{% elif key in ('checkbox', 'switch') %}
+  <input type="hidden" name="{{ field.name }}" value="false" />
+  <label class="rakit-boolean-control{% if key == 'switch' %} rakit-switch{% endif %}" data-rakit-widget="{{ key }}"{% if key == 'switch' %} data-rakit-on-label="{{ field.presentation.on_label }}" data-rakit-off-label="{{ field.presentation.off_label }}"{% endif %}>
+    <input class="rakit-checkbox" id="{{ field.id }}" name="{{ field.name }}" type="checkbox" value="true"{% if field.checked %} checked{% endif %}{% if descriptions %} aria-describedby="{{ descriptions | join(' ') }}"{% endif %}{% if field.issues %} aria-invalid="true"{% endif %} />
+    {% if key == 'switch' %}<span class="rakit-switch-track" aria-hidden="true"><span class="rakit-switch-thumb"></span></span><span data-rakit-switch-label>{{ field.presentation.on_label if field.checked else field.presentation.off_label }}</span>{% endif %}
+  </label>
+{% elif key in ('number', 'currency', 'percentage') %}
+  <div class="rakit-input-affix" data-rakit-widget="{{ key }}"{% if key == 'currency' %} data-rakit-currency="{{ field.presentation.currency }}"{% if field.presentation.locale %} data-rakit-locale="{{ field.presentation.locale }}"{% endif %}{% elif key == 'percentage' %} data-rakit-percentage-scale="{{ field.presentation.scale }}"{% endif %}>
+    {% if key == 'currency' %}<span class="rakit-input-prefix" aria-hidden="true">{{ field.presentation.currency }}</span>{% elif field.presentation.prefix is defined and field.presentation.prefix %}<span class="rakit-input-prefix" aria-hidden="true">{{ field.presentation.prefix }}</span>{% endif %}
+    <input class="rakit-input" id="{{ field.id }}" name="{{ field.name }}" type="number" value="{{ value }}"{% if field.presentation.min_value is defined and field.presentation.min_value is not none %} min="{{ field.presentation.min_value }}"{% endif %}{% if field.presentation.max_value is defined and field.presentation.max_value is not none %} max="{{ field.presentation.max_value }}"{% endif %}{% if field.presentation.step is defined and field.presentation.step is not none %} step="{{ field.presentation.step }}"{% endif %}{% if field.required %} required{% endif %}{% if descriptions %} aria-describedby="{{ descriptions | join(' ') }}"{% endif %}{% if field.issues %} aria-invalid="true"{% endif %} />
+    {% if key == 'percentage' %}<span class="rakit-input-suffix" aria-hidden="true">%</span>{% elif field.presentation.suffix is defined and field.presentation.suffix %}<span class="rakit-input-suffix" aria-hidden="true">{{ field.presentation.suffix }}</span>{% endif %}
+  </div>
+{% elif key == 'date' %}
+  <input class="rakit-input" data-rakit-widget="date" id="{{ field.id }}" name="{{ field.name }}" type="date" value="{{ value }}"{% if field.presentation.min_value %} min="{{ field.presentation.min_value }}"{% endif %}{% if field.presentation.max_value %} max="{{ field.presentation.max_value }}"{% endif %}{% if field.required %} required{% endif %}{% if descriptions %} aria-describedby="{{ descriptions | join(' ') }}"{% endif %}{% if field.issues %} aria-invalid="true"{% endif %} />
+{% elif key == 'time' %}
+  <input class="rakit-input" data-rakit-widget="time" id="{{ field.id }}" name="{{ field.name }}" type="time" value="{{ value }}"{% if field.presentation.step_seconds %} step="{{ field.presentation.step_seconds }}"{% endif %}{% if field.required %} required{% endif %}{% if descriptions %} aria-describedby="{{ descriptions | join(' ') }}"{% endif %}{% if field.issues %} aria-invalid="true"{% endif %} />
+{% elif key == 'datetime' %}
+  <input class="rakit-input" data-rakit-widget="datetime"{% if field.presentation.timezone %} data-rakit-timezone="{{ field.presentation.timezone }}"{% endif %} id="{{ field.id }}" name="{{ field.name }}" type="datetime-local" value="{{ value }}"{% if field.presentation.step_seconds %} step="{{ field.presentation.step_seconds }}"{% endif %}{% if field.required %} required{% endif %}{% if descriptions %} aria-describedby="{{ descriptions | join(' ') }}"{% endif %}{% if field.issues %} aria-invalid="true"{% endif %} />
+{% elif key == 'date_range' %}
+  <input class="rakit-input" data-rakit-widget="date_range" id="{{ field.id }}" name="{{ field.name }}" type="text" value="{{ value }}" placeholder="{{ field.presentation.placeholder }}"{% if field.required %} required{% endif %}{% if descriptions %} aria-describedby="{{ descriptions | join(' ') }}"{% endif %}{% if field.issues %} aria-invalid="true"{% endif %} />
+{% else %}
+  <input class="rakit-input" data-rakit-widget="text" id="{{ field.id }}" name="{{ field.name }}" type="{{ field.presentation.input_type if field.presentation.input_type is defined else 'text' }}" value="{{ value }}"{% if field.presentation.placeholder is defined and field.presentation.placeholder %} placeholder="{{ field.presentation.placeholder }}"{% endif %}{% if field.required %} required{% endif %}{% if descriptions %} aria-describedby="{{ descriptions | join(' ') }}"{% endif %}{% if field.issues %} aria-invalid="true"{% endif %} />
+{% endif %}

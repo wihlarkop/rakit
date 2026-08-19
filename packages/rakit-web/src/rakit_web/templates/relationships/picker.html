@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Choose {{ relationship.label }}{% endblock %}
+{% block content %}
+<nav class="mb-3 flex flex-wrap items-center gap-1.5 text-sm text-rakit-text-muted" aria-label="Breadcrumb">
+  <a href="{{ return_path }}" class="font-medium transition hover:text-rakit-text">Back to edit form</a>
+  <span aria-hidden="true">/</span><span aria-current="page">Choose {{ relationship.label }}</span>
+</nav>
+<header class="mb-6 border-b border-rakit-border pb-4">
+  <p class="text-sm font-medium text-rakit-text-muted">Relationship picker</p>
+  <h1 class="mt-1 text-2xl font-semibold tracking-tight text-rakit-text">Choose {{ relationship.label }}</h1>
+  <p class="mt-2 max-w-2xl text-sm leading-6 text-rakit-text-muted">Searches stay permission-scoped and bounded on the server. Selecting a record stages the relationship change; the parent record is not changed until you save its edit form.</p>
+</header>
+<form class="mb-5 flex flex-col gap-2 sm:flex-row" method="get" action="{{ picker_path }}">
+  <label class="sr-only" for="rakit-picker-search">Search {{ relationship.label }}</label>
+  <input class="rakit-input flex-1" id="rakit-picker-search" name="q" type="search" value="{{ query }}" placeholder="Search {{ relationship.label | lower }}" autofocus />
+  <button class="rakit-button" type="submit">Search</button>
+</form>
+<form method="get" action="{{ return_path }}" class="space-y-4">
+  <div class="overflow-hidden rounded-rakit-md border border-rakit-border bg-rakit-surface">
+    <ul class="divide-y divide-rakit-border" aria-label="Available {{ relationship.label }}">
+      {% for option in options %}
+        {% set encoded = codec.encode(option.identity) %}
+        <li class="flex items-start gap-3 px-4 py-3">
+          {% if multiple %}
+            <input class="mt-1 size-4 rounded border-rakit-border" id="rakit-picker-option-{{ loop.index0 }}" type="checkbox" name="{{ prefix }}link__{{ encoded }}" value="{{ encoded }}" />
+          {% else %}
+            <input class="mt-1 size-4 border-rakit-border" id="rakit-picker-option-{{ loop.index0 }}" type="radio" name="{{ prefix }}set" value="{{ encoded }}" required />
+          {% endif %}
+          <label class="min-w-0 flex-1 cursor-pointer" for="rakit-picker-option-{{ loop.index0 }}"><span class="block text-sm font-medium text-rakit-text [overflow-wrap:anywhere]">{{ option.label }}</span>{% if option.description is defined and option.description %}<span class="mt-1 block text-xs text-rakit-text-muted">{{ option.description }}</span>{% endif %}</label>
+        </li>
+      {% else %}
+        <li class="px-4 py-6 text-sm text-rakit-text-muted">No matching candidates in this bounded result.</li>
+      {% endfor %}
+    </ul>
+  </div>
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div class="flex gap-2">
+      {% if page > 1 %}<a class="rakit-button rakit-button-secondary" href="{{ picker_path }}?q={{ query | urlencode }}&page={{ page - 1 }}">Previous</a>{% endif %}
+      {% if has_next %}<a class="rakit-button rakit-button-secondary" href="{{ picker_path }}?q={{ query | urlencode }}&page={{ page + 1 }}">Next</a>{% endif %}
+    </div>
+    <div class="flex gap-2"><a class="rakit-button rakit-button-secondary" href="{{ return_path }}">Cancel</a><button class="rakit-button" type="submit">Use selection</button></div>
+  </div>
+</form>
+{% endblock %}

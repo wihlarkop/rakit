@@ -3,7 +3,8 @@
   <div class="rounded-rakit-sm border border-rakit-border bg-rakit-surface-subtle p-3">
     <p class="text-xs font-medium uppercase tracking-wide text-rakit-text-subtle">Current</p>
     {% if panel.rows and not panel.pending_clear %}
-      <p class="mt-1 text-sm font-medium text-rakit-text">{{ panel.rows[0].candidate.label }}</p>
+      {% set current_encoded = codec.encode(panel.rows[0].candidate.identity) %}
+      <p class="mt-1 text-sm font-medium text-rakit-text [overflow-wrap:anywhere]" data-rakit-related-identity="{{ current_encoded }}">{{ panel.rows[0].candidate.label }}</p>
     {% else %}
       <p class="mt-1 text-sm text-rakit-text-muted">No record linked yet.</p>
     {% endif %}
@@ -15,13 +16,43 @@
         <label class="block text-sm font-medium text-rakit-text" for="rakit-relationship-{{ panel.relationship_id }}-set">Change {{ panel.relationship.label }}</label>
         <p class="mt-1 text-sm text-rakit-text-muted">Choose a record to link. The change is applied when this form is saved.</p>
       </div>
-      <select class="rakit-select" id="rakit-relationship-{{ panel.relationship_id }}-set" name="{{ panel.prefix }}set" data-rakit-relationship-set data-rakit-prefix="{{ panel.prefix }}">
-        {% if panel.relationship.nullable %}<option value="">No selection</option>{% endif %}
-        {% for option in panel.options %}
-          {% set encoded = codec.encode(option.identity) %}
-          <option value="{{ encoded }}"{% if encoded in panel.selected and not panel.pending_clear %} selected{% endif %}>{{ option.label }}</option>
-        {% endfor %}
-      </select>
+
+      {% if panel.presentation_key == 'autocomplete' %}
+        {% set listbox_id = 'rakit-relationship-' ~ panel.relationship_id ~ '-autocomplete-options' %}
+        <div data-rakit-widget="autocomplete" data-rakit-mode="single" data-rakit-prefix="{{ panel.prefix }}" data-rakit-options-url="{{ panel.options_path }}" data-rakit-min-query-length="{{ panel.autocomplete_min_query_length }}">
+          <div data-rakit-autocomplete-fallback>
+            <select class="rakit-select" id="rakit-relationship-{{ panel.relationship_id }}-set" name="{{ panel.prefix }}set" data-rakit-relationship-set data-rakit-prefix="{{ panel.prefix }}">
+              {% if panel.relationship.nullable %}<option value="">No selection</option>{% endif %}
+              {% for option in panel.options %}
+                {% set encoded = codec.encode(option.identity) %}
+                <option value="{{ encoded }}"{% if encoded in panel.selected and not panel.pending_clear %} selected{% endif %}>{{ option.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="space-y-2" data-rakit-autocomplete-enhanced hidden>
+            <div class="flex flex-wrap items-center gap-2">
+              <input class="rakit-input min-w-0 flex-1" id="rakit-relationship-{{ panel.relationship_id }}-autocomplete" type="search" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="{{ listbox_id }}" autocomplete="off" data-rakit-autocomplete-input placeholder="{{ panel.presentation.placeholder or ('Search ' ~ (panel.relationship.label | lower)) }}" />
+              {% if panel.picker_path %}<a class="rakit-button rakit-button-secondary" href="{{ panel.picker_path }}">Browse</a>{% endif %}
+            </div>
+            <p class="text-xs text-rakit-text-muted">Selected: <span class="font-medium text-rakit-text" data-rakit-autocomplete-selection>{% if panel.rows and not panel.pending_clear %}{{ panel.rows[0].candidate.label }}{% else %}No selection{% endif %}</span></p>
+            <ul id="{{ listbox_id }}" class="rakit-autocomplete-listbox" role="listbox" data-rakit-autocomplete-listbox hidden></ul>
+            <p class="sr-only" role="status" aria-live="polite" data-rakit-widget-status></p>
+          </div>
+          <noscript>{% if panel.picker_path %}<p class="mt-2 text-sm"><a class="font-medium text-rakit-accent hover:underline" href="{{ panel.picker_path }}">Search all {{ panel.relationship.label | lower }}</a></p>{% endif %}</noscript>
+        </div>
+      {% else %}
+        <div{% if panel.presentation_key == 'searchable_select' %} data-rakit-widget="searchable_select"{% endif %}>
+          {% if panel.presentation_key == 'searchable_select' %}<input class="rakit-input mb-2" type="search" data-rakit-searchable-select-input placeholder="{{ panel.presentation.search_placeholder }}" autocomplete="off" hidden />{% endif %}
+          <select class="rakit-select" id="rakit-relationship-{{ panel.relationship_id }}-set" name="{{ panel.prefix }}set" data-rakit-relationship-set data-rakit-prefix="{{ panel.prefix }}">
+            {% if panel.relationship.nullable %}<option value="">No selection</option>{% endif %}
+            {% for option in panel.options %}
+              {% set encoded = codec.encode(option.identity) %}
+              <option value="{{ encoded }}"{% if encoded in panel.selected and not panel.pending_clear %} selected{% endif %}>{{ option.label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      {% endif %}
+
       {% if panel.pending_clear %}<input type="hidden" name="{{ panel.prefix }}clear" value="true" />{% endif %}
       {% if panel.clear_available %}
         {% if panel.preview_path and (panel.relationship.destructive_policy.allow_delete_orphan or panel.relationship.destructive_policy.allow_destructive_cascade) %}

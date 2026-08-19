@@ -55,6 +55,7 @@ def test_resource_heading_actions_and_long_values_stay_narrow_safe() -> None:
 
 def test_forms_actions_relationships_and_pages_wrap_long_content() -> None:
     form = _read("templates", "forms", "form.html")
+    field_control = _read("templates", "forms", "_field_control.html")
     actions = _read("templates", "components", "actions.html")
     action_confirm = _read("templates", "actions", "_confirm.html")
     relationship_panel = _read("templates", "relationships", "panel.html")
@@ -62,8 +63,11 @@ def test_forms_actions_relationships_and_pages_wrap_long_content() -> None:
     relationship_inline = _read("templates", "relationships", "inline_rows.html")
     page = _read("templates", "pages", "page.html")
 
-    assert "field.file.current.name" in form
-    assert form.count("[overflow-wrap:anywhere]") >= 2
+    assert "field.file.current.name" in field_control
+    assert (
+        form.count("[overflow-wrap:anywhere]") + field_control.count("[overflow-wrap:anywhere]")
+        >= 2
+    )
 
     assert "inline-flex max-w-full flex-col" in actions
     assert "max-w-full text-xs" in actions

@@ -59,8 +59,9 @@ class RelationshipDefinition(BaseModel):
     """One explicit admin relationship surface.
 
     Structural facts are declared here and are verified against an adapter's
-    mapper metadata at compilation.  The source resource owns this definition;
-    `target_resource_id` keeps core independent of ORM classes.
+    mapper metadata at compilation. The optional presentation object is opaque
+    core metadata: Web adapters may interpret it, while core never imports or
+    branches on transport-specific presentation classes.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -87,6 +88,7 @@ class RelationshipDefinition(BaseModel):
     record_label_resolver: RecordLabelResolver | None = None
     loading_strategy: str = "selectin"
     max_nested_depth: int = Field(default=1, ge=1)
+    presentation: object | None = None
 
     @field_validator("association_fields")
     @classmethod
