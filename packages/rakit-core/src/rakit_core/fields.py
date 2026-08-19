@@ -43,7 +43,7 @@ class FieldDefinition:
     description: str | None = None
     parser: FieldParser | None = None
     formatter: FieldFormatter | None = None
-    presentation: object | None = None
+    presentation: object | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         if not self.field_id or not isinstance(self.field_id, str):

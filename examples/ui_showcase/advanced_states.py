@@ -15,8 +15,11 @@ from rakit import (
     ActionPresentation,
     ActionScope,
     Admin,
+    Autocomplete,
     DataSourceCapabilities,
+    FileUpload,
     LauncherItem,
+    MultiAutocomplete,
     PageDefinition,
     PageResult,
     PageWebPresentation,
@@ -151,6 +154,13 @@ _CUSTOMER = RelationshipDefinition(
     writable=True,
     edit_mode=RelationshipEditMode.LINK,
     record_label_field="name",
+    presentation=Autocomplete(
+        search_fields=("name",),
+        display_fields=("name", "team"),
+        placeholder="Search customer...",
+        min_query_length=1,
+        page_size=12,
+    ),
 )
 _TAGS = RelationshipDefinition(
     relationship_id="tags",
@@ -161,6 +171,13 @@ _TAGS = RelationshipDefinition(
     writable=True,
     edit_mode=RelationshipEditMode.LINK,
     record_label_field="name",
+    presentation=MultiAutocomplete(
+        search_fields=("name",),
+        display_fields=("name", "team"),
+        placeholder="Add team links...",
+        min_query_length=1,
+        page_size=12,
+    ),
 )
 _PARTICIPANTS = RelationshipDefinition(
     relationship_id="participants",
@@ -171,6 +188,13 @@ _PARTICIPANTS = RelationshipDefinition(
     writable=True,
     edit_mode=RelationshipEditMode.LINK,
     record_label_field="name",
+    presentation=MultiAutocomplete(
+        search_fields=("name",),
+        display_fields=("name", "team"),
+        placeholder="Add participants...",
+        min_query_length=1,
+        page_size=10,
+    ),
 )
 _LINE_ITEMS = RelationshipDefinition(
     relationship_id="line_items",
@@ -748,6 +772,7 @@ def configure_ui06_acceptance(admin: Admin) -> None:
                     max_size=10 * 1024 * 1024,
                     allowed_extensions=(".pdf",),
                     allowed_mime_types=("application/pdf",),
+                    presentation=FileUpload(drag_drop=True, preview=True),
                 ),
             )
         ),
