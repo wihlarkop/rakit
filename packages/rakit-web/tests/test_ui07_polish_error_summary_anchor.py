@@ -26,20 +26,29 @@ def _login(client: TestClient) -> None:
     assert response.status_code == 303
 
 
+def _hidden_value(html: str, name: str) -> str:
+    match = re.search(rf'<input type="hidden" name="{name}" value="([^"]*)"', html)
+    assert match is not None
+    return match.group(1)
+
+
 def test_relationship_validation_summary_anchor_targets_rendered_parent_status_field() -> None:
     identity = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
+    edit_path = f"/relationship-states/{identity}/edit"
     with TestClient(
         _fresh_showcase_app(),
         base_url="http://localhost",
         client=("127.0.0.1", 50000),
     ) as client:
         _login(client)
+        form = client.get(edit_path)
+        assert form.status_code == 200
         response = client.post(
-            f"/relationship-states/{identity}/edit",
+            edit_path,
             data={
-                "csrf_token": "csrf",
-                "submission_token": "showcase-submission",
-                "concurrency_token": "relationship-parent-token",
+                "csrf_token": _hidden_value(form.text, "csrf_token"),
+                "submission_token": _hidden_value(form.text, "submission_token"),
+                "concurrency_token": _hidden_value(form.text, "concurrency_token"),
             },
             follow_redirects=False,
         )
