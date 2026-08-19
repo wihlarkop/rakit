@@ -1,22 +1,56 @@
 # Built-in UI accessibility
 
-Rakit's built-in admin UI follows accessibility-oriented defaults for semantic structure, keyboard operation, focus visibility and restoration, form error linkage, status announcements, reduced motion, and light/dark/system themes.
+Rakit's built-in admin UI follows accessibility-oriented defaults for responsive structure,
+semantic HTML, keyboard operation, visible and restorable focus, form error linkage, status
+announcements, reduced motion, and light/dark/system themes.
 
-The built-in theme implementation is CSP-safe: theme behavior is shipped as a local content-addressed JavaScript asset, styling is compiled into Rakit's single bundled Tailwind stylesheet, and no inline script or `unsafe-inline` CSP relaxation is required.
+The built-in theme implementation is CSP-safe: theme behavior is shipped as local JavaScript,
+styling is compiled into Rakit's bundled Tailwind stylesheet, and no inline script or
+`unsafe-inline` CSP relaxation is required.
 
 ## Built-in contracts
 
-The repository tests cover important framework-owned contracts including:
+Repository quality gates cover important framework-owned contracts including:
 
-- a skip link and main/navigation landmarks;
+- a skip link plus main and navigation landmarks;
 - one page-level heading on representative built-in screens;
+- responsive containment for shell navigation, dialogs, filter drawers, resource tables, action
+  groups, long values, relationships, and custom-page content;
 - explicit form labels, descriptions, errors, and error-summary focus targets;
-- semantic sortable table headers with keyboard-native GET controls that preserve active query state while resetting pagination;
-- contextual selection labels for record checkboxes;
-- polite live announcements and HTMX focus management hooks;
-- dialog opener focus restoration while relying on the native modal dialog for trapping focus;
+- semantic sortable table headers with keyboard-native GET controls that preserve active query
+  state while resetting pagination;
+- contextual record-selection labels, a current-page select-all control, and polite selected-count
+  announcements;
+- keyboard-native action, filter, theme, dialog, and popover controls with meaningful accessible
+  names;
+- opener focus restoration for framework dialogs, mobile navigation, relationship previews, and
+  dismissible popovers without forcing unrelated scroll movement;
+- contextual accessible names for relationship unlink/delete controls;
+- polite live announcements and HTMX focus-management hooks;
 - persisted `light`, `dark`, and `system` preferences;
-- `prefers-reduced-motion` handling;
-- duplicate DOM-ID checks on representative screens.
+- semantic light/dark color roles calibrated for readable built-in text and focus states;
+- `prefers-reduced-motion` handling that reduces nonessential animation and transitions while
+  keeping loading/state feedback available;
+- visible text accompanying semantic success, warning, danger, and information presentation;
+- duplicate DOM-ID checks on representative screens;
+- server-rendered critical operation paths that remain available without JavaScript.
 
-These checks are quality gates for Rakit-owned UI, not a formal WCAG certification. Application-owned custom templates and widgets remain the application's responsibility. Browser-level Playwright/axe automation remains a future roadmap item.
+## Contrast and motion targets
+
+Rakit's built-in design tokens target at least 4.5:1 contrast for normal text and 3:1 for large
+text on the framework-owned combinations where those roles are used. Semantic state color is not
+the only carrier of meaning; framework feedback includes text and appropriate HTML roles.
+
+When `prefers-reduced-motion: reduce` is active, Rakit reduces nonessential animation and transition
+durations and disables smooth scrolling. State visibility and HTMX loading indicators do not
+depend on animation continuing to run.
+
+## Scope
+
+These contracts are quality gates for Rakit-owned UI, not a formal WCAG certification. A host
+application remains responsible for the accessibility of its custom templates, custom widgets,
+third-party content, and domain-specific copy.
+
+Browser-level Playwright/axe automation, cross-browser accessibility automation, and visual
+regression remain later roadmap items; UI-07 does not claim those tools are already part of the
+release gate.
