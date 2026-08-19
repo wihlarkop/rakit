@@ -2,8 +2,8 @@
 {% block title %}{{ action.label }} · {{ binding_label }}{% endblock %}
 {% block content %}
 <div id="rakit-action-root" class="mx-auto max-w-3xl">
-  <nav class="mb-3 text-sm text-rakit-text-muted" aria-label="Breadcrumb">
-    <a class="font-medium transition hover:text-rakit-text" href="{{ cancel_url }}">Back to resource</a>
+  <nav class="mb-3" aria-label="Breadcrumb">
+    <a class="rakit-button rakit-button-quiet" href="{{ cancel_url }}">Back to resource</a>
   </nav>
   {% include "actions/_bulk_review_content.html" %}
 </div>
