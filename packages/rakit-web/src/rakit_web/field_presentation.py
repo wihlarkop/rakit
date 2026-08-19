@@ -6,7 +6,7 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum
 from types import MappingProxyType
-from typing import ClassVar, Literal
+from typing import ClassVar, Literal, cast
 
 from rakit_core.fields import FieldDefinition, FileField
 
@@ -249,8 +249,10 @@ class PresentationRegistry:
 
     def resolve(self, presentation: Presentation) -> FieldRenderer:
         for candidate in type(presentation).__mro__:
-            if candidate in self._renderers:
-                return self._renderers[candidate]
+            candidate_type = cast(type[Presentation], candidate)
+            renderer = self._renderers.get(candidate_type)
+            if renderer is not None:
+                return renderer
         raise KeyError(f"No renderer registered for {type(presentation).__name__}")
 
     @property
@@ -329,7 +331,9 @@ def legacy_widget_presentation(widget: str) -> Presentation:
         return TimePicker()
     if normalized in {"number", "numeric"}:
         return NumberInput()
-    return TextInput(input_type=normalized if normalized in {"email", "url", "password"} else "text")
+    return TextInput(
+        input_type=normalized if normalized in {"email", "url", "password"} else "text"
+    )
 
 
 def resolve_field_presentation(
@@ -360,6 +364,7 @@ def resolve_relationship_presentation(
 
 
 __all__ = [
+    "DEFAULT_PRESENTATION_REGISTRY",
     "Autocomplete",
     "Checkbox",
     "Choice",
@@ -367,7 +372,6 @@ __all__ = [
     "DatePicker",
     "DateRangePicker",
     "DateTimePicker",
-    "DEFAULT_PRESENTATION_REGISTRY",
     "FieldPresentation",
     "FieldRenderer",
     "FileUpload",

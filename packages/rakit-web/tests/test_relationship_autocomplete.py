@@ -4,11 +4,11 @@ import importlib
 
 from httpx import Response
 from rakit_core.identity import IdentityCodec, RecordIdentity
+from rakit_web.field_presentation import Autocomplete, MultiAutocomplete
 from starlette.testclient import TestClient
 
 from examples.ui_showcase import main as showcase
 from examples.ui_showcase.advanced_states import RELATIONSHIPS
-from rakit_web.field_presentation import Autocomplete, MultiAutocomplete
 
 
 def _client() -> TestClient:
@@ -60,7 +60,7 @@ def test_relationship_edit_page_renders_enhanced_comboboxes_with_native_fallback
     assert 'role="combobox"' in html
     assert 'aria-autocomplete="list"' in html
     assert 'aria-expanded="false"' in html
-    assert 'data-rakit-autocomplete-fallback' in html
+    assert "data-rakit-autocomplete-fallback" in html
     assert ">Browse</a>" in html
     assert "Search customer..." in html
     assert "Add participants..." in html

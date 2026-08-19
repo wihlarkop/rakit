@@ -64,7 +64,9 @@ async def _authorize(
     )
 
 
-def _binding(fields: tuple[FieldDefinition, ...], service: _CaptureCreateService) -> WriteResourceBinding:
+def _binding(
+    fields: tuple[FieldDefinition, ...], service: _CaptureCreateService
+) -> WriteResourceBinding:
     return WriteResourceBinding(
         path="/widgets",
         label="Widget",
@@ -182,7 +184,9 @@ async def test_scalar_presentations_keep_native_semantic_fallbacks_and_form_name
 
 
 @pytest.mark.anyio
-async def test_boolean_hidden_fallback_accepts_exact_false_true_pair_without_relaxing_transport() -> None:
+async def test_boolean_hidden_fallback_accepts_exact_false_true_pair_without_relaxing_transport() -> (
+    None
+):
     service = _CaptureCreateService()
     binding = _binding(
         (

@@ -117,9 +117,12 @@ class RelationshipEditorBinding:
                 raise ValueError("Single-choice presentation requires a to-one relationship")
         elif resolved is not None:
             raise ValueError("Unsupported relationship presentation")
-        if isinstance(resolved, Autocomplete) and resolved.search_fields:
-            if not set(resolved.search_fields).issubset(self.target_search_fields):
-                raise ValueError("Autocomplete search_fields exceed relationship search policy")
+        if (
+            isinstance(resolved, Autocomplete)
+            and resolved.search_fields
+            and not set(resolved.search_fields).issubset(self.target_search_fields)
+        ):
+            raise ValueError("Autocomplete search_fields exceed relationship search policy")
         if self.candidate_page_size < 1 or self.candidate_page_size > 200:
             raise ValueError("candidate_page_size must be between 1 and 200")
         if self.reorder_safe_maximum < 1 or self.reorder_safe_maximum > 1_000:
@@ -777,6 +780,12 @@ async def _candidate_options(
             search=query if editor.target_search_fields else None,
         )
     )
+    if not isinstance(result, PageResult):
+        raise RakitError(
+            code=ErrorCode.CONFIG_INVALID,
+            message="Relationship candidate lookup requires page-result semantics.",
+            status_code=500,
+        )
     return RelationshipCandidatePage(
         items=tuple(
             RelationshipCandidate(
@@ -1231,13 +1240,9 @@ def build_relationship_routes(
             except ValueError:
                 return PlainTextResponse("Invalid candidate page", status_code=400)
             query = request.query_params.get("q", "")
-            candidate_page = await _candidate_options(
-                editor, query=query or None, page=page_number
-            )
+            candidate_page = await _candidate_options(editor, query=query or None, page=page_number)
             encoded_parent = binding.codec.encode(identity)
-            return_path = mounted_path(
-                request, f"{binding.path}/{encoded_parent}/edit"
-            )
+            return_path = mounted_path(request, f"{binding.path}/{encoded_parent}/edit")
             picker_path = mounted_path(
                 request,
                 editor.relationship.route_path.replace("{identity}", encoded_parent) + "/picker",

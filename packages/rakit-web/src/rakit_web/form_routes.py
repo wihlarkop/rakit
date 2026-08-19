@@ -13,6 +13,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import date, datetime, time
 from types import MappingProxyType
 from typing import Protocol, cast
 from urllib.parse import quote
@@ -258,9 +259,7 @@ async def _parse_form(
     request: Request, binding: WriteResourceBinding
 ) -> tuple[dict[str, object], dict[str, str]] | None:
     file_ids = {field.field_id for field in file_fields(binding.form_schema)}
-    boolean_field_count = sum(
-        field.python_type is bool for field in binding.form_schema.fields
-    )
+    boolean_field_count = sum(field.python_type is bool for field in binding.form_schema.fields)
     try:
         form = await request.form(
             max_files=len(file_ids),
@@ -445,8 +444,10 @@ async def _form_response(
             schema_field, binding.field_presentations.get(schema_field.field_id)
         )
         raw_value = (submitted or {}).get(schema_field.field_id, "")
-        if not isinstance(raw_value, str) and hasattr(raw_value, "isoformat"):
-            raw_value = raw_value.isoformat(timespec="minutes") if schema_field.python_type.__name__ == "datetime" else raw_value.isoformat()
+        if isinstance(raw_value, datetime):
+            raw_value = raw_value.isoformat(timespec="minutes")
+        elif isinstance(raw_value, date | time):
+            raw_value = raw_value.isoformat()
         base_control = {
             "id": _field_dom_id(binding, schema_field.field_id),
             "name": schema_field.field_id,
@@ -467,9 +468,7 @@ async def _form_response(
             "custom_template": None,
         }
         controls[schema_field.field_id] = dict(
-            render_presentation(
-                presentation, base_control, registry=binding.presentation_registry
-            )
+            render_presentation(presentation, base_control, registry=binding.presentation_registry)
         )
     relationship_panels = await render_relationship_panels(
         binding.relationship_form,
@@ -935,7 +934,11 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
         }
         if staged_relationship:
             if len(staged_relationship) != len(
-                [name for name, _ in request.query_params.multi_items() if name.startswith("__rakit_rel__")]
+                [
+                    name
+                    for name, _ in request.query_params.multi_items()
+                    if name.startswith("__rakit_rel__")
+                ]
             ):
                 return _error(400, "Invalid relationship selection")
             try:

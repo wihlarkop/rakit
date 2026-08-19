@@ -23,13 +23,13 @@ from .action_presentation import (
 from .action_views import ActionView, ActionViewProvider, resolve_action_views
 from .admin import RequestContextMiddleware
 from .dashboard_routes import DashboardBinding, build_dashboard_routes, widget_path
+from .endpoint_admin import Admin as _EndpointAdmin
 from .field_presentation import (
     PresentationRegistry,
     default_presentation_registry,
     resolve_relationship_presentation,
 )
 from .form_routes import WriteResourceBinding
-from .endpoint_admin import Admin as _EndpointAdmin
 from .navigation import AdminNavigation, build_navigation_provider
 from .page_presentation import PageWebPresentation
 from .public_composition import resource_actions

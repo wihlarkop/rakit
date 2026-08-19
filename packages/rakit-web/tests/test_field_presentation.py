@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import date, datetime
 from decimal import Decimal
 from types import MappingProxyType
 from typing import ClassVar
@@ -51,13 +53,10 @@ def test_presentation_configuration_fails_closed() -> None:
     with pytest.raises(ValueError, match="min_query_length"):
         Autocomplete(min_query_length=-1)
     with pytest.raises(ValueError, match="unique"):
-        SearchableSelect(
-            choices=(Choice("active", "Active"), Choice("active", "Again"))
-        )
+        SearchableSelect(choices=(Choice("active", "Active"), Choice("active", "Again")))
     with pytest.raises(ValueError, match="at least two"):
         SegmentedControl(choices=(Choice("one", "One"),))
-    with pytest.raises(TypeError):
-        Percentage()  # type: ignore[call-arg]
+    assert inspect.signature(Percentage).parameters["scale"].default is inspect.Parameter.empty
     with pytest.raises(ValueError, match="positive"):
         NumberInput(step=Decimal("0"))
 
@@ -89,13 +88,11 @@ def test_resolution_prefers_explicit_presentation_and_keeps_inference_conservati
         Switch,
     )
     assert isinstance(
-        inferred_presentation(FieldDefinition(field_id="on", python_type=__import__("datetime").date)),
+        inferred_presentation(FieldDefinition(field_id="on", python_type=date)),
         DatePicker,
     )
     assert isinstance(
-        inferred_presentation(
-            FieldDefinition(field_id="at", python_type=__import__("datetime").datetime)
-        ),
+        inferred_presentation(FieldDefinition(field_id="at", python_type=datetime)),
         DateTimePicker,
     )
     assert isinstance(
@@ -131,9 +128,7 @@ def test_registry_is_typed_and_each_admin_gets_an_isolated_registry() -> None:
 
     registry = default_presentation_registry()
 
-    def renderer(
-        presentation: Presentation, context: dict[str, object]
-    ) -> dict[str, object]:
+    def renderer(presentation: Presentation, context: Mapping[str, object]) -> Mapping[str, object]:
         assert isinstance(presentation, RatingStars)
         return {
             **context,
