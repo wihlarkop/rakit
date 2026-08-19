@@ -15,7 +15,7 @@
   {% else %}
     <section class="rakit-panel space-y-5 p-5">
       {% if preview and preview.impact %}
-      <div class="rounded-rakit-md border border-amber-300 bg-amber-50 p-4 text-sm leading-6 text-amber-950" role="note">
+      <div class="rakit-alert rakit-alert-warning" role="note">
         <p class="font-semibold">Impact</p>
         <p class="mt-1">{{ preview.impact }}</p>
       </div>
@@ -33,7 +33,7 @@
         </dl>
       </div>
       {% endif %}
-      <p class="text-sm leading-6 text-rakit-text-muted">This change is applied only when you confirm and submit.</p>
+      {% if danger %}<p class="text-sm leading-6 text-rakit-text-muted">This action is marked as potentially destructive. Review the impact carefully; it runs only when you confirm and submit.</p>{% else %}<p class="text-sm leading-6 text-rakit-text-muted">This change is applied only when you confirm and submit.</p>{% endif %}
     </section>
     <form class="mt-5 space-y-5" method="post" action="{{ form_action }}" novalidate>
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
