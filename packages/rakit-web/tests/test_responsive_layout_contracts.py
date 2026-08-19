@@ -39,18 +39,18 @@ def test_resource_heading_actions_and_long_values_stay_narrow_safe() -> None:
     resource_table = _read("templates", "resources", "_table.html")
 
     assert "gap-4 md:flex-row md:items-start" in resource_list
-    assert 'w-full max-w-full flex-wrap items-start gap-2 md:w-auto' in resource_list
+    assert "w-full max-w-full flex-wrap items-start gap-2 md:w-auto" in resource_list
     assert "[overflow-wrap:anywhere]" in resource_list
 
     assert "gap-4 md:flex-row md:items-start" in resource_detail
-    assert 'w-full max-w-full flex-wrap items-start gap-2 md:w-auto' in resource_detail
+    assert "w-full max-w-full flex-wrap items-start gap-2 md:w-auto" in resource_detail
     assert resource_detail.count("[overflow-wrap:anywhere]") >= 3
 
     expected_total_class = (
         'class="self-start text-sm tabular-nums text-rakit-text-muted lg:self-auto"'
     )
     assert expected_total_class in resource_table
-    assert 'text-rakit-text [overflow-wrap:anywhere]' in resource_table
+    assert "text-rakit-text [overflow-wrap:anywhere]" in resource_table
 
 
 def test_forms_actions_relationships_and_pages_wrap_long_content() -> None:
