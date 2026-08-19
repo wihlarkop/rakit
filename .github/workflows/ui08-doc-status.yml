@@ -1,0 +1,61 @@
+name: UI-08 completion documentation
+
+on:
+  push:
+    branches: [ui-08-final-polish]
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ui-08-final-polish
+      - name: Record Phase A completion
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          spec = Path('docs/superpowers/specs/2026-08-19-ui-07-ui-08-phase-a-hardening-design.md')
+          text = spec.read_text()
+          marker = '## Goal\n'
+          completion = '''## Completion Update — 2026-08-19\n\n- UI-07 merged to `main` at `0ce275b475c94da0152e94bfed343d1decabcf06` after maintainer combined browser acceptance and final PR CI #871.\n- UI-08 final product/source audit found no P0, P1, or material-P2 product UI findings requiring another visual/runtime change.\n- The accepted UI-07 browser result therefore remains the Phase A product baseline; UI-08 intentionally does not invent cosmetic churn.\n- Planning artifacts were classified conservatively and retained because they still provide useful architectural/design history. The older unconditional deletion instruction remains superseded by this design.\n- Phase A UI maturity is complete. The next default roadmap phase is Phase B alpha hardening.\n\n'''
+          if completion not in text:
+              if marker not in text:
+                  raise SystemExit('spec insertion marker not found')
+              text = text.replace(marker, completion + marker, 1)
+              spec.write_text(text)
+
+          master = Path('docs/superpowers/plans/2026-08-17-ui-ux-maturity.md')
+          text = master.read_text()
+          header = '# UI-08 — Final Impeccable Polish and Planning-Doc Cleanup\n\n'
+          note = '''> **Completion update (2026-08-19):** The later approved Phase A hardening design supersedes this section where it conflicts with the workflow below. UI-08 found no P0/P1/material-P2 product UI finding after the accepted UI-07 browser matrix and final source audit, so no additional UI source churn was justified. Planning/spec documents are retained when they remain useful architectural history; the unconditional deletion steps below are historical and are not executed.\n\n'''
+          if note not in text:
+              if header not in text:
+                  raise SystemExit('master-plan UI-08 header not found')
+              text = text.replace(header, header + note, 1)
+              master.write_text(text)
+
+          plan = Path('docs/superpowers/plans/2026-08-19-ui-08-final-polish.md')
+          text = plan.read_text()
+          marker = '## Goal\n'
+          result = '''## Execution Result\n\n- Product finding classification: **no P0, P1, or material P2 findings** after the accepted UI-07 browser result and final framework-owned source audit.\n- Product source changes: **none by design**; cosmetic churn was deferred rather than manufactured.\n- Planning-document classification: retained existing UI maturity specs/plans as useful design/execution history; no unconditional deletions performed.\n- Remaining gate: fresh UI-08 PR CI on the exact documentation-only head, followed by merge to `main`.\n- Release side effects: none.\n\n'''
+          if result not in text:
+              if marker not in text:
+                  raise SystemExit('UI-08 plan insertion marker not found')
+              text = text.replace(marker, result + marker, 1)
+              plan.write_text(text)
+          PY
+          git diff --check
+      - name: Commit completion status
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/superpowers/specs/2026-08-19-ui-07-ui-08-phase-a-hardening-design.md docs/superpowers/plans/2026-08-17-ui-ux-maturity.md docs/superpowers/plans/2026-08-19-ui-08-final-polish.md
+          git diff --cached --check
+          git commit -m 'docs: record Phase A UI maturity completion'
+          git push origin HEAD:ui-08-final-polish
