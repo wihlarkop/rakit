@@ -7,29 +7,29 @@ js=0
 
 ===== sync =====
 Downloading sqlalchemy (3.2MiB)
-Downloading cryptography (4.5MiB)
 Downloading pygments (1.2MiB)
-Downloading ruff (12.7MiB)
+Downloading cryptography (4.5MiB)
 Downloading ty (11.7MiB)
+Downloading ruff (12.7MiB)
 Downloading mkdocs-material (8.9MiB)
       Built rakit-storage @ file:///home/runner/work/rakit/rakit/packages/rakit-storage
- Downloaded ruff
       Built rakit-web @ file:///home/runner/work/rakit/rakit/packages/rakit-web
- Downloaded ty
- Downloaded cryptography
-      Built rakit-server-granian @ file:///home/runner/work/rakit/rakit/packages/rakit-server-granian
- Downloaded sqlalchemy
-      Built rakit-server @ file:///home/runner/work/rakit/rakit/packages/rakit-server
- Downloaded pygments
-      Built rakit-sqlalchemy @ file:///home/runner/work/rakit/rakit/packages/rakit-sqlalchemy
-      Built rakit-server-uvicorn @ file:///home/runner/work/rakit/rakit/packages/rakit-server-uvicorn
-      Built rakit @ file:///home/runner/work/rakit/rakit/packages/rakit
-      Built rakit-auth-sqlalchemy @ file:///home/runner/work/rakit/rakit/packages/rakit-auth-sqlalchemy
-      Built rakit-storage-local @ file:///home/runner/work/rakit/rakit/packages/rakit-storage-local
       Built rakit-core @ file:///home/runner/work/rakit/rakit/packages/rakit-core
+ Downloaded pygments
+      Built rakit-auth-sqlalchemy @ file:///home/runner/work/rakit/rakit/packages/rakit-auth-sqlalchemy
+      Built rakit-sqlalchemy @ file:///home/runner/work/rakit/rakit/packages/rakit-sqlalchemy
+ Downloaded cryptography
+      Built rakit-server-uvicorn @ file:///home/runner/work/rakit/rakit/packages/rakit-server-uvicorn
+ Downloaded ty
+      Built rakit-server @ file:///home/runner/work/rakit/rakit/packages/rakit-server
+ Downloaded sqlalchemy
+ Downloaded ruff
+      Built rakit-storage-local @ file:///home/runner/work/rakit/rakit/packages/rakit-storage-local
+      Built rakit-server-granian @ file:///home/runner/work/rakit/rakit/packages/rakit-server-granian
+      Built rakit @ file:///home/runner/work/rakit/rakit/packages/rakit
  Downloaded mkdocs-material
-Prepared 31 packages in 3.27s
-Installed 76 packages in 711ms
+Prepared 31 packages in 2.88s
+Installed 76 packages in 352ms
  + aiosqlite==0.22.1
  + alembic==1.18.5
  + annotated-doc==0.0.4
@@ -115,7 +115,7 @@ packages/rakit-web/tests/test_relationship_autocomplete.py:7
     from starlette.testclient import TestClient
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-15 passed, 1 warning in 0.56s
+15 passed, 1 warning in 0.57s
 
 ===== format =====
 Would reformat: packages/rakit-web/src/rakit_web/field_presentation.py
