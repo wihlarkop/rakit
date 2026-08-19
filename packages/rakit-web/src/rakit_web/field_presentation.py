@@ -264,8 +264,13 @@ def _default_renderer(
     return {**context, "presentation": presentation, "presentation_key": presentation.key}
 
 
-DEFAULT_PRESENTATION_REGISTRY = PresentationRegistry()
-DEFAULT_PRESENTATION_REGISTRY.register(Presentation, _default_renderer)
+def default_presentation_registry() -> PresentationRegistry:
+    registry = PresentationRegistry()
+    registry.register(Presentation, _default_renderer)
+    return registry
+
+
+DEFAULT_PRESENTATION_REGISTRY = default_presentation_registry()
 
 
 def render_presentation(
@@ -379,6 +384,7 @@ __all__ = [
     "Switch",
     "TextInput",
     "TimePicker",
+    "default_presentation_registry",
     "inferred_presentation",
     "legacy_widget_presentation",
     "render_presentation",

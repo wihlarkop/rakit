@@ -13,6 +13,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Protocol, cast
 from urllib.parse import quote
 
@@ -62,6 +63,8 @@ from starlette.templating import Jinja2Templates
 from ._paths import mounted_path
 from .field_presentation import (
     Presentation,
+    PresentationRegistry,
+    default_presentation_registry,
     render_presentation,
     resolve_field_presentation,
 )
@@ -192,6 +195,9 @@ class WriteResourceBinding:
     graph_mutation_authorizer: GraphMutationAuthorizer | None = None
     relationship_editor_authorizer: RelationshipEditorAuthorizer | None = None
     field_presentations: Mapping[str, Presentation] = field(default_factory=dict)
+    presentation_registry: PresentationRegistry = field(
+        default_factory=default_presentation_registry
+    )
     codec: IdentityCodec = field(default_factory=IdentityCodec)
 
     def __post_init__(self) -> None:
@@ -204,6 +210,11 @@ class WriteResourceBinding:
             )
         if any(not isinstance(value, Presentation) for value in self.field_presentations.values()):
             raise TypeError("Field presentation overrides must contain Presentation values")
+        object.__setattr__(
+            self, "field_presentations", MappingProxyType(dict(self.field_presentations))
+        )
+        if not isinstance(self.presentation_registry, PresentationRegistry):
+            raise TypeError("presentation_registry must be a PresentationRegistry")
         editors = (
             {editor.relationship_id for editor in self.relationship_form.editors}
             if self.relationship_form is not None
@@ -456,7 +467,9 @@ async def _form_response(
             "custom_template": None,
         }
         controls[schema_field.field_id] = dict(
-            render_presentation(presentation, base_control)
+            render_presentation(
+                presentation, base_control, registry=binding.presentation_registry
+            )
         )
     relationship_panels = await render_relationship_panels(
         binding.relationship_form,

@@ -23,7 +23,11 @@ from .action_presentation import (
 from .action_views import ActionView, ActionViewProvider, resolve_action_views
 from .admin import RequestContextMiddleware
 from .dashboard_routes import DashboardBinding, build_dashboard_routes, widget_path
-from .field_presentation import resolve_relationship_presentation
+from .field_presentation import (
+    PresentationRegistry,
+    default_presentation_registry,
+    resolve_relationship_presentation,
+)
 from .form_routes import WriteResourceBinding
 from .endpoint_admin import Admin as _EndpointAdmin
 from .navigation import AdminNavigation, build_navigation_provider
@@ -100,6 +104,14 @@ class _AdminActionViewMiddleware:
 
 class Admin(_EndpointAdmin):
     """Public Admin facade with an automatic, permission-aware dashboard."""
+
+    @property
+    def presentations(self) -> PresentationRegistry:
+        registry = getattr(self, "_rakit_presentation_registry", None)
+        if registry is None:
+            registry = default_presentation_registry()
+            self._rakit_presentation_registry = registry
+        return registry
 
     def register(
         self,
@@ -235,6 +247,7 @@ class Admin(_EndpointAdmin):
         return replace(
             binding,
             field_presentations=web.fields,
+            presentation_registry=self.presentations,
             relationship_form=relationship_form,
         )
 

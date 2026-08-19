@@ -143,9 +143,16 @@ authorization, or storage policy.
 
 ## Custom presentation registry
 
-`PresentationRegistry` is the Web rendering extension boundary. A custom presentation is an immutable
-presentation object with a registered renderer. The renderer receives already-resolved form/view state
-and returns rendering data; it must not fetch directly from a database or execute mutations.
+`PresentationRegistry` is the Web rendering extension boundary. Each `Admin` owns an isolated registry
+at `admin.presentations`, so custom rendering does not mutate process-global widget behavior:
+
+```python
+admin.presentations.register(RatingStars, renderer=render_rating_stars)
+```
+
+A custom presentation is an immutable `Presentation` subclass. The renderer receives already-resolved
+form/view state and may return a `custom_template` plus safe view-model values consumed by that
+template. It must not fetch directly from a database, authorize a request, or execute mutations.
 
 Full distributable presentation-plugin packaging is intentionally deferred. UI-07D establishes the
 typed registry boundary without turning custom widgets into a parallel application framework.
