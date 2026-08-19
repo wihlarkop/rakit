@@ -25,6 +25,7 @@ import zipfile
 from dataclasses import dataclass
 from email.parser import Parser
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 VERSION = "0.1.0a1"
 _INTERNAL_PREFIX = "rakit"
@@ -410,7 +411,7 @@ def clean_install_smoke(dist: Path, root: Path, workspace: Path) -> None:
     )
 
 
-def _rakit_project(root: Path) -> dict[str, object]:
+def _rakit_project(root: Path) -> dict[str, Any]:
     return tomllib.loads(
         (root / "packages" / "rakit" / "pyproject.toml").read_text(encoding="utf-8")
     )["project"]
