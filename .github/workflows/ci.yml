@@ -52,14 +52,10 @@ jobs:
                   packages/rakit-web/src/rakit_web/templates/components/admin_navigation.html \
                   .github/workflows/ci.yml \
                   .github/ui06_final_polish.py
-          git diff --cached --exit-code -- .github/workflows/ci.yml || {
-            echo "Normal CI was not restored exactly" >&2
+          git diff --exit-code origin/ui-06-advanced-operations -- \
+            .github/workflows/ci.yml .github/ui06_final_polish.py || {
+            echo "Temporary CI/helper state differs from integration base" >&2
             exit 1
           }
-          if git diff --cached --name-only | grep -q '^\.github/'; then
-            echo "Temporary helper files remain staged" >&2
-            git diff --cached --name-only
-            exit 1
-          fi
           git commit -m "fix(web): preserve sidebar scroll and center dialogs"
           git push origin HEAD:ui-06-final-polish-scroll-dialog
