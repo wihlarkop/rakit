@@ -13,7 +13,6 @@ is never a substitute for authorization, and vice versa.
 The full-page flow works without JavaScript; HTMX is a presentation-only
 enhancement of the same pipeline.
 """
-from http import HTTPStatus
 
 import hashlib
 import inspect
@@ -23,6 +22,7 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import timedelta
 from html import escape
+from http import HTTPStatus
 from typing import Any
 
 import anyio
@@ -423,7 +423,9 @@ def _action_result_response(
                 headers={"HX-Trigger": json.dumps(trigger), "Cache-Control": "no-store"},
             )
         return RedirectResponse(
-            fallback_location, status_code=HTTPStatus.SEE_OTHER, headers={"Cache-Control": "no-store"}
+            fallback_location,
+            status_code=HTTPStatus.SEE_OTHER,
+            headers={"Cache-Control": "no-store"},
         )
     if isinstance(result, ActionRejected):
         return _rejected_response(request, result.message or "Action rejected", 409)

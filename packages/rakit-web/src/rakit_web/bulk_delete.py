@@ -7,13 +7,13 @@ operation context as ordinary resource deletion.
 """
 
 from __future__ import annotations
-from http import HTTPStatus
 
 import hashlib
 import json
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
+from http import HTTPStatus
 from typing import cast
 
 from rakit_core.crypto import TokenService

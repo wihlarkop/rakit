@@ -1,9 +1,9 @@
-from http import HTTPStatus
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import replace
 from datetime import timedelta
+from http import HTTPStatus
 from math import isfinite
 from pathlib import Path
 from types import SimpleNamespace

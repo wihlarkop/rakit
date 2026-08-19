@@ -5,10 +5,10 @@ callables). This module owns the resource_id -> handler association: it builds a
 `ResourceBinding` per resource and the list/detail `Route` objects that render
 templates via `ResourceService`, the query parser, and the identity codec.
 """
-from http import HTTPStatus
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from http import HTTPStatus
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID

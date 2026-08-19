@@ -1,7 +1,6 @@
 import re
 from pathlib import Path
 
-
 _NUMERIC_STATUS_CODE = re.compile(r"\bstatus_code\s*(?:==|!=|<=|>=|=|<|>)\s*\d{3}\b")
 
 

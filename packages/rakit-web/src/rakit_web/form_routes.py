@@ -5,7 +5,6 @@ mutation service rather than an ORM model.  HTTP concerns (CSRF, identity
 decoding, duplicate form fields, redirects) stay here; writable-field and
 optimistic-write invariants remain in the datasource service.
 """
-from http import HTTPStatus
 
 import hashlib
 import json
@@ -15,6 +14,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
+from http import HTTPStatus
 from types import MappingProxyType
 from typing import Protocol, cast
 from urllib.parse import quote

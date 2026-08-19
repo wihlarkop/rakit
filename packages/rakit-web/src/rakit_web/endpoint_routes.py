@@ -1,11 +1,11 @@
 """Starlette runtime for compiler-owned custom endpoints."""
-from http import HTTPStatus
 
 import hashlib
 import json
 from collections.abc import AsyncIterable, Awaitable, Callable, Iterable, Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
+from http import HTTPStatus
 from typing import Any
 
 import anyio

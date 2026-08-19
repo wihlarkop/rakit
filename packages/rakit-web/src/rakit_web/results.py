@@ -1,8 +1,8 @@
 """Translate semantic mutation success to HTTP/HTMX responses."""
-from http import HTTPStatus
 
 import json
 from dataclasses import dataclass
+from http import HTTPStatus
 
 from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
@@ -37,4 +37,6 @@ def mutation_success(
             status_code=HTTPStatus.NO_CONTENT,
             headers={"HX-Redirect": location, "Cache-Control": "no-store"},
         )
-    return RedirectResponse(location, status_code=HTTPStatus.SEE_OTHER, headers={"Cache-Control": "no-store"})
+    return RedirectResponse(
+        location, status_code=HTTPStatus.SEE_OTHER, headers={"Cache-Control": "no-store"}
+    )

@@ -1,8 +1,8 @@
 """Public composition and Admin integration for custom endpoints."""
-from http import HTTPStatus
 
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from http import HTTPStatus
 from typing import Any, cast
 
 from rakit_core.compiler import CompiledApplication

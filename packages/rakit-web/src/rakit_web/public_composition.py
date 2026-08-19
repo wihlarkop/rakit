@@ -1,7 +1,7 @@
 """Validation helpers for declaration-style ResourceAdmin composition."""
-from http import HTTPStatus
 
 from collections.abc import Collection
+from http import HTTPStatus
 
 from rakit_core.actions import ActionDefinition, ActionScope
 from rakit_core.admin_types import ResourceAdmin

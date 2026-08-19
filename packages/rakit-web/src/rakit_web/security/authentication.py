@@ -13,9 +13,9 @@ Both are raw ASGI wrappers, not `BaseHTTPMiddleware`, for the same reason
 pitfall, and so a rejection short-circuits without ever invoking the
 downstream app.
 """
-from http import HTTPStatus
 
 from collections.abc import Callable, Mapping
+from http import HTTPStatus
 from urllib.parse import unquote
 
 from rakit_core.auth import ANONYMOUS_PRINCIPAL, AuthBackend, Principal, SessionStore
@@ -280,7 +280,9 @@ class AuthorizationMiddleware:
                 await self._render_forbidden(request, dashboard_available)(scope, receive, send)
             else:
                 await PlainTextResponse(
-                    "Forbidden", status_code=HTTPStatus.FORBIDDEN, headers={"Cache-Control": "no-store"}
+                    "Forbidden",
+                    status_code=HTTPStatus.FORBIDDEN,
+                    headers={"Cache-Control": "no-store"},
                 )(scope, receive, send)
             return
 

@@ -1,12 +1,12 @@
 """Permission-aware dashboard rendering and isolated widget execution."""
 
 from __future__ import annotations
-from http import HTTPStatus
 
 import inspect
 from collections.abc import Callable, Iterable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
+from http import HTTPStatus
 
 import anyio
 import structlog

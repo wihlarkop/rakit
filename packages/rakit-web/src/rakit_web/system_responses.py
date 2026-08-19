@@ -1,7 +1,7 @@
 """Safe HTML/JSON responses for framework-owned system surfaces."""
-from http import HTTPStatus
 
 from dataclasses import dataclass
+from http import HTTPStatus
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response

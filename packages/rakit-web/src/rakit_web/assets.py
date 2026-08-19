@@ -1,8 +1,8 @@
 """Bundled, content-addressed assets for the built-in read-only UI."""
-from http import HTTPStatus
 
 from dataclasses import dataclass
 from hashlib import sha256
+from http import HTTPStatus
 from importlib.resources import files
 from pathlib import PurePosixPath
 

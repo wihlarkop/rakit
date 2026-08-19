@@ -1,4 +1,3 @@
-from http import HTTPStatus
 import hashlib
 import json
 import logging
@@ -8,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
+from http import HTTPStatus
 from uuid import UUID
 
 from rakit_core.auth import Principal

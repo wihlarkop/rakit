@@ -4,12 +4,12 @@ Relationship writes never happen here.  This module converts normal form
 controls into the sealed typed graph steps and offers read-only HTMX helpers
 for scoped candidates and relationship panels.
 """
-from http import HTTPStatus
 
 import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from http import HTTPStatus
 from typing import Any, Protocol, cast
 from uuid import uuid4
 
@@ -279,10 +279,14 @@ async def _preview_context(
         )
     root = await root_authorizer(request, "update", parent_identity)
     if root is None:
-        raise RakitError(code=ErrorCode.AUTH_FORBIDDEN, message="Forbidden", status_code=HTTPStatus.FORBIDDEN)
+        raise RakitError(
+            code=ErrorCode.AUTH_FORBIDDEN, message="Forbidden", status_code=HTTPStatus.FORBIDDEN
+        )
     authorizations = await graph_authorizer(request, root, parent_identity, (change,))
     if authorizations is None:
-        raise RakitError(code=ErrorCode.AUTH_FORBIDDEN, message="Forbidden", status_code=HTTPStatus.FORBIDDEN)
+        raise RakitError(
+            code=ErrorCode.AUTH_FORBIDDEN, message="Forbidden", status_code=HTTPStatus.FORBIDDEN
+        )
     try:
         return (
             authorizations.require(
@@ -1206,7 +1210,9 @@ def build_relationship_routes(
                     page=max(1, int(request.query_params.get("page", "1"))),
                 )
             except ValueError:
-                return PlainTextResponse("Invalid candidate page", status_code=HTTPStatus.BAD_REQUEST)
+                return PlainTextResponse(
+                    "Invalid candidate page", status_code=HTTPStatus.BAD_REQUEST
+                )
             selected = {
                 name.removeprefix(f"{relationship_prefix(editor.relationship_id)}link__")
                 for name in request.query_params
@@ -1239,7 +1245,9 @@ def build_relationship_routes(
             try:
                 page_number = max(1, int(request.query_params.get("page", "1")))
             except ValueError:
-                return PlainTextResponse("Invalid candidate page", status_code=HTTPStatus.BAD_REQUEST)
+                return PlainTextResponse(
+                    "Invalid candidate page", status_code=HTTPStatus.BAD_REQUEST
+                )
             query = request.query_params.get("q", "")
             candidate_page = await _candidate_options(editor, query=query or None, page=page_number)
             encoded_parent = binding.codec.encode(identity)

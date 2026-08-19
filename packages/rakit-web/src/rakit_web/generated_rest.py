@@ -1,10 +1,10 @@
-from http import HTTPStatus
 import math
 import re
 from collections.abc import Mapping
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
+from http import HTTPStatus
 from typing import cast
 from uuid import UUID
 

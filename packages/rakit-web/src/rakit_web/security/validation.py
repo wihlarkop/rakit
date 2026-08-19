@@ -1,7 +1,7 @@
-from http import HTTPStatus
 import inspect
 import ipaddress
 from collections.abc import Iterable
+from http import HTTPStatus
 
 from rakit_core.config import RakitConfig
 from rakit_core.errors import ErrorCode, RakitError

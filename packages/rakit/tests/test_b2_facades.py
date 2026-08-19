@@ -2,7 +2,6 @@ import subprocess
 import sys
 
 import pytest
-
 from rakit._optional import RakitOptionalDependencyError
 
 

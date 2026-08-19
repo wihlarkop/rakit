@@ -1,8 +1,8 @@
 """Admin composition adapter for built-in and custom BULK operations."""
-from http import HTTPStatus
 
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager
+from http import HTTPStatus
 from typing import Any, cast
 
 from rakit_core.actions import ActionScope

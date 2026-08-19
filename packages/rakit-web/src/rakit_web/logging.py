@@ -1,9 +1,9 @@
-from http import HTTPStatus
 import io
 import logging
 import sys
 from collections.abc import Mapping
 from contextvars import Token
+from http import HTTPStatus
 from typing import Any, TextIO, cast
 
 import structlog

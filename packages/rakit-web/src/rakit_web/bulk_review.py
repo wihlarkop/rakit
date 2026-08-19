@@ -1,8 +1,8 @@
 from __future__ import annotations
-from http import HTTPStatus
 
 import inspect
 from collections.abc import Awaitable, Callable, Mapping
+from http import HTTPStatus
 from typing import cast
 
 from rakit_core.actions import (
