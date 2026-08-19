@@ -28,7 +28,11 @@ def _login(client: TestClient) -> None:
 
 def test_relationship_validation_summary_anchor_targets_rendered_parent_status_field() -> None:
     identity = IdentityCodec().encode(RecordIdentity(values={"id": 1}))
-    with TestClient(_fresh_showcase_app(), base_url="http://localhost") as client:
+    with TestClient(
+        _fresh_showcase_app(),
+        base_url="http://localhost",
+        client=("127.0.0.1", 50000),
+    ) as client:
         _login(client)
         response = client.post(
             f"/relationship-states/{identity}/edit",
