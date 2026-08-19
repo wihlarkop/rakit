@@ -31,7 +31,7 @@ from rakit import (
 from rakit_core.actions import ActionSuccess
 from rakit_core.di import ServiceScope
 from rakit_core.fields import FieldDefinition, FileField
-from rakit_core.forms import FormLayout, FormSchema, RelationshipPanel
+from rakit_core.forms import FieldLayout, FormLayout, FormSchema, RelationshipPanel
 from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, OperationReceipt
 from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import MutationAuthorization, MutationOperation, OperationAuthorizationSet
@@ -719,7 +719,8 @@ def configure_ui06_acceptance(admin: Admin) -> None:
     )
 
     relationship_layout = FormLayout(
-        children=tuple(
+        children=(FieldLayout("status"),)
+        + tuple(
             RelationshipPanel(
                 layout_id=f"{definition.relationship_id}-panel",
                 relationship_id=definition.relationship_id,
