@@ -1,4 +1,5 @@
 {% set control_id = theme_control_id | default('rakit-theme') %}
+{% set menu_placement = theme_menu_placement | default('up') %}
 <div class="relative" data-rakit-theme-control>
   <button
     id="{{ control_id }}-trigger"
@@ -20,10 +21,11 @@
   <div
     id="{{ control_id }}-menu"
     data-rakit-theme-menu
+    data-rakit-theme-menu-placement="{{ menu_placement }}"
     role="menu"
     aria-label="Theme"
     hidden
-    class="absolute bottom-full left-0 z-50 mb-2 w-full min-w-44 overflow-hidden rounded-rakit-md border border-rakit-border bg-rakit-surface p-1 shadow-rakit-lg"
+    class="absolute left-0 z-50 w-full min-w-44 overflow-hidden rounded-rakit-md border border-rakit-border bg-rakit-surface p-1 shadow-rakit-lg{% if menu_placement == 'down' %} top-full mt-2{% else %} bottom-full mb-2{% endif %}"
   >
     {% for value, label, icon in (("system", "System", "monitor"), ("light", "Light", "sun"), ("dark", "Dark", "moon")) %}
       <button
