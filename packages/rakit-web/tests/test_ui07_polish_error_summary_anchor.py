@@ -41,6 +41,9 @@ def test_relationship_validation_summary_anchor_targets_rendered_parent_status_f
         )
 
     assert response.status_code == 422
-    anchor = re.search(r'href="#([^"]+)">Parent status: This field is required\.</a>', response.text)
+    anchor = re.search(
+        r'href="#([^"]+)">Parent status: This field is required\.</a>',
+        response.text,
+    )
     assert anchor is not None
     assert f'id="{anchor.group(1)}"' in response.text
