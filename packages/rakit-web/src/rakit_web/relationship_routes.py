@@ -53,6 +53,14 @@ from starlette.responses import PlainTextResponse, Response
 from starlette.routing import Route
 
 from ._paths import mounted_path
+from .field_presentation import (
+    Autocomplete,
+    MultiAutocomplete,
+    Presentation,
+    SearchableSelect,
+    Select,
+    resolve_relationship_presentation,
+)
 from .security.cookies import CSRF_COOKIE_NAME
 
 _PREFIX = "__rakit_rel__"
@@ -93,11 +101,25 @@ class RelationshipEditorBinding:
     target_form_schema: FormSchema | None = None
     association_form_schema: FormSchema | None = None
     target_search_fields: tuple[str, ...] = ()
+    presentation: Presentation | None = None
     candidate_page_size: int = 25
     reorder_safe_maximum: int = 100
 
     def __post_init__(self) -> None:
         definition = self.relationship.definition
+        resolved = resolve_relationship_presentation(definition.presentation, self.presentation)
+        object.__setattr__(self, "presentation", resolved)
+        if isinstance(resolved, MultiAutocomplete):
+            if definition.cardinality is not RelationshipCardinality.TO_MANY:
+                raise ValueError("MultiAutocomplete requires a to-many relationship")
+        elif isinstance(resolved, Autocomplete | SearchableSelect | Select):
+            if definition.cardinality is not RelationshipCardinality.TO_ONE:
+                raise ValueError("Single-choice presentation requires a to-one relationship")
+        elif resolved is not None:
+            raise ValueError("Unsupported relationship presentation")
+        if isinstance(resolved, Autocomplete) and resolved.search_fields:
+            if not set(resolved.search_fields).issubset(self.target_search_fields):
+                raise ValueError("Autocomplete search_fields exceed relationship search policy")
         if self.candidate_page_size < 1 or self.candidate_page_size > 200:
             raise ValueError("candidate_page_size must be between 1 and 200")
         if self.reorder_safe_maximum < 1 or self.reorder_safe_maximum > 1_000:
@@ -111,6 +133,12 @@ class RelationshipEditorBinding:
                     )
         elif self.association_form_schema is not None:
             raise ValueError("association form schema requires an association-object relationship")
+
+    @property
+    def effective_candidate_page_size(self) -> int:
+        if isinstance(self.presentation, Autocomplete):
+            return min(self.presentation.page_size, 200)
+        return self.candidate_page_size
 
     @property
     def relationship_id(self) -> str:
@@ -720,9 +748,18 @@ async def build_relationship_changes(
     return tuple(changes)
 
 
+@dataclass(frozen=True)
+class RelationshipCandidatePage:
+    items: tuple[RelationshipCandidate, ...]
+    page: int
+    has_previous: bool
+    has_next: bool
+    total_count: int | None = None
+
+
 async def _candidate_options(
     editor: RelationshipEditorBinding, *, query: str | None, page: int = 1
-) -> tuple[RelationshipCandidate, ...]:
+) -> RelationshipCandidatePage:
     source = editor.target_service.data_source
     identity_for = getattr(source, "identity_for", None)
     if not callable(identity_for):
@@ -733,19 +770,25 @@ async def _candidate_options(
         )
     result = await editor.target_service.list(
         ResourceQuery.from_params(
-            page=page,
-            per_page=editor.candidate_page_size,
+            page=max(1, page),
+            per_page=editor.effective_candidate_page_size,
             allowed_sort_fields=(),
             identity_fields=source.identity_fields,
             search=query if editor.target_search_fields else None,
         )
     )
-    return tuple(
-        RelationshipCandidate(
-            identity=identity_for(record),
-            label=resolve_record_label(editor.relationship.definition, record),
-        )
-        for record in result.items
+    return RelationshipCandidatePage(
+        items=tuple(
+            RelationshipCandidate(
+                identity=identity_for(record),
+                label=resolve_record_label(editor.relationship.definition, record),
+            )
+            for record in result.items
+        ),
+        page=result.page,
+        has_previous=result.has_previous,
+        has_next=result.has_next,
+        total_count=result.total_count,
     )
 
 
@@ -936,9 +979,9 @@ async def relationship_panel_view(
         if parent_identity is not None and editor.editable
         else None
     )
+    candidate_page = await _candidate_options(editor, query=None, page=page)
     options_by_identity = {
-        IdentityCodec().encode(option.identity): option
-        for option in await _candidate_options(editor, query=None, page=page)
+        IdentityCodec().encode(option.identity): option for option in candidate_page.items
     }
     # A currently scoped member remains renderable even when it falls outside
     # the bounded candidate page used by a native select.
@@ -997,6 +1040,14 @@ async def relationship_panel_view(
     return {
         "relationship": definition,
         "presentation_mode": presentation_mode,
+        "presentation": editor.presentation,
+        "presentation_key": editor.presentation.key if editor.presentation is not None else None,
+        "advanced_presentation": editor.presentation is not None,
+        "autocomplete_min_query_length": (
+            editor.presentation.min_query_length
+            if isinstance(editor.presentation, Autocomplete)
+            else 0
+        ),
         "paginated": bool(editor_page.has_previous or editor_page.has_next),
         "empty": not bool(rows) and not bool(draft_rows),
         "relationship_id": editor.relationship_id,
@@ -1061,6 +1112,7 @@ async def relationship_panel_view(
         "page_path": page_path,
         "preview_path": f"{page_path}/preview" if page_path is not None else None,
         "options_path": f"{page_path}/options" if page_path is not None else None,
+        "picker_path": f"{page_path}/picker" if page_path is not None else None,
         "new_row_key": f"new-{uuid4()}",
         "inline_fields": tuple(
             field.field_id
@@ -1137,7 +1189,14 @@ def build_relationship_routes(
                 or await binding.mutation_service.get(identity) is None
             ):
                 return PlainTextResponse("Resource was not found", status_code=404)
-            options = await _candidate_options(editor, query=request.query_params.get("q"))
+            try:
+                candidate_page = await _candidate_options(
+                    editor,
+                    query=request.query_params.get("q"),
+                    page=max(1, int(request.query_params.get("page", "1"))),
+                )
+            except ValueError:
+                return PlainTextResponse("Invalid candidate page", status_code=400)
             selected = {
                 name.removeprefix(f"{relationship_prefix(editor.relationship_id)}link__")
                 for name in request.query_params
@@ -1147,11 +1206,56 @@ def build_relationship_routes(
                 request,
                 "relationships/options.html",
                 {
-                    "options": options,
+                    "options": candidate_page.items,
                     "codec": relationship_binding.codec,
                     "prefix": relationship_prefix(editor.relationship_id),
                     "selected": selected,
                     "options_id": f"rakit-relationship-{editor.relationship_id}-options",
+                    "has_next": candidate_page.has_next,
+                    "next_page": candidate_page.page + 1 if candidate_page.has_next else None,
+                },
+                headers={"Cache-Control": "no-store"},
+            )
+
+        async def picker(request: Request, editor: RelationshipEditorBinding = editor) -> Response:
+            identity = binding.codec.decode(request.path_params["identity"])
+            if not await _authorize_editor(binding, request, editor, identity):
+                return PlainTextResponse("Forbidden", status_code=403)
+            if (
+                not callable(getattr(binding.mutation_service, "get", None))
+                or await binding.mutation_service.get(identity) is None
+            ):
+                return PlainTextResponse("Resource was not found", status_code=404)
+            try:
+                page_number = max(1, int(request.query_params.get("page", "1")))
+            except ValueError:
+                return PlainTextResponse("Invalid candidate page", status_code=400)
+            query = request.query_params.get("q", "")
+            candidate_page = await _candidate_options(
+                editor, query=query or None, page=page_number
+            )
+            encoded_parent = binding.codec.encode(identity)
+            return_path = mounted_path(
+                request, f"{binding.path}/{encoded_parent}/edit"
+            )
+            picker_path = mounted_path(
+                request,
+                editor.relationship.route_path.replace("{identity}", encoded_parent) + "/picker",
+            )
+            return binding.templates.TemplateResponse(
+                request,
+                "relationships/picker.html",
+                {
+                    "relationship": editor.relationship.definition,
+                    "options": candidate_page.items,
+                    "codec": relationship_binding.codec,
+                    "prefix": relationship_prefix(editor.relationship_id),
+                    "multiple": isinstance(editor.presentation, MultiAutocomplete),
+                    "query": query,
+                    "page": candidate_page.page,
+                    "has_next": candidate_page.has_next,
+                    "return_path": return_path,
+                    "picker_path": picker_path,
                 },
                 headers={"Cache-Control": "no-store"},
             )
@@ -1554,6 +1658,12 @@ def build_relationship_routes(
                     options,
                     methods=["GET"],
                     name=f"relationship:{editor.relationship.source_resource_id}:{editor.relationship_id}:options",
+                ),
+                Route(
+                    f"{route_path}/picker",
+                    picker,
+                    methods=["GET"],
+                    name=f"relationship:{editor.relationship.source_resource_id}:{editor.relationship_id}:picker",
                 ),
                 Route(
                     f"{route_path}/page/{{page:int}}",

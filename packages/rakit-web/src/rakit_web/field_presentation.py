@@ -258,6 +258,25 @@ class PresentationRegistry:
         return MappingProxyType(self._renderers)
 
 
+def _default_renderer(
+    presentation: Presentation, context: Mapping[str, object]
+) -> Mapping[str, object]:
+    return {**context, "presentation": presentation, "presentation_key": presentation.key}
+
+
+DEFAULT_PRESENTATION_REGISTRY = PresentationRegistry()
+DEFAULT_PRESENTATION_REGISTRY.register(Presentation, _default_renderer)
+
+
+def render_presentation(
+    presentation: Presentation,
+    context: Mapping[str, object],
+    *,
+    registry: PresentationRegistry = DEFAULT_PRESENTATION_REGISTRY,
+) -> Mapping[str, object]:
+    return registry.resolve(presentation)(presentation, context)
+
+
 def enum_choices(python_type: type[object]) -> tuple[Choice, ...]:
     if not issubclass(python_type, Enum):
         return ()
@@ -343,6 +362,7 @@ __all__ = [
     "DatePicker",
     "DateRangePicker",
     "DateTimePicker",
+    "DEFAULT_PRESENTATION_REGISTRY",
     "FieldPresentation",
     "FieldRenderer",
     "FileUpload",
@@ -361,6 +381,7 @@ __all__ = [
     "TimePicker",
     "inferred_presentation",
     "legacy_widget_presentation",
+    "render_presentation",
     "resolve_field_presentation",
     "resolve_relationship_presentation",
 ]

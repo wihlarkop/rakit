@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from dataclasses import replace
 
 from rakit_core.actions import ActionDefinition, ActionScope
 from rakit_core.admin_types import ResourceAdmin
@@ -22,11 +23,17 @@ from .action_presentation import (
 from .action_views import ActionView, ActionViewProvider, resolve_action_views
 from .admin import RequestContextMiddleware
 from .dashboard_routes import DashboardBinding, build_dashboard_routes, widget_path
+from .field_presentation import resolve_relationship_presentation
+from .form_routes import WriteResourceBinding
 from .endpoint_admin import Admin as _EndpointAdmin
 from .navigation import AdminNavigation, build_navigation_provider
 from .page_presentation import PageWebPresentation
 from .public_composition import resource_actions
-from .resource_presentation import ResourceWebPresentation, bind_resource_web_presentation
+from .resource_presentation import (
+    ResourceWebPresentation,
+    bind_resource_web_presentation,
+    resource_web_presentation,
+)
 from .resource_routes import build_templates
 from .security.authentication import (
     AuthorizationMiddleware,
@@ -167,6 +174,65 @@ class Admin(_EndpointAdmin):
             configured = presentation.actions.get(action_id)
             if configured is not None:
                 bind_action_web_presentation(action, configured)
+
+    def register_write_resource(self, resource_id: str, binding: WriteResourceBinding) -> None:
+        definition = self._resource_definitions.get(resource_id)
+        if definition is None:
+            super().register_write_resource(resource_id, binding)
+            return
+        web = resource_web_presentation(definition)
+        known_fields = {field.field_id for field in binding.form_schema.fields}
+        unknown_fields = sorted(set(web.fields).difference(known_fields))
+        relationship_form = binding.relationship_form
+        known_relationships = (
+            {editor.relationship_id for editor in relationship_form.editors}
+            if relationship_form is not None
+            else set()
+        )
+        unknown_relationships = sorted(set(web.relationships).difference(known_relationships))
+        if unknown_fields or unknown_relationships:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+                message="Invalid resource Web presentation declaration",
+                status_code=500,
+                details={
+                    "resource_id": resource_id,
+                    "reason": "unknown_web_widget_presentation",
+                    "field_ids": unknown_fields,
+                    "relationship_ids": unknown_relationships,
+                },
+            )
+        if relationship_form is not None:
+            try:
+                relationship_form = replace(
+                    relationship_form,
+                    editors=tuple(
+                        replace(
+                            editor,
+                            presentation=resolve_relationship_presentation(
+                                editor.relationship.definition.presentation,
+                                web.relationships.get(editor.relationship_id),
+                            ),
+                        )
+                        for editor in relationship_form.editors
+                    ),
+                )
+            except (TypeError, ValueError):
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+                    message="Invalid resource Web presentation declaration",
+                    status_code=500,
+                    details={
+                        "resource_id": resource_id,
+                        "reason": "invalid_relationship_widget_presentation",
+                    },
+                ) from None
+        configured = replace(
+            binding,
+            field_presentations=web.fields,
+            relationship_form=relationship_form,
+        )
+        super().register_write_resource(resource_id, configured)
 
     def register_page(
         self,

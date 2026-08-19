@@ -60,6 +60,11 @@ from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 
 from ._paths import mounted_path
+from .field_presentation import (
+    Presentation,
+    render_presentation,
+    resolve_field_presentation,
+)
 from .file_presentation import file_field_presentation
 from .file_uploads import (
     FilePreparation,
@@ -186,9 +191,19 @@ class WriteResourceBinding:
     relationship_form: RelationshipFormBinding | None = None
     graph_mutation_authorizer: GraphMutationAuthorizer | None = None
     relationship_editor_authorizer: RelationshipEditorAuthorizer | None = None
+    field_presentations: Mapping[str, Presentation] = field(default_factory=dict)
     codec: IdentityCodec = field(default_factory=IdentityCodec)
 
     def __post_init__(self) -> None:
+        field_ids = {field.field_id for field in self.form_schema.fields}
+        unknown_presentations = set(self.field_presentations).difference(field_ids)
+        if unknown_presentations:
+            raise ValueError(
+                "Field presentation references unknown fields: "
+                + ", ".join(sorted(unknown_presentations))
+            )
+        if any(not isinstance(value, Presentation) for value in self.field_presentations.values()):
+            raise TypeError("Field presentation overrides must contain Presentation values")
         editors = (
             {editor.relationship_id for editor in self.relationship_form.editors}
             if self.relationship_form is not None
@@ -242,8 +257,17 @@ async def _parse_form(
         return None
     items = form.multi_items()
     names = [name for name, _ in items]
-    if len(names) != len(set(names)):
-        return None
+    duplicate_names = {name for name in names if names.count(name) > 1}
+    if duplicate_names:
+        boolean_ids = {
+            field.field_id for field in binding.form_schema.fields if field.python_type is bool
+        }
+        for duplicate in duplicate_names:
+            if duplicate not in boolean_ids:
+                return None
+            values_for_name = [value for name, value in items if name == duplicate]
+            if values_for_name != ["false", "true"]:
+                return None
     reserved = {"csrf_token", "submission_token", "concurrency_token", "delete_token"}
     values: dict[str, object] = {}
     tokens: dict[str, str] = {}
@@ -402,7 +426,13 @@ async def _form_response(
                 else None
             )
             file_view = file_field_presentation(schema_field, current_file)
-        controls[schema_field.field_id] = {
+        presentation = resolve_field_presentation(
+            schema_field, binding.field_presentations.get(schema_field.field_id)
+        )
+        raw_value = (submitted or {}).get(schema_field.field_id, "")
+        if not isinstance(raw_value, str) and hasattr(raw_value, "isoformat"):
+            raw_value = raw_value.isoformat(timespec="minutes") if schema_field.python_type.__name__ == "datetime" else raw_value.isoformat()
+        base_control = {
             "id": _field_dom_id(binding, schema_field.field_id),
             "name": schema_field.field_id,
             "label": schema_field.label or schema_field.field_id,
@@ -411,14 +441,19 @@ async def _form_response(
             "error_id": f"{_field_dom_id(binding, schema_field.field_id)}-error",
             "file_help_id": f"{_field_dom_id(binding, schema_field.field_id)}-file-help",
             "current_file_id": f"{_field_dom_id(binding, schema_field.field_id)}-current-file",
-            "value": (submitted or {}).get(schema_field.field_id, ""),
+            "value": raw_value,
+            "checked": raw_value is True or str(raw_value).casefold() in {"true", "1", "on", "yes"},
             "issues": issue_map.get(schema_field.field_id, ()),
             "is_file": isinstance(schema_field, FileField),
             "accept": file_view.accept if file_view is not None else "",
             "file": file_view,
             "required": schema_field.required
             and not (file_view is not None and file_view.current is not None),
+            "custom_template": None,
         }
+        controls[schema_field.field_id] = dict(
+            render_presentation(presentation, base_control)
+        )
     relationship_panels = await render_relationship_panels(
         binding.relationship_form,
         parent_identity=parent_identity,
@@ -875,12 +910,32 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
         record = await mutation_service.get(identity)
         if record is None:
             return _error(404, "Resource was not found")
+        submitted = _record_values(binding, record)
+        staged_relationship = {
+            name: value
+            for name, value in request.query_params.multi_items()
+            if name.startswith("__rakit_rel__")
+        }
+        if staged_relationship:
+            if len(staged_relationship) != len(
+                [name for name, _ in request.query_params.multi_items() if name.startswith("__rakit_rel__")]
+            ):
+                return _error(400, "Invalid relationship selection")
+            try:
+                scalar, relationship = split_relationship_submission(
+                    binding.relationship_form, staged_relationship
+                )
+            except ValueError:
+                return _error(400, "Invalid relationship selection")
+            if scalar:
+                return _error(400, "Invalid relationship selection")
+            submitted.update(relationship)
         return await _form_response(
             binding,
             request,
             title=f"Edit {binding.label}",
             action_path=f"{binding.path}/{request.path_params['identity']}/edit",
-            submitted=_record_values(binding, record),
+            submitted=submitted,
             concurrency_token=mutation_service.issue_update_token(record),
             parent_identity=identity,
             operation="update",
