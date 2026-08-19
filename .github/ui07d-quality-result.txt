@@ -1,84 +1,17 @@
 sync=0
 patch=0
 format=0
-lint=1
+lint=0
 python=0
 js=0
 
 ===== patch =====
 
 ===== format =====
-6 files reformatted, 49 files left unchanged
+55 files left unchanged
 
 ===== lint =====
-SIM102 Use a single `if` statement instead of nested `if` statements
-  --> packages/rakit-web/src/rakit_web/field_presentation.py:94:9
-   |
-93 |       def __post_init__(self) -> None:
-94 | /         if self.min_value is not None and self.max_value is not None:
-95 | |             if self.min_value > self.max_value:
-   | |_______________________________________________^
-96 |                   raise ValueError("date minimum cannot exceed maximum")
-   |
-help: Combine `if` statements using `and`
-
-RUF001 String contains ambiguous `–` (EN DASH). Did you mean `-` (HYPHEN-MINUS)?
-   --> packages/rakit-web/src/rakit_web/field_presentation.py:125:36
-    |
-123 | class DateRangePicker(Presentation):
-124 |     key: ClassVar[str] = "date_range"
-125 |     placeholder: str = "YYYY-MM-DD – YYYY-MM-DD"
-    |                                    ^
-    |
-
-SIM102 Use a single `if` statement instead of nested `if` statements
-   --> packages/rakit-web/src/rakit_web/field_presentation.py:138:9
-    |
-137 |       def __post_init__(self) -> None:
-138 | /         if self.min_value is not None and self.max_value is not None:
-139 | |             if self.min_value > self.max_value:
-    | |_______________________________________________^
-140 |                   raise ValueError("number minimum cannot exceed maximum")
-141 |           if self.step is not None and self.step <= 0:
-    |
-help: Combine `if` statements using `and`
-
-SIM102 Use a single `if` statement instead of nested `if` statements
-   --> packages/rakit-web/src/rakit_web/field_presentation.py:159:9
-    |
-157 |           if self.locale is not None and not self.locale.strip():
-158 |               raise ValueError("locale must be a non-empty string")
-159 | /         if self.min_value is not None and self.max_value is not None:
-160 | |             if self.min_value > self.max_value:
-    | |_______________________________________________^
-161 |                   raise ValueError("currency minimum cannot exceed maximum")
-162 |           if self.step is not None and self.step <= 0:
-    |
-help: Combine `if` statements using `and`
-
-SIM102 Use a single `if` statement instead of nested `if` statements
-   --> packages/rakit-web/src/rakit_web/field_presentation.py:175:9
-    |
-174 |       def __post_init__(self) -> None:
-175 | /         if self.min_value is not None and self.max_value is not None:
-176 | |             if self.min_value > self.max_value:
-    | |_______________________________________________^
-177 |                   raise ValueError("percentage minimum cannot exceed maximum")
-178 |           if self.step is not None and self.step <= 0:
-    |
-help: Combine `if` statements using `and`
-
-E501 Line too long (102 > 100)
-   --> packages/rakit-web/tests/test_advanced_widget_contracts.py:187:101
-    |
-186 | @pytest.mark.anyio
-187 | async def test_boolean_hidden_fallback_accepts_exact_false_true_pair_without_relaxing_transport() -> (
-    |                                                                                                     ^^
-188 |     None
-189 | ):
-    |
-
-Found 10 errors (4 fixed, 6 remaining).
+All checks passed!
 
 ===== python =====
 

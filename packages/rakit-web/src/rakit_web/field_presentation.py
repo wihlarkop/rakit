@@ -91,9 +91,12 @@ class DatePicker(Presentation):
     max_value: date | None = None
 
     def __post_init__(self) -> None:
-        if self.min_value is not None and self.max_value is not None:
-            if self.min_value > self.max_value:
-                raise ValueError("date minimum cannot exceed maximum")
+        if (
+            self.min_value is not None
+            and self.max_value is not None
+            and self.min_value > self.max_value
+        ):
+            raise ValueError("date minimum cannot exceed maximum")
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,7 +125,7 @@ class DateTimePicker(Presentation):
 @dataclass(frozen=True, slots=True)
 class DateRangePicker(Presentation):
     key: ClassVar[str] = "date_range"
-    placeholder: str = "YYYY-MM-DD – YYYY-MM-DD"
+    placeholder: str = "YYYY-MM-DD - YYYY-MM-DD"
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,9 +138,12 @@ class NumberInput(Presentation):
     suffix: str | None = None
 
     def __post_init__(self) -> None:
-        if self.min_value is not None and self.max_value is not None:
-            if self.min_value > self.max_value:
-                raise ValueError("number minimum cannot exceed maximum")
+        if (
+            self.min_value is not None
+            and self.max_value is not None
+            and self.min_value > self.max_value
+        ):
+            raise ValueError("number minimum cannot exceed maximum")
         if self.step is not None and self.step <= 0:
             raise ValueError("number step must be positive")
 
@@ -156,9 +162,12 @@ class Currency(Presentation):
             raise ValueError("currency must be a non-empty code")
         if self.locale is not None and not self.locale.strip():
             raise ValueError("locale must be a non-empty string")
-        if self.min_value is not None and self.max_value is not None:
-            if self.min_value > self.max_value:
-                raise ValueError("currency minimum cannot exceed maximum")
+        if (
+            self.min_value is not None
+            and self.max_value is not None
+            and self.min_value > self.max_value
+        ):
+            raise ValueError("currency minimum cannot exceed maximum")
         if self.step is not None and self.step <= 0:
             raise ValueError("currency step must be positive")
 
@@ -172,9 +181,12 @@ class Percentage(Presentation):
     step: int | float | Decimal | None = None
 
     def __post_init__(self) -> None:
-        if self.min_value is not None and self.max_value is not None:
-            if self.min_value > self.max_value:
-                raise ValueError("percentage minimum cannot exceed maximum")
+        if (
+            self.min_value is not None
+            and self.max_value is not None
+            and self.min_value > self.max_value
+        ):
+            raise ValueError("percentage minimum cannot exceed maximum")
         if self.step is not None and self.step <= 0:
             raise ValueError("percentage step must be positive")
 
