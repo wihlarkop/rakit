@@ -1,0 +1,35 @@
+name: UI-07B test formatter
+
+on:
+  push:
+    branches: [ui-07b-keyboard-focus-semantics]
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ui-07b-keyboard-focus-semantics
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          python-version: '3.12'
+      - run: uv sync --all-packages --dev --locked
+      - run: uv run ruff format packages/rakit-web/tests/test_keyboard_focus_contracts.py
+      - name: Commit formatted test
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add packages/rakit-web/tests/test_keyboard_focus_contracts.py
+          if git diff --cached --quiet; then
+            echo 'Already formatted'
+            exit 1
+          fi
+          git commit -m 'style(web): format keyboard focus contract tests'
+          git push origin HEAD:ui-07b-keyboard-focus-semantics
