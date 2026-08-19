@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from pathlib import Path
 
 import httpx
@@ -10,7 +11,6 @@ from rakit_core.definitions import ResourceDefinition, ResourceFieldPolicy
 from rakit_core.forms import FormSchema
 from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_core.mutations import MutationAuthorization, MutationOperation
-from rakit_core.pagination import ResourcePaginationPolicy
 from rakit_core.permissions import PermissionRequirement
 from rakit_core.query import PagePagination, PageResult, ResourceQuery
 from rakit_core.resources import ResourceService
@@ -48,15 +48,18 @@ class _DataSource:
         return {"id": identity.values["id"], "name": "One"}
 
     def identity_for(self, record: object) -> RecordIdentity:
-        if not isinstance(record, dict):
+        if not isinstance(record, Mapping):
             raise TypeError("record must be a mapping")
-        return RecordIdentity(values={"id": record["id"]})
+        value = record.get("id")
+        if not isinstance(value, int | str) or isinstance(value, bool):
+            raise TypeError("record id must be an identity scalar")
+        return RecordIdentity(values={"id": value})
 
 
 class _WriteService:
     async def create(
         self,
-        submitted: dict[str, object],
+        submitted: Mapping[str, object],
         *,
         authorization: MutationAuthorization | None = None,
     ) -> object:
@@ -73,7 +76,7 @@ class _WriteService:
     async def update(
         self,
         identity: RecordIdentity,
-        submitted: dict[str, object],
+        submitted: Mapping[str, object],
         *,
         concurrency_token: str | None,
         authorization: MutationAuthorization | None = None,
@@ -104,7 +107,6 @@ def _resource_definition() -> ResourceDefinition:
             list_fields=("id", "name"),
             detail_fields=("id", "name"),
         ),
-        pagination=ResourcePaginationPolicy.page(),
     )
 
 
