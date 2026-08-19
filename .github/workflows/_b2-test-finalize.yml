@@ -41,6 +41,14 @@ jobs:
           PY
       - name: Finalize B2 formatting and lint
         run: |
+          uv run ruff format \
+            scripts/check_artifacts.py \
+            packages/rakit-web/src/rakit_web \
+            packages/rakit-auth-sqlalchemy/src/rakit_auth_sqlalchemy \
+            packages/rakit/tests \
+            packages/rakit-web/tests \
+            packages/rakit-auth-sqlalchemy/tests \
+            tests/release
           uv run ruff check --fix \
             scripts/check_artifacts.py \
             packages/rakit-web/src/rakit_web \
