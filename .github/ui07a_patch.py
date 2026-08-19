@@ -1,0 +1,191 @@
+from pathlib import Path
+
+
+def replace_once(path: str, old: str, new: str) -> None:
+    file = Path(path)
+    text = file.read_text(encoding="utf-8")
+    count = text.count(old)
+    if count != 1:
+        raise SystemExit(f"expected exactly one match in {path}, got {count}: {old!r}")
+    file.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
+replace_once(
+    "packages/rakit-web/src/rakit_web/assets/rakit.css",
+    "@apply inline-flex min-h-9 items-center justify-center gap-2 rounded-rakit-sm border border-transparent bg-rakit-brand-600 px-3 py-1.5 text-sm font-medium text-white shadow-rakit-sm transition hover:bg-rakit-brand-700 disabled:cursor-not-allowed disabled:opacity-50;",
+    "@apply inline-flex min-h-9 max-w-full items-center justify-center gap-2 whitespace-normal rounded-rakit-sm border border-transparent bg-rakit-brand-600 px-3 py-1.5 text-center text-sm font-medium text-white shadow-rakit-sm transition hover:bg-rakit-brand-700 disabled:cursor-not-allowed disabled:opacity-50;",
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/assets/rakit.css",
+    "@apply w-[min(32rem,calc(100%-2rem))] rounded-rakit-lg border border-rakit-border bg-rakit-surface p-0 text-rakit-text shadow-rakit-lg backdrop:bg-black/50;",
+    "@apply w-[min(32rem,calc(100%_-_2rem))] rounded-rakit-lg border border-rakit-border bg-rakit-surface p-0 text-rakit-text shadow-rakit-lg backdrop:bg-black/50;",
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/assets/rakit.css",
+    "max-height: calc(100vh - 2rem);",
+    "max-height: calc(100dvh - 2rem);",
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/assets/rakit.css",
+    "@apply px-5 py-4;",
+    "@apply min-w-0 px-5 py-4 [overflow-wrap:anywhere];",
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/assets/rakit.css",
+    "@apply absolute left-0 top-full z-50 mt-2 min-w-52 rounded-rakit-md border border-rakit-border bg-rakit-surface p-2 text-sm text-rakit-text shadow-rakit-lg;",
+    "@apply absolute left-0 top-full z-50 mt-2 min-w-52 max-w-[calc(100vw_-_2rem)] rounded-rakit-md border border-rakit-border bg-rakit-surface p-2 text-sm text-rakit-text shadow-rakit-lg [overflow-wrap:anywhere];",
+)
+
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/base.html",
+    '<span class="truncate text-base font-semibold tracking-tight text-rakit-text">{{ binding_label | default(label | default(\'Rakit\')) }}</span>\n          <div class="w-36">',
+    '<span class="min-w-0 flex-1 truncate text-base font-semibold tracking-tight text-rakit-text">{{ binding_label | default(label | default(\'Rakit\')) }}</span>\n          <div class="w-32 shrink-0 sm:w-36">',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/components/admin_mobile_navigation.html",
+    'class="fixed inset-y-0 left-0 m-0 h-dvh max-h-dvh w-[min(20rem,calc(100%-3rem))] max-w-none border-0 bg-rakit-surface p-0 text-rakit-text shadow-rakit-lg backdrop:bg-black/50 lg:hidden"',
+    'class="fixed inset-y-0 left-0 m-0 h-dvh max-h-dvh w-[min(20rem,calc(100vw_-_3rem))] max-w-none border-0 bg-rakit-surface p-0 text-rakit-text shadow-rakit-lg backdrop:bg-black/50 lg:hidden"',
+)
+
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/resources/list.html",
+    'class="mb-6 flex flex-col items-start justify-between gap-4 sm:flex-row"',
+    'class="mb-6 flex flex-col items-start justify-between gap-4 md:flex-row md:items-start"',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/resources/list.html",
+    '<h1 class="mt-1 text-2xl font-semibold tracking-tight text-rakit-text">{{ resource.label }}</h1>',
+    '<h1 class="mt-1 text-2xl font-semibold tracking-tight text-rakit-text [overflow-wrap:anywhere]">{{ resource.label }}</h1>',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/resources/list.html",
+    '<div class="flex flex-wrap items-start gap-2" aria-label="Resource actions">',
+    '<div class="flex w-full max-w-full flex-wrap items-start gap-2 md:w-auto" aria-label="Resource actions">',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/resources/detail.html",
+    'class="mb-6 flex flex-col items-start justify-between gap-4 sm:flex-row"',
+    'class="mb-6 flex flex-col items-start justify-between gap-4 md:flex-row md:items-start"',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/resources/detail.html",
+    '<h1 class="text-2xl font-semibold tracking-tight text-rakit-text" data-rakit-record-title>{{ record_view.title }}</h1>',
+    '<h1 class="text-2xl font-semibold tracking-tight text-rakit-text [overflow-wrap:anywhere]" data-rakit-record-title>{{ record_view.title }}</h1>',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/resources/detail.html",
+    '<p class="mt-1 text-sm font-medium text-rakit-text-muted" data-rakit-record-context>',
+    '<p class="mt-1 text-sm font-medium text-rakit-text-muted [overflow-wrap:anywhere]" data-rakit-record-context>',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/resources/detail.html",
+    '<div class="flex flex-wrap items-start gap-2" aria-label="Record actions">',
+    '<div class="flex w-full max-w-full flex-wrap items-start gap-2 md:w-auto" aria-label="Record actions">',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/resources/detail.html",
+    '<dd class="min-w-0 text-sm leading-6 text-rakit-text sm:col-span-2">{{ display_cells[field_name] }}</dd>',
+    '<dd class="min-w-0 text-sm leading-6 text-rakit-text [overflow-wrap:anywhere] sm:col-span-2">{{ display_cells[field_name] }}</dd>',
+)
+
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/resources/_table.html",
+    'class="fixed right-0 top-0 m-0 h-dvh max-h-dvh w-[min(24rem,calc(100vw-1rem))] max-w-none overflow-y-auto border-0 border-l border-rakit-border bg-rakit-surface p-0 text-rakit-text shadow-rakit-lg backdrop:bg-black/40 lg:hidden"',
+    'class="fixed right-0 top-0 m-0 h-dvh max-h-dvh w-[min(24rem,calc(100vw_-_1rem))] max-w-none overflow-y-auto border-0 border-l border-rakit-border bg-rakit-surface p-0 text-rakit-text shadow-rakit-lg backdrop:bg-black/40 lg:hidden"',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/resources/_table.html",
+    'class="shrink-0 text-sm tabular-nums text-rakit-text-muted" data-rakit-total',
+    'class="self-start text-sm tabular-nums text-rakit-text-muted lg:self-auto" data-rakit-total',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/resources/_table.html",
+    '<td class="max-w-80 px-4 py-3 align-middle text-rakit-text">',
+    '<td class="max-w-80 px-4 py-3 align-middle text-rakit-text [overflow-wrap:anywhere]">',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/resources/_table.html",
+    'class="rakit-pagination" aria-label="Resource pagination"',
+    'class="rakit-pagination max-w-full" aria-label="Resource pagination"',
+)
+
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/forms/form.html",
+    '<p class="mt-1 text-sm font-medium text-rakit-text">{{ field.file.current.name }}</p>',
+    '<p class="mt-1 text-sm font-medium text-rakit-text [overflow-wrap:anywhere]">{{ field.file.current.name }}</p>',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/forms/form.html",
+    '<h1 class="mt-1 text-2xl font-semibold tracking-tight text-rakit-text">{{ title }}</h1>',
+    '<h1 class="mt-1 text-2xl font-semibold tracking-tight text-rakit-text [overflow-wrap:anywhere]">{{ title }}</h1>',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/components/actions.html",
+    '<span class="inline-flex flex-col items-start gap-1">',
+    '<span class="inline-flex max-w-full flex-col items-start gap-1">',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/components/actions.html",
+    '<span class="max-w-64 text-xs leading-5 text-rakit-text-muted">{{ action.reason }}</span>',
+    '<span class="max-w-full text-xs leading-5 text-rakit-text-muted [overflow-wrap:anywhere] sm:max-w-64">{{ action.reason }}</span>',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/components/actions.html",
+    '<div class="flex flex-wrap items-start gap-2" data-rakit-action-group>',
+    '<div class="flex max-w-full flex-wrap items-start gap-2" data-rakit-action-group>',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/relationships/panel.html",
+    '<div>\n      <h2 class="text-sm font-semibold text-rakit-text">{{ panel.relationship.label }}</h2>',
+    '<div class="min-w-0">\n      <h2 class="text-sm font-semibold text-rakit-text [overflow-wrap:anywhere]">{{ panel.relationship.label }}</h2>',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/relationships/to_many.html",
+    '<td class="px-3 py-2.5 text-rakit-text"><span class="font-medium',
+    '<td class="px-3 py-2.5 text-rakit-text [overflow-wrap:anywhere]"><span class="font-medium',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/relationships/to_many.html",
+    '<div><p class="text-sm font-medium text-rakit-text',
+    '<div class="min-w-0"><p class="text-sm font-medium text-rakit-text [overflow-wrap:anywhere]',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/relationships/to_many.html",
+    '<div class="flex flex-wrap items-center justify-end gap-2">',
+    '<div class="flex max-w-full flex-wrap items-center justify-start gap-2 sm:justify-end">',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/relationships/inline_rows.html",
+    '<td class="whitespace-nowrap px-3 py-2.5 font-medium text-rakit-text">',
+    '<td class="max-w-64 px-3 py-2.5 font-medium text-rakit-text [overflow-wrap:anywhere]">',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/pages/page.html",
+    '<header class="flex flex-wrap items-end justify-between gap-4 border-b border-rakit-border pb-4">',
+    '<header class="flex flex-col items-start gap-4 border-b border-rakit-border pb-4 sm:flex-row sm:items-end sm:justify-between">',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/pages/page.html",
+    '<h1 class="mt-1 text-2xl font-semibold tracking-tight text-rakit-text">{{ page.label }}</h1>',
+    '<h1 class="mt-1 text-2xl font-semibold tracking-tight text-rakit-text [overflow-wrap:anywhere]">{{ page.label }}</h1>',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/pages/page.html",
+    '<dd class="min-w-0 whitespace-pre-wrap text-sm text-rakit-text">{{ value }}</dd>',
+    '<dd class="min-w-0 whitespace-pre-wrap text-sm text-rakit-text [overflow-wrap:anywhere]">{{ value }}</dd>',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/pages/page.html",
+    '<td class="px-4 py-3 align-top text-rakit-text">{{ value }}</td>',
+    '<td class="px-4 py-3 align-top text-rakit-text [overflow-wrap:anywhere]">{{ value }}</td>',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/actions/_confirm.html",
+    '<dd class="min-w-0 text-sm text-rakit-text sm:col-span-2">{{ field.value }}</dd>',
+    '<dd class="min-w-0 text-sm text-rakit-text [overflow-wrap:anywhere] sm:col-span-2">{{ field.value }}</dd>',
+)
+replace_once(
+    "packages/rakit-web/src/rakit_web/templates/actions/_confirm.html",
+    '<footer class="flex flex-wrap justify-end gap-3 border-t border-rakit-border pt-4">',
+    '<footer class="flex flex-col-reverse gap-2 border-t border-rakit-border pt-4 sm:flex-row sm:justify-end">',
+)
