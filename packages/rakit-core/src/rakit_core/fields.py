@@ -39,11 +39,11 @@ class FieldDefinition:
     required: bool = False
     nullable: bool = False
     widget: str = "text"
-    presentation: object | None = None
     sensitive: bool = False
     description: str | None = None
     parser: FieldParser | None = None
     formatter: FieldFormatter | None = None
+    presentation: object | None = None
 
     def __post_init__(self) -> None:
         if not self.field_id or not isinstance(self.field_id, str):
