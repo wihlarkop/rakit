@@ -2,6 +2,7 @@ import os
 from logging.config import fileConfig
 
 from alembic import context
+from rakit_auth_sqlalchemy.migrations import ALEMBIC_VERSION_TABLE
 from rakit_auth_sqlalchemy.models import Base
 from sqlalchemy import engine_from_config, pool
 
@@ -26,7 +27,7 @@ target_metadata = Base.metadata
 # host's own revision history fight over a single "current revision" row,
 # and an upgrade for one would fail trying to locate a revision ID that
 # belongs to the other's history entirely.
-VERSION_TABLE = "rakit_auth_alembic_version"
+VERSION_TABLE = ALEMBIC_VERSION_TABLE
 
 # The RAKIT_AUTH_SQLALCHEMY_URL environment variable takes precedence over
 # alembic.ini's own sqlalchemy.url, so a deployment never needs to store a
