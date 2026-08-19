@@ -1,0 +1,32 @@
+<section class="space-y-5" data-rakit-bulk-delete-review>
+  <header>
+    <p class="text-sm font-medium text-rakit-text-muted">{{ binding_label }}</p>
+    <h1 class="mt-1 text-xl font-semibold tracking-tight text-rakit-text">Delete selected {{ resource_label | lower }}</h1>
+    <p class="mt-2 text-sm leading-6 text-rakit-text-muted">
+      {{ selected_count }} selected {{ 'record' if selected_count == 1 else 'records' }} will be deleted.
+      This uses the same per-record delete checks as ordinary resource deletion.
+    </p>
+  </header>
+
+  <div class="rakit-alert rakit-alert-danger" role="note">
+    <p class="font-semibold">Review before deleting</p>
+    <p class="mt-1">This operation is destructive. Records that are no longer eligible at submission time will fail closed.</p>
+  </div>
+
+  <form method="post" action="{{ form_action }}" class="space-y-5">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <input type="hidden" name="submission_token" value="{{ submission_token }}" />
+    <input type="hidden" name="confirmation_token" value="{{ confirmation_token }}" />
+    {% for identity in selected %}<input type="hidden" name="selected" value="{{ identity }}" />{% endfor %}
+    {% for token in delete_tokens %}<input type="hidden" name="delete_token" value="{{ token }}" />{% endfor %}
+
+    <footer class="flex flex-wrap justify-end gap-3 border-t border-rakit-border pt-4">
+      {% if dialog_mode %}
+        <button class="rakit-button rakit-button-secondary" type="button" data-rakit-dialog-close>Cancel</button>
+      {% else %}
+        <a class="rakit-button rakit-button-secondary" href="{{ cancel_url }}">Cancel</a>
+      {% endif %}
+      <button class="rakit-button rakit-button-danger" type="submit">Delete selected</button>
+    </footer>
+  </form>
+</section>

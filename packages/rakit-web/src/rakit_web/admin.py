@@ -634,6 +634,11 @@ class Admin:
             (f"resource:{resource_id}:delete", ("GET",), binding.delete_path),
             (f"resource:{resource_id}:delete.submit", ("POST",), binding.delete_path),
             (
+                f"resource:{resource_id}:bulk.delete",
+                ("GET", "POST"),
+                f"{binding.path}/_bulk/delete-selected",
+            ),
+            (
                 f"resource:{resource_id}:file.download",
                 ("GET",),
                 f"{binding.path}/{{identity}}/_files/{{field_id}}",
@@ -907,6 +912,9 @@ class Admin:
                 service=service,
                 templates=templates,
                 crud_paths=crud_paths,
+                admin_id=self.config.admin_id,
+                auth_enabled=self._auth_backend is not None and self._session_store is not None,
+                superuser_bypass=self._superuser_bypass,
             )
             bindings[resource_id] = binding
             resource_routes.extend(build_resource_routes(binding))
@@ -1451,6 +1459,7 @@ class Admin:
                         )
                     )
 
+            secured_write_bindings: dict[str, WriteResourceBinding] = {}
             for write_binding in self._write_resource_bindings.values():
                 secured_binding = replace(
                     write_binding,
@@ -1465,6 +1474,9 @@ class Admin:
                     deadline_seconds=self._mutation_deadline_seconds,
                     operation_scope=operation_scope,
                 )
+                if secured_binding.resource_id is None:
+                    raise RuntimeError("Secured write resource is missing its resource id")
+                secured_write_bindings[secured_binding.resource_id] = secured_binding
                 write_routes.extend(build_write_routes(secured_binding))
                 if secured_binding.relationship_form is not None:
                     relationship_routes = build_relationship_routes(
@@ -1502,11 +1514,12 @@ class Admin:
                     unit_of_work_factory=action_uow_factory,
                 ):
                     action_routes.extend(build_action_routes(action_binding))
-                assert self._operation_idempotency_store is not None
+            if secured_write_bindings or self.compiled.action_routes:
                 action_routes.extend(
                     build_admin_bulk_action_routes(
                         compiled=self.compiled,
                         resource_services=self._resource_services,
+                        write_resource_bindings=secured_write_bindings,
                         concurrency_providers=self._concurrency_providers,
                         templates=templates,
                         verify_csrf=verify_write_csrf,

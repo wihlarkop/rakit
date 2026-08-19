@@ -56,7 +56,7 @@ function rakitCloseThemeMenu(control, { focusTrigger = false } = {}) {
   if (menu instanceof HTMLElement) menu.hidden = true;
   if (trigger instanceof HTMLButtonElement) {
     trigger.setAttribute("aria-expanded", "false");
-    if (focusTrigger) trigger.focus();
+    if (focusTrigger) trigger.focus({ preventScroll: true });
   }
 }
 
@@ -84,7 +84,7 @@ function rakitOpenThemeMenu(control, { focusCurrent = false } = {}) {
 
   const options = rakitThemeOptions(control);
   const selected = options.find((option) => option.getAttribute("aria-checked") === "true");
-  (selected || options[0])?.focus();
+  (selected || options[0])?.focus({ preventScroll: true });
 }
 
 function rakitPersistTheme(preference) {
@@ -147,12 +147,12 @@ document.addEventListener("DOMContentLoaded", () => {
         if (event.key === "ArrowDown" || event.key === "ArrowUp") {
           event.preventDefault();
           const delta = event.key === "ArrowDown" ? 1 : -1;
-          options[(index + delta + options.length) % options.length]?.focus();
+          options[(index + delta + options.length) % options.length]?.focus({ preventScroll: true });
           return;
         }
         if (event.key === "Home" || event.key === "End") {
           event.preventDefault();
-          options[event.key === "Home" ? 0 : options.length - 1]?.focus();
+          options[event.key === "Home" ? 0 : options.length - 1]?.focus({ preventScroll: true });
         }
       });
     });

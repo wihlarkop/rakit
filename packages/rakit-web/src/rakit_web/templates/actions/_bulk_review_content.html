@@ -1,0 +1,78 @@
+{% set presentation = action_presentation if action_presentation is defined else rakit_action_web_presentation(action) %}
+{% set availability_state = availability if availability is defined else 'available' %}
+{% set availability_message = availability_reason if availability_reason is defined else none %}
+{% set policy_name = execution_policy if execution_policy is defined else action.bulk_policy.execution.value %}
+{% set sync_max = synchronous_maximum if synchronous_maximum is defined else action.bulk_policy.synchronous_maximum %}
+{% set danger = presentation.intent.value == 'danger' %}
+<section class="space-y-5" data-rakit-bulk-review>
+  <header class="border-b border-rakit-border pb-4">
+    <p class="text-sm font-medium text-rakit-text-muted">{{ binding_label }}</p>
+    <h1 class="mt-1 text-xl font-semibold tracking-tight text-rakit-text">{{ action.label }}</h1>
+    <div class="mt-3 flex flex-wrap items-center gap-2 text-sm text-rakit-text-muted">
+      <strong class="font-semibold text-rakit-text">{{ selected_count }} selected {{ 'record' if selected_count == 1 else 'records' }}</strong>
+      {% if selected_count > 1 %}<span aria-hidden="true">·</span><span>{{ policy_name | replace('_', ' ') | title }}</span>{% endif %}
+      <span aria-hidden="true">·</span><span>Maximum {{ sync_max }} per synchronous run</span>
+    </div>
+  </header>
+
+  {% if action.description %}<p class="max-w-3xl text-sm leading-6 text-rakit-text-muted">{{ action.description }}</p>{% endif %}
+
+  {% if availability_state == 'disabled' %}
+    <section class="rakit-panel p-5" role="status" aria-labelledby="rakit-bulk-unavailable-title">
+      <h2 id="rakit-bulk-unavailable-title" class="text-sm font-semibold text-rakit-text">This bulk action is currently unavailable</h2>
+      {% if availability_message %}<p class="mt-2 max-w-2xl text-sm leading-6 text-rakit-text-muted">{{ availability_message }}</p>{% endif %}
+      <div class="mt-5">
+        {% if dialog_mode %}
+          <button class="rakit-button rakit-button-secondary" type="button" data-rakit-dialog-close>Close</button>
+        {% else %}
+          <a class="rakit-button rakit-button-secondary" href="{{ cancel_url }}">Back to {{ binding_label }}</a>
+        {% endif %}
+      </div>
+    </section>
+  {% else %}
+    {% if issues %}
+    <div id="form-errors" class="rakit-alert rakit-alert-danger" data-rakit-focus-target="form-errors" role="alert" tabindex="-1">
+      <p class="font-semibold">There are problems with this form</p>
+      <ul class="mt-2 list-disc pl-5">{% for issue in issues %}<li>{{ issue.message }}</li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+
+    <form class="space-y-5" method="post" action="{{ form_action }}" novalidate>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <input type="hidden" name="submission_token" value="{{ submission_token }}" />
+      {% for identity in selected %}<input type="hidden" name="selected" value="{{ identity }}" />{% endfor %}
+      {% for token in concurrency_tokens %}<input type="hidden" name="concurrency_token" value="{{ token }}" />{% endfor %}
+      {% if confirmation_token %}<input type="hidden" name="confirmation_token" value="{{ confirmation_token }}" />{% endif %}
+
+      <section class="rakit-panel space-y-5 p-5">
+        {% if confirmation_required %}
+        <div class="rakit-alert rakit-alert-warning" role="note">
+          <p class="font-semibold">Review before continuing</p>
+          <p class="mt-1">This action affects {{ selected_count }} selected {{ 'record' if selected_count == 1 else 'records' }}{% if danger %} and is marked as destructive{% endif %}.</p>
+        </div>
+        {% endif %}
+        {% for field in fields %}
+        <div class="space-y-1.5">
+          <label class="block text-sm font-medium text-rakit-text" for="{{ field.id }}">{{ field.label }}</label>
+          {% set descriptions = [] %}
+          {% if field.description %}{% set _ = descriptions.append(field.description_id) %}{% endif %}
+          {% if field.issues %}{% set _ = descriptions.append(field.error_id) %}{% endif %}
+          <input class="rakit-input" id="{{ field.id }}" name="{{ field.name }}" value="{{ field.value }}"{% if descriptions %} aria-describedby="{{ descriptions | join(' ') }}"{% endif %}{% if field.issues %} aria-invalid="true"{% endif %} />
+          {% if field.description %}<p id="{{ field.description_id }}" class="text-sm text-rakit-text-muted">{{ field.description }}</p>{% endif %}
+          {% if field.issues %}<div id="{{ field.error_id }}" class="rakit-error" role="alert">{% for issue in field.issues %}<p>{{ issue.message }}</p>{% endfor %}</div>{% endif %}
+        </div>
+        {% endfor %}
+        {% if not fields %}<p class="text-sm leading-6 text-rakit-text-muted">Continue to run this action for the selected records.</p>{% endif %}
+      </section>
+
+      <footer class="flex flex-wrap justify-end gap-3 border-t border-rakit-border pt-4">
+        {% if dialog_mode %}
+          <button class="rakit-button rakit-button-secondary" type="button" data-rakit-dialog-close>Cancel</button>
+        {% else %}
+          <a class="rakit-button rakit-button-secondary" href="{{ cancel_url }}">Cancel</a>
+        {% endif %}
+        <button class="rakit-button{% if danger %} rakit-button-danger{% endif %}" type="submit">{{ 'Confirm bulk action' if confirmation_required else 'Execute bulk action' }}</button>
+      </footer>
+    </form>
+  {% endif %}
+</section>

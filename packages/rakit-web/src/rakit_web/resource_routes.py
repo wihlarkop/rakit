@@ -21,6 +21,7 @@ from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.filters import ResourceFilter
 from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_core.pagination import ResourcePaginationPolicy
+from rakit_core.permissions import PermissionRequirement
 from rakit_core.query import ResourceQuery
 from rakit_core.resources import ResourceService
 from starlette.datastructures import QueryParams
@@ -127,7 +128,23 @@ class ResourceBinding:
     service: ResourceService
     templates: Jinja2Templates
     crud_paths: ResourceCrudPaths | None = None
+    admin_id: str = "admin"
+    auth_enabled: bool = False
+    superuser_bypass: bool = True
     codec: IdentityCodec = field(default_factory=IdentityCodec)
+
+    def can_mutate(self, request: Request, operation: str) -> bool:
+        if self.crud_paths is None:
+            return False
+        if not self.auth_enabled:
+            return True
+        principal = request.scope.get("state", {}).get("principal")
+        if principal is None or not principal.authenticated:
+            return False
+        requirement = PermissionRequirement.all_of(
+            f"{self.admin_id}.resources.{self.resource_id}.{operation}"
+        )
+        return requirement.matches(principal, superuser_bypass=self.superuser_bypass)
 
     @property
     def resource_id(self) -> str:
@@ -264,7 +281,7 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
             "resource_actions": resource_actions,
             "create_url": (
                 _mounted_path(request, binding.crud_paths.create_path)
-                if binding.crud_paths is not None
+                if binding.crud_paths is not None and binding.can_mutate(request, "create")
                 else ""
             ),
             "count_url": count_url,
@@ -367,12 +384,12 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
         edit_url = ""
         delete_url = ""
         if binding.crud_paths is not None:
-            if binding.crud_paths.update_path:
+            if binding.crud_paths.update_path and binding.can_mutate(request, "update"):
                 edit_url = _mounted_path(
                     request,
                     binding.crud_paths.update_path.replace("{identity}", encoded_identity),
                 )
-            if binding.crud_paths.delete_path:
+            if binding.crud_paths.delete_path and binding.can_mutate(request, "delete"):
                 delete_url = _mounted_path(
                     request,
                     binding.crud_paths.delete_path.replace("{identity}", encoded_identity),

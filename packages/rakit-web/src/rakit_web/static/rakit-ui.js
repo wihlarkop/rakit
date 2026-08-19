@@ -353,11 +353,104 @@ function rakitEnhanceFilterUis(root = document) {
   [...direct, ...nested].forEach((filterUi) => rakitEnhanceFilterUi(filterUi));
 }
 
+function rakitBulkRows(form) {
+  return [...form.querySelectorAll("[data-rakit-select-row]")].filter(
+    (row) => row instanceof HTMLInputElement && !row.disabled,
+  );
+}
+
+function rakitSyncBulkSelection(form) {
+  if (!(form instanceof HTMLFormElement)) return;
+  const rows = rakitBulkRows(form);
+  const selected = rows.filter((row) => row.checked);
+  const page = form.querySelector("[data-rakit-select-page]");
+  if (page instanceof HTMLInputElement) {
+    page.checked = rows.length > 0 && selected.length === rows.length;
+    page.indeterminate = selected.length > 0 && selected.length < rows.length;
+  }
+  const count = form.querySelector("[data-rakit-selected-count]");
+  if (count instanceof HTMLElement) count.textContent = `${selected.length} selected`;
+}
+
+function rakitEnhanceBulkSelections(root = document) {
+  const direct = root instanceof HTMLFormElement && root.hasAttribute("data-rakit-bulk-selection")
+    ? [root]
+    : [];
+  const nested = root.querySelectorAll?.("form[data-rakit-bulk-selection]") || [];
+  [...direct, ...nested].forEach((form) => rakitSyncBulkSelection(form));
+}
+
+function rakitBulkDialog(form) {
+  const resourceId = form.dataset.rakitBulkActions;
+  if (!resourceId) return null;
+  const dialog = document.getElementById(`rakit-bulk-dialog-${resourceId}`);
+  return dialog instanceof HTMLDialogElement ? dialog : null;
+}
+
+function rakitShowBulkDialog(form, trigger, content) {
+  const dialog = rakitBulkDialog(form);
+  if (!(dialog instanceof HTMLDialogElement)) return false;
+  const target = dialog.querySelector("[data-rakit-bulk-dialog-content]");
+  if (!(target instanceof HTMLElement)) return false;
+  target.innerHTML = content;
+  rakitEnhanceGenericDialog(dialog);
+  rakitGenericDialogReturnFocus.set(dialog, trigger);
+  if (!dialog.open) dialog.showModal();
+  const initialFocus = dialog.querySelector(
+    "[data-rakit-dialog-initial-focus], button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled)",
+  );
+  if (initialFocus instanceof HTMLElement) initialFocus.focus({ preventScroll: true });
+  return true;
+}
+
+async function rakitOpenBulkReview(form, submitter) {
+  const selected = rakitBulkRows(form).filter((row) => row.checked);
+  if (!selected.length) {
+    const content = `
+      <section class="space-y-5" data-rakit-bulk-feedback>
+        <header><h1 class="text-xl font-semibold tracking-tight text-rakit-text">Bulk action needs attention</h1></header>
+        <div class="rakit-alert rakit-alert-danger" role="alert">Select at least one resource before running a bulk action.</div>
+        <footer class="flex justify-end"><button class="rakit-button rakit-button-secondary" type="button" data-rakit-dialog-close>Close</button></footer>
+      </section>`;
+    rakitShowBulkDialog(form, submitter, content);
+    return;
+  }
+
+  const url = new URL(submitter.formAction || form.action || window.location.href, window.location.href);
+  url.search = "";
+  selected.forEach((row) => url.searchParams.append("selected", row.value));
+  try {
+    const response = await fetch(url, {
+      credentials: "same-origin",
+      headers: { Accept: "text/html", "X-Rakit-Dialog": "bulk" },
+    });
+    const content = await response.text();
+    if (!rakitShowBulkDialog(form, submitter, content)) window.location.assign(url);
+  } catch {
+    window.location.assign(url);
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   rakitShowPreview(document);
   rakitFocusTarget(document);
   rakitEnhanceFilterUis(document);
   rakitEnhanceGenericDialogs(document);
+  rakitEnhanceBulkSelections(document);
+});
+
+document.addEventListener("submit", (event) => {
+  const form = event.target;
+  const submitter = event.submitter;
+  if (
+    !(form instanceof HTMLFormElement) ||
+    !form.hasAttribute("data-rakit-bulk-actions") ||
+    !(submitter instanceof HTMLButtonElement) ||
+    !submitter.hasAttribute("data-rakit-bulk-review-trigger") ||
+    !("HTMLDialogElement" in window)
+  ) return;
+  event.preventDefault();
+  rakitOpenBulkReview(form, submitter);
 });
 
 document.addEventListener("click", (event) => {
@@ -477,7 +570,22 @@ document.addEventListener("keydown", (event) => {
 });
 
 document.addEventListener("change", (event) => {
-  const select = event.target;
+  const control = event.target;
+  if (control instanceof HTMLInputElement && control.matches("[data-rakit-select-page]")) {
+    const form = control.closest("form[data-rakit-bulk-selection]");
+    if (form instanceof HTMLFormElement) {
+      rakitBulkRows(form).forEach((row) => { row.checked = control.checked; });
+      rakitSyncBulkSelection(form);
+    }
+    return;
+  }
+  if (control instanceof HTMLInputElement && control.matches("[data-rakit-select-row]")) {
+    const form = control.closest("form[data-rakit-bulk-selection]");
+    if (form instanceof HTMLFormElement) rakitSyncBulkSelection(form);
+    return;
+  }
+
+  const select = control;
   if (!(select instanceof HTMLSelectElement) || !select.matches("[data-rakit-relationship-set]")) {
     return;
   }
@@ -495,6 +603,7 @@ document.addEventListener("htmx:afterSwap", (event) => {
   rakitFocusTarget(root);
   rakitEnhanceFilterUis(root);
   rakitEnhanceGenericDialogs(root);
+  rakitEnhanceBulkSelections(root);
 });
 
 document.addEventListener("rakit:announce", (event) => {

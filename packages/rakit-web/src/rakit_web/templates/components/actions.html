@@ -25,7 +25,7 @@
         {% if primary.item %}{{ action_control(primary.item) }}{% endif %}
         <details class="relative" data-rakit-action-overflow>
           <summary class="rakit-button rakit-button-secondary cursor-pointer list-none">More</summary>
-          <div class="absolute right-0 z-20 mt-2 min-w-56 rounded-lg border border-rakit-border bg-rakit-surface p-2 shadow-lg" role="group" aria-label="{{ label }}">
+          <div class="rakit-popover right-0 left-auto min-w-56" role="group" aria-label="{{ label }}">
             <div class="flex flex-col gap-1">
               {% for action in actions %}
                 {% if not primary.item or action.action_id != primary.item.action_id %}
@@ -36,7 +36,7 @@
                       <span class="block rounded-md px-3 py-2 text-sm font-medium text-rakit-text-subtle" aria-disabled="true">{{ action.label }}</span>
                       {% if action.reason %}<span class="block px-3 pb-2 text-xs leading-5 text-rakit-text-muted">{{ action.reason }}</span>{% endif %}
                     {% else %}
-                      <a class="block rounded-md px-3 py-2 text-sm font-medium {% if is_danger %}text-red-700 hover:bg-red-50{% else %}text-rakit-text hover:bg-rakit-surface-muted{% endif %}" href="{{ action.url }}">{{ action.label }}</a>
+                      <a class="block rounded-md px-3 py-2 text-sm font-medium {% if is_danger %}text-rakit-danger hover:bg-rakit-danger-subtle{% else %}text-rakit-text hover:bg-rakit-surface-subtle{% endif %}" href="{{ action.url }}">{{ action.label }}</a>
                     {% endif %}
                   </div>
                 {% endif %}

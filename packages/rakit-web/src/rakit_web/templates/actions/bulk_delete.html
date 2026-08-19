@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Delete selected {{ resource_label | lower }} · {{ binding_label }}{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-3xl">
+  <nav class="mb-3 text-sm text-rakit-text-muted" aria-label="Breadcrumb">
+    <a class="font-medium transition hover:text-rakit-text" href="{{ cancel_url }}">Back to resource</a>
+  </nav>
+  {% include "actions/_bulk_delete_content.html" %}
+</div>
+{% endblock %}
