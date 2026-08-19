@@ -39,6 +39,7 @@ class FieldDefinition:
     required: bool = False
     nullable: bool = False
     widget: str = "text"
+    presentation: object | None = None
     sensitive: bool = False
     description: str | None = None
     parser: FieldParser | None = None
