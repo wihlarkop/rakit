@@ -1,0 +1,41 @@
+name: UI-07D source hardening
+
+on:
+  push:
+    branches: [ui-07d-advanced-widget-foundation]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ui-07d-advanced-widget-foundation
+      - name: Apply source hardening
+        run: python .github/ui07d_followup_patch.py
+      - name: Validate Python and JavaScript syntax
+        run: |
+          python -m compileall -q packages/rakit-core/src packages/rakit-web/src packages/rakit/src
+          node --check packages/rakit-web/src/rakit_web/static/rakit-widgets.js
+      - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
+        with:
+          bun-version: 1.3.5
+      - name: Build committed CSS
+        run: |
+          bun install --frozen-lockfile
+          bun run css:build
+      - name: Commit source hardening
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add packages/rakit-core packages/rakit-web packages/rakit
+          if git diff --cached --quiet; then
+            echo 'No source changes to commit'
+          else
+            git commit -m 'fix(web): harden advanced widget integration'
+            git push origin HEAD:ui-07d-advanced-widget-foundation
+          fi
