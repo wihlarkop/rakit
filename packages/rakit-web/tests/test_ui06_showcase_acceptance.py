@@ -1,4 +1,5 @@
 import pytest
+
 from examples.ui_showcase.advanced_states import (
     ADVANCED_LAUNCHERS,
     FILE_STORAGE,
