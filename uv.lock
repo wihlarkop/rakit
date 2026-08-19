@@ -1253,6 +1253,7 @@ dependencies = [
     { name = "click" },
     { name = "rakit-core" },
     { name = "rakit-server" },
+    { name = "rakit-storage" },
     { name = "rakit-web" },
 ]
 
@@ -1295,6 +1296,7 @@ requires-dist = [
     { name = "rakit-server-uvicorn", marker = "extra == 'uvicorn'", editable = "packages/rakit-server-uvicorn" },
     { name = "rakit-sqlalchemy", marker = "extra == 'sqlalchemy'", editable = "packages/rakit-sqlalchemy" },
     { name = "rakit-sqlalchemy", marker = "extra == 'standard'", editable = "packages/rakit-sqlalchemy" },
+    { name = "rakit-storage", editable = "packages/rakit-storage" },
     { name = "rakit-storage-local", marker = "extra == 'standard'", editable = "packages/rakit-storage-local" },
     { name = "rakit-storage-local", marker = "extra == 'storage-local'", editable = "packages/rakit-storage-local" },
     { name = "rakit-web", editable = "packages/rakit-web" },
