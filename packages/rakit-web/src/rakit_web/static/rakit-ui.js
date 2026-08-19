@@ -5,7 +5,7 @@ const rakitGenericDialogReturnFocus = new WeakMap();
 function rakitReturnFocus() {
   const target = rakitDialogReturnFocus;
   rakitDialogReturnFocus = null;
-  if (target instanceof HTMLElement && document.contains(target)) target.focus();
+  if (target instanceof HTMLElement && document.contains(target)) target.focus({ preventScroll: true });
 }
 
 function rakitFocusTarget(root = document) {
@@ -41,7 +41,7 @@ function rakitEnhanceGenericDialog(dialog) {
   dialog.addEventListener("close", () => {
     const returnFocus = rakitGenericDialogReturnFocus.get(dialog);
     rakitGenericDialogReturnFocus.delete(dialog);
-    if (returnFocus instanceof HTMLElement && document.contains(returnFocus)) returnFocus.focus();
+    if (returnFocus instanceof HTMLElement && document.contains(returnFocus)) returnFocus.focus({ preventScroll: true });
   });
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog && dialog.hasAttribute("data-rakit-dialog-backdrop-close")) {
@@ -70,7 +70,7 @@ function rakitOpenGenericDialog(trigger) {
   const initialFocus = dialog.querySelector(
     "[data-rakit-dialog-initial-focus], [autofocus], button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled)",
   );
-  if (initialFocus instanceof HTMLElement) initialFocus.focus();
+  if (initialFocus instanceof HTMLElement) initialFocus.focus({ preventScroll: true });
 }
 
 function rakitCloseGenericDialog(control) {
@@ -91,7 +91,7 @@ function rakitCloseDetailPopover(details, { restoreFocus = false } = {}) {
   details.removeAttribute("open");
   if (!restoreFocus) return;
   const summary = details.querySelector(":scope > summary");
-  if (summary instanceof HTMLElement) summary.focus();
+  if (summary instanceof HTMLElement) summary.focus({ preventScroll: true });
 }
 
 function rakitInput(form, name, value) {
@@ -177,7 +177,7 @@ function rakitShowPreview(root) {
   });
   document.body.append(dialog);
   dialog.showModal();
-  dialog.querySelector("[data-rakit-confirm-preview]")?.focus();
+  dialog.querySelector("[data-rakit-confirm-preview]")?.focus({ preventScroll: true });
   dialog.addEventListener("close", () => {
     dialog.remove();
     rakitReturnFocus();
@@ -279,8 +279,14 @@ function rakitSetFilterRailVisible(root, visible, { persist = false } = {}) {
   const show = root.querySelector("[data-rakit-filter-rail-show]");
   const hide = root.querySelector("[data-rakit-filter-rail-hide]");
   if (rail instanceof HTMLElement) rail.hidden = !visible;
-  if (show instanceof HTMLElement) show.hidden = visible;
-  if (hide instanceof HTMLElement) hide.hidden = !visible;
+  if (show instanceof HTMLElement) {
+    show.hidden = visible;
+    show.setAttribute("aria-expanded", visible ? "true" : "false");
+  }
+  if (hide instanceof HTMLElement) {
+    hide.hidden = !visible;
+    hide.setAttribute("aria-expanded", visible ? "true" : "false");
+  }
   if (persist && resourceId) {
     rakitStorageSet(rakitFilterStorageKey(resourceId, "rail-visible"), String(visible));
   }
@@ -463,7 +469,7 @@ document.addEventListener("click", (event) => {
     if (root instanceof HTMLElement) {
       event.preventDefault();
       rakitSetFilterRailVisible(root, false, { persist: true });
-      root.querySelector("[data-rakit-filter-rail-show]")?.focus();
+      root.querySelector("[data-rakit-filter-rail-show]")?.focus({ preventScroll: true });
     }
     return;
   }
@@ -474,7 +480,7 @@ document.addEventListener("click", (event) => {
     if (root instanceof HTMLElement) {
       event.preventDefault();
       rakitSetFilterRailVisible(root, true, { persist: true });
-      root.querySelector("[data-rakit-filter-rail-hide]")?.focus();
+      root.querySelector("[data-rakit-filter-rail-hide]")?.focus({ preventScroll: true });
     }
     return;
   }

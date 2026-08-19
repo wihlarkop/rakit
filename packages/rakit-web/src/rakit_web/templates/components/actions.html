@@ -18,13 +18,13 @@
     {% for action in actions %}
       {% if action.intent.value == 'primary' %}{% set primary.item = action %}{% endif %}
     {% endfor %}
-    <div class="flex max-w-full flex-wrap items-start gap-2" data-rakit-action-group>
+    <div class="flex max-w-full flex-wrap items-start gap-2" data-rakit-action-group role="group" aria-label="{{ label }}">
       {% if actions|length == 1 %}
         {{ action_control(actions[0]) }}
       {% else %}
         {% if primary.item %}{{ action_control(primary.item) }}{% endif %}
         <details class="relative" data-rakit-action-overflow>
-          <summary class="rakit-button rakit-button-secondary cursor-pointer list-none">More</summary>
+          <summary class="rakit-button rakit-button-secondary cursor-pointer list-none" aria-label="More {{ label | lower }}">More</summary>
           <div class="rakit-popover right-0 left-auto min-w-56" role="group" aria-label="{{ label }}">
             <div class="flex flex-col gap-1">
               {% for action in actions %}

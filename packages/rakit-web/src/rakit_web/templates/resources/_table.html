@@ -39,6 +39,7 @@
         data-rakit-filter-drawer-trigger
         data-rakit-dialog-trigger
         aria-controls="rakit-filter-drawer-{{ resource.resource_id }}"
+        aria-haspopup="dialog"
       >
         {{ rakit_icon("list-filter", class_name="size-4") }}
         <span>Filters{% if active_filter_count %} ({{ active_filter_count }}){% endif %}</span>
@@ -49,6 +50,7 @@
         hidden
         data-rakit-filter-rail-show
         aria-controls="rakit-filter-rail-{{ resource.resource_id }}"
+        aria-expanded="false"
       >
         {{ rakit_icon("list-filter", class_name="size-4") }}
         <span>Show filters{% if active_filter_count %} ({{ active_filter_count }}){% endif %}</span>
@@ -129,7 +131,7 @@
       {% for action in bulk_actions %}{% if action.intent == 'primary' %}{% set bulk_primary.item = action %}{% endif %}{% endfor %}
       <form method="get" data-rakit-bulk-actions="{{ resource.resource_id }}" data-rakit-bulk-selection>
         <div class="mb-3 flex flex-wrap items-center gap-2" role="group" aria-label="Bulk actions">
-          <span class="mr-1 text-sm text-rakit-text-muted" data-rakit-selected-count>0 selected</span>
+          <span class="mr-1 text-sm text-rakit-text-muted" data-rakit-selected-count role="status" aria-live="polite" aria-atomic="true">0 selected</span>
           {% if bulk_actions|length == 1 %}
             {% set action = bulk_actions[0] %}
             <button class="rakit-button{% if action.intent == 'danger' %} rakit-button-danger{% elif action.intent != 'primary' %} rakit-button-secondary{% endif %}" type="submit" formaction="{{ action.url }}" data-rakit-bulk-review-trigger>{{ action.label }}</button>
@@ -138,7 +140,7 @@
             <button class="rakit-button" type="submit" formaction="{{ bulk_primary.item.url }}" data-rakit-bulk-review-trigger>{{ bulk_primary.item.label }}</button>
             {% endif %}
             <details class="relative">
-              <summary class="rakit-button rakit-button-secondary cursor-pointer list-none">More</summary>
+              <summary class="rakit-button rakit-button-secondary cursor-pointer list-none" aria-label="More bulk actions">More</summary>
               <div class="rakit-popover min-w-56">
                 <div class="flex flex-col gap-1">
                   {% for action in bulk_actions %}
@@ -307,7 +309,7 @@
           <h2 class="text-xs font-semibold uppercase tracking-wide text-rakit-text-muted">Filters</h2>
           {% if active_filter_count %}<p class="mt-0.5 text-xs text-rakit-text-subtle">{{ active_filter_count }} active</p>{% endif %}
         </div>
-        <button class="rakit-button rakit-button-quiet" type="button" hidden data-rakit-filter-rail-hide>Hide</button>
+        <button class="rakit-button rakit-button-quiet" type="button" hidden data-rakit-filter-rail-hide aria-controls="rakit-filter-rail-{{ resource.resource_id }}" aria-expanded="true">Hide</button>
       </div>
       {{ render_filter_groups(filter_groups, resource, resource_path, filter_hidden_inputs, filter_presentations, filter_policy, "desktop") }}
     </aside>
