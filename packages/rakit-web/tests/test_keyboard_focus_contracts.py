@@ -33,9 +33,9 @@ def test_filter_disclosure_state_and_focus_are_synchronized() -> None:
     table = _read("templates", "resources", "_table.html")
     ui = _read("static", "rakit-ui.js")
 
-    assert 'data-rakit-filter-drawer-trigger' in table
+    assert "data-rakit-filter-drawer-trigger" in table
     assert 'aria-haspopup="dialog"' in table
-    assert 'data-rakit-filter-rail-show' in table
+    assert "data-rakit-filter-rail-show" in table
     assert 'aria-expanded="false"' in table
     assert 'data-rakit-filter-rail-hide aria-controls="rakit-filter-rail-' in table
     assert 'aria-expanded="true">Hide</button>' in table
@@ -43,12 +43,10 @@ def test_filter_disclosure_state_and_focus_are_synchronized() -> None:
     assert 'show.setAttribute("aria-expanded", visible ? "true" : "false")' in ui
     assert 'hide.setAttribute("aria-expanded", visible ? "true" : "false")' in ui
     assert (
-        'root.querySelector("[data-rakit-filter-rail-show]")?.focus({ preventScroll: true });'
-        in ui
+        'root.querySelector("[data-rakit-filter-rail-show]")?.focus({ preventScroll: true });' in ui
     )
     assert (
-        'root.querySelector("[data-rakit-filter-rail-hide]")?.focus({ preventScroll: true });'
-        in ui
+        'root.querySelector("[data-rakit-filter-rail-hide]")?.focus({ preventScroll: true });' in ui
     )
 
 
@@ -71,8 +69,7 @@ def test_relationship_row_controls_include_record_context() -> None:
 
     for template in (row_actions, to_many):
         assert (
-            'aria-label="Remove {{ row.candidate.label }} from '
-            '{{ panel.relationship.label }}"'
+            'aria-label="Remove {{ row.candidate.label }} from {{ panel.relationship.label }}"'
         ) in template
         assert (
             'aria-label="Undo removal of {{ row.candidate.label }} from '
