@@ -36,8 +36,8 @@
     {% elif shell_mode in ('auth', 'system') %}
       <header class="border-b border-rakit-border bg-rakit-surface">
         <div class="mx-auto flex min-h-16 w-full max-w-5xl items-center justify-between gap-4 px-4 sm:px-6">
-          <span class="truncate text-base font-semibold tracking-tight text-rakit-text">{{ binding_label | default(label | default('Rakit')) }}</span>
-          <div class="w-36">{% set theme_control_id = "rakit-theme-system" %}{% set theme_menu_placement = "down" %}{% include "components/theme_control.html" %}</div>
+          <span class="min-w-0 flex-1 truncate text-base font-semibold tracking-tight text-rakit-text">{{ binding_label | default(label | default('Rakit')) }}</span>
+          <div class="w-32 shrink-0 sm:w-36">{% set theme_control_id = "rakit-theme-system" %}{% set theme_menu_placement = "down" %}{% include "components/theme_control.html" %}</div>
         </div>
       </header>
     {% endif %}
@@ -51,5 +51,6 @@
     {% if navigation_provider and shell_enabled and shell_mode == 'app' %}</div></div>{% endif %}
     <script src="{{ static_url('rakit-shell.js') }}" defer></script>
     <script src="{{ static_url('rakit-ui.js') }}" defer></script>
+    <script src="{{ static_url('rakit-widgets.js') }}" defer></script>
   </body>
 </html>

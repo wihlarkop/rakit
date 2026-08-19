@@ -1,10 +1,10 @@
-<ul id="{{ options_id }}" class="mt-2 divide-y divide-rakit-border overflow-hidden rounded-rakit-sm border border-rakit-border bg-rakit-surface" aria-label="Available relationship candidates">
+<ul id="{{ options_id }}" class="mt-2 divide-y divide-rakit-border overflow-hidden rounded-rakit-sm border border-rakit-border bg-rakit-surface" aria-label="Available relationship candidates"{% if has_next %} data-rakit-has-more="true" data-rakit-next-page="{{ next_page }}"{% endif %}>
   {% set rendered = namespace(count=0) %}
   {% for option in options %}
     {% set encoded = codec.encode(option.identity) %}
     {% if encoded not in selected %}
       {% set rendered.count = rendered.count + 1 %}
-      <li><label class="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm text-rakit-text transition hover:bg-rakit-surface-subtle"><span>{{ option.label }}</span><span class="inline-flex items-center gap-2"><input class="size-4 rounded border-rakit-border" type="checkbox" name="{{ prefix }}link__{{ encoded }}" value="{{ encoded }}" /><span class="text-xs font-medium text-rakit-text-muted">Connect</span></span></label></li>
+      <li data-rakit-option data-rakit-option-identity="{{ encoded }}" data-rakit-option-label="{{ option.label }}"><label class="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm text-rakit-text transition hover:bg-rakit-surface-subtle"><span>{{ option.label }}</span><span class="inline-flex items-center gap-2"><input class="size-4 rounded border-rakit-border" type="checkbox" name="{{ prefix }}link__{{ encoded }}" value="{{ encoded }}" /><span class="text-xs font-medium text-rakit-text-muted">Connect</span></span></label></li>
     {% endif %}
   {% endfor %}
   {% if rendered.count == 0 %}<li class="px-3 py-3 text-sm text-rakit-text-muted">No additional candidates are available in this bounded result.</li>{% endif %}

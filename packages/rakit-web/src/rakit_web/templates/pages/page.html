@@ -5,10 +5,10 @@
 <div id="rakit-page-root" class="space-y-6">
   {% include "components/dashboard_navigation.html" %}
 
-  <header class="flex flex-wrap items-end justify-between gap-4 border-b border-rakit-border pb-4">
+  <header class="flex flex-col items-start gap-4 border-b border-rakit-border pb-4 sm:flex-row sm:items-end sm:justify-between">
     <div>
       <p class="text-sm font-medium text-rakit-text-muted">{{ binding_label }}</p>
-      <h1 class="mt-1 text-2xl font-semibold tracking-tight text-rakit-text">{{ page.label }}</h1>
+      <h1 class="mt-1 text-2xl font-semibold tracking-tight text-rakit-text [overflow-wrap:anywhere]">{{ page.label }}</h1>
     </div>
     {{ action_group(page_actions | default(()), 'Page actions') }}
   </header>
@@ -64,7 +64,7 @@
           {% for key, value in payload_view.items %}
             <div class="grid gap-1 px-5 py-3 sm:grid-cols-[minmax(0,12rem)_1fr] sm:gap-4">
               <dt class="text-sm font-medium text-rakit-text-muted">{{ key }}</dt>
-              <dd class="min-w-0 whitespace-pre-wrap text-sm text-rakit-text">{{ value }}</dd>
+              <dd class="min-w-0 whitespace-pre-wrap text-sm text-rakit-text [overflow-wrap:anywhere]">{{ value }}</dd>
             </div>
           {% endfor %}
         </dl>
@@ -72,7 +72,7 @@
         <div class="overflow-x-auto">
           <table class="min-w-full divide-y divide-rakit-border text-sm">
             <thead class="bg-rakit-surface-subtle"><tr>{% for column in payload_view.columns %}<th class="px-4 py-2.5 text-left font-medium text-rakit-text-muted" scope="col">{{ column }}</th>{% endfor %}</tr></thead>
-            <tbody class="divide-y divide-rakit-border bg-rakit-surface">{% for row in payload_view.rows %}<tr>{% for value in row %}<td class="px-4 py-3 align-top text-rakit-text">{{ value }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+            <tbody class="divide-y divide-rakit-border bg-rakit-surface">{% for row in payload_view.rows %}<tr>{% for value in row %}<td class="px-4 py-3 align-top text-rakit-text [overflow-wrap:anywhere]">{{ value }}</td>{% endfor %}</tr>{% endfor %}</tbody>
           </table>
         </div>
       {% else %}

@@ -15,6 +15,7 @@ nav:
   - Guides:
       - Resources: guides/resources.md
       - Relationships: guides/relationships.md
+      - Field and Relationship Presentations: guides/presentations.md
       - Authentication: guides/authentication.md
       - Security: guides/security.md
       - Pages and Actions: guides/pages-actions.md

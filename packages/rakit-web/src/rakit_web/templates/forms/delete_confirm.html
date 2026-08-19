@@ -12,13 +12,13 @@
   <header class="mb-6">
     <p class="rakit-field-required text-sm font-medium">Destructive action</p>
     <h1 class="mt-1 text-2xl font-semibold tracking-tight text-rakit-text">Delete {{ label }}?</h1>
-    <p class="mt-2 text-sm leading-6 text-rakit-text-muted">Review this action before continuing.</p>
+    <p class="mt-2 text-sm leading-6 text-rakit-text-muted">Review the deletion details before continuing.</p>
   </header>
   <section class="rakit-panel">
     <div class="rakit-panel-body space-y-5">
       <div class="rakit-alert rakit-alert-danger">
-        <p class="font-semibold">This record will be removed through the configured resource adapter.</p>
-        <p class="mt-1">The framework does not assume whether the adapter performs a physical or recoverable deletion.</p>
+        <p class="font-semibold">Deleting invokes the configured resource adapter for this record.</p>
+        <p class="mt-1">Depending on the adapter, removal may be permanent or recoverable. Confirm only if you intend to remove this record.</p>
       </div>
       <form method="post" action="{{ action_url }}" class="flex flex-col justify-end gap-2 sm:flex-row">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />

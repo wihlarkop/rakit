@@ -15,19 +15,7 @@
         {% if field.is_file and field.file %}{% set _ = descriptions.append(field.file_help_id) %}{% endif %}
         {% if field.is_file and field.file and field.file.current %}{% set _ = descriptions.append(field.current_file_id) %}{% endif %}
         {% if field.issues %}{% set _ = descriptions.append(field.error_id) %}{% endif %}
-        {% if field.is_file %}
-          {% if field.file and field.file.current %}
-            <div id="{{ field.current_file_id }}" class="mb-2 rounded-rakit-sm border border-rakit-border bg-rakit-surface-subtle p-3">
-              <p class="text-xs font-medium uppercase tracking-wide text-rakit-text-subtle">Current file</p>
-              <p class="mt-1 text-sm font-medium text-rakit-text">{{ field.file.current.name }}</p>
-              <p class="mt-1 text-xs text-rakit-text-muted">{{ field.file.current.size_label }} · {{ field.file.current.content_type }}</p>
-            </div>
-          {% endif %}
-          <input class="rakit-file-input" type="file" id="{{ field.id }}" name="{{ field.name }}"{% if field.accept %} accept="{{ field.accept }}"{% endif %}{% if field.required %} required{% endif %}{% if descriptions %} aria-describedby="{{ descriptions | join(' ') }}"{% endif %}{% if field.issues %} aria-invalid="true"{% endif %} />
-          {% if field.file %}<p id="{{ field.file_help_id }}" class="rakit-field-help">{{ field.file.policy_hint }}{% if field.file.current %} Choose a new file to replace the current file; leave this empty to keep it.{% endif %}</p>{% endif %}
-        {% else %}
-        <input class="rakit-input" id="{{ field.id }}" name="{{ field.name }}" value="{{ field.value }}"{% if field.required %} required{% endif %}{% if descriptions %} aria-describedby="{{ descriptions | join(' ') }}"{% endif %}{% if field.issues %} aria-invalid="true"{% endif %} />
-        {% endif %}
+        {% include "forms/_field_control.html" %}
         {% if field.description %}<p id="{{ field.description_id }}" class="rakit-field-help">{{ field.description }}</p>{% endif %}
         {% if field.issues %}<div id="{{ field.error_id }}" class="rakit-error" role="alert">{% for issue in field.issues %}<p>{{ issue.message }}</p>{% endfor %}</div>{% endif %}
       </div>
@@ -67,7 +55,7 @@
 </nav>
 <header class="mb-6 border-b border-rakit-border pb-4">
   <p class="text-sm font-medium text-rakit-text-muted">{{ 'Create record' if operation == 'create' else 'Edit record' }}</p>
-  <h1 class="mt-1 text-2xl font-semibold tracking-tight text-rakit-text">{{ title }}</h1>
+  <h1 class="mt-1 text-2xl font-semibold tracking-tight text-rakit-text [overflow-wrap:anywhere]">{{ title }}</h1>
   <p class="mt-2 max-w-2xl text-sm leading-6 text-rakit-text-muted">{{ 'Add a new record using the fields available for this resource.' if operation == 'create' else 'Update the fields available for this record.' }}</p>
 </header>
 {% if issues %}

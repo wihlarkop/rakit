@@ -15,8 +15,11 @@ from rakit import (
     ActionPresentation,
     ActionScope,
     Admin,
+    Autocomplete,
     DataSourceCapabilities,
+    FileUpload,
     LauncherItem,
+    MultiAutocomplete,
     PageDefinition,
     PageResult,
     PageWebPresentation,
@@ -28,7 +31,7 @@ from rakit import (
 from rakit_core.actions import ActionSuccess
 from rakit_core.di import ServiceScope
 from rakit_core.fields import FieldDefinition, FileField
-from rakit_core.forms import FormLayout, FormSchema, RelationshipPanel
+from rakit_core.forms import FieldLayout, FormLayout, FormSchema, RelationshipPanel
 from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, OperationReceipt
 from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import MutationAuthorization, MutationOperation, OperationAuthorizationSet
@@ -151,6 +154,13 @@ _CUSTOMER = RelationshipDefinition(
     writable=True,
     edit_mode=RelationshipEditMode.LINK,
     record_label_field="name",
+    presentation=Autocomplete(
+        search_fields=("name",),
+        display_fields=("name", "team"),
+        placeholder="Search customer...",
+        min_query_length=1,
+        page_size=12,
+    ),
 )
 _TAGS = RelationshipDefinition(
     relationship_id="tags",
@@ -161,6 +171,13 @@ _TAGS = RelationshipDefinition(
     writable=True,
     edit_mode=RelationshipEditMode.LINK,
     record_label_field="name",
+    presentation=MultiAutocomplete(
+        search_fields=("name",),
+        display_fields=("name", "team"),
+        placeholder="Add team links...",
+        min_query_length=1,
+        page_size=12,
+    ),
 )
 _PARTICIPANTS = RelationshipDefinition(
     relationship_id="participants",
@@ -171,6 +188,13 @@ _PARTICIPANTS = RelationshipDefinition(
     writable=True,
     edit_mode=RelationshipEditMode.LINK,
     record_label_field="name",
+    presentation=MultiAutocomplete(
+        search_fields=("name",),
+        display_fields=("name", "team"),
+        placeholder="Add participants...",
+        min_query_length=1,
+        page_size=10,
+    ),
 )
 _LINE_ITEMS = RelationshipDefinition(
     relationship_id="line_items",
@@ -695,12 +719,15 @@ def configure_ui06_acceptance(admin: Admin) -> None:
     )
 
     relationship_layout = FormLayout(
-        children=tuple(
-            RelationshipPanel(
-                layout_id=f"{definition.relationship_id}-panel",
-                relationship_id=definition.relationship_id,
-            )
-            for definition in RELATIONSHIPS
+        children=(
+            FieldLayout("status"),
+            *(
+                RelationshipPanel(
+                    layout_id=f"{definition.relationship_id}-panel",
+                    relationship_id=definition.relationship_id,
+                )
+                for definition in RELATIONSHIPS
+            ),
         )
     )
     relationship_binding = WriteResourceBinding(
@@ -748,6 +775,7 @@ def configure_ui06_acceptance(admin: Admin) -> None:
                     max_size=10 * 1024 * 1024,
                     allowed_extensions=(".pdf",),
                     allowed_mime_types=("application/pdf",),
+                    presentation=FileUpload(drag_drop=True, preview=True),
                 ),
             )
         ),

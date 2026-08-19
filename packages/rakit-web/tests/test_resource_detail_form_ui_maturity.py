@@ -312,9 +312,9 @@ async def test_delete_confirmation_is_truthful_and_preserves_security_tokens() -
     assert response.status_code == 200
     assert "Delete Record?" in response.text
     assert "configured resource adapter" in response.text
-    assert "physical or recoverable deletion" in response.text
+    assert "permanent or recoverable" in response.text
+    assert "Confirm only if you intend to remove this record." in response.text
     assert "cannot be undone" not in response.text.casefold()
-    assert "permanent" not in response.text.casefold()
     assert 'href="/records"' in response.text
     assert 'name="csrf_token"' in response.text
     assert 'name="submission_token" value="submission-token"' in response.text
