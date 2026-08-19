@@ -1,0 +1,60 @@
+name: B2 test finalize
+
+on:
+  push:
+    branches: [phase-b2-alpha-hardening]
+
+permissions:
+  contents: write
+
+jobs:
+  finalize-tests:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: phase-b2-alpha-hardening
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-packages --dev --locked
+      - name: Update intentional Uvicorn install-hint contract
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("packages/rakit/tests/test_facade.py")
+          source = path.read_text(encoding="utf-8")
+          old = 'assert \'uv add "rakit[server-uvicorn]"\' in str(caught.value)'
+          new = 'assert \'uv add "rakit[uvicorn]"\' in str(caught.value)'
+          count = source.count(old)
+          if count != 1:
+              raise SystemExit(f"expected one stale Uvicorn assertion, found {count}")
+          path.write_text(source.replace(old, new), encoding="utf-8")
+          PY
+      - run: uv run ruff check --fix packages/rakit/tests packages/rakit-web/tests packages/rakit-auth-sqlalchemy/tests tests/release
+      - run: uv run ruff format packages/rakit/tests packages/rakit-web/tests packages/rakit-auth-sqlalchemy/tests tests/release
+      - name: Run focused B2 regressions
+        run: |
+          uv run pytest -q \
+            packages/rakit/tests/test_b2_facades.py \
+            packages/rakit/tests/test_facade.py \
+            packages/rakit-web/tests/test_assets.py \
+            packages/rakit-web/tests/test_http_status_semantics.py \
+            packages/rakit-auth-sqlalchemy/tests/test_persistence_namespace.py \
+            tests/release/test_installed_artifacts.py
+      - name: Commit finalized tests
+        run: |
+          set -euo pipefail
+          git diff --check
+          if git diff --quiet; then
+            echo "Tests already finalized"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/rakit/tests packages/rakit-web/tests packages/rakit-auth-sqlalchemy/tests tests/release
+          git commit -m "test: finalize B2 hardening regressions"
+          git push origin HEAD:phase-b2-alpha-hardening
