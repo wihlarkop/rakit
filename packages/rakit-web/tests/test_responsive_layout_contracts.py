@@ -46,7 +46,10 @@ def test_resource_heading_actions_and_long_values_stay_narrow_safe() -> None:
     assert 'w-full max-w-full flex-wrap items-start gap-2 md:w-auto' in resource_detail
     assert resource_detail.count("[overflow-wrap:anywhere]") >= 3
 
-    assert 'class="self-start text-sm tabular-nums text-rakit-text-muted lg:self-auto"' in resource_table
+    expected_total_class = (
+        'class="self-start text-sm tabular-nums text-rakit-text-muted lg:self-auto"'
+    )
+    assert expected_total_class in resource_table
     assert 'text-rakit-text [overflow-wrap:anywhere]' in resource_table
 
 
