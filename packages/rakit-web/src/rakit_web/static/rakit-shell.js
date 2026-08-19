@@ -1,5 +1,6 @@
 const RAKIT_DESKTOP_NAVIGATION = matchMedia("(min-width: 64rem)");
 const RAKIT_SIDEBAR_COLLAPSED_KEY = "rakit.sidebar.collapsed";
+const RAKIT_SIDEBAR_SCROLL_KEY_PREFIX = "rakit.sidebar.scroll";
 let rakitMobileNavigationReturnFocus = null;
 
 function rakitMobileNavigation() {
@@ -19,6 +20,47 @@ function rakitDesktopNavigation() {
 function rakitDesktopNavigationToggle() {
   const toggle = document.querySelector("[data-rakit-desktop-navigation-toggle]");
   return toggle instanceof HTMLButtonElement ? toggle : null;
+}
+
+function rakitDesktopNavigationScrollContainer() {
+  const navigation = document.querySelector("[data-rakit-desktop-navigation-scroll]");
+  return navigation instanceof HTMLElement ? navigation : null;
+}
+
+function rakitSidebarScrollStorageKey(navigation) {
+  const scope = navigation.dataset.rakitNavigationScrollKey || "/";
+  return `${RAKIT_SIDEBAR_SCROLL_KEY_PREFIX}:${scope}`;
+}
+
+function rakitStoreDesktopNavigationScroll() {
+  const navigation = rakitDesktopNavigationScrollContainer();
+  if (!navigation) return;
+  try {
+    sessionStorage.setItem(
+      rakitSidebarScrollStorageKey(navigation),
+      String(navigation.scrollTop),
+    );
+  } catch {
+    // Presentation persistence is optional; navigation remains usable without storage.
+  }
+}
+
+function rakitRestoreDesktopNavigationScroll() {
+  const navigation = rakitDesktopNavigationScrollContainer();
+  if (!navigation) return;
+
+  let stored = null;
+  try {
+    stored = sessionStorage.getItem(rakitSidebarScrollStorageKey(navigation));
+  } catch {
+    return;
+  }
+  if (stored === null) return;
+
+  const offset = Number(stored);
+  if (!Number.isFinite(offset) || offset < 0) return;
+  const maximum = Math.max(0, navigation.scrollHeight - navigation.clientHeight);
+  navigation.scrollTop = Math.min(offset, maximum);
 }
 
 function rakitStoredSidebarCollapsed() {
@@ -116,11 +158,21 @@ document.addEventListener("click", (event) => {
 
 document.addEventListener("DOMContentLoaded", () => {
   rakitApplyDesktopNavigationCollapsed(rakitStoredSidebarCollapsed());
+  rakitRestoreDesktopNavigationScroll();
+
+  const desktopScroll = rakitDesktopNavigationScrollContainer();
+  if (desktopScroll) {
+    desktopScroll.addEventListener("scroll", rakitStoreDesktopNavigationScroll, {
+      passive: true,
+    });
+    requestAnimationFrame(rakitRestoreDesktopNavigationScroll);
+  }
 
   const navigation = rakitMobileNavigation();
-  if (!navigation) return;
-  navigation.addEventListener("close", rakitResetMobileNavigation);
+  if (navigation) navigation.addEventListener("close", rakitResetMobileNavigation);
 });
+
+window.addEventListener("pagehide", rakitStoreDesktopNavigationScroll);
 
 RAKIT_DESKTOP_NAVIGATION.addEventListener("change", (event) => {
   if (event.matches) rakitCloseMobileNavigation();
