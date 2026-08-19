@@ -33,16 +33,16 @@ jobs:
             packages/rakit-web/src/rakit_web/bulk_review.py \
             packages/rakit-web/src/rakit_web/resource_routes.py \
             packages/rakit-web/src/rakit_web/security/authentication.py
+      - name: Remove helper and restore normal CI in workspace
+        run: |
+          git checkout origin/ui-06-advanced-operations -- .github/workflows/ci.yml
+          rm .github/ui06_polish_review.py
+          git diff --check
       - name: Static source gates
         run: |
           uv run ruff format --check .
           uv run ruff check .
           uv run ty check
-      - name: Remove helper and restore normal CI
-        run: |
-          git checkout origin/ui-06-advanced-operations -- .github/workflows/ci.yml
-          rm .github/ui06_polish_review.py
-          git diff --check
       - name: Commit reviewed source
         run: |
           git config user.name "rakit-ci-bot"
