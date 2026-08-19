@@ -1,6 +1,7 @@
 """Permission-aware dashboard rendering and isolated widget execution."""
 
 from __future__ import annotations
+from http import HTTPStatus
 
 import inspect
 from collections.abc import Callable, Iterable
@@ -336,7 +337,7 @@ def build_dashboard_routes(binding: DashboardBinding) -> list[Route]:
             if not _allowed(binding, _principal(request), widget.permission):
                 return PlainTextResponse(
                     "Forbidden",
-                    status_code=403,
+                    status_code=HTTPStatus.FORBIDDEN,
                     headers={"Cache-Control": "no-store"},
                 )
             result = await _execute_widget(binding, request, widget)

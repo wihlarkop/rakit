@@ -1,4 +1,5 @@
 """Starlette runtime for compiler-owned custom endpoints."""
+from http import HTTPStatus
 
 import hashlib
 import json
@@ -365,7 +366,7 @@ class _ValidatedEndpointHandler:
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
                     message="JSON endpoint handler returned an incompatible result type.",
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                     details={
                         "endpoint_id": str(endpoint.endpoint_id),
                         "reason": "result_kind_mismatch",
@@ -379,7 +380,7 @@ class _ValidatedEndpointHandler:
                     raise RakitError(
                         code=ErrorCode.VALIDATION_FAILED,
                         message="Endpoint output validation failed.",
-                        status_code=500,
+                        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                         details={"issues": _schema_issues(exc)},
                     ) from exc
             return EndpointResult(payload=payload, status_code=result.status_code)
@@ -394,7 +395,7 @@ class _ValidatedEndpointHandler:
         raise RakitError(
             code=ErrorCode.CONFIG_INVALID,
             message="Endpoint handler returned a result that does not match its response kind.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             details={"endpoint_id": str(endpoint.endpoint_id), "reason": "result_kind_mismatch"},
         )
 
@@ -466,7 +467,7 @@ def _completed_response(receipt: OperationReceipt | None) -> JSONResponse:
     status_code = receipt.payload.get("status_code")
     if (
         not isinstance(status_code, int)
-        or not 200 <= status_code < 300
+        or not 200 <= status_code < HTTPStatus.MULTIPLE_CHOICES
         or "payload" not in receipt.payload
     ):
         return _error_response(

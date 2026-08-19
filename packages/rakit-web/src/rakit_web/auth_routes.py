@@ -3,6 +3,7 @@ login rate limiting. Wired into `Admin.asgi()` only when both an
 `AuthBackend` and a `SessionStore` are configured -- an `Admin` with
 neither remains exactly as unauthenticated as before this module existed.
 """
+from http import HTTPStatus
 
 import hmac
 import secrets
@@ -186,7 +187,7 @@ def build_auth_routes(
         parsed_form = await _parse_login_form(request)
         if parsed_form is None:
             return PlainTextResponse(
-                "Invalid login form", status_code=400, headers={"Cache-Control": "no-store"}
+                "Invalid login form", status_code=HTTPStatus.BAD_REQUEST, headers={"Cache-Control": "no-store"}
             )
         identifier, password, submitted_login_csrf = parsed_form
         identifier = normalize_identifier(identifier)
@@ -194,7 +195,7 @@ def build_auth_routes(
         if client_ip is None:
             return PlainTextResponse(
                 "Invalid forwarded client chain",
-                status_code=400,
+                status_code=HTTPStatus.BAD_REQUEST,
                 headers={"Cache-Control": "no-store"},
             )
 
@@ -204,7 +205,7 @@ def build_auth_routes(
             # (and never consumes a rate-limit slot for the victim's
             # identifier).
             return PlainTextResponse(
-                "Invalid CSRF token", status_code=403, headers={"Cache-Control": "no-store"}
+                "Invalid CSRF token", status_code=HTTPStatus.FORBIDDEN, headers={"Cache-Control": "no-store"}
             )
 
         limiter_result = await rate_limiter.check(
@@ -214,11 +215,11 @@ def build_auth_routes(
             raise RakitError(
                 code=ErrorCode.INTERNAL_ERROR,
                 message="Rate limiter returned an invalid result",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             )
         if not limiter_result:
             return _render_login(
-                request, error="Too many attempts. Try again later.", status_code=429
+                request, error="Too many attempts. Try again later.", status_code=HTTPStatus.TOO_MANY_REQUESTS
             )
 
         # Deliberately identical response for "no such identifier" and
@@ -226,7 +227,7 @@ def build_auth_routes(
         # would let this endpoint be used to enumerate valid identifiers.
         principal = await auth_backend.authenticate(identifier, password)
         if principal is None or not principal.authenticated:
-            return _render_login(request, error="Invalid credentials.", status_code=401)
+            return _render_login(request, error="Invalid credentials.", status_code=HTTPStatus.UNAUTHORIZED)
 
         raw_token, record = await session_store.create(principal)
         try:
@@ -235,7 +236,7 @@ def build_auth_routes(
             await session_store.revoke(record.session_id)
             raise
 
-        response = RedirectResponse(url=_mounted_path(request, "/"), status_code=303)
+        response = RedirectResponse(url=_mounted_path(request, "/"), status_code=HTTPStatus.SEE_OTHER)
         cookie_path = _mounted_path(request, "/") or "/"
         response.set_cookie(
             SESSION_COOKIE_NAME,
@@ -268,13 +269,13 @@ def build_auth_routes(
         if record is not None:
             if not await _verify_csrf(request, csrf_service, session_id=record.session_id):
                 return PlainTextResponse(
-                    "Invalid CSRF token", status_code=403, headers={"Cache-Control": "no-store"}
+                    "Invalid CSRF token", status_code=HTTPStatus.FORBIDDEN, headers={"Cache-Control": "no-store"}
                 )
             await session_store.revoke(record.session_id)
 
         response = RedirectResponse(
             url=_mounted_path(request, "/auth/login"),
-            status_code=303,
+            status_code=HTTPStatus.SEE_OTHER,
         )
         cookie_path = _mounted_path(request, "/") or "/"
         response.delete_cookie(SESSION_COOKIE_NAME, path=cookie_path)

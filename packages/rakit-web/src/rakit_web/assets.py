@@ -1,4 +1,5 @@
 """Bundled, content-addressed assets for the built-in read-only UI."""
+from http import HTTPStatus
 
 from dataclasses import dataclass
 from hashlib import sha256
@@ -61,7 +62,7 @@ class ImmutableStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope: Scope) -> Response:
         asset = _HASHED_ASSETS.get(path)
         if asset is None:
-            raise HTTPException(status_code=404)
+            raise HTTPException(status_code=HTTPStatus.NOT_FOUND)
         response = await super().get_response(asset.source_name, scope)
         response.headers["Cache-Control"] = _CACHE_CONTROL
         return response

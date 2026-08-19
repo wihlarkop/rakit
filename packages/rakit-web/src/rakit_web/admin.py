@@ -1,3 +1,4 @@
+from http import HTTPStatus
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -124,7 +125,7 @@ def _invalid_field_policy(resource_id: str, policy_name: str) -> RakitError:
     return RakitError(
         code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
         message="Invalid resource field policy declaration",
-        status_code=500,
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         details={
             "resource_id": resource_id,
             "policy": policy_name,
@@ -231,7 +232,7 @@ class Admin:
                     "both omitted -- a partial auth configuration would silently leave "
                     "the admin unauthenticated rather than failing closed."
                 ),
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             )
         self._auth_backend = auth_backend
         self._session_store = session_store
@@ -244,7 +245,7 @@ class Admin:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message="mutation_deadline_seconds must be a positive finite number.",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             )
         self._mutation_deadline_seconds = float(mutation_deadline_seconds)
         self._login_rate_limiter = login_rate_limiter or LoginRateLimiter()
@@ -353,14 +354,14 @@ class Admin:
                     message=(
                         f'{admin_cls.__name__} is missing required attribute "{attribute_name}".'
                     ),
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                     details={"admin_class": admin_cls.__name__, "attribute": attribute_name},
                 ) from None
             if not isinstance(value, str) or not value:
                 raise RakitError(
                     code=ErrorCode.VALIDATION_FAILED,
                     message=(f"{admin_cls.__name__}.{attribute_name} must be a non-empty string."),
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                     details={"admin_class": admin_cls.__name__, "attribute": attribute_name},
                 )
 
@@ -372,7 +373,7 @@ class Admin:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
                 message="Invalid resource filter declaration",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={"resource_id": admin_cls.resource_id, "reason": "invalid_filters"},
             )
         filters = tuple(raw_filters)
@@ -381,7 +382,7 @@ class Admin:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
                 message="Invalid resource pagination declaration",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={
                     "resource_id": admin_cls.resource_id,
                     "reason": "invalid_pagination_policy",
@@ -415,7 +416,7 @@ class Admin:
                         f'No installed adapter could claim model "{admin_cls.model!r}" for '
                         f'"{admin_cls.__name__}".'
                     ),
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                     details={"admin_class": admin_cls.__name__},
                 )
             if len(claims) > 1:
@@ -425,7 +426,7 @@ class Admin:
                         f'Multiple installed adapters claimed model "{admin_cls.model!r}" for '
                         f'"{admin_cls.__name__}".'
                     ),
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                     details={"admin_class": admin_cls.__name__, "claim_count": len(claims)},
                 )
             adapter_runtime = normalize_resource_adapter_runtime(claims[0])
@@ -438,7 +439,7 @@ class Admin:
                     f'"{admin_cls.__name__}" has no data source: it is not a ModelAdmin '
                     "and no data_source was supplied."
                 ),
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={"admin_class": admin_cls.__name__},
             )
 
@@ -448,7 +449,7 @@ class Admin:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
                 message="Invalid resource filter declaration",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={
                     "resource_id": admin_cls.resource_id,
                     "reason": "unknown_filter_predicate_field",
@@ -517,14 +518,14 @@ class Admin:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message=(f'Concurrency provider references unknown resource "{resource_id}".'),
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={"resource_id": resource_id, "reason": "unknown_resource"},
             )
         if resource_id in self._concurrency_providers:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message=(f'Resource "{resource_id}" already has a concurrency provider.'),
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={"resource_id": resource_id, "reason": "duplicate_provider"},
             )
         missing_members = tuple(
@@ -540,7 +541,7 @@ class Admin:
                     "implement the full ConcurrencyVersionProvider contract "
                     f"(missing or non-callable: {', '.join(missing_members)})."
                 ),
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={
                     "resource_id": resource_id,
                     "reason": "invalid_provider_contract",
@@ -563,20 +564,20 @@ class Admin:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
                 message="Invalid resource write policy declaration",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={"resource_id": resource_id, "reason": "resource_mismatch"},
             )
         if self._auth_backend is None or self._session_store is None:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message="Write resources require configured authentication.",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             )
         if binding.idempotency_store is None:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message="Write resources require a durable idempotency store.",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             )
         validate_idempotency_store_for_production(
             binding.idempotency_store, debug=self.config.debug
@@ -586,7 +587,7 @@ class Admin:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message="Mutation service event bus must match the Admin event bus.",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={"resource_id": resource_id, "reason": "event_bus_mismatch"},
             )
         bind_scope = getattr(binding.mutation_service, "bind_scoped_statement", None)
@@ -605,7 +606,7 @@ class Admin:
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
                     message="Delete resources require durable confirmation storage.",
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                     details={"resource_id": resource_id, "reason": "missing_delete_nonce_store"},
                 )
             bind_nonce_store(binding.idempotency_store)
@@ -613,7 +614,7 @@ class Admin:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
                 message="Invalid resource write policy declaration",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={"resource_id": resource_id, "reason": "duplicate_write_policy"},
             )
         known_fields = set(self._resource_services[resource_id].data_source.fields)
@@ -622,7 +623,7 @@ class Admin:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
                 message="Invalid resource write policy declaration",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={"resource_id": resource_id, "reason": "unknown_or_empty_writable_field"},
             )
         self._write_resource_bindings[resource_id] = replace(binding, resource_id=resource_id)
@@ -805,12 +806,12 @@ class Admin:
         async def health(_request: Request) -> JSONResponse:
             if await self.lifecycle.check_health():
                 return JSONResponse({"status": "ok"})
-            return JSONResponse({"status": "unhealthy"}, status_code=503)
+            return JSONResponse({"status": "unhealthy"}, status_code=HTTPStatus.SERVICE_UNAVAILABLE)
 
         async def ready(_request: Request) -> JSONResponse:
             if await self.lifecycle.check_ready():
                 return JSONResponse({"status": "ready"})
-            return JSONResponse({"status": "not_ready"}, status_code=503)
+            return JSONResponse({"status": "not_ready"}, status_code=HTTPStatus.SERVICE_UNAVAILABLE)
 
         async def http_error_handler(request: Request, exc: Exception) -> Response:
             assert isinstance(exc, HTTPException)
@@ -819,9 +820,9 @@ class Admin:
                 request_id = request.scope.get("state", {}).get("request_id", "")
                 code = (
                     "http.method_not_allowed"
-                    if exc.status_code == 405
+                    if exc.status_code == HTTPStatus.METHOD_NOT_ALLOWED
                     else "http.not_found"
-                    if exc.status_code == 404
+                    if exc.status_code == HTTPStatus.NOT_FOUND
                     else "http.error"
                 )
                 headers = {"Cache-Control": "no-store", **(exc.headers or {})}
@@ -833,7 +834,7 @@ class Admin:
                     status_code=exc.status_code,
                     headers=headers,
                 )
-            if exc.status_code == 404:
+            if exc.status_code == HTTPStatus.NOT_FOUND:
                 return system_pages.not_found(
                     request, dashboard_available=dashboard_available(request)
                 )
@@ -859,15 +860,15 @@ class Admin:
                     status_code=exc.status_code,
                     headers={"Cache-Control": "no-store"},
                 )
-            if exc.status_code == 404:
+            if exc.status_code == HTTPStatus.NOT_FOUND:
                 return system_pages.not_found(
                     request, dashboard_available=dashboard_available(request)
                 )
-            if exc.status_code == 403:
+            if exc.status_code == HTTPStatus.FORBIDDEN:
                 return system_pages.forbidden(
                     request, dashboard_available=dashboard_available(request)
                 )
-            if exc.status_code >= 500 and not self.config.debug:
+            if exc.status_code >= HTTPStatus.INTERNAL_SERVER_ERROR and not self.config.debug:
                 return system_pages.internal_error(
                     request, dashboard_available=dashboard_available(request)
                 )
@@ -967,21 +968,21 @@ class Admin:
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
                     message="Generated CRUD requires configured authentication.",
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                     details={"reason": "generated_api_auth_required"},
                 )
             if self.config.security.secret_key is None:
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
                     message="Generated CRUD requires a security secret key for CSRF signing.",
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                     details={"reason": "generated_api_secret_key_required"},
                 )
             if self._operation_idempotency_store is None:
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
                     message="Generated CRUD requires an operation idempotency store.",
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                     details={"reason": "generated_api_idempotency_store_required"},
                 )
             validate_idempotency_store_for_production(
@@ -991,7 +992,7 @@ class Admin:
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
                     message="Generated CRUD requires a registered operation unit of work.",
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                     details={"reason": "generated_api_uow_required"},
                 )
 
@@ -1000,7 +1001,7 @@ class Admin:
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
                     message="Compiled actions require configured authentication.",
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 )
             if self.config.security.secret_key is None:
                 raise RakitError(
@@ -1009,7 +1010,7 @@ class Admin:
                         "A security.secret_key is required to serve compiled actions "
                         "(it derives the CSRF and submission-token signing key)."
                     ),
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 )
             missing_providers = sorted(
                 (
@@ -1026,7 +1027,7 @@ class Admin:
                         "Compiled RECORD actions require a registered concurrency "
                         "provider for their resource: " + ", ".join(missing_providers)
                     ),
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 )
             for _, compiled in self.compiled.action_routes:
                 action = compiled.definition
@@ -1047,7 +1048,7 @@ class Admin:
                                 "transaction policy but its executor does not participate "
                                 "in the operation unit of work."
                             ),
-                            status_code=500,
+                            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                             details={
                                 "action_id": action.action_id,
                                 "owner": owner,
@@ -1064,7 +1065,7 @@ class Admin:
                                 "provider (install a persistence plugin such as "
                                 "SQLAlchemyPlugin)."
                             ),
-                            status_code=500,
+                            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                             details={
                                 "action_id": action.action_id,
                                 "owner": owner,
@@ -1083,7 +1084,7 @@ class Admin:
                                 "which needs a mutating operation with an automatic "
                                 "transaction policy."
                             ),
-                            status_code=500,
+                            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                             details={
                                 "action_id": action.action_id,
                                 "owner": owner,
@@ -1098,7 +1099,7 @@ class Admin:
                                 f'Action "{action.action_id}" requires strong concurrency, '
                                 "but its executor does not provide atomic concurrency."
                             ),
-                            status_code=500,
+                            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                             details={
                                 "action_id": action.action_id,
                                 "owner": owner,
@@ -1113,7 +1114,7 @@ class Admin:
                         "Compiled actions require an operation idempotency store "
                         "(Admin(operation_idempotency_store=...))."
                     ),
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 )
             validate_idempotency_store_for_production(
                 self._operation_idempotency_store, debug=self.config.debug
@@ -1394,7 +1395,7 @@ class Admin:
                         raise RakitError(
                             code=ErrorCode.CONFIG_INVALID,
                             message="Generated CRUD executor provider is missing.",
-                            status_code=500,
+                            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                             details={
                                 "resource_id": api.resource_id,
                                 "reason": "generated_api_executor_not_supported",
@@ -1418,7 +1419,7 @@ class Admin:
                             message=(
                                 "Generated CRUD executor must participate in the root unit of work."
                             ),
-                            status_code=500,
+                            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                             details={
                                 "resource_id": api.resource_id,
                                 "reason": "generated_api_executor_not_uow_managed",
@@ -1428,7 +1429,7 @@ class Admin:
                         raise RakitError(
                             code=ErrorCode.CONFIG_INVALID,
                             message="Generated CRUD executor lacks atomic concurrency support.",
-                            status_code=500,
+                            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                             details={
                                 "resource_id": api.resource_id,
                                 "reason": "generated_api_atomic_concurrency_not_supported",
@@ -1566,7 +1567,7 @@ class Admin:
                         "A security.secret_key is required to enable authentication "
                         "(it derives the CSRF/session token signing key)."
                     ),
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 )
             token_service = TokenService.single_key(
                 key_id="primary",

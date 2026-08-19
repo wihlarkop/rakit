@@ -1,4 +1,5 @@
 """Admin composition adapter for built-in and custom BULK operations."""
+from http import HTTPStatus
 
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager
@@ -150,7 +151,7 @@ def build_admin_bulk_action_routes(
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message="Custom bulk actions require an operation idempotency store.",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             )
         provider = concurrency_providers.get(resource_id)
         missing_snapshot_provider = tuple(
@@ -167,7 +168,7 @@ def build_admin_bulk_action_routes(
                     f'Resource "{resource_id}" BULK actions require a registered '
                     "concurrency provider: " + ", ".join(missing_snapshot_provider)
                 ),
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={
                     "resource_id": resource_id,
                     "actions": missing_snapshot_provider,

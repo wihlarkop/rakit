@@ -13,6 +13,7 @@ is never a substitute for authorization, and vice versa.
 The full-page flow works without JavaScript; HTMX is a presentation-only
 enhancement of the same pipeline.
 """
+from http import HTTPStatus
 
 import hashlib
 import inspect
@@ -247,7 +248,7 @@ def _identity(
         raise RakitError(
             code=ErrorCode.VALIDATION_FAILED,
             message="Invalid resource identity",
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
         )
     try:
         return binding.codec.decode(encoded)
@@ -255,7 +256,7 @@ def _identity(
         raise RakitError(
             code=ErrorCode.VALIDATION_FAILED,
             message="Invalid resource identity",
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
         ) from exc
 
 
@@ -406,11 +407,11 @@ def _action_result_response(
     if isinstance(result, ActionRedirect):
         if request.headers.get("HX-Request") == "true":
             return Response(
-                status_code=204,
+                status_code=HTTPStatus.NO_CONTENT,
                 headers={"HX-Redirect": result.location, "Cache-Control": "no-store"},
             )
         return RedirectResponse(
-            result.location, status_code=303, headers={"Cache-Control": "no-store"}
+            result.location, status_code=HTTPStatus.SEE_OTHER, headers={"Cache-Control": "no-store"}
         )
     if isinstance(result, ActionRefresh):
         if request.headers.get("HX-Request") == "true":
@@ -418,24 +419,24 @@ def _action_result_response(
             if result.message:
                 trigger["rakit:toast"] = {"message": result.message}
             return Response(
-                status_code=204,
+                status_code=HTTPStatus.NO_CONTENT,
                 headers={"HX-Trigger": json.dumps(trigger), "Cache-Control": "no-store"},
             )
         return RedirectResponse(
-            fallback_location, status_code=303, headers={"Cache-Control": "no-store"}
+            fallback_location, status_code=HTTPStatus.SEE_OTHER, headers={"Cache-Control": "no-store"}
         )
     if isinstance(result, ActionRejected):
         return _rejected_response(request, result.message or "Action rejected", 409)
     if isinstance(result, ActionRendered):
         return HTMLResponse(
             result.fragment,
-            status_code=200,
+            status_code=HTTPStatus.OK,
             headers={"Cache-Control": "no-store"},
         )
     raise RakitError(
         code=ErrorCode.CONFIG_INVALID,
         message="Unsupported action result for HTTP translation.",
-        status_code=500,
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
     )
 
 
@@ -457,7 +458,7 @@ async def _action_result_response_with_adapter(
         raise RakitError(
             code=ErrorCode.CONFIG_INVALID,
             message="Action advanced responses require a configured web response adapter.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         )
     response = adapter(request, result)
     if isinstance(response, Response):
@@ -469,7 +470,7 @@ async def _action_result_response_with_adapter(
     raise RakitError(
         code=ErrorCode.CONFIG_INVALID,
         message="Action advanced response adapters must return a Starlette Response.",
-        status_code=500,
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
     )
 
 
@@ -745,7 +746,7 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
                 raise RakitError(
                     code=ErrorCode.VALIDATION_FAILED,
                     message="Invalid action form",
-                    status_code=400,
+                    status_code=HTTPStatus.BAD_REQUEST,
                 ) from exc
             items = form.multi_items()
             names = [name for name, _ in items]
@@ -951,7 +952,7 @@ def build_action_routes(binding: ActionBinding) -> list[Route]:
             def rakit_error_response(exc: RakitError) -> Response:
                 status_code = exc.status_code or 400
                 message = exc.message or "Action rejected"
-                if status_code == 409:
+                if status_code == HTTPStatus.CONFLICT:
                     message = "This action is no longer available"
                 return _rejected_response(request, message, status_code)
 
@@ -1184,14 +1185,14 @@ async def _validation_response(
             request,
             "actions/_form.html",
             template_args,
-            status_code=422,
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             headers={"Cache-Control": "no-store", "HX-Retarget": "#rakit-action-root"},
         )
     return binding.templates.TemplateResponse(
         request,
         "actions/form.html",
         template_args,
-        status_code=422,
+        status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
         headers={"Cache-Control": "no-store"},
     )
 

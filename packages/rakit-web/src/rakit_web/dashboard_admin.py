@@ -1,4 +1,5 @@
 """Dashboard-enabled public Admin facade."""
+from http import HTTPStatus
 
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -125,7 +126,7 @@ class Admin(_EndpointAdmin):
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
                 message="Invalid resource Web presentation declaration",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={
                     "resource_id": getattr(admin_cls, "resource_id", ""),
                     "reason": "invalid_web_presentation",
@@ -153,7 +154,7 @@ class Admin(_EndpointAdmin):
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
                     message="Invalid resource Web presentation declaration",
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                     details={
                         "resource_id": getattr(admin_cls, "resource_id", ""),
                         "reason": "unknown_web_filter_presentation",
@@ -171,7 +172,7 @@ class Admin(_EndpointAdmin):
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
                 message="Invalid resource Web presentation declaration",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={
                     "resource_id": getattr(admin_cls, "resource_id", ""),
                     "reason": "invalid_web_action_presentation",
@@ -211,7 +212,7 @@ class Admin(_EndpointAdmin):
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
                 message="Invalid resource Web presentation declaration",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={
                     "resource_id": resource_id,
                     "reason": "unknown_web_widget_presentation",
@@ -238,7 +239,7 @@ class Admin(_EndpointAdmin):
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
                     message="Invalid resource Web presentation declaration",
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                     details={
                         "resource_id": resource_id,
                         "reason": "invalid_relationship_widget_presentation",
@@ -274,7 +275,7 @@ class Admin(_EndpointAdmin):
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message="Invalid page Web presentation declaration",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={
                     "page_id": str(definition.page_id),
                     "reason": "invalid_web_action_presentation",
@@ -287,7 +288,7 @@ class Admin(_EndpointAdmin):
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message="Invalid page Web presentation declaration",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={
                     "page_id": str(definition.page_id),
                     "reason": "invalid_web_action_presentation",
@@ -315,7 +316,7 @@ class Admin(_EndpointAdmin):
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message="Only one dashboard may be registered for an Admin.",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={"reason": "duplicate_dashboard"},
             )
         self._dashboard_definition = definition
@@ -329,7 +330,7 @@ class Admin(_EndpointAdmin):
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message=f'Dashboard widget "{widget_id}" is already registered.',
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={"widget_id": widget_id, "reason": "duplicate_widget"},
             )
         widgets[widget_id] = definition
@@ -361,7 +362,7 @@ class Admin(_EndpointAdmin):
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message="Dashboard references unregistered widgets.",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={
                     "dashboard_id": str(dashboard.dashboard_id),
                     "widget_ids": tuple(str(item) for item in missing),

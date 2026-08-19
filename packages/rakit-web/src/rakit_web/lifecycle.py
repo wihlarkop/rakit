@@ -1,3 +1,4 @@
+from http import HTTPStatus
 import asyncio
 import logging
 import time
@@ -49,7 +50,7 @@ class LifecycleManager:
                 code=ErrorCode.CONFIG_INVALID,
                 message="max_concurrent_checks must be >= 1 (a value of 0 would make the "
                 "health-check semaphore block forever).",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={"max_concurrent_checks": max_concurrent_checks},
             )
         self.state: RuntimeState = RuntimeState.CREATED
@@ -74,28 +75,28 @@ class LifecycleManager:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message="Health check name must be non-empty.",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={"name": name},
             )
         if timeout_seconds <= 0:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message="Health check timeout_seconds must be > 0.",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={"name": name, "timeout_seconds": timeout_seconds},
             )
         if cache_seconds < 0:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message="Health check cache_seconds must be >= 0.",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={"name": name, "cache_seconds": cache_seconds},
             )
         if name in self._checks:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message=f"Health check {name!r} is already registered.",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={"name": name},
             )
         self._checks[name] = _HealthCheck(

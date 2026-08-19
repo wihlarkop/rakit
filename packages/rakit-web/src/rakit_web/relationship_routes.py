@@ -4,6 +4,7 @@ Relationship writes never happen here.  This module converts normal form
 controls into the sealed typed graph steps and offers read-only HTMX helpers
 for scoped candidates and relationship panels.
 """
+from http import HTTPStatus
 
 import hashlib
 import json
@@ -274,14 +275,14 @@ async def _preview_context(
         raise RakitError(
             code=ErrorCode.AUTH_FORBIDDEN,
             message="Relationship preview is not authorized.",
-            status_code=403,
+            status_code=HTTPStatus.FORBIDDEN,
         )
     root = await root_authorizer(request, "update", parent_identity)
     if root is None:
-        raise RakitError(code=ErrorCode.AUTH_FORBIDDEN, message="Forbidden", status_code=403)
+        raise RakitError(code=ErrorCode.AUTH_FORBIDDEN, message="Forbidden", status_code=HTTPStatus.FORBIDDEN)
     authorizations = await graph_authorizer(request, root, parent_identity, (change,))
     if authorizations is None:
-        raise RakitError(code=ErrorCode.AUTH_FORBIDDEN, message="Forbidden", status_code=403)
+        raise RakitError(code=ErrorCode.AUTH_FORBIDDEN, message="Forbidden", status_code=HTTPStatus.FORBIDDEN)
     try:
         return (
             authorizations.require(
@@ -294,7 +295,7 @@ async def _preview_context(
         )
     except ValueError as exc:
         raise RakitError(
-            code=ErrorCode.AUTH_FORBIDDEN, message="Forbidden", status_code=403
+            code=ErrorCode.AUTH_FORBIDDEN, message="Forbidden", status_code=HTTPStatus.FORBIDDEN
         ) from exc
 
 
@@ -334,7 +335,7 @@ def _invalid_relationship_field() -> RakitError:
     return RakitError(
         code=ErrorCode.VALIDATION_FAILED,
         message="Relationship form input is not valid for this editor.",
-        status_code=422,
+        status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
     )
 
 
@@ -362,7 +363,7 @@ async def _preview_confirm_response(
             "submission_token": binding.issue_submission_token(request),
             "confirm_action": confirm_action,
         },
-        status_code=200,
+        status_code=HTTPStatus.OK,
         headers={"Cache-Control": "no-store"},
     )
 
@@ -472,7 +473,7 @@ def _schema_values(
         raise RakitError(
             code=ErrorCode.VALIDATION_FAILED,
             message="Inline relationship fields are invalid.",
-            status_code=422,
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             details={
                 "relationship_issue": {
                     "relationship_id": relationship_id,
@@ -508,7 +509,7 @@ async def build_relationship_changes(
             raise RakitError(
                 code=ErrorCode.AUTH_FORBIDDEN,
                 message="This relationship is not writable.",
-                status_code=403,
+                status_code=HTTPStatus.FORBIDDEN,
             )
         _validate_relationship_field_names(editor, values)
         unlink_ids = {
@@ -527,7 +528,7 @@ async def build_relationship_changes(
             raise RakitError(
                 code=ErrorCode.VALIDATION_FAILED,
                 message="A child cannot be removed and deleted at the same time.",
-                status_code=422,
+                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                 details={
                     "relationship_issue": {
                         "relationship_id": editor.relationship_id,
@@ -550,7 +551,7 @@ async def build_relationship_changes(
                     raise RakitError(
                         code=ErrorCode.VALIDATION_FAILED,
                         message="A required relationship cannot be cleared.",
-                        status_code=422,
+                        status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                     )
                 steps.append(ClearRelated())
             elif "set" in values and values["set"] not in {"", None}:
@@ -640,7 +641,7 @@ async def build_relationship_changes(
                     raise RakitError(
                         code=ErrorCode.VALIDATION_FAILED,
                         message="Deleting this child requires a current deletion confirmation.",
-                        status_code=422,
+                        status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                         details={
                             "relationship_issue": {
                                 "relationship_id": editor.relationship_id,
@@ -672,7 +673,7 @@ async def build_relationship_changes(
             raise RakitError(
                 code=ErrorCode.VALIDATION_FAILED,
                 message="Reorder requires a complete relationship ordering state.",
-                status_code=422,
+                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             )
         for parts, value in moves:
             if len(parts) != 3 or not isinstance(value, str):
@@ -712,7 +713,7 @@ async def build_relationship_changes(
                 raise RakitError(
                     code=ErrorCode.VALIDATION_FAILED,
                     message="Relationship reorder requires a complete current ordering state.",
-                    status_code=422,
+                    status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                 )
             # A pending child delete removes its member from the same
             # operation, so the reorder step applies to the surviving members
@@ -769,7 +770,7 @@ async def _candidate_options(
         raise RakitError(
             code=ErrorCode.CONFIG_INVALID,
             message="Relationship target data source cannot provide canonical identities.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         )
     result = await editor.target_service.list(
         ResourceQuery.from_params(
@@ -784,7 +785,7 @@ async def _candidate_options(
         raise RakitError(
             code=ErrorCode.CONFIG_INVALID,
             message="Relationship candidate lookup requires page-result semantics.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         )
     return RelationshipCandidatePage(
         items=tuple(
@@ -1192,12 +1193,12 @@ def build_relationship_routes(
         async def options(request: Request, editor: RelationshipEditorBinding = editor) -> Response:
             identity = binding.codec.decode(request.path_params["identity"])
             if not await _authorize_editor(binding, request, editor, identity):
-                return PlainTextResponse("Forbidden", status_code=403)
+                return PlainTextResponse("Forbidden", status_code=HTTPStatus.FORBIDDEN)
             if (
                 not callable(getattr(binding.mutation_service, "get", None))
                 or await binding.mutation_service.get(identity) is None
             ):
-                return PlainTextResponse("Resource was not found", status_code=404)
+                return PlainTextResponse("Resource was not found", status_code=HTTPStatus.NOT_FOUND)
             try:
                 candidate_page = await _candidate_options(
                     editor,
@@ -1205,7 +1206,7 @@ def build_relationship_routes(
                     page=max(1, int(request.query_params.get("page", "1"))),
                 )
             except ValueError:
-                return PlainTextResponse("Invalid candidate page", status_code=400)
+                return PlainTextResponse("Invalid candidate page", status_code=HTTPStatus.BAD_REQUEST)
             selected = {
                 name.removeprefix(f"{relationship_prefix(editor.relationship_id)}link__")
                 for name in request.query_params
@@ -1229,16 +1230,16 @@ def build_relationship_routes(
         async def picker(request: Request, editor: RelationshipEditorBinding = editor) -> Response:
             identity = binding.codec.decode(request.path_params["identity"])
             if not await _authorize_editor(binding, request, editor, identity):
-                return PlainTextResponse("Forbidden", status_code=403)
+                return PlainTextResponse("Forbidden", status_code=HTTPStatus.FORBIDDEN)
             if (
                 not callable(getattr(binding.mutation_service, "get", None))
                 or await binding.mutation_service.get(identity) is None
             ):
-                return PlainTextResponse("Resource was not found", status_code=404)
+                return PlainTextResponse("Resource was not found", status_code=HTTPStatus.NOT_FOUND)
             try:
                 page_number = max(1, int(request.query_params.get("page", "1")))
             except ValueError:
-                return PlainTextResponse("Invalid candidate page", status_code=400)
+                return PlainTextResponse("Invalid candidate page", status_code=HTTPStatus.BAD_REQUEST)
             query = request.query_params.get("q", "")
             candidate_page = await _candidate_options(editor, query=query or None, page=page_number)
             encoded_parent = binding.codec.encode(identity)
@@ -1270,7 +1271,7 @@ def build_relationship_routes(
             if not await _authorize_editor(
                 binding, request, editor, identity
             ) or not await binding.verify_csrf(request):
-                return PlainTextResponse("Forbidden", status_code=403)
+                return PlainTextResponse("Forbidden", status_code=HTTPStatus.FORBIDDEN)
             form = await request.form(max_files=0, max_fields=_MAX_FRAGMENT_FIELDS)
             submitted = {
                 name: value
@@ -1282,7 +1283,7 @@ def build_relationship_routes(
                 not callable(getattr(binding.mutation_service, "get", None))
                 or await binding.mutation_service.get(identity) is None
             ):
-                return PlainTextResponse("Resource was not found", status_code=404)
+                return PlainTextResponse("Resource was not found", status_code=HTTPStatus.NOT_FOUND)
             panel = await relationship_panel_view(
                 editor,
                 parent_identity=identity,
@@ -1301,7 +1302,7 @@ def build_relationship_routes(
             if not await _authorize_editor(
                 binding, request, editor, identity
             ) or not await binding.verify_csrf(request):
-                return PlainTextResponse("Forbidden", status_code=403)
+                return PlainTextResponse("Forbidden", status_code=HTTPStatus.FORBIDDEN)
             form = await request.form(max_files=0, max_fields=_MAX_FRAGMENT_FIELDS)
             submitted = {
                 name: value
@@ -1336,7 +1337,7 @@ def build_relationship_routes(
                         raise RakitError(
                             code=ErrorCode.CONFIG_INVALID,
                             message="Inline child deletion is not supported by this relationship.",
-                            status_code=500,
+                            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                         )
                     encoded = active_delete
                     child = _identity(relationship_binding.codec, encoded)
@@ -1354,7 +1355,7 @@ def build_relationship_routes(
                         raise RakitError(
                             code=ErrorCode.AUTH_FORBIDDEN,
                             message="Relationship child deletion is not authorized.",
-                            status_code=403,
+                            status_code=HTTPStatus.FORBIDDEN,
                         )
                     try:
                         authorizations.require(
@@ -1367,7 +1368,7 @@ def build_relationship_routes(
                         raise RakitError(
                             code=ErrorCode.AUTH_FORBIDDEN,
                             message="Relationship child deletion is not authorized.",
-                            status_code=403,
+                            status_code=HTTPStatus.FORBIDDEN,
                         ) from exc
                     # Membership is resolved by the adapter before it previews the child.
                     child_preview = await preview_delete(identity, editor.relationship_id, child)
@@ -1411,7 +1412,7 @@ def build_relationship_routes(
                         raise RakitError(
                             code=ErrorCode.VALIDATION_FAILED,
                             message="Choose a relationship change before requesting confirmation.",
-                            status_code=422,
+                            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                         )
                     plan = _preview_plan(editor, identity, change)
                     if plan is None:
@@ -1420,7 +1421,7 @@ def build_relationship_routes(
                             message=(
                                 "This relationship change has no destructive impact to confirm."
                             ),
-                            status_code=422,
+                            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                         )
                     capability, _ = await _preview_context(
                         binding, request, editor, identity, change
@@ -1433,7 +1434,7 @@ def build_relationship_routes(
                         raise RakitError(
                             code=ErrorCode.CONFIG_INVALID,
                             message="Relationship destructive preview is not available.",
-                            status_code=500,
+                            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                         )
                     impact = await _with_preview_context(
                         request, capability, preview_impact(plan, authorization=capability)
@@ -1445,7 +1446,7 @@ def build_relationship_routes(
                                 "This relationship change is not destructive and does not need "
                                 "confirmation."
                             ),
-                            status_code=422,
+                            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                         )
                     confirmation = await _with_preview_context(
                         request, capability, issue(plan, authorization=capability)
@@ -1562,7 +1563,7 @@ def build_relationship_routes(
                             request,
                             "relationships/panel.html",
                             {"panel": panel, "codec": relationship_binding.codec},
-                            status_code=200,
+                            status_code=HTTPStatus.OK,
                             headers={
                                 "Cache-Control": "no-store",
                                 "HX-Retarget": (
@@ -1575,7 +1576,7 @@ def build_relationship_routes(
                         request,
                         "relationships/error_summary.html",
                         {"message": message},
-                        status_code=200,
+                        status_code=HTTPStatus.OK,
                         headers={"Cache-Control": "no-store"},
                     )
                 return await _form_response(
@@ -1602,7 +1603,7 @@ def build_relationship_routes(
             if not await _authorize_editor(
                 binding, request, editor, identity
             ) or not await binding.verify_csrf(request):
-                return PlainTextResponse("Forbidden", status_code=403)
+                return PlainTextResponse("Forbidden", status_code=HTTPStatus.FORBIDDEN)
             form = await request.form(max_files=0, max_fields=_MAX_FRAGMENT_FIELDS)
             submitted = {
                 name: value
@@ -1652,7 +1653,7 @@ def build_relationship_routes(
                     else None
                 ),
                 operation="update",
-                status_code=200,
+                status_code=HTTPStatus.OK,
                 parent_identity=identity,
             )
 

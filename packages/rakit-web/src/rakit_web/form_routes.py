@@ -5,6 +5,7 @@ mutation service rather than an ORM model.  HTTP concerns (CSRF, identity
 decoding, duplicate form fields, redirects) stay here; writable-field and
 optimistic-write invariants remain in the datasource service.
 """
+from http import HTTPStatus
 
 import hashlib
 import json
@@ -640,7 +641,7 @@ async def _graph_authorizations(
         raise RakitError(
             code=ErrorCode.AUTH_FORBIDDEN,
             message="Relationship graph mutation is not authorized.",
-            status_code=403,
+            status_code=HTTPStatus.FORBIDDEN,
         )
     authorizations = await binding.graph_mutation_authorizer(
         request, root, parent_identity, changes
@@ -649,7 +650,7 @@ async def _graph_authorizations(
         raise RakitError(
             code=ErrorCode.AUTH_FORBIDDEN,
             message="Relationship graph mutation is not authorized.",
-            status_code=403,
+            status_code=HTTPStatus.FORBIDDEN,
         )
     return authorizations
 
@@ -710,7 +711,7 @@ async def _file_services(binding: WriteResourceBinding) -> AsyncIterator[Service
         raise RakitError(
             code=ErrorCode.CONFIG_INVALID,
             message="File fields require an operation service scope.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         )
     async with binding.operation_scope() as services:
         yield services
@@ -802,7 +803,7 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                     action_path=binding.create_path,
                     submitted=display_submitted,
                     issues=preparation.issues,
-                    status_code=422,
+                    status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                 )
             state = binding.form_schema.parse(preparation.values)
             normalized = dict(state.normalized)
@@ -819,7 +820,7 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                     raise RakitError(
                         code=ErrorCode.CONFIG_INVALID,
                         message="Relationship forms require graph mutation support.",
-                        status_code=500,
+                        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                     )
                 graph_authorizations = await _graph_authorizations(
                     binding, request, authorization, None, changes
@@ -867,7 +868,7 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                 action_path=binding.create_path,
                 submitted=display_submitted,
                 issues=exc.state.issues,
-                status_code=422,
+                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             )
         except RakitError as exc:
             await _compensate_bound_files(binding, preparation)
@@ -1005,7 +1006,7 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                     issues=preparation.issues,
                     concurrency_token=tokens.get("concurrency_token"),
                     operation="update",
-                    status_code=422,
+                    status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                     parent_identity=identity,
                 )
             state = binding.form_schema.parse(preparation.values)
@@ -1023,7 +1024,7 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                     raise RakitError(
                         code=ErrorCode.CONFIG_INVALID,
                         message="Relationship forms require graph mutation support.",
-                        status_code=500,
+                        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                     )
                 graph_authorizations = await _graph_authorizations(
                     binding, request, authorization, identity, changes
@@ -1086,7 +1087,7 @@ def build_write_routes(binding: WriteResourceBinding) -> list[Route]:
                 issues=exc.state.issues,
                 concurrency_token=tokens.get("concurrency_token"),
                 operation="update",
-                status_code=422,
+                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                 parent_identity=identity,
             )
         except RakitError as exc:

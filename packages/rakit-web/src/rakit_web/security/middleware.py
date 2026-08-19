@@ -1,3 +1,4 @@
+from http import HTTPStatus
 import ipaddress
 from collections.abc import MutableMapping
 from typing import Any
@@ -251,19 +252,19 @@ class SecurityMiddleware:
         origin_values = singleton_values(b"origin")
         referer_values = singleton_values(b"referer")
         if len(host_values) != 1:
-            await PlainTextResponse("Invalid host header", status_code=400)(
+            await PlainTextResponse("Invalid host header", status_code=HTTPStatus.BAD_REQUEST)(
                 scope, receive, send_with_security_headers
             )
             return
         if len(origin_values) > 1 or len(referer_values) > 1:
-            await PlainTextResponse("Invalid request origin", status_code=403)(
+            await PlainTextResponse("Invalid request origin", status_code=HTTPStatus.FORBIDDEN)(
                 scope, receive, send_with_security_headers
             )
             return
 
         authority = parse_authority(host_values[0])
         if authority is None or authority[0] not in self._allowed_hosts:
-            await PlainTextResponse("Invalid host header", status_code=400)(
+            await PlainTextResponse("Invalid host header", status_code=HTTPStatus.BAD_REQUEST)(
                 scope, receive, send_with_security_headers
             )
             return
@@ -301,7 +302,7 @@ class SecurityMiddleware:
                 # http://localhost request) must still be rejected.
                 source_origin = _parse_origin(source, allow_path=allow_path)
                 if source_origin is None or source_origin != request_origin:
-                    await PlainTextResponse("Invalid request origin", status_code=403)(
+                    await PlainTextResponse("Invalid request origin", status_code=HTTPStatus.FORBIDDEN)(
                         scope, receive, send_with_security_headers
                     )
                     return
@@ -324,7 +325,7 @@ class SecurityMiddleware:
         if invalid_content_length or (
             declared_size is not None and declared_size > self._max_body_size
         ):
-            await PlainTextResponse("Request entity too large", status_code=413)(
+            await PlainTextResponse("Request entity too large", status_code=HTTPStatus.REQUEST_ENTITY_TOO_LARGE)(
                 scope, receive, send_with_security_headers
             )
             return
@@ -342,6 +343,6 @@ class SecurityMiddleware:
             await self.app(scope, limited_receive, send_with_security_headers)
         except _BodyTooLarge:
             if not response_started:
-                await PlainTextResponse("Request entity too large", status_code=413)(
+                await PlainTextResponse("Request entity too large", status_code=HTTPStatus.REQUEST_ENTITY_TOO_LARGE)(
                     scope, receive, send_with_security_headers
                 )

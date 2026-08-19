@@ -1,3 +1,4 @@
+from http import HTTPStatus
 import math
 import re
 from collections.abc import Mapping
@@ -209,7 +210,7 @@ def _json_safe(api: CompiledResourceApi, value: object) -> object:
             raise _transport_error(
                 api,
                 "generated_api_output_not_serializable",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 message="Generated API output cannot be serialized safely.",
             )
         return value
@@ -226,7 +227,7 @@ def _json_safe(api: CompiledResourceApi, value: object) -> object:
             raise _transport_error(
                 api,
                 "generated_api_output_not_serializable",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 message="Generated API output cannot be serialized safely.",
             )
         return {str(key): _json_safe(api, item) for key, item in value.items()}
@@ -235,7 +236,7 @@ def _json_safe(api: CompiledResourceApi, value: object) -> object:
     raise _transport_error(
         api,
         "generated_api_output_not_serializable",
-        status_code=500,
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         message="Generated API output cannot be serialized safely.",
     )
 
@@ -252,7 +253,7 @@ def serialize_generated_record(
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message="Generated API output schema requires a schema adapter.",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={
                     "resource_id": api.resource_id,
                     "reason": "generated_api_output_schema_adapter_missing",
@@ -265,7 +266,7 @@ def serialize_generated_record(
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message="Generated API output schema must serialize to an object.",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={
                     "resource_id": api.resource_id,
                     "reason": "generated_api_output_schema_not_mapping",
@@ -277,7 +278,7 @@ def serialize_generated_record(
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
                 message="Generated API output schema widened the configured read fields.",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={
                     "resource_id": api.resource_id,
                     "reason": "generated_api_output_schema_widened_field_policy",
@@ -294,7 +295,7 @@ def serialize_generated_record(
         raise RakitError(
             code=ErrorCode.INTERNAL_ERROR,
             message="Generated API record is missing a configured output field.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             details={
                 "resource_id": api.resource_id,
                 "reason": "generated_api_output_field_missing",

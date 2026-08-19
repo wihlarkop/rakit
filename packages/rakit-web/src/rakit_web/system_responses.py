@@ -1,4 +1,5 @@
 """Safe HTML/JSON responses for framework-owned system surfaces."""
+from http import HTTPStatus
 
 from dataclasses import dataclass
 
@@ -68,7 +69,7 @@ class SystemPageRenderer:
         return self._response(
             request,
             template="system/403.html",
-            status_code=403,
+            status_code=HTTPStatus.FORBIDDEN,
             title="Access denied",
             message="You don't have permission to view this page.",
             dashboard_available=dashboard_available,
@@ -78,7 +79,7 @@ class SystemPageRenderer:
         return self._response(
             request,
             template="system/404.html",
-            status_code=404,
+            status_code=HTTPStatus.NOT_FOUND,
             title="Page not found",
             message="The page you're looking for doesn't exist or may have been moved.",
             dashboard_available=dashboard_available,
@@ -90,7 +91,7 @@ class SystemPageRenderer:
         return self._response(
             request,
             template="system/500.html",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             title="Something went wrong",
             message="We couldn't complete this request.",
             dashboard_available=dashboard_available,
@@ -108,7 +109,7 @@ def unexpected_api_error(request: Request) -> JSONResponse:
             "error": {"code": "internal.error", "message": "Internal server error."},
             "request_id": request_id,
         },
-        status_code=500,
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         headers={"Cache-Control": "no-store"},
     )
 

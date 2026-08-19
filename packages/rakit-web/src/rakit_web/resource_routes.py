@@ -5,6 +5,7 @@ callables). This module owns the resource_id -> handler association: it builds a
 `ResourceBinding` per resource and the list/detail `Route` objects that render
 templates via `ResourceService`, the query parser, and the identity codec.
 """
+from http import HTTPStatus
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -232,7 +233,7 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
                     resource_path,
                     validated_query_params(builder_query, explicit, definitions),
                 ),
-                status_code=303,
+                status_code=HTTPStatus.SEE_OTHER,
             )
 
         page = await binding.service.list(query)
@@ -361,14 +362,14 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
             raise RakitError(
                 code=ErrorCode.VALIDATION_FAILED,
                 message="Invalid resource identity",
-                status_code=400,
+                status_code=HTTPStatus.BAD_REQUEST,
                 cause=exc,
             ) from exc
         if set(identity.values) != set(binding.identity_fields):
             raise RakitError(
                 code=ErrorCode.VALIDATION_FAILED,
                 message="Invalid resource identity",
-                status_code=400,
+                status_code=HTTPStatus.BAD_REQUEST,
             )
         record = await binding.service.detail(identity)
         record_actions = await request_action_views(

@@ -1,3 +1,4 @@
+from http import HTTPStatus
 import inspect
 import ipaddress
 from collections.abc import Iterable
@@ -23,7 +24,7 @@ def _invalid_production_config(reason: str, **details: object) -> RakitError:
     return RakitError(
         code=ErrorCode.CONFIG_INVALID,
         message=f"Invalid production security configuration: {reason}",
-        status_code=500,
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         details={"reason": reason, **details},
     )
 

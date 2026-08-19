@@ -1,4 +1,5 @@
 """Translate semantic mutation success to HTTP/HTMX responses."""
+from http import HTTPStatus
 
 import json
 from dataclasses import dataclass
@@ -29,11 +30,11 @@ def mutation_success(
             if message:
                 trigger["rakit:toast"] = {"message": message}
             return Response(
-                status_code=204,
+                status_code=HTTPStatus.NO_CONTENT,
                 headers={"HX-Trigger": json.dumps(trigger), "Cache-Control": "no-store"},
             )
         return Response(
-            status_code=204,
+            status_code=HTTPStatus.NO_CONTENT,
             headers={"HX-Redirect": location, "Cache-Control": "no-store"},
         )
-    return RedirectResponse(location, status_code=303, headers={"Cache-Control": "no-store"})
+    return RedirectResponse(location, status_code=HTTPStatus.SEE_OTHER, headers={"Cache-Control": "no-store"})
