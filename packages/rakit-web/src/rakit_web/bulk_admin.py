@@ -33,7 +33,7 @@ def build_admin_bulk_action_routes(
     *,
     compiled: CompiledApplication,
     resource_services: Mapping[str, ResourceService],
-    write_resource_bindings: Mapping[str, WriteResourceBinding],
+    write_resource_bindings: Mapping[str, WriteResourceBinding] | None = None,
     concurrency_providers: Mapping[str, ConcurrencyVersionProvider],
     templates: Jinja2Templates,
     verify_csrf: Callable[[Request], Awaitable[bool]],
@@ -51,6 +51,7 @@ def build_admin_bulk_action_routes(
     """Materialize framework bulk delete plus compiled custom BULK actions."""
 
     routes: list[Route] = []
+    write_bindings = write_resource_bindings or {}
 
     def bulk_action_views(request: Request, resource_id: str) -> tuple[dict[str, str], ...]:
         principal = request.scope.get("state", {}).get("principal")
@@ -58,7 +59,7 @@ def build_admin_bulk_action_routes(
             return ()
 
         views: list[dict[str, str]] = []
-        write_binding = write_resource_bindings.get(resource_id)
+        write_binding = write_bindings.get(resource_id)
         if write_binding is not None and write_binding.has_record_write_routes:
             delete_requirement = PermissionRequirement.all_of(
                 f"{admin_id}.resources.{resource_id}.delete"
@@ -67,7 +68,7 @@ def build_admin_bulk_action_routes(
                 views.append(
                     {
                         "label": "Delete selected",
-                        "url": mounted_path(request, f"{write_binding.path}/_bulk/delete"),
+                        "url": mounted_path(request, f"{write_binding.path}/_bulk/delete-selected"),
                         "intent": "danger",
                         "builtin": "delete",
                     }
@@ -95,7 +96,7 @@ def build_admin_bulk_action_routes(
 
     # Built-in bulk delete exists independently from ActionDefinition. It is
     # simply the resource DELETE capability applied to a selected set.
-    for resource_id, write_binding in write_resource_bindings.items():
+    for resource_id, write_binding in write_bindings.items():
         if not write_binding.has_record_write_routes:
             continue
         service = resource_services.get(resource_id)

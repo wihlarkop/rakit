@@ -21,6 +21,7 @@ from rakit_core.idempotency import IdempotencyStatus, OperationReceipt
 from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import MutationAuthorization
 from starlette.datastructures import FormData
+from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
@@ -60,7 +61,7 @@ class BuiltInBulkDeleteBinding:
 
     @property
     def path(self) -> str:
-        return f"{self.write.path}/_bulk/delete"
+        return f"{self.write.path}/_bulk/delete-selected"
 
 
 @dataclass(frozen=True)
@@ -294,6 +295,19 @@ def build_builtin_bulk_delete_routes(binding: BuiltInBulkDeleteBinding) -> list[
                 headers={"Cache-Control": "no-store"},
             )
 
+        # Parse once with the bulk-specific bound before CSRF/submission
+        # verifiers read the cached form. This avoids the generic form parser's
+        # lower default field limit becoming an accidental bulk limit.
+        try:
+            form = await request.form(max_files=0, max_fields=(_MAX_SELECTED * 2) + 4)
+        except HTTPException:
+            return _render_feedback(
+                binding,
+                request,
+                title="Bulk delete rejected",
+                message="Invalid bulk delete submission.",
+                status_code=400,
+            )
         if not await binding.write.verify_csrf(request):
             return _render_feedback(
                 binding,
@@ -309,16 +323,6 @@ def build_builtin_bulk_delete_routes(binding: BuiltInBulkDeleteBinding) -> list[
                 title="Bulk delete rejected",
                 message="Invalid or expired submission token.",
                 status_code=409,
-            )
-        try:
-            form = await request.form(max_files=0, max_fields=(_MAX_SELECTED * 2) + 4)
-        except Exception:
-            return _render_feedback(
-                binding,
-                request,
-                title="Bulk delete rejected",
-                message="Invalid bulk delete submission.",
-                status_code=400,
             )
 
         selected_values = form.getlist("selected")
@@ -396,13 +400,36 @@ def build_builtin_bulk_delete_routes(binding: BuiltInBulkDeleteBinding) -> list[
                 message="Built-in bulk delete requires an idempotency store.",
                 status_code=500,
             )
-        reservation = await store.begin(
-            hashlib.sha256(submission_token.encode()).hexdigest(),
-            fingerprint=_fingerprint(selected, delete_tokens),
-        )
+        try:
+            reservation = await store.begin(
+                hashlib.sha256(submission_token.encode()).hexdigest(),
+                fingerprint=_fingerprint(selected, delete_tokens),
+            )
+        except ValueError:
+            return _render_feedback(
+                binding,
+                request,
+                title="Bulk delete rejected",
+                message="This submission token is bound to another bulk delete.",
+                status_code=409,
+            )
         if reservation.status is IdempotencyStatus.COMPLETED:
             receipt = reservation.completed_receipt
-            deleted = int((receipt.payload or {}).get("deleted", len(selected))) if receipt else 0
+            payload = receipt.payload if receipt is not None and receipt.payload is not None else {}
+            deleted = int(payload.get("deleted", len(selected)))
+            failed = int(payload.get("failed", 0))
+            if failed:
+                return _render_feedback(
+                    binding,
+                    request,
+                    title="Bulk delete partially completed",
+                    message=(
+                        f"Deleted {deleted} selected record{'s' if deleted != 1 else ''}; "
+                        f"{failed} could not be deleted. Refresh the resource before retrying."
+                    ),
+                    status_code=409,
+                    tone="warning",
+                )
             return mutation_success(
                 request,
                 location=mounted_path(request, binding.write.path),
@@ -438,7 +465,9 @@ def build_builtin_bulk_delete_routes(binding: BuiltInBulkDeleteBinding) -> list[
                     await _cleanup_deleted_bound_files(binding.write, record)
                     deleted += 1
                 except (RakitError, ValueError) as exc:
-                    failures.append(exc.message if isinstance(exc, RakitError) else "Delete rejected")
+                    failures.append(
+                        exc.message if isinstance(exc, RakitError) else "Delete rejected"
+                    )
             await store.complete(
                 reservation,
                 OperationReceipt(

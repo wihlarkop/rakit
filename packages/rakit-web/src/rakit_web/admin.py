@@ -636,7 +636,7 @@ class Admin:
             (
                 f"resource:{resource_id}:bulk.delete",
                 ("GET", "POST"),
-                f"{binding.path}/_bulk/delete",
+                f"{binding.path}/_bulk/delete-selected",
             ),
             (
                 f"resource:{resource_id}:file.download",
