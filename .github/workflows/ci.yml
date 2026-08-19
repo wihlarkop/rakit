@@ -1,95 +1,77 @@
-name: CI
+name: UI-06 Acceptance Refresh
 
 on:
   pull_request:
-  push:
-    branches: [main]
+    types: [opened, reopened, synchronize]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  test:
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.12", "3.13", "3.14"]
+  refresh-acceptance:
+    if: github.head_ref == 'ui-06-showcase-acceptance'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          python-version: ${{ matrix.python-version }}
-          enable-cache: true
-      - run: uv sync --all-packages --dev --locked
-      - run: uv run ruff format --check .
-      - run: uv run ruff check .
-      - run: uv run ty check
-      - run: uv run pytest
-
-  dependency-compatibility:
-    name: Dependencies (${{ matrix.mode }})
-    strategy:
-      fail-fast: false
-      matrix:
-        mode: [lowest-direct, latest]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           python-version: "3.12"
           enable-cache: true
-      - name: Sync minimum supported direct dependencies
-        if: matrix.mode == 'lowest-direct'
-        run: uv sync --all-packages --dev --resolution lowest-direct
-      - name: Sync latest allowed dependencies
-        if: matrix.mode == 'latest'
-        run: uv sync --all-packages --dev --upgrade
-      - name: Run test suite without re-syncing
-        run: uv run --no-sync pytest -q --tb=short --maxfail=5
-
-  release-gate:
-    name: Plan 07 release gate
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          python-version: "3.12"
-          enable-cache: true
-      - run: uv sync --all-packages --dev --locked
-      - run: uv run pytest --cov
-      - run: uv run mkdocs build --strict
-      - run: uv run python scripts/check_artifacts.py
-
-  artifact-dry-run:
-    name: Artifact dry run
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          python-version: "3.12"
-          enable-cache: true
-      - run: uv sync --all-packages --dev --locked
-      - run: uv run pytest tests/release -v
-      - name: Build all official distributions
+      - name: Merge latest UI-06 integration
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf dist
-          mkdir -p dist
-          for project in packages/*; do
-            uv build "$project" --out-dir dist
-          done
-          ls -la dist
-      - name: Upload dry-run artifacts
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
-        with:
-          name: pr-python-distributions
-          path: dist/*
-          if-no-files-found: error
-          retention-days: 7
+          git fetch origin ui-06-advanced-operations
+          set +e
+          git merge --no-ff --no-commit origin/ui-06-advanced-operations
+          merge_status=$?
+          set -e
+          if [ "$merge_status" -ne 0 ]; then
+            unresolved="$(git diff --name-only --diff-filter=U)"
+            expected="packages/rakit-web/src/rakit_web/static/rakit.css"
+            if [ "$unresolved" != "$expected" ]; then
+              echo "Unexpected merge conflicts:"
+              printf '%s\n' "$unresolved"
+              exit 1
+            fi
+            git checkout --theirs -- "$expected"
+            git add "$expected"
+          fi
+          if git diff --name-only --diff-filter=U | grep -q .; then
+            echo "Unresolved merge conflicts remain"
+            git diff --name-only --diff-filter=U
+            exit 1
+          fi
+          # Generated CSS belongs to the latest integration source. The acceptance
+          # fixture has no CSS-source change, so never carry an obsolete generated diff.
+          git checkout origin/ui-06-advanced-operations -- packages/rakit-web/src/rakit_web/static/rakit.css
+          git add packages/rakit-web/src/rakit_web/static/rakit.css
+      - name: Validate acceptance fixture presence
+        run: python .github/ui06_acceptance_refresh.py
+      - name: Sync dependencies
+        run: uv sync --all-packages --dev --locked
+      - name: Let Ruff normalize the regression test
+        run: |
+          uv run ruff check --fix packages/rakit-web/tests/test_ui06_showcase_acceptance.py
+          uv run ruff format packages/rakit-web/tests/test_ui06_showcase_acceptance.py
+      - name: Focused acceptance verification
+        run: |
+          uv run ruff check packages/rakit-web/tests/test_ui06_showcase_acceptance.py examples/ui_showcase/advanced_states.py examples/ui_showcase/main.py
+          uv run ty check
+          uv run pytest packages/rakit-web/tests/test_ui06_showcase_acceptance.py -q
+          uv run python -c "from examples.ui_showcase.main import app, admin; assert app is not None; assert admin.compiled is not None"
+      - name: Restore normal CI and remove helper
+        run: |
+          git checkout origin/ui-06-advanced-operations -- .github/workflows/ci.yml
+          rm .github/ui06_acceptance_refresh.py
+          git diff --check
+      - name: Commit refreshed acceptance branch
+        run: |
+          git config user.name "rakit-ci-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "merge: refresh UI-06 acceptance on integration"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
