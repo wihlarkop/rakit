@@ -1,6 +1,7 @@
 name: B2 test finalize
 
 on:
+  pull_request:
   push:
     branches: [phase-b2-alpha-hardening]
 
@@ -46,6 +47,7 @@ jobs:
             packages/rakit-auth-sqlalchemy/tests/test_persistence_namespace.py \
             tests/release/test_installed_artifacts.py
       - name: Commit finalized tests
+        if: github.event_name == 'push'
         run: |
           set -euo pipefail
           git diff --check
@@ -59,4 +61,4 @@ jobs:
           git commit -m "test: finalize B2 hardening regressions"
           git push origin HEAD:phase-b2-alpha-hardening
 
-# Trigger commit; remove this workflow after the focused B2 regressions land.
+# Temporary: remove after focused B2 regressions land.
