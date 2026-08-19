@@ -1,7 +1,7 @@
 <section id="rakit-relationship-{{ panel.relationship_id }}" class="rakit-panel" data-rakit-relationship-panel="{{ panel.relationship_id }}" data-rakit-prefix="{{ panel.prefix }}" data-rakit-presentation="{{ panel.presentation_mode }}">
   <header class="rakit-panel-header flex flex-wrap items-start justify-between gap-3">
-    <div>
-      <h2 class="text-sm font-semibold text-rakit-text">{{ panel.relationship.label }}</h2>
+    <div class="min-w-0">
+      <h2 class="text-sm font-semibold text-rakit-text [overflow-wrap:anywhere]">{{ panel.relationship.label }}</h2>
       <p class="mt-1 text-sm text-rakit-text-muted">{% if panel.relationship.effective_writable %}Manage this relationship using the available controls.{% else %}Relationship details are read-only.{% endif %}</p>
     </div>
     {% if panel.total_label %}<span class="rakit-status">{{ panel.total_label }}</span>{% endif %}
