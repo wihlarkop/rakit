@@ -53,8 +53,7 @@ def test_forms_actions_relationships_and_pages_wrap_long_content() -> None:
 
     assert "field.file.current.name" in field_control
     assert (
-        form.count("[overflow-wrap:anywhere]")
-        + field_control.count("[overflow-wrap:anywhere]")
+        form.count("[overflow-wrap:anywhere]") + field_control.count("[overflow-wrap:anywhere]")
         >= 2
     )
 
@@ -85,6 +84,6 @@ def test_narrow_viewports_keep_long_content_inside_intentional_scroll_regions() 
     for template in (resource_table, relationship_many, dashboard_table):
         assert "overflow-x-auto" in template
 
-    assert "table class=\"min-w-full" in resource_table
-    assert "table class=\"min-w-full" in relationship_many
-    assert "table class=\"min-w-full" in dashboard_table
+    assert 'table class="min-w-full' in resource_table
+    assert 'table class="min-w-full' in relationship_many
+    assert 'table class="min-w-full' in dashboard_table
