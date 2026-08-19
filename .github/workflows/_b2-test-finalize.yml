@@ -35,8 +35,24 @@ jobs:
               raise SystemExit(f"expected one stale Uvicorn assertion, found {count}")
           path.write_text(source.replace(old, new), encoding="utf-8")
           PY
-      - run: uv run ruff check --fix packages/rakit/tests packages/rakit-web/tests packages/rakit-auth-sqlalchemy/tests tests/release
-      - run: uv run ruff format packages/rakit/tests packages/rakit-web/tests packages/rakit-auth-sqlalchemy/tests tests/release
+      - name: Finalize B2 formatting and lint
+        run: |
+          uv run ruff check --fix \
+            scripts/check_artifacts.py \
+            packages/rakit-web/src/rakit_web \
+            packages/rakit-auth-sqlalchemy/src/rakit_auth_sqlalchemy \
+            packages/rakit/tests \
+            packages/rakit-web/tests \
+            packages/rakit-auth-sqlalchemy/tests \
+            tests/release
+          uv run ruff format \
+            scripts/check_artifacts.py \
+            packages/rakit-web/src/rakit_web \
+            packages/rakit-auth-sqlalchemy/src/rakit_auth_sqlalchemy \
+            packages/rakit/tests \
+            packages/rakit-web/tests \
+            packages/rakit-auth-sqlalchemy/tests \
+            tests/release
       - name: Run focused B2 regressions
         run: |
           uv run pytest -q \
@@ -46,18 +62,25 @@ jobs:
             packages/rakit-web/tests/test_http_status_semantics.py \
             packages/rakit-auth-sqlalchemy/tests/test_persistence_namespace.py \
             tests/release/test_installed_artifacts.py
-      - name: Commit finalized tests
+      - name: Commit finalized B2 code and tests
         if: github.event_name == 'push'
         run: |
           set -euo pipefail
           git diff --check
           if git diff --quiet; then
-            echo "Tests already finalized"
+            echo "B2 code and tests already finalized"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/rakit/tests packages/rakit-web/tests packages/rakit-auth-sqlalchemy/tests tests/release
+          git add \
+            scripts/check_artifacts.py \
+            packages/rakit-web/src/rakit_web \
+            packages/rakit-auth-sqlalchemy/src/rakit_auth_sqlalchemy \
+            packages/rakit/tests \
+            packages/rakit-web/tests \
+            packages/rakit-auth-sqlalchemy/tests \
+            tests/release
           git commit -m "test: finalize B2 hardening regressions"
           git push origin HEAD:phase-b2-alpha-hardening
 
