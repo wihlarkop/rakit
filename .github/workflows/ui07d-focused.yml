@@ -1,0 +1,31 @@
+name: UI-07D focused verification
+
+on:
+  push:
+    branches: [ui-07d-advanced-widget-foundation]
+
+jobs:
+  focused:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ui-07d-advanced-widget-foundation
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          python-version: '3.12'
+      - run: uv sync --all-packages --dev --locked
+      - name: Focused tests
+        run: |
+          uv run pytest -q \
+            packages/rakit-web/tests/test_field_presentation.py \
+            packages/rakit-web/tests/test_advanced_widget_contracts.py \
+            packages/rakit-web/tests/test_relationship_autocomplete.py
+      - name: Ruff format check
+        run: uv run ruff format --check packages/rakit-core/src/rakit_core/fields.py packages/rakit-core/src/rakit_core/relationships.py packages/rakit-web/src/rakit_web packages/rakit-web/tests/test_field_presentation.py packages/rakit-web/tests/test_advanced_widget_contracts.py packages/rakit-web/tests/test_relationship_autocomplete.py examples/ui_showcase/advanced_states.py
+      - name: Ruff lint
+        run: uv run ruff check packages/rakit-core/src/rakit_core/fields.py packages/rakit-core/src/rakit_core/relationships.py packages/rakit-web/src/rakit_web packages/rakit-web/tests/test_field_presentation.py packages/rakit-web/tests/test_advanced_widget_contracts.py packages/rakit-web/tests/test_relationship_autocomplete.py examples/ui_showcase/advanced_states.py
+      - name: Type check
+        run: uv run ty check
+      - name: JavaScript syntax
+        run: node --check packages/rakit-web/src/rakit_web/static/rakit-widgets.js
