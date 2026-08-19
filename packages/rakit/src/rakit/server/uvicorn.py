@@ -7,7 +7,7 @@ from .._optional import optional_import
 # Guarding the plain top-level import first gets the exception with the
 # expected `.name`, then the real (unconditional, statically-typed) import
 # below only runs once the package is confirmed present.
-with optional_import("rakit_server_uvicorn", extra="server-uvicorn"):
+with optional_import("rakit_server_uvicorn", extra="uvicorn"):
     import rakit_server_uvicorn  # noqa: F401
 
 from rakit_server_uvicorn.server import UvicornServer
