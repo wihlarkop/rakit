@@ -58,3 +58,5 @@ jobs:
           git add packages/rakit/tests packages/rakit-web/tests packages/rakit-auth-sqlalchemy/tests tests/release
           git commit -m "test: finalize B2 hardening regressions"
           git push origin HEAD:phase-b2-alpha-hardening
+
+# Trigger commit; remove this workflow after the focused B2 regressions land.
