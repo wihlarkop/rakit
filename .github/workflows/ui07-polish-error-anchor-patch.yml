@@ -1,0 +1,50 @@
+name: UI-07 polish error anchor patch
+
+on:
+  push:
+    branches: [ui-07-polish-error-summary-field-anchor]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ui-07-polish-error-summary-field-anchor
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          python-version: '3.12'
+      - run: uv sync --all-packages --dev --locked
+      - name: Restore required field to explicit relationship layout
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('examples/ui_showcase/advanced_states.py')
+          source = path.read_text()
+          old_import = 'from rakit_core.forms import FormLayout, FormSchema, RelationshipPanel'
+          new_import = 'from rakit_core.forms import FieldLayout, FormLayout, FormSchema, RelationshipPanel'
+          if old_import not in source:
+              raise SystemExit('forms import target not found')
+          source = source.replace(old_import, new_import, 1)
+
+          old_layout = '''    relationship_layout = FormLayout(\n        children=tuple(\n            RelationshipPanel(\n                layout_id=f"{definition.relationship_id}-panel",\n                relationship_id=definition.relationship_id,\n            )\n            for definition in RELATIONSHIPS\n        )\n    )'''
+          new_layout = '''    relationship_layout = FormLayout(\n        children=(FieldLayout("status"),)\n        + tuple(\n            RelationshipPanel(\n                layout_id=f"{definition.relationship_id}-panel",\n                relationship_id=definition.relationship_id,\n            )\n            for definition in RELATIONSHIPS\n        )\n    )'''
+          if old_layout not in source:
+              raise SystemExit('relationship layout target not found')
+          path.write_text(source.replace(old_layout, new_layout, 1))
+          PY
+          uv run ruff format examples/ui_showcase/advanced_states.py
+          uv run ruff check examples/ui_showcase/advanced_states.py
+      - name: Commit minimal fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add examples/ui_showcase/advanced_states.py
+          git diff --cached --check
+          git commit -m 'fix(showcase): render required relationship parent status'
+          git push origin HEAD:ui-07-polish-error-summary-field-anchor
