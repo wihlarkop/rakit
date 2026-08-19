@@ -20,8 +20,8 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
+from ._paths import mounted_path
 from .action_presentation import action_web_presentation
-from .action_routes import _rejected_response
 from .bulk_routes import (
     BulkActionBinding,
     _bulk_context,
@@ -36,6 +36,38 @@ from .bulk_routes import (
 )
 
 _EMPTY_SUBMITTED: Mapping[str, object] = {}
+
+
+def _dialog_mode(request: Request) -> bool:
+    return request.headers.get("X-Rakit-Dialog") == "bulk"
+
+
+def _render_feedback(
+    binding: BulkActionBinding,
+    request: Request,
+    *,
+    owner_path: str,
+    title: str,
+    message: str,
+    status_code: int,
+    tone: str = "danger",
+) -> Response:
+    return binding.templates.TemplateResponse(
+        request,
+        "actions/_bulk_feedback_content.html"
+        if _dialog_mode(request)
+        else "actions/bulk_feedback.html",
+        {
+            "binding_label": binding.label,
+            "title": title,
+            "message": message,
+            "tone": tone,
+            "cancel_url": mounted_path(request, owner_path),
+            "dialog_mode": _dialog_mode(request),
+        },
+        status_code=status_code,
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 async def _target_context_decisions(
@@ -108,11 +140,12 @@ async def _render_review(
             "availability_reason": availability_reason,
             "execution_policy": policy.execution.value,
             "synchronous_maximum": policy.synchronous_maximum,
+            "dialog_mode": _dialog_mode(request),
         }
     )
     return binding.templates.TemplateResponse(
         request,
-        "actions/bulk.html",
+        "actions/_bulk_review_content.html" if _dialog_mode(request) else "actions/bulk.html",
         args,
         status_code=status_code,
         headers={"Cache-Control": "no-store"},
@@ -155,7 +188,14 @@ def build_mature_bulk_action_routes(binding: BulkActionBinding) -> list[Route]:
 
             root_authorization = await binding.authorize_action(request, compiled, None)
             if root_authorization is None:
-                return _rejected_response(request, "Forbidden", 403)
+                return _render_feedback(
+                    binding,
+                    request,
+                    owner_path=owner_path,
+                    title="Bulk action unavailable",
+                    message="Permission denied.",
+                    status_code=403,
+                )
             try:
                 identities = _decode_selection(
                     binding,
@@ -164,7 +204,14 @@ def build_mature_bulk_action_routes(binding: BulkActionBinding) -> list[Route]:
                 )
                 selection = await _load_selection(binding, identities)
             except RakitError as exc:
-                return _rejected_response(request, exc.message, exc.status_code)
+                return _render_feedback(
+                    binding,
+                    request,
+                    owner_path=owner_path,
+                    title="Bulk action needs attention",
+                    message=exc.message,
+                    status_code=exc.status_code,
+                )
 
             decisions = await _target_context_decisions(
                 binding,
@@ -173,9 +220,23 @@ def build_mature_bulk_action_routes(binding: BulkActionBinding) -> list[Route]:
                 selection,
             )
             if len(decisions) != len(selection.targets):
-                return _rejected_response(request, "Forbidden", 403)
+                return _render_feedback(
+                    binding,
+                    request,
+                    owner_path=owner_path,
+                    title="Bulk action unavailable",
+                    message="Permission denied.",
+                    status_code=403,
+                )
             if any(decision.availability is ActionAvailability.HIDDEN for _, decision in decisions):
-                return _rejected_response(request, "Resource was not found", 404)
+                return _render_feedback(
+                    binding,
+                    request,
+                    owner_path=owner_path,
+                    title="Bulk action unavailable",
+                    message="Resource was not found.",
+                    status_code=404,
+                )
             disabled = next(
                 (
                     decision
