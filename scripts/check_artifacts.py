@@ -4,7 +4,8 @@
 The checker intentionally derives the package inventory from ``packages/*/pyproject.toml`` rather
 than keeping an independent package count. It builds into a temporary directory, inspects wheels
 and sdists, installs ``rakit[standard]`` from those local wheels into a clean virtual environment,
-and starts a copied minimal example outside the repository working tree.
+starts a copied minimal example outside the repository working tree, and then proves the optional
+Granian adapter can be installed and imported from the built artifacts as well.
 """
 
 from __future__ import annotations
@@ -39,6 +40,11 @@ _REQUIRED_WHEEL_PATHS: dict[str, tuple[str, ...]] = {
         "rakit_web/templates/base.html",
         "rakit_web/static/rakit.css",
         "rakit_web/static/rakit-ui.js",
+        "rakit_web/static/rakit-widgets.js",
+        "rakit_web/static/rakit-shell.js",
+        "rakit_web/static/htmx.min.js",
+        "rakit_web/static/HTMX_LICENSE.txt",
+        "rakit_web/static/HTMX_PROVENANCE.md",
         "rakit_web/static/theme.js",
     ),
     "rakit-auth-sqlalchemy": (
@@ -51,6 +57,9 @@ _STANDARD_MODULES = (
     "rakit.core",
     "rakit.sqlalchemy",
     "rakit.auth.sqlalchemy",
+    "rakit.server.uvicorn",
+    "rakit.storage",
+    "rakit.storage.local",
     "rakit_core",
     "rakit_core.testing",
     "rakit_web",
@@ -60,6 +69,10 @@ _STANDARD_MODULES = (
     "rakit_storage_local",
     "rakit_server",
     "rakit_server_uvicorn",
+)
+_GRANIAN_MODULES = (
+    "rakit.server.granian",
+    "rakit_server_granian",
 )
 
 
@@ -258,13 +271,19 @@ def _clean_env() -> dict[str, str]:
     return env
 
 
-def _assert_installed_imports(python: Path, *, cwd: Path, repository: Path) -> None:
-    modules = repr(_STANDARD_MODULES)
+def _assert_installed_imports(
+    python: Path,
+    *,
+    modules: tuple[str, ...],
+    cwd: Path,
+    repository: Path,
+) -> None:
+    module_names = repr(modules)
     repository_text = repr(str(repository.resolve()))
     code = f"""
 import importlib
 from pathlib import Path
-modules = {modules}
+modules = {module_names}
 repo = Path({repository_text}).resolve()
 for name in modules:
     module = importlib.import_module(name)
@@ -301,10 +320,7 @@ def _wait_for_port(port: int, process: subprocess.Popen[str], timeout: float = 2
     raise RuntimeError("timed out waiting for installed minimal example")
 
 
-def clean_install_smoke(dist: Path, root: Path, workspace: Path) -> None:
-    venv = workspace / "venv"
-    _run(["uv", "venv", str(venv), "--python", sys.executable], cwd=workspace)
-    python = _venv_python(venv)
+def _install_extra(dist: Path, python: Path, workspace: Path, extra: str) -> None:
     _run(
         [
             "uv",
@@ -314,13 +330,25 @@ def clean_install_smoke(dist: Path, root: Path, workspace: Path) -> None:
             str(python),
             "--find-links",
             str(dist),
-            f"rakit[standard]=={VERSION}",
+            f"rakit[{extra}]=={VERSION}",
         ],
         cwd=workspace,
         env=_clean_env(),
     )
+
+
+def clean_install_smoke(dist: Path, root: Path, workspace: Path) -> None:
+    venv = workspace / "venv"
+    _run(["uv", "venv", str(venv), "--python", sys.executable], cwd=workspace)
+    python = _venv_python(venv)
+    _install_extra(dist, python, workspace, "standard")
     cli = _venv_rakit(venv)
-    _assert_installed_imports(python, cwd=workspace, repository=root)
+    _assert_installed_imports(
+        python,
+        modules=_STANDARD_MODULES,
+        cwd=workspace,
+        repository=root,
+    )
     _run([str(cli), "--help"], cwd=workspace, env=_clean_env())
 
     # Copy the actual official minimal example into a directory outside the repository. The only
@@ -370,12 +398,37 @@ def clean_install_smoke(dist: Path, root: Path, workspace: Path) -> None:
                 process.kill()
                 process.wait(timeout=5)
 
+    # Granian is intentionally outside ``standard``. Prove the optional extra resolves from the
+    # same locally built Rakit artifacts and that its ergonomic facade imports without leaking the
+    # repository working tree into the clean environment.
+    _install_extra(dist, python, workspace, "granian")
+    _assert_installed_imports(
+        python,
+        modules=_GRANIAN_MODULES,
+        cwd=workspace,
+        repository=root,
+    )
+
+
+def _rakit_project(root: Path) -> dict[str, object]:
+    return tomllib.loads(
+        (root / "packages" / "rakit" / "pyproject.toml").read_text(encoding="utf-8")
+    )["project"]
+
+
+def check_facade_dependencies(root: Path) -> None:
+    dependencies = tuple(_rakit_project(root).get("dependencies", ()))
+    required = f"rakit-storage=={VERSION}"
+    if required not in dependencies:
+        raise RuntimeError(f"rakit facade must directly depend on {required}")
+
 
 def check_standard_extra(root: Path) -> None:
-    data = tomllib.loads(
-        (root / "packages" / "rakit" / "pyproject.toml").read_text(encoding="utf-8")
-    )
-    standard = tuple(data["project"]["optional-dependencies"].get("standard", ()))
+    project = _rakit_project(root)
+    optional = project.get("optional-dependencies", {})
+    if not isinstance(optional, dict):
+        raise RuntimeError("rakit optional-dependencies metadata must be a table")
+    standard = tuple(optional.get("standard", ()))
     required = {
         f"rakit-sqlalchemy=={VERSION}",
         f"rakit-auth-sqlalchemy=={VERSION}",
@@ -399,6 +452,7 @@ def main() -> int:
     root = repository_root()
     projects = discover_projects(root)
     print("official distributions:", ", ".join(project.name for project in projects))
+    check_facade_dependencies(root)
     check_standard_extra(root)
 
     with tempfile.TemporaryDirectory(prefix="rakit-artifacts-") as temporary:
