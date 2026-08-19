@@ -65,8 +65,7 @@ def test_forms_actions_relationships_and_pages_wrap_long_content() -> None:
 
     assert "field.file.current.name" in field_control
     assert (
-        form.count("[overflow-wrap:anywhere]")
-        + field_control.count("[overflow-wrap:anywhere]")
+        form.count("[overflow-wrap:anywhere]") + field_control.count("[overflow-wrap:anywhere]")
         >= 2
     )
 
