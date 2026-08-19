@@ -15,7 +15,7 @@
               {% for row in panel.rows %}
                 {% set encoded = codec.encode(row.candidate.identity) %}
                 <tr{% if encoded in panel.pending_unlinks %} data-rakit-pending-unlink="true"{% endif %}>
-                  <td class="px-3 py-2.5 text-rakit-text"><span class="font-medium{% if encoded in panel.pending_unlinks %} opacity-55 line-through{% endif %}">{{ row.candidate.label }}</span>{% if encoded in panel.pending_unlinks %}<span class="ml-2 text-xs text-rakit-text-muted">Pending relationship removal</span>{% endif %}</td>
+                  <td class="px-3 py-2.5 text-rakit-text [overflow-wrap:anywhere]"><span class="font-medium{% if encoded in panel.pending_unlinks %} opacity-55 line-through{% endif %}">{{ row.candidate.label }}</span>{% if encoded in panel.pending_unlinks %}<span class="ml-2 text-xs text-rakit-text-muted">Pending relationship removal</span>{% endif %}</td>
                   {% if panel.relationship.effective_writable %}<td class="px-3 py-2.5 text-right">{% include "relationships/_row_actions.html" ignore missing %}</td>{% endif %}
                 </tr>
               {% endfor %}
@@ -27,9 +27,9 @@
           {% for row in panel.rows %}
             {% set encoded = codec.encode(row.candidate.identity) %}
             <li class="flex flex-col gap-3 px-3 py-3 sm:flex-row sm:items-center sm:justify-between"{% if encoded in panel.pending_unlinks %} data-rakit-pending-unlink="true"{% endif %}>
-              <div><p class="text-sm font-medium text-rakit-text{% if encoded in panel.pending_unlinks %} opacity-55 line-through{% endif %}">{{ row.candidate.label }}</p>{% if encoded in panel.pending_unlinks %}<p class="mt-1 text-xs text-rakit-text-muted">Pending relationship removal</p>{% endif %}</div>
+              <div class="min-w-0"><p class="text-sm font-medium text-rakit-text [overflow-wrap:anywhere]{% if encoded in panel.pending_unlinks %} opacity-55 line-through{% endif %}">{{ row.candidate.label }}</p>{% if encoded in panel.pending_unlinks %}<p class="mt-1 text-xs text-rakit-text-muted">Pending relationship removal</p>{% endif %}</div>
               {% if panel.relationship.effective_writable %}
-                <div class="flex flex-wrap items-center justify-end gap-2">
+                <div class="flex max-w-full flex-wrap items-center justify-start gap-2 sm:justify-end">
                   {% if panel.unlink_destructive %}
                     {% if encoded in panel.pending_unlinks %}
                       <label class="inline-flex items-center gap-2 text-sm font-medium text-rakit-text"><input class="size-4 rounded border-rakit-border" data-rakit-unlink-input type="checkbox" name="{{ panel.prefix }}unlink__{{ encoded }}" value="{{ encoded }}" checked />Undo removal</label>

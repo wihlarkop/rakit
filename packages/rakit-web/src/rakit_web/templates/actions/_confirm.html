@@ -27,7 +27,7 @@
           {% for field in confirmation_fields %}
           <div class="grid gap-1 px-4 py-3 sm:grid-cols-3 sm:gap-4">
             <dt class="text-sm font-medium text-rakit-text-muted">{{ field.name | replace('_', ' ') | title }}</dt>
-            <dd class="min-w-0 text-sm text-rakit-text sm:col-span-2">{{ field.value }}</dd>
+            <dd class="min-w-0 text-sm text-rakit-text [overflow-wrap:anywhere] sm:col-span-2">{{ field.value }}</dd>
           </div>
           {% endfor %}
         </dl>
@@ -41,7 +41,7 @@
       {% if concurrency_token %}<input type="hidden" name="concurrency_token" value="{{ concurrency_token }}" />{% endif %}
       {% if confirmation_token %}<input type="hidden" name="confirmation_token" value="{{ confirmation_token }}" />{% endif %}
       {% for field in confirmation_fields %}<input type="hidden" name="{{ field.name }}" value="{{ field.value }}" />{% endfor %}
-      <footer class="flex flex-wrap justify-end gap-3 border-t border-rakit-border pt-4">
+      <footer class="flex flex-col-reverse gap-2 border-t border-rakit-border pt-4 sm:flex-row sm:justify-end">
         <a class="rakit-button rakit-button-secondary" href="{{ cancel_url }}">Back</a>
         <button class="rakit-button{% if danger %} rakit-button-danger{% endif %}" type="submit">{{ action.label }}</button>
       </footer>
