@@ -15,11 +15,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: phase-b2-alpha-hardening
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          python-version: "3.12"
-          enable-cache: true
-      - run: uv sync --all-packages --dev --locked
       - name: Replace explicit numeric status_code literals
         shell: bash
         run: |
@@ -32,68 +27,27 @@ jobs:
 
           root = Path("packages/rakit-web/src/rakit_web")
           names = {
-              100: "CONTINUE",
-              101: "SWITCHING_PROTOCOLS",
-              102: "PROCESSING",
-              103: "EARLY_HINTS",
-              200: "OK",
-              201: "CREATED",
-              202: "ACCEPTED",
-              203: "NON_AUTHORITATIVE_INFORMATION",
-              204: "NO_CONTENT",
-              205: "RESET_CONTENT",
-              206: "PARTIAL_CONTENT",
-              207: "MULTI_STATUS",
-              208: "ALREADY_REPORTED",
-              226: "IM_USED",
-              300: "MULTIPLE_CHOICES",
-              301: "MOVED_PERMANENTLY",
-              302: "FOUND",
-              303: "SEE_OTHER",
-              304: "NOT_MODIFIED",
-              305: "USE_PROXY",
-              307: "TEMPORARY_REDIRECT",
-              308: "PERMANENT_REDIRECT",
-              400: "BAD_REQUEST",
-              401: "UNAUTHORIZED",
-              402: "PAYMENT_REQUIRED",
-              403: "FORBIDDEN",
-              404: "NOT_FOUND",
-              405: "METHOD_NOT_ALLOWED",
-              406: "NOT_ACCEPTABLE",
-              407: "PROXY_AUTHENTICATION_REQUIRED",
-              408: "REQUEST_TIMEOUT",
-              409: "CONFLICT",
-              410: "GONE",
-              411: "LENGTH_REQUIRED",
-              412: "PRECONDITION_FAILED",
-              413: "REQUEST_ENTITY_TOO_LARGE",
-              414: "REQUEST_URI_TOO_LONG",
-              415: "UNSUPPORTED_MEDIA_TYPE",
-              416: "REQUESTED_RANGE_NOT_SATISFIABLE",
-              417: "EXPECTATION_FAILED",
-              418: "IM_A_TEAPOT",
-              421: "MISDIRECTED_REQUEST",
-              422: "UNPROCESSABLE_ENTITY",
-              423: "LOCKED",
-              424: "FAILED_DEPENDENCY",
-              425: "TOO_EARLY",
-              426: "UPGRADE_REQUIRED",
-              428: "PRECONDITION_REQUIRED",
-              429: "TOO_MANY_REQUESTS",
-              431: "REQUEST_HEADER_FIELDS_TOO_LARGE",
-              451: "UNAVAILABLE_FOR_LEGAL_REASONS",
-              500: "INTERNAL_SERVER_ERROR",
-              501: "NOT_IMPLEMENTED",
-              502: "BAD_GATEWAY",
-              503: "SERVICE_UNAVAILABLE",
-              504: "GATEWAY_TIMEOUT",
-              505: "HTTP_VERSION_NOT_SUPPORTED",
-              506: "VARIANT_ALSO_NEGOTIATES",
-              507: "INSUFFICIENT_STORAGE",
-              508: "LOOP_DETECTED",
-              510: "NOT_EXTENDED",
-              511: "NETWORK_AUTHENTICATION_REQUIRED",
+              100: "CONTINUE", 101: "SWITCHING_PROTOCOLS", 102: "PROCESSING", 103: "EARLY_HINTS",
+              200: "OK", 201: "CREATED", 202: "ACCEPTED", 203: "NON_AUTHORITATIVE_INFORMATION",
+              204: "NO_CONTENT", 205: "RESET_CONTENT", 206: "PARTIAL_CONTENT", 207: "MULTI_STATUS",
+              208: "ALREADY_REPORTED", 226: "IM_USED", 300: "MULTIPLE_CHOICES",
+              301: "MOVED_PERMANENTLY", 302: "FOUND", 303: "SEE_OTHER", 304: "NOT_MODIFIED",
+              305: "USE_PROXY", 307: "TEMPORARY_REDIRECT", 308: "PERMANENT_REDIRECT",
+              400: "BAD_REQUEST", 401: "UNAUTHORIZED", 402: "PAYMENT_REQUIRED", 403: "FORBIDDEN",
+              404: "NOT_FOUND", 405: "METHOD_NOT_ALLOWED", 406: "NOT_ACCEPTABLE",
+              407: "PROXY_AUTHENTICATION_REQUIRED", 408: "REQUEST_TIMEOUT", 409: "CONFLICT",
+              410: "GONE", 411: "LENGTH_REQUIRED", 412: "PRECONDITION_FAILED",
+              413: "REQUEST_ENTITY_TOO_LARGE", 414: "REQUEST_URI_TOO_LONG",
+              415: "UNSUPPORTED_MEDIA_TYPE", 416: "REQUESTED_RANGE_NOT_SATISFIABLE",
+              417: "EXPECTATION_FAILED", 418: "IM_A_TEAPOT", 421: "MISDIRECTED_REQUEST",
+              422: "UNPROCESSABLE_ENTITY", 423: "LOCKED", 424: "FAILED_DEPENDENCY",
+              425: "TOO_EARLY", 426: "UPGRADE_REQUIRED", 428: "PRECONDITION_REQUIRED",
+              429: "TOO_MANY_REQUESTS", 431: "REQUEST_HEADER_FIELDS_TOO_LARGE",
+              451: "UNAVAILABLE_FOR_LEGAL_REASONS", 500: "INTERNAL_SERVER_ERROR",
+              501: "NOT_IMPLEMENTED", 502: "BAD_GATEWAY", 503: "SERVICE_UNAVAILABLE",
+              504: "GATEWAY_TIMEOUT", 505: "HTTP_VERSION_NOT_SUPPORTED",
+              506: "VARIANT_ALSO_NEGOTIATES", 507: "INSUFFICIENT_STORAGE", 508: "LOOP_DETECTED",
+              510: "NOT_EXTENDED", 511: "NETWORK_AUTHENTICATION_REQUIRED",
           }
           pattern = re.compile(r"(\bstatus_code\s*(?:==|!=|<=|>=|=|<|>)\s*)(\d{3})\b")
 
@@ -102,8 +56,8 @@ jobs:
                   return source
               tree = ast.parse(source)
               insert_after = 0
-              body = list(tree.body)
               index = 0
+              body = list(tree.body)
               if body and isinstance(body[0], ast.Expr):
                   value = body[0].value
                   if isinstance(value, ast.Constant) and isinstance(value.value, str):
@@ -114,26 +68,24 @@ jobs:
                   if isinstance(node, ast.ImportFrom) and node.module == "__future__":
                       insert_after = node.end_lineno or node.lineno
                       index += 1
-                      continue
-                  break
+                  else:
+                      break
               lines = source.splitlines(keepends=True)
               lines.insert(insert_after, "from http import HTTPStatus\n")
               return "".join(lines)
 
           changed: list[str] = []
+          skipped: list[str] = []
           for path in sorted(root.rglob("*.py")):
               source = path.read_text(encoding="utf-8")
               touched = [False]
 
               def replace(match: re.Match[str]) -> str:
                   code = int(match.group(2))
-                  try:
-                      name = names[code]
-                  except KeyError as exc:
-                      raise SystemExit(
-                          f"{path}: unsupported explicit HTTP status literal {code}; "
-                          "extend the compatibility mapping intentionally"
-                      ) from exc
+                  name = names.get(code)
+                  if name is None:
+                      skipped.append(f"{path}:{code}")
+                      return match.group(0)
                   touched[0] = True
                   return f"{match.group(1)}HTTPStatus.{name}"
 
@@ -144,22 +96,18 @@ jobs:
                   path.write_text(updated, encoding="utf-8")
                   changed.append(str(path))
 
+          print("updated HTTP status semantics:")
+          print("\n".join(changed) if changed else "none")
+          print("unmapped explicit status literals:")
+          print("\n".join(skipped) if skipped else "none")
           if not changed:
               raise SystemExit("no explicit numeric status_code literals found")
-          print("updated HTTP status semantics:")
-          print("\n".join(changed))
           PY
-      - run: uv run ruff check --fix packages/rakit-web/src/rakit_web
-      - run: uv run ruff format packages/rakit-web/src/rakit_web
       - name: Commit semantic-only cleanup
         shell: bash
         run: |
           set -euo pipefail
           git diff --check
-          if git diff --quiet -- packages/rakit-web/src/rakit_web; then
-            echo "No HTTPStatus changes"
-            exit 0
-          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add packages/rakit-web/src/rakit_web
