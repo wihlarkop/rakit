@@ -19,6 +19,8 @@ def test_ui06_acceptance_launchers_and_pages_are_compiled() -> None:
         "/acceptance-documents",
         "/acceptance-page-mapping",
     }
+    launcher_ids = tuple(launcher.launcher_id for launcher in ADVANCED_LAUNCHERS)
+    assert len(launcher_ids) == len(set(launcher_ids))
 
     compiled = admin.compiled
     assert compiled is not None
