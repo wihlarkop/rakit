@@ -102,7 +102,7 @@ function rakitOpenMobileNavigation(trigger) {
   trigger.setAttribute("aria-expanded", "true");
   document.body.setAttribute("data-rakit-mobile-navigation-open", "");
   navigation.showModal();
-  navigation.querySelector("[data-rakit-mobile-navigation-close]")?.focus();
+  navigation.querySelector("[data-rakit-mobile-navigation-close]")?.focus({ preventScroll: true });
 }
 
 function rakitCloseMobileNavigation() {
@@ -121,7 +121,7 @@ function rakitResetMobileNavigation() {
     document.contains(returnFocus) &&
     !RAKIT_DESKTOP_NAVIGATION.matches
   ) {
-    returnFocus.focus();
+    returnFocus.focus({ preventScroll: true });
   }
 }
 
