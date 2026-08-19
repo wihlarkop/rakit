@@ -28,12 +28,16 @@ jobs:
 
           path = Path("packages/rakit/tests/test_facade.py")
           source = path.read_text(encoding="utf-8")
+          marker = "def test_server_uvicorn_facade_raises_friendly_error_when_missing"
           old = 'assert \'uv add "rakit[server-uvicorn]"\' in str(caught.value)'
           new = 'assert \'uv add "rakit[uvicorn]"\' in str(caught.value)'
-          count = source.count(old)
-          if count != 1:
-              raise SystemExit(f"expected one stale Uvicorn assertion, found {count}")
-          path.write_text(source.replace(old, new), encoding="utf-8")
+          if marker not in source:
+              raise SystemExit("Uvicorn facade test marker not found")
+          before, after = source.split(marker, 1)
+          if old not in after:
+              raise SystemExit("stale Uvicorn facade assertion not found after marker")
+          after = after.replace(old, new, 1)
+          path.write_text(before + marker + after, encoding="utf-8")
           PY
       - name: Finalize B2 formatting and lint
         run: |
