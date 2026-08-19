@@ -19,8 +19,17 @@ from starlette.requests import Request
 from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 
+from .action_views import request_action_views
 from .page_routes import PageBinding, build_page_routes
 from .security.validation import validate_idempotency_store_for_production
+
+_PAGE_ACTIONS_STATE = "rakit_page_actions"
+
+
+def _page_action_context(request: Request) -> dict[str, object]:
+    state = request.scope.get("state", {})
+    actions = state.get(_PAGE_ACTIONS_STATE, ()) if isinstance(state, Mapping) else ()
+    return {"page_actions": actions}
 
 
 def register_public_page(
@@ -180,19 +189,28 @@ def build_admin_page_routes(
         if principal.subject_id is None:
             return None
         page = compiled_page.definition
-        return OperationAuthorization.for_requirement(
+        authorization = OperationAuthorization.for_requirement(
             admin_id=admin_id,
             resource_id=str(page.page_id),
             operation=f"page:{page.page_id}",
             principal_id=principal.subject_id,
             requirement=compiled_page.permission,
         )
+        page_actions = await request_action_views(
+            request,
+            owner_id=str(page.page_id),
+            scope=ActionScope.PAGE,
+        )
+        request.scope.setdefault("state", {})[_PAGE_ACTIONS_STATE] = page_actions
+        return authorization
 
     route_by_name = {route.route_name: route for route in compiled.routes}
     pairs = tuple(
         (route_by_name[f"page:{compiled_page.definition.page_id}"], compiled_page)
         for compiled_page in compiled.compiled_pages
     )
+    if _page_action_context not in templates.context_processors:
+        templates.context_processors.append(_page_action_context)
     binding = PageBinding(
         routes=pairs,
         templates=templates,

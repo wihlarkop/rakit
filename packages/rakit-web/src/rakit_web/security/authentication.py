@@ -20,14 +20,18 @@ from urllib.parse import unquote
 from rakit_core.auth import ANONYMOUS_PRINCIPAL, AuthBackend, Principal, SessionStore
 from rakit_core.permissions import PermissionRequirement
 from starlette.requests import Request
-from starlette.responses import JSONResponse, PlainTextResponse, RedirectResponse
+from starlette.responses import JSONResponse, PlainTextResponse, RedirectResponse, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .._paths import mounted_path
+from ..auth_state import AuthReason
 from .cookies import SESSION_COOKIE_NAME
 
 LOGIN_PATH = "/auth/login"
 LOGOUT_PATH = "/auth/logout"
+_AUTH_REASON_STATE_KEY = "rakit_auth_reason"
+
+BrowserForbiddenRenderer = Callable[[Request, bool], Response]
 
 # Paths that must remain reachable without authentication. `/auth/login`
 # above all -- gating it would make the admin unreachable (a redirect loop
@@ -118,7 +122,9 @@ class PrincipalMiddleware:
         self._auth_backend = auth_backend
         self._session_store = session_store
 
-    async def _resolve(self, request: Request) -> tuple[Principal, bool, str | None]:
+    async def _resolve(
+        self, request: Request
+    ) -> tuple[Principal, bool, str | None, AuthReason | None]:
         """Resolve the request's principal, and report whether a session
         cookie was present but no longer usable.
 
@@ -130,10 +136,10 @@ class PrincipalMiddleware:
         """
         raw_token = request.cookies.get(SESSION_COOKIE_NAME)
         if not raw_token:
-            return ANONYMOUS_PRINCIPAL, False, None
+            return ANONYMOUS_PRINCIPAL, False, None, None
         record = await self._session_store.resolve(raw_token)
         if record is None:
-            return ANONYMOUS_PRINCIPAL, True, None
+            return ANONYMOUS_PRINCIPAL, True, None, AuthReason.SESSION_EXPIRED
         principal = await self._auth_backend.resolve_principal(record.subject_id)
         if principal is None or not principal.authenticated:
             # Revoke, don't just ignore. Treating this as anonymous for the
@@ -142,17 +148,19 @@ class PrincipalMiddleware:
             # *same* pre-deactivation session. Disabling an account has to
             # end its sessions, not pause them.
             await self._session_store.revoke(record.session_id)
-            return ANONYMOUS_PRINCIPAL, True, None
-        return principal, False, record.session_id
+            return ANONYMOUS_PRINCIPAL, True, None, None
+        return principal, False, record.session_id, None
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
         request = Request(scope, receive=receive)
-        principal, clear_session_cookie, session_id = await self._resolve(request)
+        principal, clear_session_cookie, session_id, auth_reason = await self._resolve(request)
         scope.setdefault("state", {})
         scope["state"]["principal"] = principal
+        if auth_reason is not None:
+            scope["state"][_AUTH_REASON_STATE_KEY] = auth_reason.value
         if session_id is not None:
             # The opaque identifier is request-private state, not a response
             # field.  Write routes use it to bind CSRF/submission tokens to
@@ -173,7 +181,7 @@ class PrincipalMiddleware:
         await self.app(scope, receive, send_clearing_session_cookie)
 
 
-def _is_generated_api_path(path: str) -> bool:
+def is_generated_api_path(path: str) -> bool:
     return path == "/api" or path.startswith("/api/")
 
 
@@ -205,10 +213,12 @@ class AuthorizationMiddleware:
         *,
         requirement_for: Callable[..., PermissionRequirement | None],
         superuser_bypass: bool = True,
+        render_forbidden: BrowserForbiddenRenderer | None = None,
     ) -> None:
         self.app = app
         self._requirement_for = requirement_for
         self._superuser_bypass = superuser_bypass
+        self._render_forbidden = render_forbidden
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -218,7 +228,7 @@ class AuthorizationMiddleware:
         request = Request(scope, receive=receive)
         relative_path = admin_relative_path(request)
         requirement = self._requirement_for(relative_path, request.method)
-        api_request = _is_generated_api_path(relative_path)
+        api_request = is_generated_api_path(relative_path)
         if requirement is None:
             await self.app(scope, receive, send)
             return
@@ -234,9 +244,16 @@ class AuthorizationMiddleware:
                     message="Authentication is required.",
                 )(scope, receive, send)
                 return
-            # Browser requests retain the existing login redirect behavior.
+            # Browser requests retain the login redirect behavior and expose
+            # only a closed reason code when a previously-present session expired.
+            login_url = mounted_path(request, LOGIN_PATH)
+            if (
+                scope.get("state", {}).get(_AUTH_REASON_STATE_KEY)
+                == AuthReason.SESSION_EXPIRED.value
+            ):
+                login_url = f"{login_url}?reason={AuthReason.SESSION_EXPIRED.value}"
             await RedirectResponse(
-                url=mounted_path(request, LOGIN_PATH),
+                url=login_url,
                 status_code=303,
                 headers={"Cache-Control": "no-store"},
             )(scope, receive, send)
@@ -251,9 +268,19 @@ class AuthorizationMiddleware:
                     message="Permission denied.",
                 )(scope, receive, send)
                 return
-            await PlainTextResponse(
-                "Forbidden", status_code=403, headers={"Cache-Control": "no-store"}
-            )(scope, receive, send)
+            if self._render_forbidden is not None:
+                dashboard_requirement = self._requirement_for("/", "GET")
+                dashboard_available = (
+                    dashboard_requirement is None
+                    or dashboard_requirement.matches(
+                        principal, superuser_bypass=self._superuser_bypass
+                    )
+                )
+                await self._render_forbidden(request, dashboard_available)(scope, receive, send)
+            else:
+                await PlainTextResponse(
+                    "Forbidden", status_code=403, headers={"Cache-Control": "no-store"}
+                )(scope, receive, send)
             return
 
         await self.app(scope, receive, send)
@@ -341,6 +368,8 @@ def build_requirement_resolver(
                     operation: str | None = None
                     if suffix == ["new"]:
                         operation = "create"
+                    elif suffix == ["_bulk", "delete-selected"]:
+                        operation = "delete"
                     elif len(suffix) == 2 and suffix[1] in {"edit", "delete"}:
                         operation = "update" if suffix[1] == "edit" else "delete"
                     elif len(suffix) >= 2 and suffix[1] == "_relationships":

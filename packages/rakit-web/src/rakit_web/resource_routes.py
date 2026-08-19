@@ -15,11 +15,13 @@ from uuid import UUID
 from jinja2 import ChoiceLoader, FileSystemLoader, PackageLoader, pass_context, select_autoescape
 from jinja2 import Environment as JinjaEnvironment
 from jinja2.runtime import Context
+from rakit_core.actions import ActionScope
 from rakit_core.definitions import ResourceDefinition
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.filters import ResourceFilter
 from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_core.pagination import ResourcePaginationPolicy
+from rakit_core.permissions import PermissionRequirement
 from rakit_core.query import ResourceQuery
 from rakit_core.resources import ResourceService
 from starlette.datastructures import QueryParams
@@ -29,6 +31,8 @@ from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 
 from ._paths import mounted_path as _mounted_path
+from .action_presentation import action_web_presentation
+from .action_views import request_action_views
 from .assets import static_url
 from .icons import render_icon
 from .resource_presentation import resource_web_presentation
@@ -82,6 +86,7 @@ def build_templates(template_dirs: Sequence[Path]) -> Jinja2Templates:
     globals_["static_url"] = _template_static_url
     globals_["rakit_icon"] = render_icon
     globals_["rakit_resource_web_presentation"] = resource_web_presentation
+    globals_["rakit_action_web_presentation"] = action_web_presentation
     return Jinja2Templates(env=environment)
 
 
@@ -123,7 +128,23 @@ class ResourceBinding:
     service: ResourceService
     templates: Jinja2Templates
     crud_paths: ResourceCrudPaths | None = None
+    admin_id: str = "admin"
+    auth_enabled: bool = False
+    superuser_bypass: bool = True
     codec: IdentityCodec = field(default_factory=IdentityCodec)
+
+    def can_mutate(self, request: Request, operation: str) -> bool:
+        if self.crud_paths is None:
+            return False
+        if not self.auth_enabled:
+            return True
+        principal = request.scope.get("state", {}).get("principal")
+        if principal is None or not principal.authenticated:
+            return False
+        requirement = PermissionRequirement.all_of(
+            f"{self.admin_id}.resources.{self.resource_id}.{operation}"
+        )
+        return requirement.matches(principal, superuser_bypass=self.superuser_bypass)
 
     @property
     def resource_id(self) -> str:
@@ -215,6 +236,11 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
             )
 
         page = await binding.service.list(query)
+        resource_actions = await request_action_views(
+            request,
+            owner_id=binding.resource_id,
+            scope=ActionScope.RESOURCE,
+        )
         fields = binding.fields
         rows: list[dict[str, object]] = []
         for item in page.items:
@@ -252,9 +278,10 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
             "fields": fields,
             "rows": rows,
             "resource_path": resource_path,
+            "resource_actions": resource_actions,
             "create_url": (
                 _mounted_path(request, binding.crud_paths.create_path)
-                if binding.crud_paths is not None
+                if binding.crud_paths is not None and binding.can_mutate(request, "create")
                 else ""
             ),
             "count_url": count_url,
@@ -344,18 +371,25 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
                 status_code=400,
             )
         record = await binding.service.detail(identity)
+        record_actions = await request_action_views(
+            request,
+            owner_id=binding.resource_id,
+            scope=ActionScope.RECORD,
+            identity=identity,
+            record=record,
+        )
         fields = binding.detail_fields
         cells = {field_name: _field_value(record, field_name) for field_name in fields}
         encoded_identity = binding.codec.encode(identity)
         edit_url = ""
         delete_url = ""
         if binding.crud_paths is not None:
-            if binding.crud_paths.update_path:
+            if binding.crud_paths.update_path and binding.can_mutate(request, "update"):
                 edit_url = _mounted_path(
                     request,
                     binding.crud_paths.update_path.replace("{identity}", encoded_identity),
                 )
-            if binding.crud_paths.delete_path:
+            if binding.crud_paths.delete_path and binding.can_mutate(request, "delete"):
                 delete_url = _mounted_path(
                     request,
                     binding.crud_paths.delete_path.replace("{identity}", encoded_identity),
@@ -368,6 +402,8 @@ def build_resource_routes(binding: ResourceBinding) -> list[Route]:
             "display_cells": {
                 field_name: _display_value(value) for field_name, value in cells.items()
             },
+            "record_actions": record_actions,
+            "encoded_identity": encoded_identity,
             "edit_url": edit_url,
             "delete_url": delete_url,
         }

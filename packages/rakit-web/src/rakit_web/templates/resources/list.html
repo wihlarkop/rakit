@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "components/actions.html" import action_group %}
 {% block title %}{{ resource.label }}{% endblock %}
 {% block content %}
 <div id="rakit-resource-list-root">
@@ -13,8 +14,13 @@
       <h1 class="mt-1 text-2xl font-semibold tracking-tight text-rakit-text">{{ resource.label }}</h1>
       <p class="mt-2 max-w-2xl text-sm leading-6 text-rakit-text-muted">Browse, search, filter, and inspect the records available in this resource.</p>
     </div>
-    {% if create_url %}
-      <a class="rakit-button shrink-0" href="{{ create_url }}">Create {{ resource.singular_label }}</a>
+    {% if create_url or resource_actions %}
+      <div class="flex flex-wrap items-start gap-2" aria-label="Resource actions">
+        {% if create_url %}
+          <a class="rakit-button shrink-0" href="{{ create_url }}">Create {{ resource.singular_label }}</a>
+        {% endif %}
+        {{ action_group(resource_actions, 'Resource actions') }}
+      </div>
     {% endif %}
   </header>
   {% include table_template %}

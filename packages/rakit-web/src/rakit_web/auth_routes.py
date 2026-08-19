@@ -21,6 +21,7 @@ from .security.csrf import CsrfService
 from .security.middleware import resolve_client_ip
 from .security.rate_limit import RateLimiter
 from .security.validation import TrustedProxyNetwork
+from .system_responses import auth_reason_message
 
 CSRF_HEADER_NAME = "x-csrf-token"
 CSRF_FORM_FIELD = "csrf_token"
@@ -122,11 +123,18 @@ def build_auth_routes(
     csrf_service: CsrfService,
     rate_limiter: RateLimiter,
     templates: Jinja2Templates,
+    label: str,
     admin_id: str,
     secure_cookies: bool,
     trusted_proxies: tuple[TrustedProxyNetwork, ...] = (),
 ) -> list[Route]:
-    def _render_login(request: Request, *, error: str | None, status_code: int = 200) -> Response:
+    def _render_login(
+        request: Request,
+        *,
+        error: str | None,
+        reason_message: tuple[str, str] | None = None,
+        status_code: int = 200,
+    ) -> Response:
         """Render login with a stable pre-session double-submit token.
 
         Reuse the current login CSRF cookie while it is structurally valid so
@@ -146,10 +154,13 @@ def build_auth_routes(
             "auth/login.html",
             {
                 "error": error,
+                "reason_message": reason_message,
+                "binding_label": label,
                 "login_url": _mounted_path(request, "/auth/login"),
                 "login_csrf_token": token,
                 "login_csrf_field": LOGIN_CSRF_FORM_FIELD,
                 "rakit_shell_enabled": False,
+                "rakit_shell_mode": "auth",
             },
             status_code=status_code,
             headers={"Cache-Control": "no-store"},
@@ -165,7 +176,11 @@ def build_auth_routes(
         return response
 
     async def login_get(request: Request) -> Response:
-        return _render_login(request, error=None)
+        return _render_login(
+            request,
+            error=None,
+            reason_message=auth_reason_message(request.query_params.get("reason")),
+        )
 
     async def login_post(request: Request) -> Response:
         parsed_form = await _parse_login_form(request)
@@ -257,7 +272,10 @@ def build_auth_routes(
                 )
             await session_store.revoke(record.session_id)
 
-        response = RedirectResponse(url=_mounted_path(request, "/auth/login"), status_code=303)
+        response = RedirectResponse(
+            url=_mounted_path(request, "/auth/login"),
+            status_code=303,
+        )
         cookie_path = _mounted_path(request, "/") or "/"
         response.delete_cookie(SESSION_COOKIE_NAME, path=cookie_path)
         response.delete_cookie(CSRF_COOKIE_NAME, path=cookie_path)

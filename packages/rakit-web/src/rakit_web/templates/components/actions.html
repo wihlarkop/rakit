@@ -1,0 +1,50 @@
+{% macro action_control(action, compact=false) -%}
+  {% set is_disabled = action.availability.value == 'disabled' %}
+  {% set is_danger = action.intent.value == 'danger' %}
+  {% set classes = 'rakit-button rakit-button-danger' if is_danger else ('rakit-button' if action.intent.value == 'primary' else 'rakit-button rakit-button-secondary') %}
+  {% if is_disabled %}
+    <span class="inline-flex flex-col items-start gap-1">
+      <button class="{{ classes }}" type="button" disabled aria-disabled="true">{{ action.label }}</button>
+      {% if action.reason and not compact %}<span class="max-w-64 text-xs leading-5 text-rakit-text-muted">{{ action.reason }}</span>{% endif %}
+    </span>
+  {% else %}
+    <a class="{{ classes }}" href="{{ action.url }}">{{ action.label }}</a>
+  {% endif %}
+{%- endmacro %}
+
+{% macro action_group(actions, label='Actions') -%}
+  {% if actions %}
+    {% set primary = namespace(item=none) %}
+    {% for action in actions %}
+      {% if action.intent.value == 'primary' %}{% set primary.item = action %}{% endif %}
+    {% endfor %}
+    <div class="flex flex-wrap items-start gap-2" data-rakit-action-group>
+      {% if actions|length == 1 %}
+        {{ action_control(actions[0]) }}
+      {% else %}
+        {% if primary.item %}{{ action_control(primary.item) }}{% endif %}
+        <details class="relative" data-rakit-action-overflow>
+          <summary class="rakit-button rakit-button-secondary cursor-pointer list-none">More</summary>
+          <div class="rakit-popover right-0 left-auto min-w-56" role="group" aria-label="{{ label }}">
+            <div class="flex flex-col gap-1">
+              {% for action in actions %}
+                {% if not primary.item or action.action_id != primary.item.action_id %}
+                  {% set is_disabled = action.availability.value == 'disabled' %}
+                  {% set is_danger = action.intent.value == 'danger' %}
+                  <div{% if is_danger %} class="mt-1 border-t border-rakit-border pt-2"{% endif %}>
+                    {% if is_disabled %}
+                      <span class="block rounded-md px-3 py-2 text-sm font-medium text-rakit-text-subtle" aria-disabled="true">{{ action.label }}</span>
+                      {% if action.reason %}<span class="block px-3 pb-2 text-xs leading-5 text-rakit-text-muted">{{ action.reason }}</span>{% endif %}
+                    {% else %}
+                      <a class="block rounded-md px-3 py-2 text-sm font-medium {% if is_danger %}text-rakit-danger hover:bg-rakit-danger-subtle{% else %}text-rakit-text hover:bg-rakit-surface-subtle{% endif %}" href="{{ action.url }}">{{ action.label }}</a>
+                    {% endif %}
+                  </div>
+                {% endif %}
+              {% endfor %}
+            </div>
+          </div>
+        </details>
+      {% endif %}
+    </div>
+  {% endif %}
+{%- endmacro %}

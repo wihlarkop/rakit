@@ -125,12 +125,32 @@
   <div class="flex flex-col gap-4 lg:flex-row lg:items-start" data-rakit-resource-layout>
     <div class="min-w-0 flex-1 space-y-4" data-rakit-resource-results>
       {% if bulk_actions %}
-      <form method="get" data-rakit-bulk-actions="{{ resource.resource_id }}">
+      {% set bulk_primary = namespace(item=none) %}
+      {% for action in bulk_actions %}{% if action.intent == 'primary' %}{% set bulk_primary.item = action %}{% endif %}{% endfor %}
+      <form method="get" data-rakit-bulk-actions="{{ resource.resource_id }}" data-rakit-bulk-selection>
         <div class="mb-3 flex flex-wrap items-center gap-2" role="group" aria-label="Bulk actions">
-          <span class="text-sm text-rakit-text-muted" data-rakit-selected-count>Selected rows:</span>
-          {% for action in bulk_actions %}
-          <button class="rakit-button rakit-button-secondary" type="submit" formaction="{{ action.url }}">{{ action.label }}</button>
-          {% endfor %}
+          <span class="mr-1 text-sm text-rakit-text-muted" data-rakit-selected-count>0 selected</span>
+          {% if bulk_actions|length == 1 %}
+            {% set action = bulk_actions[0] %}
+            <button class="rakit-button{% if action.intent == 'danger' %} rakit-button-danger{% elif action.intent != 'primary' %} rakit-button-secondary{% endif %}" type="submit" formaction="{{ action.url }}" data-rakit-bulk-review-trigger>{{ action.label }}</button>
+          {% else %}
+            {% if bulk_primary.item %}
+            <button class="rakit-button" type="submit" formaction="{{ bulk_primary.item.url }}" data-rakit-bulk-review-trigger>{{ bulk_primary.item.label }}</button>
+            {% endif %}
+            <details class="relative">
+              <summary class="rakit-button rakit-button-secondary cursor-pointer list-none">More</summary>
+              <div class="rakit-popover min-w-56">
+                <div class="flex flex-col gap-1">
+                  {% for action in bulk_actions %}
+                    {% if not bulk_primary.item or action.url != bulk_primary.item.url %}
+                    <button class="w-full rounded-md px-3 py-2 text-left text-sm font-medium transition{% if action.intent == 'danger' %} mt-1 border-t border-rakit-border pt-3 text-rakit-danger hover:bg-rakit-danger-subtle{% else %} text-rakit-text hover:bg-rakit-surface-subtle{% endif %}" type="submit" formaction="{{ action.url }}" data-rakit-bulk-review-trigger>{{ action.label }}</button>
+                    {% endif %}
+                  {% endfor %}
+                </div>
+              </div>
+            </details>
+          {% endif %}
+          <span class="text-xs text-rakit-text-subtle">Select records, then choose an action.</span>
         </div>
       {% endif %}
 
@@ -140,7 +160,9 @@
             <thead class="bg-rakit-surface-subtle">
               <tr class="border-b border-rakit-border">
                 {% if bulk_actions %}
-                <th scope="col" class="w-12 px-4 py-3"><span class="sr-only">Select</span></th>
+                <th scope="col" class="w-12 px-4 py-3">
+                  <input class="rakit-checkbox" type="checkbox" data-rakit-select-page aria-label="Select all records on this page" />
+                </th>
                 {% endif %}
                 {% for header in sort_headers %}
                 <th scope="col" class="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-rakit-text-muted" aria-sort="{{ header.aria_sort }}">
@@ -177,7 +199,7 @@
                 {% if bulk_actions %}
                 <td class="px-4 py-3 align-middle">
                   {% if row.detail_url %}
-                  <input class="rakit-checkbox" type="checkbox" name="selected" value="{{ row.detail_url.rsplit('/', 1)[-1] }}" aria-label="Select {{ row.display_cells[0] }}" />
+                  <input class="rakit-checkbox" type="checkbox" name="selected" value="{{ row.detail_url.rsplit('/', 1)[-1] }}" data-rakit-select-row aria-label="Select {{ row.display_cells[0] }}" />
                   {% endif %}
                 </td>
                 {% endif %}
@@ -214,6 +236,16 @@
       </div>
       {% if bulk_actions %}
       </form>
+      <dialog
+        id="rakit-bulk-dialog-{{ resource.resource_id }}"
+        class="rakit-dialog"
+        data-rakit-dialog
+        data-rakit-dialog-backdrop-close
+        data-rakit-bulk-dialog
+        aria-label="Bulk action"
+      >
+        <div class="rakit-dialog-body" data-rakit-bulk-dialog-content></div>
+      </dialog>
       {% endif %}
 
       <div class="flex flex-col gap-3 border-t border-rakit-border pt-4 lg:flex-row lg:items-center lg:justify-between" data-rakit-pagination data-rakit-pagination-strategy="{{ pagination.strategy }}">

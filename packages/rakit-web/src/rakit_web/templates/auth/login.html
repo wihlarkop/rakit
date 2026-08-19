@@ -1,17 +1,31 @@
 {% extends "base.html" %}
-
-{% block title %}Sign in{% endblock %}
-
+{% block title %}Sign in · {{ binding_label }}{% endblock %}
 {% block content %}
-<form method="post" action="{{ login_url }}">
-  {% if error %}
-  <p role="alert">{{ error }}</p>
-  {% endif %}
-  <input type="hidden" name="{{ login_csrf_field }}" value="{{ login_csrf_token }}" />
-  <label for="identifier">Email</label>
-  <input type="text" id="identifier" name="identifier" autocomplete="username" required />
-  <label for="password">Password</label>
-  <input type="password" id="password" name="password" autocomplete="current-password" required />
-  <button type="submit">Sign in</button>
-</form>
+<section class="mx-auto flex min-h-[60vh] max-w-md items-center py-8" aria-labelledby="rakit-login-title">
+  <div class="w-full rounded-rakit-lg border border-rakit-border bg-rakit-surface p-6 shadow-rakit-sm sm:p-8">
+    <p class="text-sm font-semibold text-rakit-text-muted">{{ binding_label }}</p>
+    <h1 id="rakit-login-title" class="mt-2 text-2xl font-semibold tracking-tight text-rakit-text">Sign in</h1>
+    <p class="mt-2 text-sm leading-6 text-rakit-text-muted">Use your account credentials to continue to the admin.</p>
+
+    {% if reason_message %}
+      <div class="rakit-alert mt-5{% if reason_message[0] == 'success' %} rakit-alert-success{% elif reason_message[0] == 'warning' %} rakit-alert-warning{% endif %}" role="status">{{ reason_message[1] }}</div>
+    {% endif %}
+    {% if error %}
+      <div class="rakit-alert rakit-alert-danger mt-5" role="alert">{{ error }}</div>
+    {% endif %}
+
+    <form class="mt-6 space-y-4" method="post" action="{{ login_url }}">
+      <input type="hidden" name="{{ login_csrf_field }}" value="{{ login_csrf_token }}" />
+      <div>
+        <label class="mb-1.5 block text-sm font-medium text-rakit-text" for="identifier">Email</label>
+        <input class="rakit-input" type="text" id="identifier" name="identifier" autocomplete="username" required />
+      </div>
+      <div>
+        <label class="mb-1.5 block text-sm font-medium text-rakit-text" for="password">Password</label>
+        <input class="rakit-input" type="password" id="password" name="password" autocomplete="current-password" required />
+      </div>
+      <button class="rakit-button rakit-button-primary w-full justify-center" type="submit">Sign in</button>
+    </form>
+  </div>
+</section>
 {% endblock %}

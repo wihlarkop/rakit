@@ -1,9 +1,9 @@
 <dialog class="rakit-dialog" aria-labelledby="rakit-preview-title" data-rakit-preview-dialog data-rakit-prefix="{{ prefix }}"{% if delete_identity %} data-rakit-delete-identity="{{ delete_identity }}"{% endif %}{% if unlink_identity %} data-rakit-unlink-identity="{{ unlink_identity }}"{% endif %}{% if clear_prefix %} data-rakit-clear-prefix="{{ clear_prefix }}"{% endif %} data-rakit-confirmation="{{ confirmation }}" data-rakit-confirmation-intent="{{ confirmation_intent }}" data-rakit-impact="{{ impact }}">
   <form method="dialog" class="p-5">
-    <h2 id="rakit-preview-title" class="text-lg font-semibold text-slate-900">{{ title }}</h2>
-    <p class="mt-2 text-sm leading-6 text-slate-600">{{ description }}</p>
-    {% if impact %}<div class="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950"><p class="font-medium">Impact</p><p class="mt-1">{{ impact }}</p></div>{% endif %}
-    <p class="mt-4 text-sm text-slate-600">This is applied only when you save the {{ resource_label }}.</p>
+    <h2 id="rakit-preview-title" class="text-lg font-semibold text-rakit-text">{{ title }}</h2>
+    <p class="mt-2 text-sm leading-6 text-rakit-text-muted">{{ description }}</p>
+    {% if impact %}<div class="mt-4 rounded-md border border-rakit-border bg-rakit-surface-subtle p-3 text-sm text-rakit-text"><p class="font-medium">Impact</p><p class="mt-1">{{ impact }}</p></div>{% endif %}
+    <p class="mt-4 text-sm text-rakit-text-muted">This is applied only when you save the {{ resource_label }}.</p>
     <div class="mt-6 flex justify-end gap-2">
       <button class="rakit-button rakit-button-secondary" value="cancel">Cancel</button>
       <button class="rakit-button rakit-button-danger" value="confirm" data-rakit-confirm-preview>{{ confirm_label }}</button>

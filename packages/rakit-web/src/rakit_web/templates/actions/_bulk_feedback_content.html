@@ -1,0 +1,16 @@
+<section class="space-y-5" data-rakit-bulk-feedback>
+  <header>
+    <p class="text-sm font-medium text-rakit-text-muted">{{ binding_label }}</p>
+    <h1 class="mt-1 text-xl font-semibold tracking-tight text-rakit-text">{{ title }}</h1>
+  </header>
+  <div class="rakit-alert rakit-alert-{{ tone | default('danger') }}" role="alert">
+    {{ message }}
+  </div>
+  <footer class="flex justify-end">
+    {% if dialog_mode %}
+      <button class="rakit-button rakit-button-secondary" type="button" data-rakit-dialog-close>Close</button>
+    {% else %}
+      <a class="rakit-button rakit-button-secondary" href="{{ cancel_url }}">Back to resource</a>
+    {% endif %}
+  </footer>
+</section>

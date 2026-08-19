@@ -14,57 +14,41 @@
       href="#rakit-main-content"
       class="sr-only z-50 rounded-rakit-sm bg-rakit-surface px-3 py-2 text-sm font-medium text-rakit-text shadow-rakit-md focus:not-sr-only focus:fixed focus:left-4 focus:top-4"
     >Skip to main content</a>
-
     <div id="rakit-announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 
     {% set navigation_provider = request.scope.get('state', {}).get('rakit_navigation_provider') %}
     {% set shell_enabled = rakit_shell_enabled | default(true) %}
-    {% if navigation_provider and shell_enabled %}
+    {% set shell_mode = rakit_shell_mode | default('app' if shell_enabled else 'auth') %}
+    {% if navigation_provider and shell_enabled and shell_mode == 'app' %}
       {% set shell_navigation = navigation_provider(request) %}
       <div data-rakit-app-shell class="min-h-screen lg:flex">
         {% include "components/admin_navigation.html" %}
-
         <div class="min-w-0 flex-1">
           <header class="sticky top-0 z-30 border-b border-rakit-border bg-rakit-surface/95 backdrop-blur lg:hidden">
             <div class="flex min-h-16 items-center gap-3 px-4 sm:px-6">
-              <button
-                type="button"
-                data-rakit-mobile-navigation-trigger
-                aria-controls="rakit-mobile-navigation"
-                aria-expanded="false"
-                aria-label="Open navigation"
-                class="inline-flex size-10 shrink-0 items-center justify-center rounded-rakit-sm text-rakit-text-muted transition hover:bg-rakit-surface-subtle hover:text-rakit-text"
-              >
-                {{ rakit_icon("menu", class_name="size-5") }}
-              </button>
-              <a href="{{ shell_navigation.dashboard.path }}" class="min-w-0 flex-1 truncate text-base font-semibold tracking-tight text-rakit-text">
-                {{ shell_navigation.title }}
-              </a>
+              <button type="button" data-rakit-mobile-navigation-trigger aria-controls="rakit-mobile-navigation" aria-expanded="false" aria-label="Open navigation" class="inline-flex size-10 shrink-0 items-center justify-center rounded-rakit-sm text-rakit-text-muted transition hover:bg-rakit-surface-subtle hover:text-rakit-text">{{ rakit_icon("menu", class_name="size-5") }}</button>
+              <a href="{{ shell_navigation.dashboard.path }}" class="min-w-0 flex-1 truncate text-base font-semibold tracking-tight text-rakit-text">{{ shell_navigation.title }}</a>
               <span class="rounded-rakit-sm border border-rakit-border px-2 py-0.5 text-xs font-medium text-rakit-text-muted">Admin</span>
             </div>
           </header>
-
           {% include "components/admin_mobile_navigation.html" %}
-
-          <noscript>
-            {% set navigation = shell_navigation %}
-            <nav class="border-b border-rakit-border bg-rakit-surface px-4 py-4 lg:hidden" aria-label="Primary navigation fallback">
-              {% include "components/admin_navigation_items.html" %}
-            </nav>
-          </noscript>
+          <noscript>{% set navigation = shell_navigation %}<nav class="border-b border-rakit-border bg-rakit-surface px-4 py-4 lg:hidden" aria-label="Primary navigation fallback">{% include "components/admin_navigation_items.html" %}</nav></noscript>
+    {% elif shell_mode in ('auth', 'system') %}
+      <header class="border-b border-rakit-border bg-rakit-surface">
+        <div class="mx-auto flex min-h-16 w-full max-w-5xl items-center justify-between gap-4 px-4 sm:px-6">
+          <span class="truncate text-base font-semibold tracking-tight text-rakit-text">{{ binding_label | default(label | default('Rakit')) }}</span>
+          <div class="w-36">{% set theme_control_id = "rakit-theme-system" %}{% set theme_menu_placement = "down" %}{% include "components/theme_control.html" %}</div>
+        </div>
+      </header>
     {% endif %}
 
     <main id="rakit-main-content" tabindex="-1" class="min-w-0 flex-1">
-      <div class="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+      <div class="mx-auto w-full {% if shell_mode in ('auth', 'system') %}max-w-5xl{% else %}max-w-7xl{% endif %} px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
         {% block content %}{% endblock %}
       </div>
     </main>
 
-    {% if navigation_provider and shell_enabled %}
-        </div>
-      </div>
-    {% endif %}
-
+    {% if navigation_provider and shell_enabled and shell_mode == 'app' %}</div></div>{% endif %}
     <script src="{{ static_url('rakit-shell.js') }}" defer></script>
     <script src="{{ static_url('rakit-ui.js') }}" defer></script>
   </body>

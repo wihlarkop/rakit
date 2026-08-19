@@ -94,7 +94,9 @@ from rakit_core.relationships import (
     RelationshipEditMode,
     RelationshipKind,
 )
+from rakit_web.action_presentation import ActionIntent, ActionPresentation
 from rakit_web.dashboard_admin import Admin
+from rakit_web.page_presentation import PageWebPresentation
 from rakit_web.resource_presentation import (
     FilterGroupPresentation,
     FilterPanelPresentation,
@@ -107,6 +109,8 @@ __version__ = "0.1.0a1"
 
 __all__ = [
     "ActionDefinition",
+    "ActionIntent",
+    "ActionPresentation",
     "ActionResult",
     "ActionScope",
     "ActionSuccess",
@@ -163,6 +167,7 @@ __all__ = [
     "PageRejected",
     "PageResult",
     "PageSizePolicy",
+    "PageWebPresentation",
     "PaginationStrategy",
     "PreparedPageMutationHandler",
     "RakitConfig",
