@@ -1,4 +1,4 @@
-"""Admin composition adapter for compiled BULK action routes."""
+"""Admin composition adapter for built-in and custom BULK operations."""
 
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager
@@ -14,6 +14,7 @@ from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.idempotency import IdempotencyStore
 from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_core.mutations import OperationAuthorization
+from rakit_core.permissions import PermissionRequirement
 from rakit_core.resources import ResourceService
 from rakit_core.transactions import OperationUnitOfWorkFactory
 from starlette.requests import Request
@@ -22,21 +23,24 @@ from starlette.templating import Jinja2Templates
 
 from ._paths import mounted_path
 from .action_presentation import action_web_presentation
+from .bulk_delete import BuiltInBulkDeleteBinding, build_builtin_bulk_delete_routes
 from .bulk_review import build_mature_bulk_action_routes
 from .bulk_routes import BulkActionBinding
+from .form_routes import WriteResourceBinding
 
 
 def build_admin_bulk_action_routes(
     *,
     compiled: CompiledApplication,
     resource_services: Mapping[str, ResourceService],
+    write_resource_bindings: Mapping[str, WriteResourceBinding],
     concurrency_providers: Mapping[str, ConcurrencyVersionProvider],
     templates: Jinja2Templates,
     verify_csrf: Callable[[Request], Awaitable[bool]],
     verify_submission_token: Callable[[Request], Awaitable[bool]],
     issue_submission_token: Callable[[Request], str],
     token_service: TokenService,
-    idempotency_store: IdempotencyStore,
+    idempotency_store: IdempotencyStore | None,
     admin_id: str,
     superuser_bypass: bool,
     deadline_seconds: float,
@@ -44,7 +48,7 @@ def build_admin_bulk_action_routes(
     unit_of_work_factory: Callable[[], OperationUnitOfWorkFactory | None],
     label: str,
 ) -> list[Route]:
-    """Materialize BULK bindings and list controls from the same compiled graph."""
+    """Materialize framework bulk delete plus compiled custom BULK actions."""
 
     routes: list[Route] = []
 
@@ -52,23 +56,62 @@ def build_admin_bulk_action_routes(
         principal = request.scope.get("state", {}).get("principal")
         if principal is None or not principal.authenticated:
             return ()
-        return tuple(
+
+        views: list[dict[str, str]] = []
+        write_binding = write_resource_bindings.get(resource_id)
+        if write_binding is not None and write_binding.has_record_write_routes:
+            delete_requirement = PermissionRequirement.all_of(
+                f"{admin_id}.resources.{resource_id}.delete"
+            )
+            if delete_requirement.matches(principal, superuser_bypass=superuser_bypass):
+                views.append(
+                    {
+                        "label": "Delete selected",
+                        "url": mounted_path(request, f"{write_binding.path}/_bulk/delete"),
+                        "intent": "danger",
+                        "builtin": "delete",
+                    }
+                )
+
+        views.extend(
             {
                 "label": str(compiled_action.definition.label),
                 "url": mounted_path(request, route.path),
                 "intent": action_web_presentation(compiled_action.definition).intent.value,
+                "builtin": "",
             }
             for route, compiled_action in compiled.action_routes
             if compiled_action.definition.scope is ActionScope.BULK
             and compiled_action.definition.resource_id == resource_id
             and compiled_action.permission.matches(principal, superuser_bypass=superuser_bypass)
         )
+        return tuple(views)
 
     # Resource/action templates are shared across bindings. These helpers are
-    # Web-only and filter exact compiled permissions before exposing launchers.
+    # Web-only and filter exact permissions before exposing launchers.
     template_globals = cast(dict[str, Any], templates.env.globals)
     template_globals["rakit_bulk_actions"] = bulk_action_views
     template_globals["rakit_action_web_presentation"] = action_web_presentation
+
+    # Built-in bulk delete exists independently from ActionDefinition. It is
+    # simply the resource DELETE capability applied to a selected set.
+    for resource_id, write_binding in write_resource_bindings.items():
+        if not write_binding.has_record_write_routes:
+            continue
+        service = resource_services.get(resource_id)
+        if service is None:
+            continue
+        routes.extend(
+            build_builtin_bulk_delete_routes(
+                BuiltInBulkDeleteBinding(
+                    write=write_binding,
+                    identity_fields=service.data_source.identity_fields,
+                    templates=templates,
+                    token_service=token_service,
+                    label=label,
+                )
+            )
+        )
 
     async def authorize_action(
         request: Request,
@@ -102,6 +145,12 @@ def build_admin_bulk_action_routes(
         )
         if not pairs:
             continue
+        if idempotency_store is None:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="Custom bulk actions require an operation idempotency store.",
+                status_code=500,
+            )
         provider = concurrency_providers.get(resource_id)
         missing_snapshot_provider = tuple(
             str(compiled_action.definition.action_id)
