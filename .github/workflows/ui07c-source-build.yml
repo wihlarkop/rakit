@@ -1,0 +1,50 @@
+name: UI-07C source build
+
+on:
+  push:
+    branches: [ui-07c-contrast-motion-copy]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-build:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ui-07c-contrast-motion-copy
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.22
+      - name: Apply contrast and copy hardening
+        run: python .github/ui07c_patch.py
+      - name: Install maintainer assets
+        run: bun install --frozen-lockfile
+      - name: Build committed CSS
+        run: bun run css:build
+      - name: Verify source and generated output
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F -- '--color-rakit-text-subtle: oklch(0.54 0.018 285);' packages/rakit-web/src/rakit_web/assets/rakit.css
+          grep -F -- '--color-rakit-text-subtle: oklch(0.62 0.022 285);' packages/rakit-web/src/rakit_web/assets/rakit.css
+          grep -F 'text-rakit-bg' packages/rakit-web/src/rakit_web/assets/rakit.css
+          grep -F 'rakit-alert rakit-alert-warning' packages/rakit-web/src/rakit_web/templates/actions/_confirm.html
+          grep -F '@media (prefers-reduced-motion: reduce)' packages/rakit-web/src/rakit_web/assets/rakit.css
+          git diff --check
+      - name: Commit product source and generated CSS
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add packages/rakit-web/src/rakit_web
+          if git diff --cached --quiet; then
+            echo 'No product changes to commit'
+            exit 1
+          fi
+          git commit -m 'fix(web): harden contrast motion and confirmation copy'
+          git push origin HEAD:ui-07c-contrast-motion-copy
