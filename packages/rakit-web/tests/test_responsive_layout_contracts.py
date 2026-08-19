@@ -52,9 +52,11 @@ def test_forms_actions_relationships_and_pages_wrap_long_content() -> None:
     page = _read("templates", "pages", "page.html")
 
     assert "field.file.current.name" in field_control
-    assert form.count("[overflow-wrap:anywhere]") + field_control.count(
-        "[overflow-wrap:anywhere]"
-    ) >= 2
+    assert (
+        form.count("[overflow-wrap:anywhere]")
+        + field_control.count("[overflow-wrap:anywhere]")
+        >= 2
+    )
 
     assert "inline-flex max-w-full flex-col" in actions
     assert "max-w-full text-xs" in actions
