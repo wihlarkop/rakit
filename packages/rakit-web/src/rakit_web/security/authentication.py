@@ -368,6 +368,8 @@ def build_requirement_resolver(
                     operation: str | None = None
                     if suffix == ["new"]:
                         operation = "create"
+                    elif suffix == ["_bulk", "delete"]:
+                        operation = "delete"
                     elif len(suffix) == 2 and suffix[1] in {"edit", "delete"}:
                         operation = "update" if suffix[1] == "edit" else "delete"
                     elif len(suffix) >= 2 and suffix[1] == "_relationships":

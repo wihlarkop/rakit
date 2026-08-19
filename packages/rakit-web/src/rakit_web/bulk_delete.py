@@ -19,6 +19,7 @@ from rakit_core.crypto import TokenService
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.idempotency import IdempotencyStatus, OperationReceipt
 from rakit_core.identity import RecordIdentity
+from rakit_core.mutations import MutationAuthorization
 from starlette.datastructures import FormData
 from starlette.requests import Request
 from starlette.responses import Response
@@ -366,7 +367,7 @@ def build_builtin_bulk_delete_routes(binding: BuiltInBulkDeleteBinding) -> list[
             )
 
         service = cast(WriteMutationService, binding.write.mutation_service)
-        preflight: list[tuple[RecordIdentity, object, object]] = []
+        preflight: list[tuple[RecordIdentity, object, MutationAuthorization]] = []
         for identity in identities:
             authorization = await _authorization(binding.write, request, "delete", identity)
             if authorization is None:
@@ -432,7 +433,7 @@ def build_builtin_bulk_delete_routes(binding: BuiltInBulkDeleteBinding) -> list[
                             identity=identity,
                             authorization=authorization,
                         ),
-                        cast("object", authorization),
+                        authorization,
                     )
                     await _cleanup_deleted_bound_files(binding.write, record)
                     deleted += 1

@@ -141,7 +141,11 @@
   }
 
   .rakit-select {
-    @apply block min-h-9 w-full appearance-auto rounded-rakit-sm border border-rakit-border-strong bg-rakit-surface px-3 py-1.5 pr-8 text-sm text-rakit-text shadow-rakit-sm focus:border-rakit-focus;
+    @apply block min-h-9 w-full appearance-none rounded-rakit-sm border border-rakit-border-strong bg-rakit-surface px-3 py-1.5 pr-10 text-sm text-rakit-text shadow-rakit-sm focus:border-rakit-focus;
+    background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+    background-position: calc(100% - 1rem) calc(50% - 0.125rem), calc(100% - 0.7rem) calc(50% - 0.125rem);
+    background-repeat: no-repeat;
+    background-size: 0.32rem 0.32rem;
   }
 
   .rakit-textarea {
