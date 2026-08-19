@@ -1,0 +1,56 @@
+name: UI-07D quality fixes
+
+on:
+  push:
+    branches: [ui-07d-advanced-widget-foundation]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ui-07d-advanced-widget-foundation
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          python-version: '3.12'
+      - run: uv sync --all-packages --dev --locked
+      - name: Apply quality patch
+        run: python .github/ui07d_quality_patch.py
+      - name: Apply repository formatter and safe lint fixes
+        run: |
+          uv run ruff format \
+            packages/rakit-core/src/rakit_core/fields.py \
+            packages/rakit-core/src/rakit_core/relationships.py \
+            packages/rakit-web/src/rakit_web \
+            packages/rakit-web/tests/test_field_presentation.py \
+            packages/rakit-web/tests/test_advanced_widget_contracts.py \
+            packages/rakit-web/tests/test_relationship_autocomplete.py \
+            examples/ui_showcase/advanced_states.py
+          uv run ruff check --fix \
+            packages/rakit-core/src/rakit_core/fields.py \
+            packages/rakit-core/src/rakit_core/relationships.py \
+            packages/rakit-web/src/rakit_web \
+            packages/rakit-web/tests/test_field_presentation.py \
+            packages/rakit-web/tests/test_advanced_widget_contracts.py \
+            packages/rakit-web/tests/test_relationship_autocomplete.py \
+            examples/ui_showcase/advanced_states.py
+      - name: Validate syntax
+        run: |
+          python -m compileall -q packages/rakit-core/src packages/rakit-web/src packages/rakit/src examples/ui_showcase
+          node --check packages/rakit-web/src/rakit_web/static/rakit-widgets.js
+      - name: Commit quality fixes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add packages/rakit-core packages/rakit-web examples/ui_showcase
+          if git diff --cached --quiet; then
+            echo 'No quality changes to commit'
+          else
+            git commit -m 'fix(web): satisfy UI-07D quality contracts'
+            git push origin HEAD:ui-07d-advanced-widget-foundation
+          fi
