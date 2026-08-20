@@ -23,7 +23,7 @@ jobs:
       - name: Normalize source formatting and imports
         run: |
           uv run ruff format packages/rakit/src/rakit packages/rakit-web/src/rakit_web examples/reference_app
-          uv run ruff check --fix packages/rakit/src/rakit packages/rakit-web/src/rakit_web examples/reference_app
+          uv run ruff check --fix --unsafe-fixes packages/rakit/src/rakit packages/rakit-web/src/rakit_web examples/reference_app
           git diff --check
       - name: Commit deterministic formatting
         run: |
@@ -35,6 +35,7 @@ jobs:
           git add packages/rakit/src/rakit packages/rakit-web/src/rakit_web examples/reference_app
           git commit -m "style: normalize Phase B source"
           git push origin HEAD:phase-b-reference-app-hardening
+      - run: uv run ruff check packages/rakit/src/rakit packages/rakit-web/src/rakit_web examples/reference_app
       - run: uv run ty check
       - run: uv run python -m compileall -q examples/reference_app
       - name: Compile reference application through public composition
