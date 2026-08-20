@@ -162,7 +162,6 @@ jobs:
           assert data["project"]["dependencies"] == ["rakit[standard]", "aiosqlite"]
           assert data["project"]["requires-python"] == ">=3.12"
           PY
-          "$PYTHON_BIN" -m compileall -q demo-standard/src
           "$RAKIT_BIN" init demo-standard --template standard --server uvicorn --no-install --yes \
             > rerun.txt
           grep -q "satisfied" rerun.txt
@@ -175,6 +174,7 @@ jobs:
           fi
           grep -q "conflict" collision.txt
           test "$pyproject_hash" = "$(sha256sum demo-standard/pyproject.toml | cut -d' ' -f1)"
+          "$PYTHON_BIN" -m compileall -q demo-standard/src
 
           echo "== standard generated composition bootstraps and passes rakit check =="
           "$RAKIT_BIN" init demo-check --template standard --server uvicorn --no-install --yes \
