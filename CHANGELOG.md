@@ -34,6 +34,13 @@ The project follows Semantic Versioning. Until a release is actually tagged, cha
   permissions, password hashing, permission synchronization, and durable idempotency storage.
 - Public domain-action composition exports and a high-level `Admin.register_write(...)` helper for
   enabling ordinary resource write forms without constructing transport-level bindings.
+- Declarative ordinary CRUD through `ResourceWriteDefinition` on `ModelAdmin`, with adapter-owned
+  write-service materialization, an explicit writable-field allowlist, read-only-by-default
+  semantics, and fail-closed capability checks. SQLAlchemy now supplies the first write-service
+  provider for this neutral contract.
+- Friendly lifecycle composition through `Admin.on_startup(...)`, `Admin.on_shutdown(...)`, and
+  `Admin.add_health_check(...)`, delegating to the existing lifecycle manager without changing
+  startup, readiness, or shutdown semantics.
 - Tag-gated trusted-publishing workflow preparation without a release tag or publish action.
 
 ### Changed
@@ -45,6 +52,10 @@ The project follows Semantic Versioning. Until a release is actually tagged, cha
 - Reference application bootstrap is additive and application-owned; Rakit continues to keep ORM
   models, domain transitions, database-driver selection, and application migration policy outside
   the framework core.
+- The reference application now uses one-call declarative resource registration for ordinary
+  Product and Order CRUD plus the public lifecycle facade, removing application-level mutation
+  service/token boilerplate while retaining explicit forms, writable fields, concurrency, and
+  permissions.
 
 ### Security
 

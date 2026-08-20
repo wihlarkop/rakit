@@ -12,6 +12,7 @@ from .datasource import SQLAlchemyDataSource
 from .generated import SQLAlchemyGeneratedResourceExecutorProvider
 from .introspection import UnsupportedFieldPolicyError, UnsupportedIdentityError, inspect_model
 from .uow import SQLAlchemyOperationUnitOfWorkFactory
+from .write_provider import SQLAlchemyWriteServiceProvider
 
 
 class SQLAlchemyPlugin:
@@ -72,4 +73,8 @@ class SQLAlchemyPlugin:
         return ResourceAdapterRuntime(
             data_source=data_source,
             generated_executor_provider=SQLAlchemyGeneratedResourceExecutorProvider(model=model),
+            write_service_provider=SQLAlchemyWriteServiceProvider(
+                model=model,
+                session_factory=self._session_factory,
+            ),
         )

@@ -6,7 +6,6 @@ import os
 
 from rakit import Admin, SecretValue
 from rakit.auth.sqlalchemy import SQLAlchemyAuthPlugin, SQLAlchemyIdempotencyStore
-from rakit.core import TokenService
 from rakit.sqlalchemy import SQLAlchemyPlugin
 from rakit.storage.local import LocalStorage, LocalStoragePlugin
 from sqlalchemy import text
@@ -18,7 +17,7 @@ from .database import (
     engine,
     session_factory,
 )
-from .resources import ORDER_FORM, PRODUCT_FORM, RESOURCE_ADMINS, order_mutations, product_mutations
+from .resources import RESOURCE_ADMINS
 from .views import OPERATIONS_PAGE, REFERENCE_DASHBOARD, REFERENCE_WIDGETS
 
 ADMIN_ID = "reference"
@@ -31,11 +30,6 @@ APP_SECRET = SecretValue(
 
 auth = SQLAlchemyAuthPlugin(session_factory)
 idempotency_store = SQLAlchemyIdempotencyStore(session_factory)
-token_service = TokenService.single_key(
-    key_id="reference",
-    value=APP_SECRET,
-    admin_id=ADMIN_ID,
-)
 
 admin = Admin(
     admin_id=ADMIN_ID,
@@ -63,21 +57,6 @@ admin.install(
 for resource_admin in RESOURCE_ADMINS:
     admin.register(resource_admin)
 
-admin.register_write(
-    "products",
-    form_schema=PRODUCT_FORM,
-    mutation_service=product_mutations(token_service),
-    success_message="Product saved.",
-    htmx_refresh_targets=("rakit:dashboard-refresh",),
-)
-admin.register_write(
-    "orders",
-    form_schema=ORDER_FORM,
-    mutation_service=order_mutations(token_service),
-    success_message="Order saved.",
-    htmx_refresh_targets=("rakit:dashboard-refresh",),
-)
-
 admin.register_page(OPERATIONS_PAGE)
 for widget in REFERENCE_WIDGETS:
     admin.register_widget(widget)
@@ -97,15 +76,15 @@ async def _database_ready() -> bool:
         return False
 
 
-admin.lifecycle.register_starting_callback(_bootstrap)
-admin.lifecycle.register_health_check(
+admin.on_startup(_bootstrap)
+admin.add_health_check(
     "database",
     _database_ready,
     critical=True,
     timeout_seconds=2.0,
     cache_seconds=1.0,
 )
-admin.lifecycle.register_stopping_callback(dispose_database)
+admin.on_shutdown(dispose_database)
 
 app = admin.asgi()
 

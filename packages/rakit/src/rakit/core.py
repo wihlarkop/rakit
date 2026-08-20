@@ -11,6 +11,7 @@ from rakit_core.actions import (
     ActionScope,
     ActionSuccess,
 )
+from rakit_core.admin_types import ResourceWriteDefinition
 from rakit_core.auth import (
     ANONYMOUS_PRINCIPAL,
     AuthBackend,
@@ -92,6 +93,10 @@ from rakit_core.forms import (
     Section,
     Tab,
     Tabs,
+)
+from rakit_core.generated_runtime import (
+    ResourceWriteServiceContext,
+    ResourceWriteServiceProvider,
 )
 from rakit_core.idempotency import (
     IdempotencyReservation,
@@ -273,6 +278,9 @@ __all__ = [
     "ResourceMutationPlan",
     "ResourceQuery",
     "ResourceService",
+    "ResourceWriteDefinition",
+    "ResourceWriteServiceContext",
+    "ResourceWriteServiceProvider",
     "Row",
     "SecretValue",
     "Section",

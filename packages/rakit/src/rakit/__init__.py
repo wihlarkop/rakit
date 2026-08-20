@@ -7,7 +7,7 @@ from rakit_core.actions import (
     ActionSuccess,
     DomainActionExecutor,
 )
-from rakit_core.admin_types import ModelAdmin, ResourceAdmin
+from rakit_core.admin_types import ModelAdmin, ResourceAdmin, ResourceWriteDefinition
 from rakit_core.bulk import BulkExecutionPolicy, BulkPolicy
 from rakit_core.config import RakitConfig, SecretValue
 from rakit_core.dashboard import (
@@ -231,6 +231,7 @@ __all__ = [
     "ResourcePagination",
     "ResourcePaginationPolicy",
     "ResourceWebPresentation",
+    "ResourceWriteDefinition",
     "SearchableSelect",
     "SecretValue",
     "SegmentedControl",
