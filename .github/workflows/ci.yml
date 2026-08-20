@@ -106,3 +106,159 @@ jobs:
           path: dist/*
           if-no-files-found: error
           retention-days: 7
+
+  c2-manual-smoke:
+    name: C2 source-first manual smoke
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-packages --dev --locked
+      - name: Exercise C2 without regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$PWD"
+          RAKIT_BIN="$ROOT/.venv/bin/rakit"
+          PYTHON_BIN="$ROOT/.venv/bin/python"
+          WORK="$RUNNER_TEMP/rakit-c2-manual"
+          rm -rf "$WORK"
+          mkdir -p "$WORK"
+          cd "$WORK"
+
+          echo "== dry-run works without uv on PATH and creates nothing =="
+          PATH=/usr/bin:/bin "$RAKIT_BIN" init dry-demo --yes --dry-run > dry-run.txt
+          grep -q "Mode: new" dry-run.txt
+          grep -q "Dependencies: uv sync" dry-run.txt
+          test ! -e dry-demo
+
+          echo "== real install preflight fails before writes when uv is unavailable =="
+          if PATH=/usr/bin:/bin "$RAKIT_BIN" init missing-uv --yes > missing-uv.txt 2>&1; then
+            echo "expected missing-uv init to fail" >&2
+            exit 1
+          fi
+          grep -q "uv.*not available" missing-uv.txt
+          test ! -e missing-uv
+
+          echo "== standard scaffold, canonical metadata, rerun, collision =="
+          "$RAKIT_BIN" init demo-standard --template standard --server uvicorn --no-install --yes \
+            > standard.txt
+          test -f demo-standard/pyproject.toml
+          test -f demo-standard/.env.example
+          test ! -e demo-standard/.env
+          test -f demo-standard/src/demo_standard/app.py
+          test -f demo-standard/src/demo_standard/bootstrap.py
+          test "$(head -n 1 demo-standard/pyproject.toml)" = "[build-system]"
+          "$PYTHON_BIN" - <<'PY'
+          from pathlib import Path
+          import tomllib
+
+          path = Path("demo-standard/pyproject.toml")
+          data = tomllib.loads(path.read_text(encoding="utf-8"))
+          assert data["project"]["dependencies"] == ["rakit[standard]", "aiosqlite"]
+          assert data["project"]["requires-python"] == ">=3.12"
+          PY
+          "$PYTHON_BIN" -m compileall -q demo-standard/src
+          "$RAKIT_BIN" init demo-standard --template standard --server uvicorn --no-install --yes \
+            > rerun.txt
+          grep -q "satisfied" rerun.txt
+          pyproject_hash="$(sha256sum demo-standard/pyproject.toml | cut -d' ' -f1)"
+          printf '\nuser change\n' >> demo-standard/README.md
+          if "$RAKIT_BIN" init demo-standard --template standard --server uvicorn --no-install --yes \
+            > collision.txt 2>&1; then
+            echo "expected changed generated file to conflict" >&2
+            exit 1
+          fi
+          grep -q "conflict" collision.txt
+          test "$pyproject_hash" = "$(sha256sum demo-standard/pyproject.toml | cut -d' ' -f1)"
+
+          echo "== standard generated composition bootstraps and passes rakit check =="
+          "$RAKIT_BIN" init demo-check --template standard --server uvicorn --no-install --yes \
+            > check-create.txt
+          cd demo-check
+          export RAKIT_SECRET_KEY="manual-smoke-secret-value-1234567890"
+          export PYTHONPATH="$PWD/src"
+          "$PYTHON_BIN" -m demo_check.bootstrap
+          "$RAKIT_BIN" check demo_check.app:admin > check.txt
+          grep -q "Rakit configuration is valid" check.txt
+          "$RAKIT_BIN" permissions sync demo_check.app:admin > permissions.txt
+          grep -q "added=" permissions.txt
+          cd "$WORK"
+          unset PYTHONPATH
+          unset RAKIT_SECRET_KEY
+
+          echo "== minimal granian scaffold stays read-only/lightweight and passes check =="
+          "$RAKIT_BIN" init demo-minimal --template minimal --server granian --no-install --yes \
+            > minimal.txt
+          "$PYTHON_BIN" - <<'PY'
+          from pathlib import Path
+          import tomllib
+
+          data = tomllib.loads(Path("demo-minimal/pyproject.toml").read_text(encoding="utf-8"))
+          assert data["project"]["dependencies"] == ["rakit[granian]"]
+          assert not (Path("demo-minimal") / ".env.example").exists()
+          assert not (Path("demo-minimal/src/demo_minimal") / "db.py").exists()
+          PY
+          "$PYTHON_BIN" -m compileall -q demo-minimal/src
+          cd demo-minimal
+          export PYTHONPATH="$PWD/src"
+          "$RAKIT_BIN" check demo_minimal.app:admin > minimal-check.txt
+          grep -q "Rakit configuration is valid" minimal-check.txt
+          cd "$WORK"
+          unset PYTHONPATH
+
+          echo "== interactive wizard follows project/template/server/install order =="
+          printf 'interactive-demo\n\n\nn\n' | "$RAKIT_BIN" init > interactive.txt
+          test -f interactive-demo/src/interactive_demo/app.py
+          grep -q "Project name" interactive.txt
+          grep -q "Starter template" interactive.txt
+          grep -q "Server adapter" interactive.txt
+          grep -q "Install dependencies now" interactive.txt
+
+          echo "== existing src-layout is additive and prints FastAPI mount guidance =="
+          mkdir -p host/src/host_app
+          : > host/src/host_app/__init__.py
+          cat > host/pyproject.toml <<'TOML'
+          [project]
+          name = "host-app"
+          version = "0.1.0"
+          dependencies = ["fastapi"]
+          TOML
+          printf 'host-owned\n' > host/src/host_app/main.py
+          host_hash="$(sha256sum host/src/host_app/main.py | cut -d' ' -f1)"
+          "$RAKIT_BIN" init --existing host --template standard --server uvicorn --no-install --yes \
+            > existing.txt
+          test -f host/src/host_app/rakit_admin/app.py
+          test -f host/src/host_app/rakit_admin/db.py
+          test ! -e host/.env.example
+          test "$host_hash" = "$(sha256sum host/src/host_app/main.py | cut -d' ' -f1)"
+          grep -q "No host entrypoint" existing.txt
+          grep -q 'app.mount("/admin", rakit_app' existing.txt
+          grep -q "isolated .rakit" existing.txt
+
+          echo "== ambiguous existing packages fail non-interactively, explicit package resolves =="
+          mkdir -p ambiguous/src/alpha ambiguous/src/beta
+          : > ambiguous/src/alpha/__init__.py
+          : > ambiguous/src/beta/__init__.py
+          cat > ambiguous/pyproject.toml <<'TOML'
+          [project]
+          name = "ambiguous-host"
+          version = "0.1.0"
+          dependencies = []
+          TOML
+          if "$RAKIT_BIN" init --existing ambiguous --template minimal --no-install --yes \
+            > ambiguous.txt 2>&1; then
+            echo "expected ambiguous package resolution to fail" >&2
+            exit 1
+          fi
+          grep -q -- "--package" ambiguous.txt
+          "$RAKIT_BIN" init --existing ambiguous --package alpha --template minimal \
+            --no-install --yes > explicit.txt
+          test -f ambiguous/src/alpha/rakit_admin/app.py
+          test ! -e ambiguous/src/beta/rakit_admin
+
+          echo "C2 source-first manual smoke: PASS"
