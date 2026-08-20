@@ -26,6 +26,8 @@ Rakit remains under active pre-release development. The current package version 
 | Phase B3 realistic reference application | **Complete** |
 | Phase B4 API/DX refinement from reference application | **Complete** |
 | **Phase B overall** | **Complete** |
+| Phase C1 friendly CRUD and lifecycle APIs | **Complete** |
+| Phase C2 project initialization and scaffolding | **Next** |
 | Phase C developer experience and lifecycle ergonomics | **Next** |
 | Phase D adapter ecosystem | **Planned** |
 | Phase E generated APIs v1 | **Planned; foundation exists** |
@@ -274,13 +276,23 @@ No release, tag, version bump, TestPyPI upload, or PyPI publication is implied b
 
 ### C1 — Friendly CRUD and lifecycle APIs
 
-- simplify common registration and lifecycle flows.
-- reduce unnecessary boilerplate.
-- retain explicit authorization, transaction, and capability semantics.
-- improve extension ergonomics without hiding important framework behavior.
-- use the reference application as the acceptance pressure for proposed simplifications.
+**Status: Complete**
+
+C1 used the realistic reference application to remove repeated composition work without making resource writes implicit or adapter-specific:
+
+- `ResourceWriteDefinition` lets a `ModelAdmin` opt into ordinary CRUD next to its read/query policy while keeping explicit form and writable-field allowlists.
+- model adapters may expose a neutral `ResourceWriteServiceProvider`; SQLAlchemy supplies the first implementation and derives model identity without moving ORM concerns into `rakit-core`.
+- `Admin.register(...)` materializes declared writes through the selected adapter and reuses the existing secure `Admin.register_write(...)` pipeline rather than creating a second mutation transport.
+- read-only resources remain read-only by default, and missing/incomplete write-provider capability fails closed before mutation bindings are installed.
+- existing manual `Admin.register_write(...)` and `Admin.register_write_resource(...)` paths remain available for advanced composition.
+- `Admin.on_startup(...)`, `Admin.on_shutdown(...)`, and `Admin.add_health_check(...)` provide a thin lifecycle facade while preserving existing startup, readiness, health-cache, and LIFO shutdown semantics.
+- `examples/reference_app` now uses declarative writes for Product and Order plus the public lifecycle facade, removing duplicate mutation-service/token wiring while preserving explicit concurrency, permissions, forms, and storage behavior.
+
+C1 closed only after Ruff formatting/linting, `ty`, pytest on Python 3.12/3.13/3.14, lowest-direct/latest dependency matrices, coverage, strict MkDocs, artifact validation, and generated web-asset reproducibility all passed on the integration head.
 
 ### C2 — Project initialization and scaffolding
+
+**Status: Next**
 
 Design a Vite-like interactive `rakit init` flow.
 
@@ -788,15 +800,14 @@ The following are intentionally outside Rakit's current product direction:
 
 ## Near-term execution order
 
-With Phase B complete, the preferred sequence is now:
+With Phase B and C1 complete, the preferred sequence is now:
 
-1. **C1** — improve friendly CRUD and lifecycle ergonomics using reference-app evidence.
-2. **C2** — design and implement `rakit init` for new and existing projects.
-3. **C3** — normalize installation/extras UX.
-4. **C4** — strengthen capability discovery and diagnostics.
-5. **D** — prove the capability architecture with a carefully selected second adapter.
-6. **E** — mature generated REST into a documented API product with OpenAPI and machine authentication.
-7. Continue through F–P according to user value, architectural pressure, and implementation evidence.
+1. **C2** — design and implement `rakit init` for new and existing projects.
+2. **C3** — normalize installation/extras UX.
+3. **C4** — strengthen capability discovery and diagnostics.
+4. **D** — prove the capability architecture with a carefully selected second adapter.
+5. **E** — mature generated REST into a documented API product with OpenAPI and machine authentication.
+6. Continue through F–P according to user value, architectural pressure, and implementation evidence.
 
 The pagination research track can continue in parallel where it does not block committed product work.
 
