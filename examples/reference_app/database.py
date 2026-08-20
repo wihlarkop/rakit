@@ -87,12 +87,6 @@ async def _seed_auth(admin: Admin, session: AsyncSession) -> None:
         .options(selectinload(Role.permissions), selectinload(Role.users))
         .where(Role.name == OPERATIONS_ROLE)
     )
-    if role is None:
-        # Keep the new role transient while populating relationship collections.
-        # Flushing first would make an attribute assignment attempt an async lazy
-        # load of the previous collection, which is invalid outside greenlet_spawn.
-        role = Role(name=OPERATIONS_ROLE)
-        session.add(role)
 
     allowed_keys = {
         f"{admin.config.admin_id}.access",
@@ -115,9 +109,22 @@ async def _seed_auth(admin: Admin, session: AsyncSession) -> None:
             )
         ).all()
     )
-    role.permissions = list(permissions)
-    if operator not in role.users:
-        role.users.append(operator)
+
+    if role is None:
+        # Populate relationships before the role is added to the session. A
+        # permission query can otherwise autoflush a pending role, after which
+        # assigning an unloaded relationship would require forbidden implicit
+        # async IO and raise MissingGreenlet.
+        role = Role(
+            name=OPERATIONS_ROLE,
+            permissions=list(permissions),
+            users=[operator],
+        )
+        session.add(role)
+    else:
+        role.permissions = list(permissions)
+        if operator not in role.users:
+            role.users.append(operator)
 
 
 async def _seed_commerce(session: AsyncSession) -> None:
