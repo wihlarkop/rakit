@@ -1,0 +1,56 @@
+name: Phase B source patch
+
+on:
+  push:
+    branches: [phase-b-reference-app-hardening]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-source:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: phase-b-reference-app-hardening
+      - name: Add public write composition helper
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("packages/rakit-web/src/rakit_web/admin.py")
+          source = path.read_text(encoding="utf-8")
+
+          old = "from rakit_core.generated_runtime import (\n    GeneratedResourceExecutorContext,\n    normalize_resource_adapter_runtime,\n)\nfrom rakit_core.idempotency import IdempotencyStore"
+          new = "from rakit_core.generated_runtime import (\n    GeneratedResourceExecutorContext,\n    normalize_resource_adapter_runtime,\n)\nfrom rakit_core.forms import FormSchema\nfrom rakit_core.idempotency import IdempotencyStore"
+          if source.count(old) != 1:
+              raise SystemExit("form import marker not found exactly once")
+          source = source.replace(old, new)
+
+          old = "from .form_routes import WriteResourceBinding, build_write_routes"
+          new = "from .form_routes import CreateMutationService, WriteResourceBinding, build_write_routes"
+          if source.count(old) != 1:
+              raise SystemExit("form_routes import marker not found exactly once")
+          source = source.replace(old, new)
+
+          marker = "    def register_write_resource(self, resource_id: str, binding: WriteResourceBinding) -> None:\n"
+          if source.count(marker) != 1:
+              raise SystemExit("register_write_resource marker not found exactly once")
+
+          method = '''    def register_write(\n        self,\n        resource_id: str,\n        *,\n        form_schema: FormSchema,\n        mutation_service: CreateMutationService,\n        idempotency_store: IdempotencyStore | None = None,\n        success_message: str | None = None,\n        htmx_refresh_targets: tuple[str, ...] = (),\n    ) -> None:\n        """Register a public write declaration without transport plumbing.\n\n        Applications provide the backend-neutral form schema and a mutation\n        service.  Rakit supplies templates, authorization, CSRF, submission\n        tokens, request-scoped services, and deadlines when the ASGI runtime is\n        materialized.  The low-level ``WriteResourceBinding`` remains available\n        for advanced integrations, but ordinary applications should not need to\n        construct one merely to enable CRUD forms.\n        """\n        definition = self._resource_definitions.get(resource_id)\n        if definition is None:\n            raise RakitError(\n                code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,\n                message="Invalid resource write policy declaration",\n                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,\n                details={"resource_id": resource_id, "reason": "unknown_resource"},\n            )\n        store = idempotency_store or self._operation_idempotency_store\n        if store is None:\n            raise RakitError(\n                code=ErrorCode.CONFIG_INVALID,\n                message=(\n                    "Write resources require an idempotency store; pass "\n                    "Admin(operation_idempotency_store=...) or idempotency_store=."\n                ),\n                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,\n                details={"resource_id": resource_id, "reason": "missing_idempotency_store"},\n            )\n\n        async def unresolved_verifier(_request: Request) -> bool:\n            return False\n\n        def unresolved_submission_token(_request: Request) -> str:\n            return ""\n\n        self.register_write_resource(\n            resource_id,\n            WriteResourceBinding(\n                path=definition.path,\n                label=definition.singular_label,\n                form_schema=form_schema,\n                mutation_service=mutation_service,\n                templates=build_templates(self._template_dirs),\n                authorize=unresolved_verifier,\n                verify_csrf=unresolved_verifier,\n                verify_submission_token=unresolved_verifier,\n                issue_submission_token=unresolved_submission_token,\n                idempotency_store=store,\n                success_message=success_message,\n                htmx_refresh_targets=htmx_refresh_targets,\n            ),\n        )\n\n'''
+          source = source.replace(marker, method + marker)
+          path.write_text(source, encoding="utf-8")
+          PY
+      - name: Commit source patch
+        run: |
+          set -euo pipefail
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/rakit-web/src/rakit_web/admin.py
+          git commit -m "feat(web): add public write composition helper"
+          git push origin HEAD:phase-b-reference-app-hardening
+
+# Temporary workflow; remove after the source patch lands.
