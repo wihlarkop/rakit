@@ -53,8 +53,7 @@ class ResourceWriteDefinition:
         )
         if non_writable:
             raise ValueError(
-                "writable_fields references non-writable form fields: "
-                + ", ".join(non_writable)
+                "writable_fields references non-writable form fields: " + ", ".join(non_writable)
             )
 
         if self.version_field is not None and (

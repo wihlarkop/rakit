@@ -7,10 +7,11 @@ from http import HTTPStatus
 from math import isfinite
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import structlog
 from rakit_core.actions import ActionDefinition, ActionScope
-from rakit_core.admin_types import ModelAdmin, ResourceAdmin
+from rakit_core.admin_types import ModelAdmin, ResourceAdmin, ResourceWriteDefinition
 from rakit_core.auth import AuthBackend, SessionStore
 from rakit_core.compiler import ApplicationBuilder, CompiledApplication, Plugin, compile_application
 from rakit_core.concurrency import ConcurrencyTokenService, ConcurrencyVersionProvider
@@ -31,6 +32,7 @@ from rakit_core.forms import FormSchema
 from rakit_core.generated_api import ApiExposure
 from rakit_core.generated_runtime import (
     GeneratedResourceExecutorContext,
+    ResourceWriteServiceContext,
     normalize_resource_adapter_runtime,
 )
 from rakit_core.idempotency import IdempotencyStore
@@ -325,6 +327,34 @@ class Admin:
         """The application-scoped bus used by every mutation operation."""
         return self._event_bus
 
+    def on_startup(self, callback: Callable[[], Awaitable[None]]) -> Callable[[], Awaitable[None]]:
+        """Register fail-fast startup work and return the callback unchanged."""
+        self.lifecycle.register_starting_callback(callback)
+        return callback
+
+    def on_shutdown(self, callback: Callable[[], Awaitable[None]]) -> Callable[[], Awaitable[None]]:
+        """Register shutdown cleanup and return the callback unchanged."""
+        self.lifecycle.register_stopping_callback(callback)
+        return callback
+
+    def add_health_check(
+        self,
+        name: str,
+        check: Callable[[], Awaitable[bool]],
+        *,
+        critical: bool,
+        timeout_seconds: float = 2.0,
+        cache_seconds: float = 5.0,
+    ) -> None:
+        """Register one readiness check through the public Admin facade."""
+        self.lifecycle.register_health_check(
+            name,
+            check,
+            critical=critical,
+            timeout_seconds=timeout_seconds,
+            cache_seconds=cache_seconds,
+        )
+
     def install(self, plugin: Plugin) -> None:
         if self.compiled is not None:
             raise RuntimeError("Cannot install plugins after compilation")
@@ -403,6 +433,19 @@ class Admin:
             admin_cls,
             existing_action_ids={str(action.action_id) for action in self._builder.actions},
         )
+        write_definition = getattr(admin_cls, "write", None)
+        if write_definition is not None and not isinstance(
+            write_definition, ResourceWriteDefinition
+        ):
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+                message="Invalid resource write policy declaration",
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                details={
+                    "resource_id": admin_cls.resource_id,
+                    "reason": "invalid_write_definition",
+                },
+            )
 
         if issubclass(admin_cls, ModelAdmin):
             claims = [
@@ -445,6 +488,118 @@ class Admin:
             )
 
         data_source = adapter_runtime.data_source
+        declarative_mutation_service: CreateMutationService | None = None
+        if write_definition is not None:
+            provider = adapter_runtime.write_service_provider
+            if provider is None:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+                    message="Installed adapter cannot provide declared resource writes",
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                    details={
+                        "resource_id": admin_cls.resource_id,
+                        "reason": "write_provider_unavailable",
+                    },
+                )
+            if self._auth_backend is None or self._session_store is None:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID,
+                    message="Declarative write resources require configured authentication.",
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                    details={
+                        "resource_id": admin_cls.resource_id,
+                        "reason": "missing_authentication",
+                    },
+                )
+            secret_key = self.config.security.secret_key
+            if secret_key is None:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID,
+                    message="Declarative write resources require a configured secret key.",
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                    details={
+                        "resource_id": admin_cls.resource_id,
+                        "reason": "missing_secret_key",
+                    },
+                )
+            if self._operation_idempotency_store is None:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID,
+                    message=(
+                        "Declarative write resources require an Admin operation_idempotency_store."
+                    ),
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                    details={
+                        "resource_id": admin_cls.resource_id,
+                        "reason": "missing_idempotency_store",
+                    },
+                )
+            unknown_write_fields = set(write_definition.writable_fields).difference(
+                data_source.fields
+            )
+            if unknown_write_fields:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+                    message="Invalid resource write policy declaration",
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                    details={
+                        "resource_id": admin_cls.resource_id,
+                        "reason": "unknown_writable_field",
+                        "fields": sorted(unknown_write_fields),
+                    },
+                )
+            token_service = TokenService.single_key(
+                key_id="primary",
+                value=secret_key,
+                admin_id=self.config.admin_id,
+            )
+            try:
+                mutation_candidate = provider.build(
+                    ResourceWriteServiceContext(
+                        admin_id=self.config.admin_id,
+                        resource_id=admin_cls.resource_id,
+                        definition=write_definition,
+                        token_service=token_service,
+                    )
+                )
+            except RakitError:
+                raise
+            except (TypeError, ValueError) as exc:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+                    message="Adapter could not materialize declared resource writes",
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                    details={
+                        "resource_id": admin_cls.resource_id,
+                        "reason": "write_provider_failed",
+                    },
+                    cause=exc,
+                ) from exc
+            missing_write_members = tuple(
+                name
+                for name in (
+                    "create",
+                    "get",
+                    "issue_update_token",
+                    "update",
+                    "issue_delete_token",
+                    "delete",
+                )
+                if not callable(getattr(mutation_candidate, name, None))
+            )
+            if missing_write_members:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+                    message="Adapter returned an invalid resource write service",
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                    details={
+                        "resource_id": admin_cls.resource_id,
+                        "reason": "invalid_write_provider_contract",
+                        "members": missing_write_members,
+                    },
+                )
+            declarative_mutation_service = cast(CreateMutationService, mutation_candidate)
+
         unknown_predicate_fields = set(predicate_fields).difference(data_source.fields)
         if unknown_predicate_fields:
             raise RakitError(
@@ -501,6 +656,15 @@ class Admin:
         )
         self._resource_services[admin_cls.resource_id] = ResourceService(data_source)
         self._resource_definitions[admin_cls.resource_id] = definition
+        if write_definition is not None:
+            assert declarative_mutation_service is not None
+            self.register_write(
+                admin_cls.resource_id,
+                form_schema=write_definition.form_schema,
+                mutation_service=declarative_mutation_service,
+                success_message=write_definition.success_message,
+                htmx_refresh_targets=write_definition.htmx_refresh_targets,
+            )
 
     def register_concurrency_provider(
         self, resource_id: str, provider: ConcurrencyVersionProvider

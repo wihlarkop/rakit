@@ -28,9 +28,7 @@ class SQLAlchemyWriteServiceProvider:
             token_service=context.token_service,
             version_field=context.definition.version_field,
             resource_id=context.resource_id,
-            delete_permission=(
-                f"{context.admin_id}.resources.{context.resource_id}.delete"
-            ),
+            delete_permission=(f"{context.admin_id}.resources.{context.resource_id}.delete"),
             force_overwrite_permission=(
                 f"{context.admin_id}.resources.{context.resource_id}.force_overwrite"
             ),
