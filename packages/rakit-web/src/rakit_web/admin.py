@@ -32,6 +32,7 @@ from rakit_core.generated_runtime import (
     GeneratedResourceExecutorContext,
     normalize_resource_adapter_runtime,
 )
+from rakit_core.forms import FormSchema
 from rakit_core.idempotency import IdempotencyStore
 from rakit_core.identity import IdentityCodec, RecordIdentity
 from rakit_core.mutations import (
@@ -68,7 +69,7 @@ from .assets import static_files
 from .auth_routes import _verify_csrf, build_auth_routes
 from .bulk_admin import build_admin_bulk_action_routes
 from .capabilities import STARLETTE_WEB_CAPABILITIES
-from .form_routes import WriteResourceBinding, build_write_routes
+from .form_routes import CreateMutationService, WriteResourceBinding, build_write_routes
 from .generated_rest_runtime import (
     GeneratedRestBinding,
     build_generated_rest_routes,
@@ -549,6 +550,69 @@ class Admin:
                 },
             )
         self._concurrency_providers[resource_id] = provider
+
+    def register_write(
+        self,
+        resource_id: str,
+        *,
+        form_schema: FormSchema,
+        mutation_service: CreateMutationService,
+        idempotency_store: IdempotencyStore | None = None,
+        success_message: str | None = None,
+        htmx_refresh_targets: tuple[str, ...] = (),
+    ) -> None:
+        """Register a public write declaration without transport plumbing.
+
+        Applications provide the backend-neutral form schema and a mutation
+        service.  Rakit supplies templates, authorization, CSRF, submission
+        tokens, request-scoped services, and deadlines when the ASGI runtime is
+        materialized.  The low-level ``WriteResourceBinding`` remains available
+        for advanced integrations, but ordinary applications should not need to
+        construct one merely to enable CRUD forms.
+        """
+        definition = self._resource_definitions.get(resource_id)
+        if definition is None:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+                message="Invalid resource write policy declaration",
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                details={"resource_id": resource_id, "reason": "unknown_resource"},
+            )
+        store = idempotency_store or self._operation_idempotency_store
+        if store is None:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message=(
+                    "Write resources require an idempotency store; pass "
+                    "Admin(operation_idempotency_store=...) or idempotency_store=."
+                ),
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                details={"resource_id": resource_id, "reason": "missing_idempotency_store"},
+            )
+
+        async def unresolved_verifier(_request: Request) -> bool:
+            return False
+
+        def unresolved_submission_token(_request: Request) -> str:
+            return ""
+
+        self.register_write_resource(
+            resource_id,
+            WriteResourceBinding(
+                path=definition.path,
+                label=definition.singular_label,
+                form_schema=form_schema,
+                mutation_service=mutation_service,
+                templates=build_templates(self._template_dirs),
+                authorize=unresolved_verifier,
+                verify_csrf=unresolved_verifier,
+                verify_submission_token=unresolved_verifier,
+                issue_submission_token=unresolved_submission_token,
+                idempotency_store=store,
+                success_message=success_message,
+                htmx_refresh_targets=htmx_refresh_targets,
+            ),
+        )
 
     def register_write_resource(self, resource_id: str, binding: WriteResourceBinding) -> None:
         """Register the explicit Plan 04 write policy for an existing resource.
