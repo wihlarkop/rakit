@@ -101,7 +101,7 @@ It also owns deterministic helpers for:
 - formatting the canonical `uv add` command;
 - optionally appending application-owned packages such as `aiosqlite` without treating them as Rakit extras.
 
-Extra ordering is deterministic. Bundle plus server examples must render as `standard,uvicorn` and `standard,granian`, not whichever order individual callers happen to supply.
+Extra ordering is deterministic. Bundle plus server examples must render as `standard,uvicorn` and `standard,granian`, not whichever order individual callers happen to supply. Repeated canonical extras are deduplicated. Known overlapping combinations are not rejected merely because one bundle currently contains another capability; for example, `standard` plus `sqlalchemy` normalizes deterministically rather than creating a special compatibility rule. Non-canonical or unknown identifiers are rejected rather than silently rendered into a requirement string.
 
 The packaging declaration in `packages/rakit/pyproject.toml` remains normal static TOML. C3 does not generate packaging metadata from Python. Regression coverage instead verifies that every canonical user-facing extra represented by `_install` exists in package metadata and that removed unpublished aliases do not.
 
@@ -175,7 +175,8 @@ Expected user-facing failures stay actionable and fail closed:
 
 - missing optional implementation package -> `RakitOptionalDependencyError` with one canonical `uv add` command;
 - installed optional implementation whose dependency graph is broken -> original import exception;
-- invalid internal extra composition -> rejected by the typed/install-formatting helper rather than silently producing an unknown extra;
+- non-canonical install vocabulary input -> rejected by the typed/install-formatting helper rather than silently producing an unknown extra;
+- repeated canonical extras -> deduplicated with deterministic ordering;
 - generated C2 dependency output -> deterministic and derived from the canonical install vocabulary.
 
 No runtime auto-installation is attempted.
@@ -204,7 +205,7 @@ Regression coverage should lock:
 - package metadata and internal vocabulary consistency;
 - standard server-neutral membership;
 - removal of the unpublished alias;
-- canonical formatting and ordering;
+- canonical formatting, deduplication, and ordering;
 - friendly optional dependency messages;
 - transitive failure passthrough;
 - C2 new/existing dependency combinations.
