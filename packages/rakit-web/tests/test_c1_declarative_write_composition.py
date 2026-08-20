@@ -15,7 +15,11 @@ from rakit.core import (
 from rakit_core.compiler import ApplicationBuilder
 from rakit_core.errors import RakitError
 from rakit_core.fields import FieldDefinition
-from rakit_core.generated_runtime import ResourceAdapterRuntime, ResourceWriteServiceContext
+from rakit_core.generated_runtime import (
+    ResourceAdapterRuntime,
+    ResourceWriteServiceContext,
+    ResourceWriteServiceProvider,
+)
 
 
 class _Model:
@@ -170,7 +174,7 @@ class _Provider:
 class _AdapterPlugin:
     plugin_id = "c1-test-adapter"
 
-    def __init__(self, provider: object | None) -> None:
+    def __init__(self, provider: ResourceWriteServiceProvider | None) -> None:
         self.provider = provider
 
     def configure(self, builder: ApplicationBuilder) -> None:
@@ -181,7 +185,7 @@ class _AdapterPlugin:
                 return None
             return ResourceAdapterRuntime(
                 data_source=_DataSource(),
-                write_service_provider=provider,  # type: ignore[arg-type]
+                write_service_provider=provider,
             )
 
         builder.register_adapter(self.plugin_id, claim)
