@@ -66,10 +66,7 @@ def test_sqlalchemy_write_provider_derives_identity_and_canonical_permissions() 
     assert service._version_field == "version"
     assert service._resource_id == "things"
     assert service._delete_permission == "backoffice.resources.things.delete"
-    assert (
-        service._force_overwrite_permission
-        == "backoffice.resources.things.force_overwrite"
-    )
+    assert service._force_overwrite_permission == "backoffice.resources.things.force_overwrite"
 
 
 def test_sqlalchemy_plugin_claim_exposes_write_provider_for_mapped_model() -> None:

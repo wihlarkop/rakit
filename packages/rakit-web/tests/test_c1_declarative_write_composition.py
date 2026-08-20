@@ -48,9 +48,7 @@ class _DataSource:
         return None
 
 
-SCHEMA = FormSchema(
-    fields=(FieldDefinition(field_id="name", python_type=str, required=True),)
-)
+SCHEMA = FormSchema(fields=(FieldDefinition(field_id="name", python_type=str, required=True),))
 WRITE = ResourceWriteDefinition(
     form_schema=SCHEMA,
     writable_fields=("name",),
