@@ -1,3 +1,4 @@
+from rakit_core.admin_types import ResourceWriteDefinition
 from rakit_core.compatibility import validate_official_package_versions
 from rakit_core.config import (
     LifecycleConfig,
@@ -29,6 +30,7 @@ __all__ = [
     "RakitPerformanceWarning",
     "RakitSecurityWarning",
     "RakitWarning",
+    "ResourceWriteDefinition",
     "SecretValue",
     "SecurityConfig",
     "__version__",
