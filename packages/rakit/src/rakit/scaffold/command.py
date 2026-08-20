@@ -12,7 +12,14 @@ from .detection import (
     normalize_distribution_name,
     resolve_existing_package,
 )
-from .model import InitConfig, InitMode, PackageResolution, ServerAdapter, StarterTemplate
+from .model import (
+    InitConfig,
+    InitMode,
+    PackageResolution,
+    ScaffoldPlan,
+    ServerAdapter,
+    StarterTemplate,
+)
 from .planner import ScaffoldPlanError, build_scaffold_plan, classify_plan
 
 _TEMPLATE_VALUES = tuple(item.value for item in StarterTemplate)
@@ -74,22 +81,12 @@ def _resolve_package_interactively(
         return resolve_existing_package(root, selected, interactive=True)
 
 
-def _normalize_config(
+def _resolved_template_and_server(
     *,
-    project_name: str | None,
-    existing: Path | None,
     template_name: str | None,
     server_name: str | None,
-    package_name: str | None,
     yes: bool,
-    install_dependencies: bool | None,
-    dry_run: bool,
-) -> InitConfig:
-    if project_name is not None and existing is not None:
-        raise ScaffoldDetectionError("PROJECT_NAME and --existing are mutually exclusive.")
-    if existing is None and package_name is not None:
-        raise ScaffoldDetectionError("--package is only valid with --existing.")
-
+) -> tuple[StarterTemplate, ServerAdapter]:
     template = StarterTemplate(
         _choice_or_prompt(
             template_name,
@@ -108,7 +105,24 @@ def _normalize_config(
             default=ServerAdapter.UVICORN.value,
         )
     )
-    install = _install_or_prompt(install_dependencies, yes=yes)
+    return template, server
+
+
+def _normalize_config(
+    *,
+    project_name: str | None,
+    existing: Path | None,
+    template_name: str | None,
+    server_name: str | None,
+    package_name: str | None,
+    yes: bool,
+    install_dependencies: bool | None,
+    dry_run: bool,
+) -> InitConfig:
+    if project_name is not None and existing is not None:
+        raise ScaffoldDetectionError("PROJECT_NAME and --existing are mutually exclusive.")
+    if existing is None and package_name is not None:
+        raise ScaffoldDetectionError("--package is only valid with --existing.")
 
     if existing is None:
         if project_name is None:
@@ -117,6 +131,12 @@ def _normalize_config(
             project_name = click.prompt("Project name")
         distribution_name, import_package = normalize_distribution_name(project_name)
         target = (Path.cwd() / distribution_name).resolve()
+        template, server = _resolved_template_and_server(
+            template_name=template_name,
+            server_name=server_name,
+            yes=yes,
+        )
+        install = _install_or_prompt(install_dependencies, yes=yes)
         return InitConfig(
             mode=InitMode.NEW,
             target=target,
@@ -135,6 +155,12 @@ def _normalize_config(
             f"Existing-project target does not exist or is not a directory: {target}"
         )
     pyproject_text = _read_pyproject(target)
+    template, server = _resolved_template_and_server(
+        template_name=template_name,
+        server_name=server_name,
+        yes=yes,
+    )
+    install = _install_or_prompt(install_dependencies, yes=yes)
     if install and pyproject_text is None:
         raise ScaffoldDetectionError(
             "Existing-project dependency installation requires pyproject.toml; "
@@ -163,7 +189,7 @@ def _display_path(path: Path, *, target: Path) -> str:
         return str(path)
 
 
-def _print_plan(plan) -> None:
+def _print_plan(plan: ScaffoldPlan) -> None:
     config = plan.config
     click.echo(f"Mode: {config.mode.value}")
     click.echo(f"Target: {config.target}")
