@@ -1,5 +1,11 @@
 import pytest
-from rakit import Admin, DataSourceCapabilities, RakitError, ResourceAdmin, SecretValue
+from rakit import (
+    Admin,
+    DataSourceCapabilities,
+    RakitError,
+    ResourceAdmin,
+    SecretValue,
+)
 from rakit.core import (
     FormSchema,
     IdempotencyReservation,
@@ -100,7 +106,9 @@ class _IdempotencyStore:
 
 
 class _MutationService:
-    async def create(self, submitted: object, *, authorization: object | None = None) -> object:
+    async def create(
+        self, submitted: object, *, authorization: object | None = None
+    ) -> object:
         del authorization
         return submitted
 
