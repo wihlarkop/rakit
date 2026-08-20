@@ -106,9 +106,7 @@ class _IdempotencyStore:
 
 
 class _MutationService:
-    async def create(
-        self, submitted: object, *, authorization: object | None = None
-    ) -> object:
+    async def create(self, submitted: object, *, authorization: object | None = None) -> object:
         del authorization
         return submitted
 
@@ -128,9 +126,7 @@ def test_register_write_builds_low_level_binding_from_public_inputs() -> None:
     store = _IdempotencyStore()
     admin = _admin(store)
     admin.register(_Resource)
-    schema = FormSchema(
-        fields=(FieldDefinition(field_id="name", python_type=str, required=True),)
-    )
+    schema = FormSchema(fields=(FieldDefinition(field_id="name", python_type=str, required=True),))
 
     admin.register_write(
         "things",
@@ -149,9 +145,7 @@ def test_register_write_builds_low_level_binding_from_public_inputs() -> None:
 
 def test_register_write_rejects_unknown_resource() -> None:
     admin = _admin(_IdempotencyStore())
-    schema = FormSchema(
-        fields=(FieldDefinition(field_id="name", python_type=str, required=True),)
-    )
+    schema = FormSchema(fields=(FieldDefinition(field_id="name", python_type=str, required=True),))
 
     with pytest.raises(RakitError, match="Invalid resource write policy declaration"):
         admin.register_write(
@@ -164,9 +158,7 @@ def test_register_write_rejects_unknown_resource() -> None:
 def test_register_write_requires_an_idempotency_store() -> None:
     admin = _admin()
     admin.register(_Resource)
-    schema = FormSchema(
-        fields=(FieldDefinition(field_id="name", python_type=str, required=True),)
-    )
+    schema = FormSchema(fields=(FieldDefinition(field_id="name", python_type=str, required=True),))
 
     with pytest.raises(RakitError, match="Write resources require an idempotency store"):
         admin.register_write(
