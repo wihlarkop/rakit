@@ -4,7 +4,7 @@ from rakit_core.crypto import TokenService
 from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.fields import FieldDefinition
 from rakit_core.forms import FormSchema
-from rakit_core.generated_runtime import ResourceWriteServiceContext
+from rakit_core.generated_runtime import ResourceAdapterRuntime, ResourceWriteServiceContext
 from rakit_sqlalchemy.mutations import SQLAlchemyMutationService
 from rakit_sqlalchemy.plugin import SQLAlchemyPlugin
 from rakit_sqlalchemy.write_provider import SQLAlchemyWriteServiceProvider
@@ -80,5 +80,5 @@ def test_sqlalchemy_plugin_claim_exposes_write_provider_for_mapped_model() -> No
         ResourceFieldPolicy(list_fields=("id", "name"), detail_fields=("id", "name")),
     )
 
-    assert runtime is not None
+    assert isinstance(runtime, ResourceAdapterRuntime)
     assert isinstance(runtime.write_service_provider, SQLAlchemyWriteServiceProvider)
