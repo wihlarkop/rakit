@@ -41,23 +41,21 @@ def dependency_action_for(config: InitConfig) -> DependencyAction | None:
 def _new_pyproject(config: InitConfig) -> str:
     assert config.distribution_name is not None
     dependencies = "\n".join(f'    "{item}",' for item in _dependency_specs(config))
-    return _text(
-        f'''
-        [build-system]
-        requires = ["hatchling>=1.27"]
-        build-backend = "hatchling.build"
-
-        [project]
-        name = "{config.distribution_name}"
-        version = "0.1.0"
-        requires-python = ">=3.12"
-        dependencies = [
-        {dependencies}
-        ]
-
-        [tool.hatch.build.targets.wheel]
-        packages = ["src/{config.import_package}"]
-        '''
+    return (
+        "[build-system]\n"
+        'requires = ["hatchling>=1.27"]\n'
+        'build-backend = "hatchling.build"\n'
+        "\n"
+        "[project]\n"
+        f'name = "{config.distribution_name}"\n'
+        'version = "0.1.0"\n'
+        'requires-python = ">=3.12"\n'
+        "dependencies = [\n"
+        f"{dependencies}\n"
+        "]\n"
+        "\n"
+        "[tool.hatch.build.targets.wheel]\n"
+        f'packages = ["src/{config.import_package}"]\n'
     )
 
 
