@@ -1,7 +1,5 @@
-from datetime import UTC, datetime, timedelta
-
 import pytest
-from rakit import Admin, DataSourceCapabilities, ResourceAdmin, SecretValue
+from rakit import Admin, DataSourceCapabilities, RakitError, ResourceAdmin, SecretValue
 from rakit.core import (
     FormSchema,
     IdempotencyReservation,
@@ -147,7 +145,7 @@ def test_register_write_rejects_unknown_resource() -> None:
         fields=(FieldDefinition(field_id="name", python_type=str, required=True),)
     )
 
-    with pytest.raises(Exception, match="Invalid resource write policy declaration"):
+    with pytest.raises(RakitError, match="Invalid resource write policy declaration"):
         admin.register_write(
             "missing",
             form_schema=schema,
@@ -162,7 +160,7 @@ def test_register_write_requires_an_idempotency_store() -> None:
         fields=(FieldDefinition(field_id="name", python_type=str, required=True),)
     )
 
-    with pytest.raises(Exception, match="Write resources require an idempotency store"):
+    with pytest.raises(RakitError, match="Write resources require an idempotency store"):
         admin.register_write(
             "things",
             form_schema=schema,
