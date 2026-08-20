@@ -1,3 +1,9 @@
+from .apply import (
+    DependencyInstallError,
+    MissingUvError,
+    ScaffoldApplyError,
+    apply_scaffold_plan,
+)
 from .detection import (
     PackageResolutionRequired,
     ScaffoldDetectionError,
@@ -18,6 +24,12 @@ from .model import (
     ServerAdapter,
     StarterTemplate,
 )
+from .planner import (
+    ScaffoldConflictError,
+    ScaffoldPlanError,
+    build_scaffold_plan,
+    classify_plan,
+)
 from .render import (
     dependency_action_for,
     dependency_command_for,
@@ -28,16 +40,24 @@ from .render import (
 __all__ = [
     "ApplyResult",
     "DependencyAction",
+    "DependencyInstallError",
     "FileDisposition",
     "InitConfig",
     "InitMode",
+    "MissingUvError",
     "PackageResolution",
     "PackageResolutionRequired",
     "PlannedFile",
+    "ScaffoldApplyError",
+    "ScaffoldConflictError",
     "ScaffoldDetectionError",
     "ScaffoldPlan",
+    "ScaffoldPlanError",
     "ServerAdapter",
     "StarterTemplate",
+    "apply_scaffold_plan",
+    "build_scaffold_plan",
+    "classify_plan",
     "dependency_action_for",
     "dependency_command_for",
     "detect_host_framework",
