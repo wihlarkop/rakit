@@ -22,9 +22,10 @@ Rakit is still under active pre-release development. The current package version
 | Phase A UI/UX, UI-01–UI-08 | **Complete** |
 | Phase B1 alpha readiness audit | **Complete** |
 | Phase B2 alpha/core hardening | **Complete** |
-| Phase B2.7 stale-branch retirement | **Planned housekeeping** |
-| Phase B3 realistic reference application | **Next** |
-| Phase B4 API/DX refinement from reference application | **Planned** |
+| Phase B2.7 stale-branch retirement | **Complete** |
+| Phase B3 realistic reference application | **Complete** |
+| Phase B4 API/DX refinement from reference application | **Complete** |
+| Phase C developer experience and lifecycle ergonomics | **Next** |
 | Public release | **Deferred until explicit maintainer approval** |
 
 ## Completed foundation
@@ -180,7 +181,7 @@ Phase A upgraded Rakit from a functional administration surface into a more cohe
 
 ## Phase B — Alpha hardening and real-world validation
 
-Phase B validates that the framework works as a coherent product rather than only as a collection of individually complete subsystems.
+Phase B validates that the framework works as a coherent product rather than only as a collection of individually complete subsystems. Phase B is complete; public release remains a separate maintainer decision and is still deferred.
 
 ### B1 — Alpha readiness audit
 
@@ -214,63 +215,53 @@ Completed work includes:
 
 ### B2.7 — Retire superseded stale branches
 
-**Status: Planned housekeeping**
+**Status: Complete**
 
-Retire old branches whose intent has already been implemented by B2:
+The two superseded roadmap-only branches were retired after B2 absorbed their useful intent:
 
 - `chore/httpstatus-roadmap-todo`.
 - `chore/rakit-table-prefix-roadmap-todo`.
 
-This is repository housekeeping rather than product work.
+No stale implementation was merged or rebased; the work was reimplemented from current `main`.
 
 ### B3 — Realistic reference application
 
-**Status: Next**
+**Status: Complete**
 
-Build `examples/reference_app` as a realistic backoffice application using public Rakit APIs only.
+`examples/reference_app` now provides a realistic commerce/backoffice application composed through public Rakit APIs. It exercises:
 
-The reference application should exercise a meaningful cross-section of the framework:
+- application-owned async SQLAlchemy persistence on SQLite.
+- built-in SQLAlchemy authentication, sessions, users, roles, and allow-only RBAC.
+- customers, products, orders, and order-item domain models.
+- optimistic CRUD forms for mutable resources.
+- private image upload/storage using the local storage adapter and portable `StoredFile` descriptors.
+- resource filters, search, sorting, and generated REST reads.
+- relationship metadata.
+- record and bulk actions with explicit application-owned transaction boundaries.
+- an application-owned custom page.
+- eager and lazy dashboard widgets plus launchers.
+- startup bootstrap, database readiness, and shutdown cleanup.
+- an isolated subprocess smoke test that creates a fresh database, compiles the app, seeds auth/domain data, and proves readiness.
 
-- application setup.
-- SQLAlchemy persistence.
-- authentication and authorization.
-- users and roles.
-- products or inventory.
-- orders or another transactional domain.
-- relationships.
-- file upload/storage.
-- create/update/delete flows.
-- resource filters and search.
-- actions and bulk actions.
-- custom pages.
-- dashboard widgets.
-- generated REST endpoints.
-- realistic permission boundaries.
-
-The reference application is not merely a visual showcase. Its purpose is to expose friction in the public API and developer experience.
+The example deliberately keeps application models, driver choice, migrations/bootstrap policy, and domain transitions outside Rakit core.
 
 ### B4 — API and DX refinement from the reference application
 
-**Status: Planned**
+**Status: Complete**
 
-Use problems discovered while building the reference application to improve Rakit itself.
+The reference application exposed a small set of concrete public-API friction points, which were fixed without introducing a broad speculative abstraction layer:
 
-Typical targets may include:
+- `rakit.auth.sqlalchemy` now exposes the operational auth primitives needed to bootstrap the built-in schema, users, roles, permissions, password hashing, permission synchronization, and durable idempotency.
+- `Admin.register_write(...)` enables ordinary resource write forms without forcing applications to construct transport-level `WriteResourceBinding` objects or duplicate CSRF/auth/template plumbing.
+- lifecycle startup callbacks now provide a fail-fast initialization seam before the runtime enters `READY`.
+- the root `rakit` facade exposes the domain-action composition contracts needed to declare typed actions without importing internal modules.
+- reference-app documentation now makes persistence, transaction, storage-descriptor, and application/framework ownership boundaries explicit.
 
-- awkward lifecycle APIs.
-- excessive boilerplate.
-- unclear capability errors.
-- inconsistent imports or naming.
-- missing extension hooks.
-- configuration friction.
-- documentation gaps.
-- public API surfaces that are technically correct but unpleasant to use.
-
-B4 should prefer fixes driven by real application pressure rather than speculative abstraction work.
+These changes preserve explicit authorization, transaction ownership, adapter boundaries, and fail-closed behavior. No release, tag, version bump, or package publication is implied by Phase B completion.
 
 ## Phase C — Developer experience and lifecycle ergonomics
 
-**Status: Planned**
+**Status: Next**
 
 ### C1 — Friendly CRUD and lifecycle APIs
 
