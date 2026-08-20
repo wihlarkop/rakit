@@ -69,7 +69,9 @@ def normalize_distribution_name(name: str) -> tuple[str, str]:
 
 def validate_package_name(name: str) -> str:
     if not name or name != name.strip() or "." in name or "/" in name or "\\" in name:
-        raise ScaffoldDetectionError("Package name must be one top-level Python package identifier.")
+        raise ScaffoldDetectionError(
+            "Package name must be one top-level Python package identifier."
+        )
     if not _is_valid_import_name(name):
         raise ScaffoldDetectionError(f"Package name {name!r} is not a valid Python identifier.")
     return name
@@ -106,7 +108,9 @@ def resolve_existing_package(
 ) -> PackageResolution:
     root = root.resolve()
     if not root.is_dir():
-        raise ScaffoldDetectionError(f"Existing-project target does not exist or is not a directory: {root}")
+        raise ScaffoldDetectionError(
+            f"Existing-project target does not exist or is not a directory: {root}"
+        )
 
     src_root = root / "src"
     src_candidates = _candidate_packages(src_root)
