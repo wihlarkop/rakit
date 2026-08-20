@@ -56,7 +56,8 @@ def normalize_distribution_name(name: str) -> tuple[str, str]:
         raise ScaffoldDetectionError("Project name must not contain path separators or traversal.")
     if not _DISTRIBUTION_RE.fullmatch(name):
         raise ScaffoldDetectionError(
-            "Project name may contain letters, numbers, underscores, and hyphens and must start with a letter."
+            "Project name may contain letters, numbers, underscores, and hyphens "
+            "and must start with a letter."
         )
 
     import_package = name.replace("-", "_")
@@ -123,7 +124,8 @@ def resolve_existing_package(
         if package in flat_candidates:
             return _resolution(root, package, source_root=root)
         raise ScaffoldDetectionError(
-            f"Package {package!r} was not found as a conventional src/ or flat package under {root}."
+            f"Package {package!r} was not found as a conventional src/ or flat "
+            f"package under {root}."
         )
 
     if len(src_candidates) == 1:
