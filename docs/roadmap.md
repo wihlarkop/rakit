@@ -8,7 +8,7 @@ Rakit remains under active pre-release development. The current package version 
 
 ## Status legend
 
-- **Complete** — implemented and merged to `main`.
+- **Complete** — implementation and verification are complete; for integration work this status becomes canonical when the owning PR lands on `main`.
 - **Next** — next major workstream expected to receive active implementation.
 - **Planned** — accepted direction, but not necessarily fully designed yet.
 - **Research** — exploratory work that may change shape substantially.
