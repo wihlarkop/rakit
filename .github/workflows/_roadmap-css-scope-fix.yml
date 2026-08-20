@@ -1,0 +1,46 @@
+name: Roadmap CSS source scope fix
+
+on:
+  push:
+    branches: [docs/full-roadmap]
+
+permissions:
+  contents: write
+
+jobs:
+  fix-css-source-scope:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: docs/full-roadmap
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.0.2
+        with:
+          bun-version: 1.3.14
+      - name: Scope Tailwind source detection to rakit_web
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("packages/rakit-web/src/rakit_web/assets/rakit.css")
+          source = path.read_text(encoding="utf-8")
+          old = '@import "tailwindcss";\n\n@source "../templates";'
+          new = '@import "tailwindcss" source("../");'
+          if source.count(old) != 1:
+              raise SystemExit("expected Tailwind source marker not found exactly once")
+          path.write_text(source.replace(old, new), encoding="utf-8")
+          PY
+      - run: bun install --frozen-lockfile
+      - run: bun run css:build
+      - name: Commit scoped source and canonical CSS
+        run: |
+          set -euo pipefail
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/rakit-web/src/rakit_web/assets/rakit.css packages/rakit-web/src/rakit_web/static/rakit.css
+          git commit -m "fix(web): scope Tailwind source detection"
+          git push origin HEAD:docs/full-roadmap
+
+# Temporary workflow; remove after the canonical CSS commit lands.
