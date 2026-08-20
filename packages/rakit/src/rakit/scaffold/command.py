@@ -130,7 +130,9 @@ def _normalize_config(
                 raise ScaffoldDetectionError("PROJECT_NAME is required when --yes is used.")
             project_name = click.prompt("Project name")
         distribution_name, import_package = normalize_distribution_name(project_name)
-        target = (Path.cwd() / distribution_name).resolve()
+        target = (Path.cwd() / distribution_name).absolute()
+        if target.is_symlink():
+            raise ScaffoldDetectionError(f"New-project target must not be a symlink: {target}")
         template, server = _resolved_template_and_server(
             template_name=template_name,
             server_name=server_name,
@@ -198,9 +200,7 @@ def _print_plan(plan: ScaffoldPlan) -> None:
     click.echo(f"Server: {config.server.value}")
     click.echo("Files:")
     for item in plan.files:
-        click.echo(
-            f"  {item.disposition.value:9} {_display_path(item.path, target=config.target)}"
-        )
+        click.echo(f"  {item.disposition.value:9} {_display_path(item.path, target=config.target)}")
     if plan.dependency_action is not None:
         click.echo("Dependencies: " + " ".join(plan.dependency_action.argv))
     else:
