@@ -21,10 +21,10 @@ from rakit import (
     RelationshipEditMode,
     RelationshipKind,
     ResourceApiDefinition,
+    ResourceWriteDefinition,
     TransactionPolicy,
 )
-from rakit.core import FormSchema, TokenService
-from rakit.sqlalchemy import SQLAlchemyMutationService
+from rakit.core import FormSchema
 from sqlalchemy import update
 
 from .database import session_factory
@@ -135,82 +135,6 @@ ORDER_CUSTOMER = RelationshipDefinition(
     record_label_field="name",
 )
 
-
-class CustomerAdmin(ModelAdmin):
-    resource_id = "customers"
-    path = "/customers"
-    label = "Customers"
-    singular_label = "Customer"
-    model = Customer
-    list_fields = ("id", "name", "email", "status", "created_at")
-    detail_fields = ("id", "name", "email", "status", "created_at")
-    filters = (CUSTOMER_STATUS,)
-    search_fields = ("name", "email")
-    sort_fields = ("id", "name", "created_at")
-    api = ResourceApiDefinition(
-        exposure=ApiExposure.READ_ONLY,
-        read_fields=("id", "name", "email", "status", "created_at"),
-        filters=("customer_status",),
-    )
-
-
-class ProductAdmin(ModelAdmin):
-    resource_id = "products"
-    path = "/products"
-    label = "Products"
-    singular_label = "Product"
-    model = Product
-    list_fields = ("id", "sku", "name", "price_cents", "inventory_count", "status")
-    detail_fields = (
-        "id",
-        "sku",
-        "name",
-        "price_cents",
-        "inventory_count",
-        "status",
-        "image",
-        "created_at",
-    )
-    filters = (PRODUCT_STATUS,)
-    search_fields = ("sku", "name")
-    sort_fields = ("id", "sku", "name", "price_cents", "inventory_count", "created_at")
-    api = ResourceApiDefinition(
-        exposure=ApiExposure.READ_ONLY,
-        read_fields=("id", "sku", "name", "price_cents", "inventory_count", "status"),
-        filters=("product_status",),
-    )
-
-
-class OrderAdmin(ModelAdmin):
-    resource_id = "orders"
-    path = "/orders"
-    label = "Orders"
-    singular_label = "Order"
-    model = Order
-    list_fields = ("id", "customer_id", "status", "total_cents", "created_at")
-    detail_fields = ("id", "customer_id", "status", "total_cents", "created_at")
-    filters = (ORDER_STATUS,)
-    sort_fields = ("id", "total_cents", "created_at")
-    relationships = (ORDER_CUSTOMER,)
-    actions = (MARK_PAID, MARK_PROCESSING)
-    api = ResourceApiDefinition(
-        exposure=ApiExposure.READ_ONLY,
-        read_fields=("id", "customer_id", "status", "total_cents", "created_at"),
-        filters=("order_status",),
-    )
-
-
-class OrderItemAdmin(ModelAdmin):
-    resource_id = "order_items"
-    path = "/order-items"
-    label = "Order items"
-    singular_label = "Order item"
-    model = OrderItem
-    list_fields = ("id", "order_id", "product_id", "quantity", "unit_price_cents")
-    detail_fields = ("id", "order_id", "product_id", "quantity", "unit_price_cents")
-    sort_fields = ("id", "order_id", "product_id")
-
-
 PRODUCT_FORM = FormSchema(
     fields=(
         FieldDefinition(field_id="sku", python_type=str, label="SKU", required=True),
@@ -258,34 +182,93 @@ ORDER_FORM = FormSchema(
 )
 
 
-def product_mutations(token_service: TokenService) -> SQLAlchemyMutationService:
-    return SQLAlchemyMutationService(
-        model=Product,
-        session_factory=session_factory,
+class CustomerAdmin(ModelAdmin):
+    resource_id = "customers"
+    path = "/customers"
+    label = "Customers"
+    singular_label = "Customer"
+    model = Customer
+    list_fields = ("id", "name", "email", "status", "created_at")
+    detail_fields = ("id", "name", "email", "status", "created_at")
+    filters = (CUSTOMER_STATUS,)
+    search_fields = ("name", "email")
+    sort_fields = ("id", "name", "created_at")
+    api = ResourceApiDefinition(
+        exposure=ApiExposure.READ_ONLY,
+        read_fields=("id", "name", "email", "status", "created_at"),
+        filters=("customer_status",),
+    )
+
+
+class ProductAdmin(ModelAdmin):
+    resource_id = "products"
+    path = "/products"
+    label = "Products"
+    singular_label = "Product"
+    model = Product
+    list_fields = ("id", "sku", "name", "price_cents", "inventory_count", "status")
+    detail_fields = (
+        "id",
+        "sku",
+        "name",
+        "price_cents",
+        "inventory_count",
+        "status",
+        "image",
+        "created_at",
+    )
+    filters = (PRODUCT_STATUS,)
+    search_fields = ("sku", "name")
+    sort_fields = ("id", "sku", "name", "price_cents", "inventory_count", "created_at")
+    api = ResourceApiDefinition(
+        exposure=ApiExposure.READ_ONLY,
+        read_fields=("id", "sku", "name", "price_cents", "inventory_count", "status"),
+        filters=("product_status",),
+    )
+    write = ResourceWriteDefinition(
         form_schema=PRODUCT_FORM,
         writable_fields=("sku", "name", "price_cents", "inventory_count", "status", "image"),
-        identity_fields=("id",),
-        token_service=token_service,
         version_field="version",
-        resource_id="products",
-        delete_permission="reference.resources.products.delete",
-        force_overwrite_permission="reference.resources.products.force_overwrite",
+        success_message="Product saved.",
+        htmx_refresh_targets=("rakit:dashboard-refresh",),
     )
 
 
-def order_mutations(token_service: TokenService) -> SQLAlchemyMutationService:
-    return SQLAlchemyMutationService(
-        model=Order,
-        session_factory=session_factory,
+class OrderAdmin(ModelAdmin):
+    resource_id = "orders"
+    path = "/orders"
+    label = "Orders"
+    singular_label = "Order"
+    model = Order
+    list_fields = ("id", "customer_id", "status", "total_cents", "created_at")
+    detail_fields = ("id", "customer_id", "status", "total_cents", "created_at")
+    filters = (ORDER_STATUS,)
+    sort_fields = ("id", "total_cents", "created_at")
+    relationships = (ORDER_CUSTOMER,)
+    actions = (MARK_PAID, MARK_PROCESSING)
+    api = ResourceApiDefinition(
+        exposure=ApiExposure.READ_ONLY,
+        read_fields=("id", "customer_id", "status", "total_cents", "created_at"),
+        filters=("order_status",),
+    )
+    write = ResourceWriteDefinition(
         form_schema=ORDER_FORM,
         writable_fields=("customer_id", "status", "total_cents"),
-        identity_fields=("id",),
-        token_service=token_service,
         version_field="version",
-        resource_id="orders",
-        delete_permission="reference.resources.orders.delete",
-        force_overwrite_permission="reference.resources.orders.force_overwrite",
+        success_message="Order saved.",
+        htmx_refresh_targets=("rakit:dashboard-refresh",),
     )
+
+
+class OrderItemAdmin(ModelAdmin):
+    resource_id = "order_items"
+    path = "/order-items"
+    label = "Order items"
+    singular_label = "Order item"
+    model = OrderItem
+    list_fields = ("id", "order_id", "product_id", "quantity", "unit_price_cents")
+    detail_fields = ("id", "order_id", "product_id", "quantity", "unit_price_cents")
+    sort_fields = ("id", "order_id", "product_id")
 
 
 RESOURCE_ADMINS = (CustomerAdmin, ProductAdmin, OrderAdmin, OrderItemAdmin)
@@ -303,6 +286,4 @@ __all__ = [
     "OrderAdmin",
     "OrderItemAdmin",
     "ProductAdmin",
-    "order_mutations",
-    "product_mutations",
 ]
