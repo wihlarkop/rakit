@@ -1,7 +1,5 @@
 /* Maintainer source. Build with `bun run css:build`; commit the generated static asset. */
-@import "tailwindcss";
-
-@source "../templates";
+@import "tailwindcss" source("../");
 
 @custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
 

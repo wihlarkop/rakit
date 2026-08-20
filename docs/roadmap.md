@@ -1,218 +1,751 @@
 # Rakit Roadmap
 
-This roadmap describes direction rather than release dates. Items may move as implementation experience reveals better boundaries.
+This document is the canonical public roadmap for Rakit.
 
-## Initial `0.1` scope
+The roadmap describes product direction and engineering priorities rather than release dates. Items may move as implementation experience reveals better abstractions or sharper boundaries.
 
-### Runtime and packaging
+Rakit is still under active pre-release development. The current package version target is `0.1.0a1`, but publication is intentionally deferred until the maintainer considers the framework ready.
+
+## Status legend
+
+- **Complete** — implemented and merged to `main`.
+- **Next** — next major workstream expected to receive active implementation.
+- **Planned** — accepted direction, but not necessarily fully designed yet.
+- **Research** — exploratory work that may change shape substantially.
+- **Not currently planned** — intentionally outside the product focus.
+
+## Current position
+
+| Area | Status |
+| --- | --- |
+| Plans 00–07 foundation | **Complete** |
+| Phase A UI/UX, UI-01–UI-08 | **Complete** |
+| Phase B1 alpha readiness audit | **Complete** |
+| Phase B2 alpha/core hardening | **Complete** |
+| Phase B2.7 stale-branch retirement | **Planned housekeeping** |
+| Phase B3 realistic reference application | **Next** |
+| Phase B4 API/DX refinement from reference application | **Planned** |
+| Public release | **Deferred until explicit maintainer approval** |
+
+## Completed foundation
+
+### Plan 00 — Foundation workspace
 
 - uv multi-package workspace.
-- Python 3.12–3.14 CI.
-- `rakit`, `rakit-core`, `rakit-web`, SQLAlchemy, auth, storage, and Uvicorn packages.
-- Standalone and mountable Starlette ASGI runtime.
-- Uvicorn first-class server adapter.
-- Typed public APIs and `py.typed`.
-- Ruff and ty project quality gates.
+- Python 3.12+ baseline.
+- package boundaries and dependency direction.
+- typed package foundations and `py.typed`.
+- repository quality tooling.
 
-### Administration and internal tools
+### Plan 01 — Runtime, compiler, and lifecycle
 
-- SQLAlchemy `ModelAdmin` CRUD.
-- Read-only custom `ResourceAdmin`.
-- Full relationship editing.
-- Filters, resource search, multi-column sorting, and offset pagination.
-- Exact, deferred, and disabled count policies.
-- Custom pages, actions, bulk actions, and JSON endpoints.
-- Dashboard launchers and basic widgets.
-- Jinja overrides, bundled Tailwind, and HTMX progressive enhancement.
-- Light, dark, and system themes.
+- framework-neutral runtime contracts.
+- compilation and registration foundations.
+- dependency injection.
+- application lifecycle and shutdown behavior.
+- operation semantics.
 
-### Correctness and security
+### Plan 02 — Read-only resources and web UI
 
-- Pydantic v2 validation and form engine.
-- Operation-scoped DI and unit of work.
-- Explicit transaction policies.
-- Transaction-aware typed events.
-- Optimistic concurrency.
-- Server-side duplicate-submission protection.
-- Secure server-side sessions, CSRF, and origin checks.
-- Allow-only built-in RBAC.
-- Purpose-separated cryptographic key ring and rotation.
-- Trusted hosts/proxies, CSP, security headers, safe redirects, and production checks.
-- Local private file storage and upload validation.
-- Accessibility quality gate.
-- Deadlines and cooperative cancellation.
-- Structured logging.
-- Health, readiness, and graceful shutdown.
+- `ResourceAdmin` and resource registration.
+- read-only resource pages.
+- Starlette-based standalone and mountable ASGI runtime.
+- bundled templates, assets, and HTMX progressive enhancement.
 
-### Developer experience
+### Plan 03 — Authentication, authorization, and security
 
-- `rakit check`.
-- `rakit createsuperuser`.
-- `rakit permissions sync`.
-- `rakit routes`.
-- Unit, contract, integration, and example smoke tests.
-- README, design docs, security guide, extension guides, and executable examples.
+- secure server-side sessions.
+- built-in SQLAlchemy authentication.
+- allow-only RBAC.
+- CSRF and origin validation.
+- trusted host/proxy handling.
+- CSP and security headers.
+- production safety checks.
+- purpose-separated cryptographic key management.
 
-## Planned after the initial release
+### Plan 04 — Forms and write pipeline
 
-These items have clear value and are expected to receive dedicated design work.
+- Pydantic v2 validation integration.
+- form engine.
+- create/update/delete flows.
+- explicit transaction policies.
+- optimistic concurrency.
+- duplicate-submission protection.
+- typed transactional events.
 
-### Generated APIs
+### Plan 05 — Relationships, actions, pages, and endpoints
 
-- Generated resource REST API.
-- PUT, PATCH, and DELETE semantics.
-- OpenAPI generation.
-- Authenticated Swagger UI or ReDoc.
-- API keys and token-based machine authentication.
-- ETag, `If-Match`, and conditional requests.
-- Generated GraphQL types, queries, mutations, and relationships.
-- GraphQL DataLoader/batching.
-- GraphQL field authorization.
-- GraphQL complexity and depth limits.
-- Cursor pagination.
-- GraphQL subscriptions after durable event infrastructure exists.
+- relationship introspection and mutation.
+- custom actions.
+- bulk actions.
+- custom pages.
+- custom JSON endpoints.
+- operation-scoped authorization and transaction behavior.
 
-### Storage
+### Plan 06 — Dashboard, storage, and accessibility
+
+- dashboard foundations.
+- basic widgets.
+- storage contracts.
+- local private file storage.
+- upload validation.
+- accessibility foundations.
+- structured logging.
+- health/readiness handling.
+
+### Plan 07 — Hardening, examples, docs, packaging, and governance
+
+- Python 3.12 / 3.13 / 3.14 CI matrix.
+- lowest-direct and latest dependency compatibility matrices.
+- strict Ruff formatting/linting and `ty` type checking.
+- repository-wide pytest coverage gate.
+- strict MkDocs build.
+- wheel and sdist validation for official distributions.
+- clean-installed artifact smoke testing outside the repository checkout.
+- compatibility and governance documentation.
+- tag-gated release workflow.
+
+No package publication is implied by completion of Plan 07.
+
+## Phase A — UI/UX maturity
+
+Phase A upgraded Rakit from a functional administration surface into a more cohesive product UI while preserving SSR and progressive enhancement.
+
+### UI-01 — Showcase baseline
+
+**Status: Complete**
+
+- representative UI showcase.
+- shared visual baseline for subsequent UI work.
+
+### UI-02 — Responsive shell and navigation
+
+**Status: Complete**
+
+- responsive application shell.
+- navigation behavior across screen sizes.
+- sidebar behavior and persistence contracts.
+
+### UI-03 — Design foundation, icons, and theme
+
+**Status: Complete**
+
+- design tokens and visual foundation.
+- icon system.
+- light, dark, and system themes.
+- bundled Tailwind build.
+
+### UI-04 — Core components
+
+**Status: Complete**
+
+- reusable UI primitives.
+- dialogs, feedback states, controls, and component-level presentation contracts.
+
+### UI-05 — Resource experience
+
+**Status: Complete**
+
+- mature resource list/detail/form experiences.
+- filter presentation.
+- query UI.
+- pagination presentation.
+- resource actions and state feedback.
+
+### UI-06 — Advanced operations
+
+**Status: Complete**
+
+- advanced actions.
+- bulk operations.
+- relationships and uploads.
+- authentication/system surfaces.
+- custom pages and feedback states.
+
+### UI-07 — Responsive/accessibility hardening and advanced widgets
+
+**Status: Complete**
+
+- keyboard and focus contracts.
+- motion and contrast contracts.
+- responsive hardening.
+- advanced widget foundations.
+
+### UI-08 — Final Phase A polish
+
+**Status: Complete**
+
+- final visual and interaction polish across the Phase A surface.
+- Phase A acceptance and integration cleanup.
+
+## Phase B — Alpha hardening and real-world validation
+
+Phase B validates that the framework works as a coherent product rather than only as a collection of individually complete subsystems.
+
+### B1 — Alpha readiness audit
+
+**Status: Complete**
+
+- reconstructed alpha acceptance criteria.
+- audited the current framework against the original pre-release definition of done.
+- identified remaining hardening work without triggering a release.
+
+### B2 — Alpha/core hardening
+
+**Status: Complete**
+
+B2 hardened package boundaries, artifact correctness, generated assets, and public semantics.
+
+Completed work includes:
+
+- public facade normalization while preserving physical distribution boundaries.
+- `rakit.server.granian` facade.
+- neutral `rakit.storage` facade.
+- `rakit.storage.local` facade.
+- preferred server extras `rakit[uvicorn]` and `rakit[granian]`.
+- explicit facade dependency ownership.
+- runtime web asset completeness checks.
+- generated Tailwind CSS reproducibility gate.
+- clean-installed optional Granian smoke coverage.
+- semantic stdlib `HTTPStatus` usage for HTTP-facing status codes without changing wire behavior.
+- documented and regression-tested `rakit_` namespace invariant for Rakit-owned persistence.
+- dedicated Rakit-owned Alembic version-table naming.
+- refreshed architecture, install, migration, and `Unreleased` documentation.
+
+### B2.7 — Retire superseded stale branches
+
+**Status: Planned housekeeping**
+
+Retire old branches whose intent has already been implemented by B2:
+
+- `chore/httpstatus-roadmap-todo`.
+- `chore/rakit-table-prefix-roadmap-todo`.
+
+This is repository housekeeping rather than product work.
+
+### B3 — Realistic reference application
+
+**Status: Next**
+
+Build `examples/reference_app` as a realistic backoffice application using public Rakit APIs only.
+
+The reference application should exercise a meaningful cross-section of the framework:
+
+- application setup.
+- SQLAlchemy persistence.
+- authentication and authorization.
+- users and roles.
+- products or inventory.
+- orders or another transactional domain.
+- relationships.
+- file upload/storage.
+- create/update/delete flows.
+- resource filters and search.
+- actions and bulk actions.
+- custom pages.
+- dashboard widgets.
+- generated REST endpoints.
+- realistic permission boundaries.
+
+The reference application is not merely a visual showcase. Its purpose is to expose friction in the public API and developer experience.
+
+### B4 — API and DX refinement from the reference application
+
+**Status: Planned**
+
+Use problems discovered while building the reference application to improve Rakit itself.
+
+Typical targets may include:
+
+- awkward lifecycle APIs.
+- excessive boilerplate.
+- unclear capability errors.
+- inconsistent imports or naming.
+- missing extension hooks.
+- configuration friction.
+- documentation gaps.
+- public API surfaces that are technically correct but unpleasant to use.
+
+B4 should prefer fixes driven by real application pressure rather than speculative abstraction work.
+
+## Phase C — Developer experience and lifecycle ergonomics
+
+**Status: Planned**
+
+### C1 — Friendly CRUD and lifecycle APIs
+
+- simplify common registration and lifecycle flows.
+- reduce unnecessary boilerplate.
+- retain explicit behavior for authorization, transactions, and capabilities.
+- improve extension ergonomics without hiding important framework semantics.
+
+### C2 — Project initialization and scaffolding
+
+Design a Vite-like interactive `rakit init` flow.
+
+Potential choices include:
+
+- project name and layout.
+- standalone Rakit vs integration into an existing application.
+- web integration.
+- persistence adapter.
+- server adapter.
+- authentication.
+- storage.
+- generated examples and starter resources.
+
+The initializer should support both creating a new project and adding Rakit to an existing project where practical.
+
+### C3 — Installation and extras UX
+
+Continue simplifying optional capability installation.
+
+Examples:
+
+```bash
+uv add "rakit[standard]"
+uv add "rakit[uvicorn]"
+uv add "rakit[granian]"
+uv add "rakit[sqlalchemy]"
+```
+
+Goals:
+
+- predictable extra names.
+- clear missing-dependency errors.
+- no implicit adapter activation.
+- no unnecessary heavy dependencies in the base install.
+
+### C4 — Capability discovery
+
+Expand diagnostics such as `rakit check` and capability inspection.
+
+Potential output should make it obvious which adapters are installed and which capabilities are available.
+
+Examples of capability groups:
+
+- servers.
+- persistence.
+- schema.
+- storage.
+- authentication.
+- generated API transports.
+
+## Phase D — Adapter ecosystem
+
+**Status: Planned**
+
+Rakit should prove that its capability architecture works beyond the first implementation in each category.
+
+The goal is not to support every library immediately. The preferred strategy is to add one well-chosen second adapter at a time and use the resulting pressure to improve contracts.
+
+Potential web integrations:
+
+- FastAPI.
+- Starlette.
+- Litestar.
+- Sanic.
+- Flask.
+
+Potential persistence integrations:
+
+- SQLAlchemy ORM/Core.
+- Tortoise ORM.
+- Peewee.
+- Masonite ORM or other compatible ecosystems where the capability model fits honestly.
+
+Potential schema integrations:
+
+- Pydantic.
+- msgspec.
+- dataclass-based adapters.
+
+Likely early candidates for proving a second implementation include Litestar, Tortoise ORM, or msgspec.
+
+Adapter work must preserve an important rule: unsupported capabilities fail explicitly rather than being silently approximated.
+
+## Phase E — Generated APIs v1
+
+**Status: Planned; foundation already exists**
+
+Generated REST is not starting from zero. Rakit already contains substantial generated API foundations, including compilation contracts, read and mutation runtimes, SQLAlchemy execution, filters, pagination contracts, authorization integration, concurrency handling, idempotency, and structured HTTP errors.
+
+### E1 — Complete and polish generated REST
+
+- complete public REST surface.
+- consistent resource route conventions.
+- clarify supported mutation semantics.
+- strengthen public documentation and examples.
+
+### E2 — HTTP mutation semantics
+
+- POST semantics.
+- PATCH semantics.
+- DELETE semantics.
+- evaluate PUT semantics where a true replacement operation is meaningful.
+
+### E3 — OpenAPI generation
+
+- generated schemas.
+- operation metadata.
+- query/filter documentation.
+- error contracts.
+- authentication descriptions.
+
+### E4 — API documentation UI
+
+- Swagger UI.
+- ReDoc or equivalent documentation surface.
+- safe production defaults.
+
+### E5 — Machine authentication
+
+- API keys.
+- token-based authentication.
+- explicit scopes/permissions.
+- rotation and revocation policies.
+
+### E6 — Conditional requests and concurrency
+
+- ETag behavior.
+- `If-Match`.
+- conditional reads/writes where appropriate.
+- consistent optimistic concurrency contracts.
+
+### E7 — GraphQL foundation
+
+GraphQL should follow a mature REST surface rather than precede it.
+
+Potential scope:
+
+- generated types.
+- queries.
+- mutations.
+- relationships.
+- pagination.
+
+### E8 — GraphQL batching
+
+- DataLoader-style batching.
+- relationship query efficiency.
+
+### E9 — GraphQL authorization
+
+- field authorization.
+- mutation authorization.
+- relationship authorization.
+
+### E10 — GraphQL safety
+
+- complexity limits.
+- depth limits.
+- query cost controls.
+
+Subscriptions should wait until durable event infrastructure exists.
+
+## Phase F — Storage ecosystem
+
+**Status: Planned; local storage already exists**
+
+Current foundation:
+
+- `FileStorage` contract.
+- local private storage implementation.
+- upload validation.
+
+Planned providers and capabilities:
 
 - S3-compatible storage.
 - Cloudflare R2.
 - MinIO.
 - Google Cloud Storage.
 - Azure Blob Storage.
-- Presigned URLs.
-- Direct-to-storage upload.
-- Multipart and resumable upload.
-- Upload progress.
-- Image thumbnails.
-- Virus-scanning integrations.
-- Durable orphan cleanup.
-- Cross-storage migration.
+- presigned URLs.
+- direct-to-storage uploads.
+- multipart uploads.
+- resumable uploads.
+- upload progress.
+- image thumbnails.
+- virus-scanning integrations.
+- durable orphan cleanup.
+- cross-storage migration tooling.
 
-### Background operations
+## Phase G — Background operations
 
-- `JobBackend` contract.
-- Taskiq, Dramatiq, Celery, ARQ, RQ, and Temporal integrations.
-- Progress and cancellation.
-- Retry and scheduling.
-- Job history UI.
+**Status: Planned**
+
+Introduce a neutral background execution contract only after concrete use cases are validated.
+
+Potential abstraction:
+
+```python
+class JobBackend:
+    ...
+```
+
+Potential adapters:
+
+- Taskiq.
+- Dramatiq.
+- Celery.
+- ARQ.
+- RQ.
+- Temporal.
+
+Potential capabilities:
+
+- progress.
+- cancellation.
+- retry.
+- scheduling.
+- job history.
+- resumability.
+- idempotency.
 - HTMX/SSE status updates.
-- Resumable and idempotent jobs.
+- administration UI for operational visibility.
 
-### Audit and operations
+## Phase H — Audit and observability
 
-- Optional persistent audit package.
-- Append-only audit records.
-- Before/after snapshots and diffs.
-- Redaction policy.
-- Audit UI and export.
-- Retention controls.
-- Hash-chain integrity.
-- Restore workflows where safe.
-- Metrics registry.
+**Status: Planned**
+
+### Persistent audit
+
+- optional persistent audit package.
+- append-only audit records.
+- before/after snapshots and diffs.
+- field-level redaction policy.
+- audit UI.
+- export.
+- retention controls.
+- hash-chain integrity where justified.
+- safe restore workflows.
+
+### Metrics and tracing
+
+- metrics registry.
 - Prometheus endpoint.
-- OpenTelemetry tracing and metrics.
+- OpenTelemetry tracing.
+- OpenTelemetry metrics.
 - Grafana examples.
+- correlation across requests, jobs, and integrations.
 
-### Import and export
+## Phase I — Import and export
 
-- CSV, Excel, and JSON.
-- Column mapping.
-- Dry-run validation.
-- Relationship resolution.
-- Atomic and best-effort policies.
-- Templates.
-- Permissions.
-- Background execution.
-- Progress and resumability.
-- Idempotency.
+**Status: Planned**
 
-### UI and accessibility v1
+- CSV.
+- Excel.
+- JSON.
+- column/field mapping.
+- dry-run validation.
+- relationship resolution.
+- atomic import mode.
+- best-effort import mode.
+- reusable templates.
+- permission enforcement.
+- background execution.
+- progress reporting.
+- resumability.
+- idempotency.
 
-- Playwright end-to-end tests.
-- Cross-browser testing.
-- Visual regression.
-- axe-core automation.
-- Keyboard-flow regression.
-- Formalized `data-rakit-*` browser integration contract.
-- Chart widgets with accessible table fallback.
-- Auto-refresh and visibility-aware polling.
-- SSE and WebSocket widgets.
-- Saved and per-user dashboard layouts.
-- Drag-and-drop dashboard builder.
-- Command palette and keyboard shortcuts.
-- Automated theme contrast checks.
-- Advanced data-grid accessibility.
+## Phase J — Search and querying v2
 
-### Search and querying
+**Status: Planned; basic querying already exists**
 
-- Grouped `AND`/`OR` filter expressions.
-- Global search.
-- Full-text search.
-- PostgreSQL FTS and `pg_trgm`.
-- BM25 and TF-IDF providers.
-- Fuzzy, phonetic, trigram, and edit-distance search.
-- Elasticsearch and OpenSearch.
-- Meilisearch, Typesense, Algolia, MongoDB Atlas Search, and SQLite FTS.
-- Vector and semantic search.
-- Reranking and hybrid search.
-- Natural-language query interpretation.
-- Facets, highlighting, synonyms, and language-aware analysis.
-- Locale-aware, natural, and ICU sorting.
-- Estimated counts.
-- Cursor, keyset, snapshot, and continuation-token pagination.
+Current foundations include filters, search, sorting, and page/offset/cursor pagination contracts.
 
-### Authorization
+### Query composition
 
-- Explicit deny.
-- Role inheritance.
-- Hierarchical roles.
-- Direct user grants and denies.
-- Permission precedence inspector.
-- Temporary and time-bound grants.
-- Conditional permissions.
-- Policy simulation.
-- Invite and approval registration flows.
-- Password reset and account recovery.
-- JWT and PASETO API authentication.
+- grouped `AND`/`OR` filter expressions.
+- reusable query definitions.
+- richer filter operators where backend capabilities support them honestly.
 
-### Events and integration
+### Search
 
-- Durable outbox/inbox.
-- Retry and dead-letter queues.
+- global search.
+- full-text search.
+- PostgreSQL FTS.
+- `pg_trgm`.
+- BM25 providers.
+- TF-IDF providers where useful.
+- fuzzy search.
+- phonetic search.
+- trigram/edit-distance search.
+- Elasticsearch.
+- OpenSearch.
+- Meilisearch.
+- Typesense.
+- Algolia.
+- MongoDB Atlas Search where an adapter boundary makes sense.
+- SQLite FTS.
+- semantic/vector search.
+- reranking.
+- hybrid lexical/vector search.
+- natural-language query interpretation as an optional layer rather than a replacement for deterministic query semantics.
+
+### Search UX
+
+- facets.
+- highlighting.
+- synonyms.
+- language-aware analysis.
+- locale-aware sorting.
+- natural sorting.
+- ICU-based collation where supported.
+- estimated counts.
+
+### Pagination
+
+- page pagination.
+- limit/offset pagination.
+- cursor pagination.
+- keyset pagination.
+- snapshot pagination.
+- continuation tokens.
+- hybrid strategies.
+
+Pagination also has a separate research track described later in this roadmap.
+
+## Phase K — Authorization v2
+
+**Status: Planned**
+
+Current built-in authorization is deliberately conservative and allow-only.
+
+Potential v2 capabilities:
+
+- explicit deny.
+- role inheritance.
+- hierarchical roles.
+- direct user grants.
+- direct user denies.
+- well-defined precedence rules.
+- permission inspector.
+- temporary/time-bound grants.
+- conditional permissions.
+- policy simulation.
+- invite flows.
+- approval-based registration flows.
+- password reset/account recovery.
+- JWT authentication.
+- PASETO authentication.
+
+More expressive authorization must remain inspectable and deterministic.
+
+## Phase L — Durable events and integrations
+
+**Status: Planned; typed in-process event foundations already exist**
+
+- transactional outbox.
+- inbox/deduplication patterns.
+- retries.
+- dead-letter handling.
 - Kafka.
 - RabbitMQ.
 - NATS.
 - Redis Streams.
 - Google Pub/Sub.
-- Webhooks.
-- Event replay and inspection.
-- Distributed correlation and tracing.
-- External subscriber compatibility tooling.
+- webhooks.
+- replay and inspection tooling.
+- external subscriber compatibility guidance.
+- distributed correlation and tracing.
 
-### Caching
+## Phase M — Caching
 
-- `CacheBackend` protocol after validated use cases.
-- Memory and Redis implementations.
-- Permission-aware canonical keys.
-- Tag-based invalidation.
-- Event-driven invalidation.
-- Widget caching.
-- Stale-while-revalidate.
-- Diagnostics.
-- Distributed coordination.
+**Status: Planned only after validated use cases**
 
-### Scraping integrations
+Rakit intentionally does not perform automatic application-data caching today.
 
-Rakit remains a control panel rather than a scraping engine.
+Potential abstraction:
+
+```python
+class CacheBackend:
+    ...
+```
+
+Potential capabilities:
+
+- in-memory cache.
+- Redis.
+- permission-aware canonical cache keys.
+- tag-based invalidation.
+- event-driven invalidation.
+- widget caching.
+- stale-while-revalidate.
+- diagnostics.
+- distributed coordination where necessary.
+
+Caching must remain explicit application policy rather than hidden framework behavior.
+
+## Phase N — UI testing and accessibility automation
+
+**Status: Planned**
+
+Phase A established strong static and contract-level UI foundations. Phase N adds browser-level verification.
+
+- Playwright end-to-end tests.
+- cross-browser verification.
+- visual regression testing.
+- axe-core accessibility automation.
+- keyboard-flow regression.
+- formal `data-rakit-*` browser integration contract.
+- automated theme contrast verification.
+- advanced data-grid accessibility testing.
+
+## Phase O — Advanced dashboard and widgets
+
+**Status: Planned; dashboard/widget foundation already exists**
+
+- chart widgets with accessible table fallbacks.
+- visibility-aware polling.
+- SSE-backed widgets.
+- WebSocket-backed widgets.
+- saved dashboards.
+- per-user layouts.
+- drag-and-drop dashboard builder.
+- command palette.
+- keyboard shortcuts.
+- richer operational/status widgets.
+
+## Phase P — Scraping integrations
+
+**Status: Planned as integrations only**
+
+Rakit is not intended to become a scraping engine. It may provide an administration and orchestration surface for external scraping systems.
 
 Potential integrations:
 
-- Scrapy;
-- Playwright;
-- HTTP/browser providers;
-- scraping run management pages;
-- result inspection;
-- scheduling through an external job backend.
+- Scrapy.
+- Playwright-based jobs.
+- external HTTP/browser providers.
+- run management pages.
+- result inspection.
+- retry controls.
+- scheduling through an external `JobBackend`.
+- operational monitoring.
+
+## Research track — Pagination
+
+**Status: Research**
+
+Rakit already exposes page, limit/offset, and cursor pagination concepts. A separate research track explores whether pagination can be improved beyond common industry patterns rather than merely adding another syntax for the same trade-offs.
+
+Areas of investigation include:
+
+- offset cost and stability under mutation.
+- keyset ordering guarantees.
+- cursor opacity and portability.
+- snapshot consistency.
+- continuation-token design.
+- distributed data-source pagination.
+- pagination across changing datasets.
+- exact vs approximate counts.
+- latency-aware pagination.
+- hybrid page/cursor UX.
+- resumable navigation.
+- new pagination algorithms or abstractions where research demonstrates a real advantage.
+
+Research results are not automatically committed to the framework API. Any new strategy must demonstrate clear semantics and honest backend capability requirements.
 
 ## Exploration
 
@@ -220,67 +753,127 @@ These areas are intentionally not assigned to a specific version.
 
 ### Multi-tenancy
 
-- Tenant context and resolver.
-- Membership models.
-- Tenant-aware authorization and query isolation.
-- Tenant switcher.
-- Shared-schema tenancy.
-- Schema-per-tenant.
-- Database-per-tenant.
-- Tenant-aware storage and jobs.
-- Provisioning, suspension, quotas, and reporting.
-- Dedicated tenant-isolation contract tests.
+- tenant context and resolver.
+- membership models.
+- tenant-aware authorization.
+- tenant-aware query isolation.
+- tenant switcher.
+- shared-schema tenancy.
+- schema-per-tenant.
+- database-per-tenant.
+- tenant-aware storage.
+- tenant-aware jobs.
+- provisioning and suspension.
+- quotas and reporting.
+- dedicated tenant-isolation contract tests.
 
-Multi-tenancy is not targeted for `0.1` or v1. Applications may implement their own isolation through custom queries, authorization, services, and data sources, but Rakit does not initially claim a tenant-aware guarantee.
+Multi-tenancy is not currently a framework guarantee. Applications can build isolation using custom queries, authorization, services, and data sources, but Rakit should not claim a tenant-aware guarantee until the entire capability surface is designed and tested accordingly.
 
 ### Distributed consistency
 
-- Two-phase commit where supported.
-- Saga coordination.
-- Compensating actions.
-- Recovery and reconciliation.
-- Cross-datasource operation history.
+- two-phase commit where genuinely supported.
+- saga coordination.
+- compensating actions.
+- recovery and reconciliation.
+- cross-datasource operation history.
 
 ### Internationalization and localization
 
-- Translation catalogues.
-- Locale negotiation.
-- Per-user language.
-- Translated validation and plugin bundles.
+- translation catalogues.
+- locale negotiation.
+- per-user language.
+- translated validation.
+- plugin translation bundles.
 - RTL layout.
-- Timezone-aware rendering.
-- Locale-aware date, number, decimal, and currency formatting.
-- Regional input parsing.
-- Localized collation.
+- timezone-aware rendering.
+- locale-aware date/number/decimal/currency formatting.
+- regional input parsing.
+- localized collation.
 
-### Advanced history
+### Advanced history and versioning
 
-- Record version history.
-- Field-level change history.
-- Relationship history.
-- Comparison and restore.
-- Legal hold and retention policies.
+- record version history.
+- field-level change history.
+- relationship history.
+- comparison views.
+- restore workflows.
+- legal hold.
+- retention policies.
+
+## Architecture principles that guide roadmap decisions
+
+### Capability-first, not implementation-first
+
+Framework-neutral contracts should live below concrete integrations. Implementations such as Uvicorn, Granian, SQLAlchemy, or local storage should remain replaceable adapters rather than becoming assumptions inside `rakit-core`.
+
+### Small distributions, ergonomic facade
+
+Physical packages remain independently installable where the dependency boundary justifies it, while the `rakit` facade provides ergonomic public imports.
+
+Typical naming direction:
+
+```text
+Distribution:           rakit-<capability>-<implementation>
+Implementation package: rakit_<capability>_<implementation>
+Public facade:          rakit.<capability>.<implementation>
+```
+
+Existing historical public surfaces should not be renamed without concrete ecosystem pressure and a migration plan.
+
+### Fail closed
+
+Rakit should not silently emulate a capability that a selected backend cannot correctly provide.
+
+Unsupported capabilities should produce precise diagnostics.
+
+### Progressive enhancement
+
+SSR remains the baseline web delivery model. HTMX and browser JavaScript should enhance the experience rather than make basic administration behavior depend on a large client-side application runtime.
+
+### Deterministic business semantics
+
+Authorization, persistence, transactions, validation, and other correctness-sensitive behavior should remain explicit and deterministic.
+
+### Public API pressure should come from real applications
+
+New abstractions should preferably be justified by the reference application or concrete adapter/product needs rather than by hypothetical future flexibility.
 
 ## Not currently planned
 
-- A universal ORM.
-- A universal migration language.
-- Automatic production migrations at startup.
-- A built-in scraping engine.
-- A built-in distributed queue.
-- Custom cryptographic algorithms.
-- Implicit plugin activation.
-- Global service-locator access.
-- Silent fallback when a backend lacks a requested capability.
-- Automatic data caching without explicit application policy.
-- Hiding backend-specific behavior behind an inaccurate universal abstraction.
+The following are intentionally outside Rakit's current product direction:
+
+- a universal ORM.
+- a universal migration language.
+- automatic production migrations during application startup.
+- a built-in scraping engine.
+- a built-in distributed queue implementation.
+- custom cryptographic algorithms.
+- implicit plugin activation.
+- global service-locator access.
+- silent fallback when a backend lacks a requested capability.
+- automatic application-data caching without explicit policy.
+- hiding backend-specific behavior behind an inaccurate universal abstraction.
+- forcing all adapters into `rakit-core`.
+- turning the repository into a physically nested monolith merely to mirror public import paths.
+
+## Near-term execution order
+
+The current preferred execution sequence is:
+
+1. **B2.7** — retire superseded stale branches.
+2. **B3** — build the realistic `examples/reference_app` using public APIs only.
+3. **B4** — repair API and DX friction found by the reference application.
+4. **C** — improve lifecycle ergonomics, project initialization, installation UX, and capability discovery.
+5. **D** — prove the adapter architecture with a carefully selected second implementation in one capability category.
+6. **E** — mature generated REST into a documented API product, including OpenAPI and machine authentication.
+7. Continue through the remaining workstreams according to user value, architectural pressure, and implementation evidence.
+
+A public release is deliberately not inserted into this sequence as an automatic milestone. Release readiness remains a separate maintainer decision.
 
 ## Roadmap management
 
-Roadmap entries should be categorized as:
+Roadmap entries should remain categorized as **Complete**, **Next**, **Planned**, **Research**, or **Not currently planned**.
 
-- **Planned:** valuable direction with a reasonably clear boundary.
-- **Exploration:** valuable but not sufficiently designed or validated.
-- **Not currently planned:** intentionally outside the product focus.
+Changes to this roadmap should prefer evidence from implementation, reference applications, adapter work, production constraints, and user experience over speculative completeness.
 
-The roadmap should not promise release dates until implementation capacity and validated scope support them.
+The roadmap should not promise release dates until implementation maturity and maintainer intent support them.
