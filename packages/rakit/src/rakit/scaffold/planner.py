@@ -55,6 +55,9 @@ def _ensure_new_target_contains_only_planned_content(plan: ScaffoldPlan) -> None
     planned_directories = _planned_directory_paths(plan)
     unmanaged: list[Path] = []
     for path in target.rglob("*"):
+        if path.is_symlink():
+            unmanaged.append(path)
+            continue
         resolved = path.resolve(strict=False)
         if path.is_dir() and resolved in planned_directories:
             continue
@@ -75,6 +78,8 @@ def _has_incompatible_parent(path: Path, *, target: Path) -> bool:
     parent = path.parent
     stop = target.parent
     while parent != stop:
+        if parent.is_symlink():
+            return True
         if parent.exists() and not parent.is_dir():
             return True
         if parent == target:
@@ -86,6 +91,8 @@ def _has_incompatible_parent(path: Path, *, target: Path) -> bool:
 def _classify_file(item: PlannedFile, *, target: Path) -> PlannedFile:
     path = item.path
     if _has_incompatible_parent(path, target=target):
+        return replace(item, disposition=FileDisposition.CONFLICT)
+    if path.is_symlink():
         return replace(item, disposition=FileDisposition.CONFLICT)
     if not path.exists():
         return replace(item, disposition=FileDisposition.CREATE)
