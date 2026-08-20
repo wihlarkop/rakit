@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from contextlib import suppress
 from pathlib import Path
 
 from .model import ApplyResult, FileDisposition, ScaffoldPlan
@@ -44,16 +45,12 @@ def _ensure_parent_directories(path: Path, created_directories: list[Path]) -> N
 
 def _cleanup_created_paths(created_files: list[Path], created_directories: list[Path]) -> None:
     for path in reversed(created_files):
-        try:
+        with suppress(OSError):
             path.unlink(missing_ok=True)
-        except OSError:
-            pass
 
     for directory in reversed(created_directories):
-        try:
+        with suppress(OSError):
             directory.rmdir()
-        except OSError:
-            pass
 
 
 def _preflight_uv(plan: ScaffoldPlan) -> None:
