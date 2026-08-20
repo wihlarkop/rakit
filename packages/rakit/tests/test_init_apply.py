@@ -4,8 +4,19 @@ from types import SimpleNamespace
 
 import pytest
 from rakit.scaffold.apply import DependencyInstallError, MissingUvError, apply_scaffold_plan
-from rakit.scaffold.model import FileDisposition, InitConfig, InitMode, ServerAdapter, StarterTemplate
-from rakit.scaffold.planner import ScaffoldConflictError, ScaffoldPlanError, build_scaffold_plan, classify_plan
+from rakit.scaffold.model import (
+    FileDisposition,
+    InitConfig,
+    InitMode,
+    ServerAdapter,
+    StarterTemplate,
+)
+from rakit.scaffold.planner import (
+    ScaffoldConflictError,
+    ScaffoldPlanError,
+    build_scaffold_plan,
+    classify_plan,
+)
 
 
 def _config(tmp_path: Path, *, install: bool = False) -> InitConfig:
@@ -76,7 +87,9 @@ def test_missing_uv_is_rejected_before_filesystem_mutation(tmp_path: Path, monke
     assert not config.target.exists()
 
 
-def test_dependency_failure_keeps_successfully_created_scaffold(tmp_path: Path, monkeypatch) -> None:
+def test_dependency_failure_keeps_successfully_created_scaffold(
+    tmp_path: Path, monkeypatch
+) -> None:
     config = _config(tmp_path, install=True)
     apply_module = importlib.import_module("rakit.scaffold.apply")
     monkeypatch.setattr(apply_module.shutil, "which", lambda _name: "/usr/bin/uv")
