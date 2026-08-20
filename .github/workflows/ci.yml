@@ -9,6 +9,52 @@ permissions:
   contents: read
 
 jobs:
+  c1-source-patch:
+    name: C1 source patch
+    if: github.event_name == 'pull_request' && github.head_ref == 'phase-c1-crud-lifecycle-ergonomics'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: phase-c1-crud-lifecycle-ergonomics
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-packages --dev --locked
+      - name: Apply and format C1 source patch
+        run: |
+          python scripts/_c1_apply_source.py
+          uv run ruff format \
+            packages/rakit/src/rakit/core.py \
+            packages/rakit-web/src/rakit_web/admin.py \
+            packages/rakit-core/src/rakit_core/admin_types.py \
+            packages/rakit-core/src/rakit_core/generated_runtime.py \
+            packages/rakit-sqlalchemy/src/rakit_sqlalchemy/plugin.py \
+            packages/rakit-sqlalchemy/src/rakit_sqlalchemy/write_provider.py \
+            examples/reference_app/resources.py \
+            examples/reference_app/app.py
+      - name: Commit patch when needed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            packages/rakit/src/rakit/core.py \
+            packages/rakit-web/src/rakit_web/admin.py \
+            packages/rakit-core/src/rakit_core/admin_types.py \
+            packages/rakit-core/src/rakit_core/generated_runtime.py \
+            packages/rakit-sqlalchemy/src/rakit_sqlalchemy/plugin.py \
+            packages/rakit-sqlalchemy/src/rakit_sqlalchemy/write_provider.py \
+            examples/reference_app/resources.py \
+            examples/reference_app/app.py
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: apply C1 admin composition"
+            git push origin HEAD:phase-c1-crud-lifecycle-ergonomics
+          fi
+
   test:
     strategy:
       fail-fast: false
