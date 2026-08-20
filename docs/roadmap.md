@@ -27,7 +27,8 @@ Rakit remains under active pre-release development. The current package version 
 | Phase B4 API/DX refinement from reference application | **Complete** |
 | **Phase B overall** | **Complete** |
 | Phase C1 friendly CRUD and lifecycle APIs | **Complete** |
-| Phase C2 project initialization and scaffolding | **Next** |
+| Phase C2 project initialization and scaffolding | **Complete** |
+| Phase C3 installation and extras UX | **Next** |
 | Phase C developer experience and lifecycle ergonomics | **Next** |
 | Phase D adapter ecosystem | **Planned** |
 | Phase E generated APIs v1 | **Planned; foundation exists** |
@@ -292,24 +293,26 @@ C1 closed only after Ruff formatting/linting, `ty`, pytest on Python 3.12/3.13/3
 
 ### C2 — Project initialization and scaffolding
 
-**Status: Next**
+**Status: Complete**
 
-Design a Vite-like interactive `rakit init` flow.
+C2 adds a Vite-like but fail-closed `rakit init` workflow to the existing CLI:
 
-Potential choices include:
+- interactive project/template/server/install prompts plus deterministic flags for automation, including `--yes`, `--dry-run`, `--install/--no-install`, `--existing`, and `--package`.
+- `standard` and `minimal` starter profiles with explicit Uvicorn or Granian selection.
+- new-project generation with canonical `src/` layout, `pyproject.toml`, README, `.python-version`, and safe starter-owned runtime files.
+- the standard starter composes SQLAlchemy persistence, SQLAlchemy auth/idempotency, local storage, declarative `ResourceWriteDefinition` CRUD, health checks, shutdown lifecycle, explicit development bootstrap, and process-environment secrets through current public APIs.
+- the minimal starter remains intentionally lightweight and read-only.
+- existing-project mode detects conventional `src/` or flat package layouts, creates an isolated additive Rakit module, never rewrites host entrypoints or arbitrary host source, and emits FastAPI/Starlette mount guidance when those hosts are detected.
+- C2 v1 uses `uv` deliberately; dependency installation is preflighted before writes, while a dependency command failure after successful scaffold creation keeps the generated files and prints a retry path.
+- dry-run performs no filesystem mutation or dependency subprocess.
+- identical reruns are accepted, while changed generated files, unmanaged new-project content, symlink targets, ambiguous package placement, and other unsafe collisions fail closed before mutation.
+- focused regression suites cover detection, planning, apply behavior, CLI behavior, and generated-project bootstrap/check flows.
 
-- project name and layout.
-- standalone Rakit vs integration into an existing application.
-- web integration.
-- persistence adapter.
-- server adapter.
-- authentication.
-- storage.
-- generated examples and starter resources.
-
-The initializer should support both creating a new project and adding Rakit to an existing project where practical.
+C2 was verified source-first with a manual runner matrix covering dry-run, missing-`uv` preflight, standard/minimal generation, rerun/collision behavior, generated bootstrap, `rakit check`, permission synchronization, interactive prompts, additive FastAPI integration, and ambiguous-package handling. Regression verification then passed Ruff formatting/linting, `ty`, pytest on Python 3.12/3.13/3.14, lowest-direct/latest dependency matrices, coverage, strict MkDocs, artifact validation, and generated web-asset reproducibility.
 
 ### C3 — Installation and extras UX
+
+**Status: Next**
 
 Continue simplifying optional capability installation.
 
@@ -800,14 +803,13 @@ The following are intentionally outside Rakit's current product direction:
 
 ## Near-term execution order
 
-With Phase B and C1 complete, the preferred sequence is now:
+With Phase B, C1, and C2 complete, the preferred sequence is now:
 
-1. **C2** — design and implement `rakit init` for new and existing projects.
-2. **C3** — normalize installation/extras UX.
-3. **C4** — strengthen capability discovery and diagnostics.
-4. **D** — prove the capability architecture with a carefully selected second adapter.
-5. **E** — mature generated REST into a documented API product with OpenAPI and machine authentication.
-6. Continue through F–P according to user value, architectural pressure, and implementation evidence.
+1. **C3** — normalize installation/extras UX.
+2. **C4** — strengthen capability discovery and diagnostics.
+3. **D** — prove the capability architecture with a carefully selected second adapter.
+4. **E** — mature generated REST into a documented API product with OpenAPI and machine authentication.
+5. Continue through F–P according to user value, architectural pressure, and implementation evidence.
 
 The pagination research track can continue in parallel where it does not block committed product work.
 
