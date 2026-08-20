@@ -584,6 +584,7 @@ class Admin:
                     "update",
                     "issue_delete_token",
                     "delete",
+                    "bind_delete_nonce_store",
                 )
                 if not callable(getattr(mutation_candidate, name, None))
             )
