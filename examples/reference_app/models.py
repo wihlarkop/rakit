@@ -19,7 +19,7 @@ class Base(DeclarativeBase):
     """Metadata owned by the reference application, never by Rakit auth."""
 
 
-class StoredFileType(TypeDecorator[dict[str, Any]]):
+class StoredFileType(TypeDecorator[StoredFile]):
     """Persist Rakit's portable StoredFile descriptor as application JSON."""
 
     impl = JSON
