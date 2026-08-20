@@ -41,6 +41,10 @@ The project follows Semantic Versioning. Until a release is actually tagged, cha
 - Friendly lifecycle composition through `Admin.on_startup(...)`, `Admin.on_shutdown(...)`, and
   `Admin.add_health_check(...)`, delegating to the existing lifecycle manager without changing
   startup, readiness, or shutdown semantics.
+- `rakit init` project scaffolding for new and existing applications, with interactive and
+  deterministic non-interactive flows, `standard` and `minimal` starters, Uvicorn/Granian choices,
+  `uv`-based dependency guidance, safe dry-runs, additive existing-project integration, and
+  generated starters that use the current declarative CRUD/lifecycle APIs.
 - Tag-gated trusted-publishing workflow preparation without a release tag or publish action.
 
 ### Changed
@@ -62,3 +66,6 @@ The project follows Semantic Versioning. Until a release is actually tagged, cha
 - Fail-closed configuration, host/proxy, CSRF, permission re-check, concurrency, idempotency,
   confirmation, upload/path, private-file, production-error, and shutdown/readiness verification
   gates.
+- Project scaffolding fails closed on conflicting generated files, unmanaged content in a new-project
+  target, ambiguous existing-package placement, and missing `uv` before requested dependency
+  installation; dry-run performs no filesystem mutation or dependency subprocess.
