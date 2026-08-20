@@ -11,6 +11,7 @@ from rakit_core.errors import RakitError
 
 from ._optional import optional_import
 from ._server import run as run_server
+from .scaffold.command import init_command
 
 
 class Compilable(Protocol):
@@ -76,6 +77,9 @@ def _make_working_directory_importable() -> None:
 @click.group()
 def cli() -> None:
     _make_working_directory_importable()
+
+
+cli.add_command(init_command)
 
 
 def _capability_diagnostics(compiled: CompiledApplication) -> None:
