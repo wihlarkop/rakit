@@ -13,9 +13,9 @@ from rakit.core import (
     SessionRecord,
 )
 from rakit_core.compiler import ApplicationBuilder
+from rakit_core.errors import RakitError
 from rakit_core.fields import FieldDefinition
 from rakit_core.generated_runtime import ResourceAdapterRuntime, ResourceWriteServiceContext
-from rakit_core.errors import RakitError
 
 
 class _Model:
