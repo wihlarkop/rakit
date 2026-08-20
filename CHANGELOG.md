@@ -25,6 +25,15 @@ The project follows Semantic Versioning. Until a release is actually tagged, cha
   runtime assets and optional server adapters.
 - A documented `rakit_` namespace invariant for framework-owned persistence and independent Rakit
   migration version tables.
+- A realistic `examples/reference_app` that composes SQLAlchemy persistence, built-in auth/RBAC,
+  optimistic CRUD, relationships, private uploads, filters/search, record and bulk actions, custom
+  pages, dashboard widgets, generated REST reads, lifecycle bootstrap, and readiness through public
+  Rakit APIs.
+- Public startup lifecycle callbacks that run fail-fast before the runtime enters `READY`.
+- Public operational SQLAlchemy-auth facade exports for auth schema bootstrap, users, roles,
+  permissions, password hashing, permission synchronization, and durable idempotency storage.
+- Public domain-action composition exports and a high-level `Admin.register_write(...)` helper for
+  enabling ordinary resource write forms without constructing transport-level bindings.
 - Tag-gated trusted-publishing workflow preparation without a release tag or publish action.
 
 ### Changed
@@ -33,6 +42,9 @@ The project follows Semantic Versioning. Until a release is actually tagged, cha
   `server-uvicorn` extra remains a compatibility alias.
 - Official examples prefer the `rakit` facade for public contracts and adapters instead of importing
   implementation packages directly when an ergonomic facade exists.
+- Reference application bootstrap is additive and application-owned; Rakit continues to keep ORM
+  models, domain transitions, database-driver selection, and application migration policy outside
+  the framework core.
 
 ### Security
 

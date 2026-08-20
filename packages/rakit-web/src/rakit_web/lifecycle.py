@@ -54,10 +54,22 @@ class LifecycleManager:
                 details={"max_concurrent_checks": max_concurrent_checks},
             )
         self.state: RuntimeState = RuntimeState.CREATED
+        self._starting_callbacks: list[Callable[[], Awaitable[None]]] = []
         self._stopping_callbacks: list[Callable[[], Awaitable[None]]] = []
         self._checks: dict[str, _HealthCheck] = {}
         self._cache: dict[str, tuple[bool, float]] = {}
         self._check_semaphore = asyncio.Semaphore(max_concurrent_checks)
+
+    def register_starting_callback(self, callback: Callable[[], Awaitable[None]]) -> None:
+        """Register fail-fast application initialization before readiness.
+
+        Startup callbacks run in registration order after the application
+        service resolver has opened and before the runtime transitions to
+        ``READY``. A callback failure marks startup failed and propagates to
+        the ASGI server instead of serving a partially initialized admin.
+        """
+
+        self._starting_callbacks.append(callback)
 
     def register_stopping_callback(self, callback: Callable[[], Awaitable[None]]) -> None:
         self._stopping_callbacks.append(callback)
@@ -111,6 +123,8 @@ class LifecycleManager:
         try:
             self.state = RuntimeState.COMPILING
             self.state = RuntimeState.STARTING
+            for callback in self._starting_callbacks:
+                await callback()
             self.state = RuntimeState.READY
         except Exception:
             self.state = RuntimeState.FAILED
