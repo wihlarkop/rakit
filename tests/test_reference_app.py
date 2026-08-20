@@ -26,6 +26,7 @@ def test_reference_app_compiles_bootstraps_and_reaches_readiness(tmp_path) -> No
                 "orders",
                 "order_items",
             }
+            assert set(admin._write_resource_bindings) == {"products", "orders"}
             assert {action.action_id for action in compiled.actions} == {
                 "mark_paid",
                 "mark_processing",
