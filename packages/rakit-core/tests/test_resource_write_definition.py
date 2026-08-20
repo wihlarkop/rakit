@@ -37,45 +37,57 @@ def test_resource_admin_is_read_only_by_default() -> None:
     assert ResourceAdmin.write is None
 
 
+def _empty_writable_fields() -> ResourceWriteDefinition:
+    return ResourceWriteDefinition(form_schema=_schema(), writable_fields=())
+
+
+def _duplicate_writable_fields() -> ResourceWriteDefinition:
+    return ResourceWriteDefinition(
+        form_schema=_schema(),
+        writable_fields=("name", "name"),
+    )
+
+
+def _unknown_writable_field() -> ResourceWriteDefinition:
+    return ResourceWriteDefinition(
+        form_schema=_schema(),
+        writable_fields=("missing",),
+    )
+
+
+def _non_writable_form_field() -> ResourceWriteDefinition:
+    return ResourceWriteDefinition(
+        form_schema=_schema(),
+        writable_fields=("status",),
+    )
+
+
+def _blank_version_field() -> ResourceWriteDefinition:
+    return ResourceWriteDefinition(
+        form_schema=_schema(),
+        writable_fields=("name",),
+        version_field="  ",
+    )
+
+
+def _duplicate_refresh_targets() -> ResourceWriteDefinition:
+    return ResourceWriteDefinition(
+        form_schema=_schema(),
+        writable_fields=("name",),
+        htmx_refresh_targets=("rakit:refresh", "rakit:refresh"),
+    )
+
+
 @pytest.mark.parametrize(
     ("factory", "message"),
     [
+        (_empty_writable_fields, "writable_fields must be a non-empty tuple"),
+        (_duplicate_writable_fields, "writable_fields must be unique"),
+        (_unknown_writable_field, "unknown form fields"),
+        (_non_writable_form_field, "non-writable form fields"),
+        (_blank_version_field, "version_field must be None or a non-empty string"),
         (
-            lambda: ResourceWriteDefinition(form_schema=_schema(), writable_fields=()),
-            "writable_fields must be a non-empty tuple",
-        ),
-        (
-            lambda: ResourceWriteDefinition(
-                form_schema=_schema(), writable_fields=("name", "name")
-            ),
-            "writable_fields must be unique",
-        ),
-        (
-            lambda: ResourceWriteDefinition(
-                form_schema=_schema(), writable_fields=("missing",)
-            ),
-            "unknown form fields",
-        ),
-        (
-            lambda: ResourceWriteDefinition(
-                form_schema=_schema(), writable_fields=("status",)
-            ),
-            "non-writable form fields",
-        ),
-        (
-            lambda: ResourceWriteDefinition(
-                form_schema=_schema(),
-                writable_fields=("name",),
-                version_field="  ",
-            ),
-            "version_field must be None or a non-empty string",
-        ),
-        (
-            lambda: ResourceWriteDefinition(
-                form_schema=_schema(),
-                writable_fields=("name",),
-                htmx_refresh_targets=("rakit:refresh", "rakit:refresh"),
-            ),
+            _duplicate_refresh_targets,
             "htmx_refresh_targets must contain unique non-empty strings",
         ),
     ],
