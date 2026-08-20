@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 import pytest
 from rakit_core.admin_types import ResourceAdmin, ResourceWriteDefinition
 from rakit_core.fields import FieldDefinition
@@ -36,27 +38,50 @@ def test_resource_admin_is_read_only_by_default() -> None:
 
 
 @pytest.mark.parametrize(
-    ("kwargs", "message"),
+    ("factory", "message"),
     [
-        ({"writable_fields": ()}, "writable_fields must be a non-empty tuple"),
-        ({"writable_fields": ("name", "name")}, "writable_fields must be unique"),
-        ({"writable_fields": ("missing",)}, "unknown form fields"),
-        ({"writable_fields": ("status",)}, "non-writable form fields"),
         (
-            {"writable_fields": ("name",), "version_field": "  "},
+            lambda: ResourceWriteDefinition(form_schema=_schema(), writable_fields=()),
+            "writable_fields must be a non-empty tuple",
+        ),
+        (
+            lambda: ResourceWriteDefinition(
+                form_schema=_schema(), writable_fields=("name", "name")
+            ),
+            "writable_fields must be unique",
+        ),
+        (
+            lambda: ResourceWriteDefinition(
+                form_schema=_schema(), writable_fields=("missing",)
+            ),
+            "unknown form fields",
+        ),
+        (
+            lambda: ResourceWriteDefinition(
+                form_schema=_schema(), writable_fields=("status",)
+            ),
+            "non-writable form fields",
+        ),
+        (
+            lambda: ResourceWriteDefinition(
+                form_schema=_schema(),
+                writable_fields=("name",),
+                version_field="  ",
+            ),
             "version_field must be None or a non-empty string",
         ),
         (
-            {
-                "writable_fields": ("name",),
-                "htmx_refresh_targets": ("rakit:refresh", "rakit:refresh"),
-            },
+            lambda: ResourceWriteDefinition(
+                form_schema=_schema(),
+                writable_fields=("name",),
+                htmx_refresh_targets=("rakit:refresh", "rakit:refresh"),
+            ),
             "htmx_refresh_targets must contain unique non-empty strings",
         ),
     ],
 )
 def test_resource_write_definition_rejects_unsafe_policy(
-    kwargs: dict[str, object], message: str
+    factory: Callable[[], ResourceWriteDefinition], message: str
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        ResourceWriteDefinition(form_schema=_schema(), **kwargs)  # type: ignore[arg-type]
+        factory()
