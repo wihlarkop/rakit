@@ -5,6 +5,7 @@ import json
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
+from http import HTTPStatus
 from typing import Any
 
 import anyio
@@ -243,7 +244,7 @@ def _result_response(
     if isinstance(result, PageRedirect):
         return RedirectResponse(
             mounted_path(request, result.location),
-            status_code=303,
+            status_code=HTTPStatus.SEE_OTHER,
             headers={"Cache-Control": "no-store"},
         )
     if isinstance(result, PageRejected):
@@ -259,7 +260,7 @@ def _result_response(
     raise RakitError(
         code=ErrorCode.CONFIG_INVALID,
         message="Unsupported page result for HTTP translation.",
-        status_code=500,
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
     )
 
 
@@ -292,7 +293,7 @@ def _completed_response(
         )
     return RedirectResponse(
         mounted_path(request, location),
-        status_code=303,
+        status_code=HTTPStatus.SEE_OTHER,
         headers={"Cache-Control": "no-store"},
     )
 
@@ -385,7 +386,7 @@ async def _form_input(
         raise RakitError(
             code=ErrorCode.VALIDATION_FAILED,
             message="Invalid page form",
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
         ) from exc
     items = list(form.multi_items())
     names = [str(name) for name, _ in items]
@@ -443,7 +444,7 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
                     compiled_page,
                     submitted=submitted,
                     issues=pre_issues,
-                    status_code=422,
+                    status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                 )
             unknown_issues = _unknown_input_issues(
                 binding.schema_adapter, page.input_schema, submitted
@@ -455,7 +456,7 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
                     compiled_page,
                     submitted=submitted,
                     issues=unknown_issues,
-                    status_code=422,
+                    status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                 )
             try:
                 values = _model_values(binding.schema_adapter, page.input_schema, submitted)
@@ -466,7 +467,7 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
                     compiled_page,
                     submitted=submitted,
                     issues=_validation_issues(exc),
-                    status_code=422,
+                    status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                 )
 
             if page.handler is None:
@@ -490,7 +491,7 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
         ) -> Response:
             page = compiled_page.definition
             if not page.mutating:
-                return Response(status_code=405, headers={"Allow": "GET"})
+                return Response(status_code=HTTPStatus.METHOD_NOT_ALLOWED, headers={"Allow": "GET"})
             assert binding.verify_csrf is not None
             assert binding.verify_submission_token is not None
             assert binding.idempotency_store is not None
@@ -508,7 +509,7 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
                     compiled_page,
                     submitted=submitted,
                     issues=pre_issues,
-                    status_code=422,
+                    status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                 )
             unknown_issues = _unknown_input_issues(
                 binding.schema_adapter, page.input_schema, submitted
@@ -520,7 +521,7 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
                     compiled_page,
                     submitted=submitted,
                     issues=unknown_issues,
-                    status_code=422,
+                    status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                 )
             try:
                 values = _model_values(binding.schema_adapter, page.input_schema, submitted)
@@ -531,7 +532,7 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
                     compiled_page,
                     submitted=submitted,
                     issues=_validation_issues(exc),
-                    status_code=422,
+                    status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                 )
 
             submission_token = tokens.get("submission_token")
@@ -600,7 +601,7 @@ def build_page_routes(binding: PageBinding) -> list[Route]:
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
                     message="Mutating page handlers must return PageRedirect.",
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                     details={"page_id": str(page.page_id), "reason": "post_redirect_required"},
                 )
 

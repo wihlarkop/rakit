@@ -6,6 +6,7 @@ import inspect
 from collections.abc import Callable, Iterable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
+from http import HTTPStatus
 
 import anyio
 import structlog
@@ -336,7 +337,7 @@ def build_dashboard_routes(binding: DashboardBinding) -> list[Route]:
             if not _allowed(binding, _principal(request), widget.permission):
                 return PlainTextResponse(
                     "Forbidden",
-                    status_code=403,
+                    status_code=HTTPStatus.FORBIDDEN,
                     headers={"Cache-Control": "no-store"},
                 )
             result = await _execute_widget(binding, request, widget)

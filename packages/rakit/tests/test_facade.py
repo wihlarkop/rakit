@@ -172,7 +172,7 @@ def test_server_uvicorn_facade_raises_friendly_error_when_missing(monkeypatch) -
     with pytest.raises(RakitOptionalDependencyError) as caught:
         import rakit.server.uvicorn  # noqa: F401
 
-    assert 'uv add "rakit[server-uvicorn]"' in str(caught.value)
+    assert 'uv add "rakit[uvicorn]"' in str(caught.value)
 
 
 def test_auth_sqlalchemy_facade_reexports_real_class() -> None:

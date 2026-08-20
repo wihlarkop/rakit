@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
+from http import HTTPStatus
 from uuid import UUID
 
 from rakit_core.auth import Principal
@@ -85,7 +86,7 @@ def _unexpected_error_response(request: Request) -> JSONResponse:
         RakitError(
             code=ErrorCode.INTERNAL_ERROR,
             message="Internal server error.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         ),
     )
 
@@ -127,7 +128,7 @@ class GeneratedReadExecutor:
         raise RakitError(
             code=ErrorCode.CONFIG_INVALID,
             message="Generated read executor received an unsupported operation.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         )
 
 
@@ -162,13 +163,13 @@ def _authorize_read(
             raise RakitError(
                 code=ErrorCode.AUTH_UNAUTHENTICATED,
                 message="Authentication is required.",
-                status_code=401,
+                status_code=HTTPStatus.UNAUTHORIZED,
             )
         if not requirement.matches(principal, superuser_bypass=binding.superuser_bypass):
             raise RakitError(
                 code=ErrorCode.AUTH_FORBIDDEN,
                 message="Permission denied.",
-                status_code=403,
+                status_code=HTTPStatus.FORBIDDEN,
             )
         principal_id = principal.subject_id
     else:
@@ -195,7 +196,7 @@ def _authorize_mutation(
         raise RakitError(
             code=ErrorCode.CONFIG_INVALID,
             message="Generated CRUD mutation requires authentication.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             details={
                 "resource_id": binding.api.resource_id,
                 "reason": "generated_api_auth_required",
@@ -206,14 +207,14 @@ def _authorize_mutation(
         raise RakitError(
             code=ErrorCode.AUTH_UNAUTHENTICATED,
             message="Authentication is required.",
-            status_code=401,
+            status_code=HTTPStatus.UNAUTHORIZED,
         )
     requirement = _permission_requirement(binding, operation)
     if not requirement.matches(principal, superuser_bypass=binding.superuser_bypass):
         raise RakitError(
             code=ErrorCode.AUTH_FORBIDDEN,
             message="Permission denied.",
-            status_code=403,
+            status_code=HTTPStatus.FORBIDDEN,
         )
     return OperationAuthorization.for_requirement(
         admin_id=binding.admin_id,
@@ -291,7 +292,7 @@ async def _run_mutation(
         raise RakitError(
             code=ErrorCode.CONFIG_INVALID,
             message="Generated CRUD runtime is incomplete.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             details={
                 "resource_id": binding.api.resource_id,
                 "reason": "generated_api_mutation_runtime_incomplete",
@@ -365,7 +366,7 @@ def _list_response(binding: GeneratedRestBinding, result: object) -> JSONRespons
         raise RakitError(
             code=ErrorCode.INTERNAL_ERROR,
             message="Generated list executor returned an invalid result.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         )
     return JSONResponse(
         {
@@ -396,7 +397,7 @@ def _etag_headers(
         raise RakitError(
             code=ErrorCode.CONFIG_INVALID,
             message="Generated CRUD concurrency runtime is incomplete.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             details={
                 "resource_id": binding.api.resource_id,
                 "reason": "generated_api_concurrency_runtime_incomplete",
@@ -436,7 +437,7 @@ def _decode_identity(binding: GeneratedRestBinding, request: Request) -> RecordI
         raise RakitError(
             code=ErrorCode.VALIDATION_FAILED,
             message="Generated API identity is required.",
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
             details={"reason": "generated_api_identity_required"},
         )
     try:
@@ -445,7 +446,7 @@ def _decode_identity(binding: GeneratedRestBinding, request: Request) -> RecordI
         raise RakitError(
             code=ErrorCode.VALIDATION_FAILED,
             message="Generated API identity is invalid.",
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
             details={"reason": "generated_api_identity_invalid"},
         ) from exc
 
@@ -457,7 +458,7 @@ def _if_match_token(binding: GeneratedRestBinding, request: Request) -> str | No
         raise RakitError(
             code=ErrorCode.CONFIG_INVALID,
             message="Generated CRUD concurrency token service is missing.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             details={
                 "resource_id": binding.api.resource_id,
                 "reason": "generated_api_concurrency_runtime_incomplete",
@@ -468,7 +469,7 @@ def _if_match_token(binding: GeneratedRestBinding, request: Request) -> str | No
         raise RakitError(
             code=ErrorCode.VALIDATION_FAILED,
             message="If-Match is required for this resource.",
-            status_code=428,
+            status_code=HTTPStatus.PRECONDITION_REQUIRED,
             details={
                 "resource_id": binding.api.resource_id,
                 "reason": "generated_api_if_match_required",
@@ -487,7 +488,7 @@ def _if_match_token(binding: GeneratedRestBinding, request: Request) -> str | No
         raise RakitError(
             code=ErrorCode.VALIDATION_FAILED,
             message="If-Match must contain exactly one strong ETag.",
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
             details={
                 "resource_id": binding.api.resource_id,
                 "reason": "generated_api_if_match_invalid",
@@ -498,7 +499,7 @@ def _if_match_token(binding: GeneratedRestBinding, request: Request) -> str | No
         raise RakitError(
             code=ErrorCode.VALIDATION_FAILED,
             message="If-Match must contain exactly one strong ETag.",
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
             details={
                 "resource_id": binding.api.resource_id,
                 "reason": "generated_api_if_match_invalid",
@@ -513,7 +514,7 @@ async def _verify_mutation_csrf(binding: GeneratedRestBinding, request: Request)
         raise RakitError(
             code=ErrorCode.AUTH_FORBIDDEN,
             message="Invalid CSRF token.",
-            status_code=403,
+            status_code=HTTPStatus.FORBIDDEN,
         )
 
 
@@ -523,7 +524,7 @@ def _idempotency_key(binding: GeneratedRestBinding, request: Request) -> str:
         raise RakitError(
             code=ErrorCode.VALIDATION_FAILED,
             message="Idempotency-Key is required.",
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
             details={
                 "resource_id": binding.api.resource_id,
                 "reason": "generated_api_idempotency_key_required",
@@ -538,7 +539,7 @@ async def _json_payload(request: Request, binding: GeneratedRestBinding) -> obje
         raise RakitError(
             code=ErrorCode.VALIDATION_FAILED,
             message="Generated mutations require application/json.",
-            status_code=415,
+            status_code=HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
             details={
                 "resource_id": binding.api.resource_id,
                 "reason": "generated_api_json_required",
@@ -549,7 +550,7 @@ async def _json_payload(request: Request, binding: GeneratedRestBinding) -> obje
         raise RakitError(
             code=ErrorCode.VALIDATION_FAILED,
             message="Generated mutation body is too large.",
-            status_code=413,
+            status_code=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
             details={
                 "resource_id": binding.api.resource_id,
                 "reason": "generated_api_json_body_too_large",
@@ -561,7 +562,7 @@ async def _json_payload(request: Request, binding: GeneratedRestBinding) -> obje
         raise RakitError(
             code=ErrorCode.VALIDATION_FAILED,
             message="Generated mutation body is invalid JSON.",
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
             details={
                 "resource_id": binding.api.resource_id,
                 "reason": "generated_api_json_invalid",
@@ -594,7 +595,7 @@ def _fingerprint_value(value: object) -> object:
     raise RakitError(
         code=ErrorCode.CONFIG_INVALID,
         message="Generated mutation input cannot be fingerprinted.",
-        status_code=500,
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
     )
 
 
@@ -643,7 +644,7 @@ async def _claim_mutation(
         raise RakitError(
             code=ErrorCode.CONFIG_INVALID,
             message="Generated CRUD requires an idempotency store.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         )
     try:
         token_scope = "\0".join(
@@ -663,7 +664,7 @@ async def _claim_mutation(
         raise RakitError(
             code=ErrorCode.RESOURCE_CONFLICT,
             message="Idempotency key is bound to another mutation.",
-            status_code=409,
+            status_code=HTTPStatus.CONFLICT,
         ) from exc
     if reservation.status is IdempotencyStatus.COMPLETED:
         return reservation, _replay_response(reservation)
@@ -671,14 +672,14 @@ async def _claim_mutation(
         raise RakitError(
             code=ErrorCode.RESOURCE_CONFLICT,
             message="Mutation is already in progress.",
-            status_code=409,
+            status_code=HTTPStatus.CONFLICT,
         )
     return reservation, None
 
 
 def _receipt_payload(response: Response) -> Mapping[str, object]:
     body: object | None
-    if response.status_code == 204:
+    if response.status_code == HTTPStatus.NO_CONTENT:
         body = None
     elif isinstance(response, JSONResponse):
         raw_body = bytes(response.body).decode("utf-8")
@@ -687,7 +688,7 @@ def _receipt_payload(response: Response) -> Mapping[str, object]:
         raise RakitError(
             code=ErrorCode.CONFIG_INVALID,
             message="Generated mutation response is not replayable.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         )
     headers = {
         name: value
@@ -707,7 +708,7 @@ def _replay_response(reservation: IdempotencyReservation) -> Response:
         raise RakitError(
             code=ErrorCode.INTERNAL_ERROR,
             message="Stored generated mutation receipt is invalid.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         )
     status_code = receipt.payload.get("status_code")
     body = receipt.payload.get("body")
@@ -716,15 +717,15 @@ def _replay_response(reservation: IdempotencyReservation) -> Response:
         raise RakitError(
             code=ErrorCode.INTERNAL_ERROR,
             message="Stored generated mutation receipt is invalid.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         )
     normalized_headers = {
         str(name): str(value)
         for name, value in headers.items()
         if isinstance(name, str) and isinstance(value, str)
     }
-    if status_code == 204:
-        return Response(status_code=204, headers=normalized_headers)
+    if status_code == HTTPStatus.NO_CONTENT:
+        return Response(status_code=HTTPStatus.NO_CONTENT, headers=normalized_headers)
     return JSONResponse(body, status_code=status_code, headers=normalized_headers)
 
 
@@ -757,21 +758,21 @@ def _mutation_response(
         raise RakitError(
             code=ErrorCode.INTERNAL_ERROR,
             message="Generated mutation executor returned an invalid result.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         )
     if operation is GeneratedCrudOperation.DELETE:
         if result.record is not None:
             raise RakitError(
                 code=ErrorCode.INTERNAL_ERROR,
                 message="Generated delete returned an unexpected record.",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             )
-        return Response(status_code=204, headers={"Cache-Control": "no-store"})
+        return Response(status_code=HTTPStatus.NO_CONTENT, headers={"Cache-Control": "no-store"})
     if result.record is None:
         raise RakitError(
             code=ErrorCode.INTERNAL_ERROR,
             message="Generated mutation result is missing a record.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         )
     body = {
         "data": serialize_generated_record(
@@ -782,9 +783,9 @@ def _mutation_response(
     }
     headers = {"Cache-Control": "no-store"}
     headers.update(_etag_headers(binding, result.identity, result.record))
-    status_code = 200
+    status_code = HTTPStatus.OK
     if operation is GeneratedCrudOperation.CREATE:
-        status_code = 201
+        status_code = HTTPStatus.CREATED
         headers["Location"] = mounted_path(
             request,
             f"/api/{binding.api.resource_id}/{binding.codec.encode(result.identity)}",
@@ -843,7 +844,7 @@ async def _mutation_handler(
                 raise RakitError(
                     code=ErrorCode.VALIDATION_FAILED,
                     message="Generated PATCH requires at least one field.",
-                    status_code=422,
+                    status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                     details={
                         "resource_id": binding.api.resource_id,
                         "reason": "generated_api_patch_empty",
@@ -860,7 +861,7 @@ async def _mutation_handler(
                 raise RakitError(
                     code=ErrorCode.VALIDATION_FAILED,
                     message="Generated delete does not accept a request body.",
-                    status_code=400,
+                    status_code=HTTPStatus.BAD_REQUEST,
                     details={"reason": "generated_api_delete_body_not_allowed"},
                 )
             generated_request = GeneratedCrudRequest.delete(

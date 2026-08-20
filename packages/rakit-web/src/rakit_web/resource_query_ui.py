@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from http import HTTPStatus
 from typing import Any
 from urllib.parse import urlencode
 
@@ -160,7 +161,7 @@ def parse_resource_query(
             raise RakitError(
                 code=ErrorCode.VALIDATION_FAILED,
                 message="Invalid sort query",
-                status_code=400,
+                status_code=HTTPStatus.BAD_REQUEST,
             ) from None
         return ResourceQuery.from_components(
             pagination=pagination,
@@ -732,7 +733,7 @@ def pagination_controls(
     raise RakitError(
         code=ErrorCode.INTERNAL_ERROR,
         message="Data source returned pagination metadata incompatible with the resource query.",
-        status_code=500,
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         details={"reason": "pagination_result_mismatch"},
     )
 

@@ -1,6 +1,7 @@
 {
   "name": "rakit-maintainer-assets",
   "private": true,
+  "packageManager": "bun@1.3.14",
   "scripts": {
     "css:build": "tailwindcss --input packages/rakit-web/src/rakit_web/assets/rakit.css --output packages/rakit-web/src/rakit_web/static/rakit.css --minify",
     "css:watch": "tailwindcss --input packages/rakit-web/src/rakit_web/assets/rakit.css --output packages/rakit-web/src/rakit_web/static/rakit.css --watch"

@@ -13,6 +13,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
+from http import HTTPStatus
 from typing import cast
 
 from rakit_core.crypto import TokenService
@@ -116,19 +117,19 @@ def _selection(binding: BuiltInBulkDeleteBinding, values: list[str]) -> tuple[Re
         raise RakitError(
             code=ErrorCode.VALIDATION_FAILED,
             message="Select at least one resource before running a bulk action.",
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
         )
     if len(values) > _MAX_SELECTED:
         raise RakitError(
             code=ErrorCode.VALIDATION_FAILED,
             message=f"Select at most {_MAX_SELECTED} resources per bulk delete.",
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
         )
     if len(values) != len(set(values)):
         raise RakitError(
             code=ErrorCode.VALIDATION_FAILED,
             message="The bulk selection contains duplicate resources.",
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
         )
 
     identities: list[RecordIdentity] = []
@@ -139,13 +140,13 @@ def _selection(binding: BuiltInBulkDeleteBinding, values: list[str]) -> tuple[Re
             raise RakitError(
                 code=ErrorCode.VALIDATION_FAILED,
                 message="The bulk selection is invalid.",
-                status_code=400,
+                status_code=HTTPStatus.BAD_REQUEST,
             ) from exc
         if set(identity.values) != set(binding.identity_fields):
             raise RakitError(
                 code=ErrorCode.VALIDATION_FAILED,
                 message="The bulk selection is invalid.",
-                status_code=400,
+                status_code=HTTPStatus.BAD_REQUEST,
             )
         identities.append(identity)
     return tuple(identities)
@@ -165,14 +166,14 @@ async def _targets_for_review(
             raise RakitError(
                 code=ErrorCode.AUTH_FORBIDDEN,
                 message="Permission denied.",
-                status_code=403,
+                status_code=HTTPStatus.FORBIDDEN,
             )
         record = await service.get(identity)
         if record is None:
             raise RakitError(
                 code=ErrorCode.RESOURCE_NOT_FOUND,
                 message="A selected resource was not found.",
-                status_code=404,
+                status_code=HTTPStatus.NOT_FOUND,
             )
         targets.append(
             _DeleteTarget(
@@ -256,7 +257,7 @@ def build_builtin_bulk_delete_routes(binding: BuiltInBulkDeleteBinding) -> list[
                 request,
                 title="Bulk delete unavailable",
                 message="Permission denied.",
-                status_code=403,
+                status_code=HTTPStatus.FORBIDDEN,
             )
 
         if request.method == "GET":
@@ -306,7 +307,7 @@ def build_builtin_bulk_delete_routes(binding: BuiltInBulkDeleteBinding) -> list[
                 request,
                 title="Bulk delete rejected",
                 message="Invalid bulk delete submission.",
-                status_code=400,
+                status_code=HTTPStatus.BAD_REQUEST,
             )
         if not await binding.write.verify_csrf(request):
             return _render_feedback(
@@ -314,7 +315,7 @@ def build_builtin_bulk_delete_routes(binding: BuiltInBulkDeleteBinding) -> list[
                 request,
                 title="Bulk delete rejected",
                 message="Invalid CSRF token.",
-                status_code=403,
+                status_code=HTTPStatus.FORBIDDEN,
             )
         if not await binding.write.verify_submission_token(request):
             return _render_feedback(
@@ -322,7 +323,7 @@ def build_builtin_bulk_delete_routes(binding: BuiltInBulkDeleteBinding) -> list[
                 request,
                 title="Bulk delete rejected",
                 message="Invalid or expired submission token.",
-                status_code=409,
+                status_code=HTTPStatus.CONFLICT,
             )
 
         selected_values = form.getlist("selected")
@@ -333,7 +334,7 @@ def build_builtin_bulk_delete_routes(binding: BuiltInBulkDeleteBinding) -> list[
                 request,
                 title="Bulk delete rejected",
                 message="Invalid bulk delete submission.",
-                status_code=400,
+                status_code=HTTPStatus.BAD_REQUEST,
             )
         selected = cast(tuple[str, ...], tuple(selected_values))
         delete_tokens = cast(tuple[str, ...], tuple(delete_values))
@@ -356,7 +357,7 @@ def build_builtin_bulk_delete_routes(binding: BuiltInBulkDeleteBinding) -> list[
                 request,
                 title="Bulk delete rejected",
                 message="Invalid or expired bulk delete confirmation.",
-                status_code=400,
+                status_code=HTTPStatus.BAD_REQUEST,
             )
 
         try:
@@ -380,7 +381,7 @@ def build_builtin_bulk_delete_routes(binding: BuiltInBulkDeleteBinding) -> list[
                     request,
                     title="Bulk delete rejected",
                     message="Permission denied.",
-                    status_code=403,
+                    status_code=HTTPStatus.FORBIDDEN,
                 )
             record = await service.get(identity)
             if record is None:
@@ -389,7 +390,7 @@ def build_builtin_bulk_delete_routes(binding: BuiltInBulkDeleteBinding) -> list[
                     request,
                     title="Bulk delete rejected",
                     message="A selected resource was not found.",
-                    status_code=404,
+                    status_code=HTTPStatus.NOT_FOUND,
                 )
             preflight.append((identity, record, authorization))
 
@@ -398,7 +399,7 @@ def build_builtin_bulk_delete_routes(binding: BuiltInBulkDeleteBinding) -> list[
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message="Built-in bulk delete requires an idempotency store.",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             )
         try:
             reservation = await store.begin(
@@ -411,7 +412,7 @@ def build_builtin_bulk_delete_routes(binding: BuiltInBulkDeleteBinding) -> list[
                 request,
                 title="Bulk delete rejected",
                 message="This submission token is bound to another bulk delete.",
-                status_code=409,
+                status_code=HTTPStatus.CONFLICT,
             )
         if reservation.status is IdempotencyStatus.COMPLETED:
             receipt = reservation.completed_receipt
@@ -427,7 +428,7 @@ def build_builtin_bulk_delete_routes(binding: BuiltInBulkDeleteBinding) -> list[
                         f"Deleted {deleted} selected record{'s' if deleted != 1 else ''}; "
                         f"{failed} could not be deleted. Refresh the resource before retrying."
                     ),
-                    status_code=409,
+                    status_code=HTTPStatus.CONFLICT,
                     tone="warning",
                 )
             return mutation_success(
@@ -441,7 +442,7 @@ def build_builtin_bulk_delete_routes(binding: BuiltInBulkDeleteBinding) -> list[
                 request,
                 title="Bulk delete already in progress",
                 message="This bulk delete submission is already being processed.",
-                status_code=409,
+                status_code=HTTPStatus.CONFLICT,
                 tone="warning",
             )
 
@@ -494,7 +495,7 @@ def build_builtin_bulk_delete_routes(binding: BuiltInBulkDeleteBinding) -> list[
                     f"Deleted {deleted} selected record{'s' if deleted != 1 else ''}; "
                     f"{len(failures)} could not be deleted. Refresh the resource before retrying."
                 ),
-                status_code=409,
+                status_code=HTTPStatus.CONFLICT,
                 tone="warning",
             )
         return mutation_success(

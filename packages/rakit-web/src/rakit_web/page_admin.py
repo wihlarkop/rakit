@@ -2,6 +2,7 @@
 
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager
+from http import HTTPStatus
 
 from rakit_core.actions import ActionDefinition, ActionScope
 from rakit_core.auth import Principal
@@ -46,7 +47,7 @@ def register_public_page(
         raise RakitError(
             code=ErrorCode.CONFIG_INVALID,
             message="Invalid page action declaration.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             details={"page_id": str(definition.page_id), "reason": "duplicate_action"},
         )
     for action in actions:
@@ -54,7 +55,7 @@ def register_public_page(
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message="Invalid page action declaration.",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={
                     "page_id": str(definition.page_id),
                     "action_id": str(action.action_id),
@@ -89,7 +90,7 @@ def validate_page_runtime(
         raise RakitError(
             code=ErrorCode.CONFIG_INVALID,
             message="Compiled pages require configured authentication.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         )
 
     for compiled_page in compiled.compiled_pages:
@@ -101,7 +102,7 @@ def validate_page_runtime(
                     f'Page "{page.page_id}" uses a parameterized path, but the '
                     "custom-page runtime supports static paths only."
                 ),
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={
                     "page_id": str(page.page_id),
                     "path": page.path,
@@ -117,7 +118,7 @@ def validate_page_runtime(
                 "Mutating pages require an operation idempotency store "
                 "(Admin(operation_idempotency_store=...))."
             ),
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         )
     if idempotency_store is not None and mutating_pages:
         validate_idempotency_store_for_production(idempotency_store, debug=debug)
@@ -134,7 +135,7 @@ def validate_page_runtime(
                         "transaction policy but its handler does not participate in the "
                         "operation unit of work."
                     ),
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                     details={
                         "page_id": str(page.page_id),
                         "transaction_policy": str(page.transaction_policy),
@@ -148,7 +149,7 @@ def validate_page_runtime(
                         f'Page "{page.page_id}" requires a registered operation '
                         "unit-of-work provider."
                     ),
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                     details={
                         "page_id": str(page.page_id),
                         "transaction_policy": str(page.transaction_policy),

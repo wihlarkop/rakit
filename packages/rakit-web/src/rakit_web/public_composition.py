@@ -1,6 +1,7 @@
 """Validation helpers for declaration-style ResourceAdmin composition."""
 
 from collections.abc import Collection
+from http import HTTPStatus
 
 from rakit_core.actions import ActionDefinition, ActionScope
 from rakit_core.admin_types import ResourceAdmin
@@ -12,7 +13,7 @@ def _invalid_declaration(admin_cls: type[ResourceAdmin], attribute: str, reason:
     return RakitError(
         code=ErrorCode.CONFIG_INVALID,
         message=f"Invalid {admin_cls.__name__}.{attribute} declaration.",
-        status_code=500,
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         details={
             "admin_class": admin_cls.__name__,
             "attribute": attribute,

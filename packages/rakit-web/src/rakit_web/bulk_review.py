@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable, Mapping
+from http import HTTPStatus
 from typing import cast
 
 from rakit_core.actions import (
@@ -194,7 +195,7 @@ def build_mature_bulk_action_routes(binding: BulkActionBinding) -> list[Route]:
                     owner_path=owner_path,
                     title="Bulk action unavailable",
                     message="Permission denied.",
-                    status_code=403,
+                    status_code=HTTPStatus.FORBIDDEN,
                 )
             try:
                 identities = _decode_selection(
@@ -226,7 +227,7 @@ def build_mature_bulk_action_routes(binding: BulkActionBinding) -> list[Route]:
                     owner_path=owner_path,
                     title="Bulk action unavailable",
                     message="Permission denied.",
-                    status_code=403,
+                    status_code=HTTPStatus.FORBIDDEN,
                 )
             if any(decision.availability is ActionAvailability.HIDDEN for _, decision in decisions):
                 return _render_feedback(
@@ -235,7 +236,7 @@ def build_mature_bulk_action_routes(binding: BulkActionBinding) -> list[Route]:
                     owner_path=owner_path,
                     title="Bulk action unavailable",
                     message="Resource was not found.",
-                    status_code=404,
+                    status_code=HTTPStatus.NOT_FOUND,
                 )
             disabled = next(
                 (

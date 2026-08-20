@@ -15,6 +15,7 @@ downstream app.
 """
 
 from collections.abc import Callable, Mapping
+from http import HTTPStatus
 from urllib.parse import unquote
 
 from rakit_core.auth import ANONYMOUS_PRINCIPAL, AuthBackend, Principal, SessionStore
@@ -239,7 +240,7 @@ class AuthorizationMiddleware:
             if api_request:
                 await _api_auth_response(
                     request,
-                    status_code=401,
+                    status_code=HTTPStatus.UNAUTHORIZED,
                     code="auth.unauthenticated",
                     message="Authentication is required.",
                 )(scope, receive, send)
@@ -254,7 +255,7 @@ class AuthorizationMiddleware:
                 login_url = f"{login_url}?reason={AuthReason.SESSION_EXPIRED.value}"
             await RedirectResponse(
                 url=login_url,
-                status_code=303,
+                status_code=HTTPStatus.SEE_OTHER,
                 headers={"Cache-Control": "no-store"},
             )(scope, receive, send)
             return
@@ -263,7 +264,7 @@ class AuthorizationMiddleware:
             if api_request:
                 await _api_auth_response(
                     request,
-                    status_code=403,
+                    status_code=HTTPStatus.FORBIDDEN,
                     code="auth.forbidden",
                     message="Permission denied.",
                 )(scope, receive, send)
@@ -279,7 +280,9 @@ class AuthorizationMiddleware:
                 await self._render_forbidden(request, dashboard_available)(scope, receive, send)
             else:
                 await PlainTextResponse(
-                    "Forbidden", status_code=403, headers={"Cache-Control": "no-store"}
+                    "Forbidden",
+                    status_code=HTTPStatus.FORBIDDEN,
+                    headers={"Cache-Control": "no-store"},
                 )(scope, receive, send)
             return
 

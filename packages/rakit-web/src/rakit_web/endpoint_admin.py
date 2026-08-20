@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from http import HTTPStatus
 from typing import Any, cast
 
 from rakit_core.compiler import CompiledApplication
@@ -172,7 +173,7 @@ def validate_endpoint_runtime(
                     f'Endpoint "{endpoint.endpoint_id}" uses a parameterized path, but '
                     "Custom endpoint runtime supports static paths only."
                 ),
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={
                     "endpoint_id": str(endpoint.endpoint_id),
                     "reason": "path_parameters_not_supported",
@@ -182,14 +183,14 @@ def validate_endpoint_runtime(
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message="Custom endpoints must declare exactly one HTTP method.",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={"endpoint_id": str(endpoint.endpoint_id), "reason": "one_method_required"},
             )
         if endpoint.handler is None or not callable(endpoint.handler):
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message=f'Endpoint "{endpoint.endpoint_id}" requires a callable handler.',
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={"endpoint_id": str(endpoint.endpoint_id), "reason": "handler_missing"},
             )
         method = endpoint.methods[0]
@@ -197,7 +198,7 @@ def validate_endpoint_runtime(
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message="Typed endpoint input requires one explicit input source.",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={
                     "endpoint_id": str(endpoint.endpoint_id),
                     "reason": "input_source_missing",
@@ -208,7 +209,7 @@ def validate_endpoint_runtime(
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
                     message="GET endpoints must be read-only.",
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                     details={
                         "endpoint_id": str(endpoint.endpoint_id),
                         "reason": "get_not_read_only",
@@ -218,7 +219,7 @@ def validate_endpoint_runtime(
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
                     message="GET endpoints accept QUERY input only.",
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                     details={
                         "endpoint_id": str(endpoint.endpoint_id),
                         "reason": "get_input_source",
@@ -230,7 +231,7 @@ def validate_endpoint_runtime(
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
                     message="POST endpoints must be mutating and transactional.",
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                     details={
                         "endpoint_id": str(endpoint.endpoint_id),
                         "reason": "post_not_mutating",
@@ -240,7 +241,7 @@ def validate_endpoint_runtime(
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
                     message="Public POST endpoints are not supported by the current runtime.",
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                     details={
                         "endpoint_id": str(endpoint.endpoint_id),
                         "reason": "public_post_not_supported",
@@ -254,7 +255,7 @@ def validate_endpoint_runtime(
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
                     message="POST endpoints accept JSON or FORM input only.",
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                     details={
                         "endpoint_id": str(endpoint.endpoint_id),
                         "reason": "post_input_source",
@@ -264,7 +265,7 @@ def validate_endpoint_runtime(
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
                     message="POST endpoint responses must be replayable JSON.",
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                     details={
                         "endpoint_id": str(endpoint.endpoint_id),
                         "reason": "post_response_kind",
@@ -280,7 +281,7 @@ def validate_endpoint_runtime(
                             f"{endpoint.transaction_policy.value} transaction policy but its "
                             "handler does not participate in the operation unit of work."
                         ),
-                        status_code=500,
+                        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                         details={
                             "endpoint_id": str(endpoint.endpoint_id),
                             "reason": "handler_not_uow_managed",
@@ -293,7 +294,7 @@ def validate_endpoint_runtime(
                             f'Endpoint "{endpoint.endpoint_id}" requires a registered operation '
                             "unit-of-work provider."
                         ),
-                        status_code=500,
+                        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                         details={
                             "endpoint_id": str(endpoint.endpoint_id),
                             "reason": "operation_uow_not_configured",
@@ -303,7 +304,7 @@ def validate_endpoint_runtime(
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message="Advanced raw response adapters are not supported.",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={
                     "endpoint_id": str(endpoint.endpoint_id),
                     "reason": "advanced_response_deferred",
@@ -316,7 +317,7 @@ def validate_endpoint_runtime(
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message="File and stream endpoints must be read-only GET operations.",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={
                     "endpoint_id": str(endpoint.endpoint_id),
                     "reason": "streaming_transaction_boundary",
@@ -332,7 +333,7 @@ def validate_endpoint_runtime(
         raise RakitError(
             code=ErrorCode.CONFIG_INVALID,
             message="Private custom endpoints require configured authentication.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         )
     if post_endpoints and idempotency_store is None:
         raise RakitError(
@@ -341,7 +342,7 @@ def validate_endpoint_runtime(
                 "POST endpoints require an operation idempotency store "
                 "(Admin(operation_idempotency_store=...))."
             ),
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         )
     if post_endpoints and idempotency_store is not None:
         validate_idempotency_store_for_production(idempotency_store, debug=debug)
@@ -440,7 +441,7 @@ class Admin(_BaseAdmin):
                     message=(
                         "POST custom endpoints require session authentication and a secret key."
                     ),
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 )
             token_service = TokenService.single_key(
                 key_id="primary",

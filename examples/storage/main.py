@@ -14,9 +14,9 @@ import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from rakit_core.compiler import ApplicationBuilder
-from rakit_storage import FileStorage, StoredFile, TemporaryUpload
-from rakit_storage_local import LocalStorage, LocalStoragePlugin
+from rakit.core import ApplicationBuilder
+from rakit.storage import FileStorage, StoredFile, TemporaryUpload
+from rakit.storage.local import LocalStorage, LocalStoragePlugin
 
 
 async def _bytes_stream(payload: bytes) -> AsyncIterator[bytes]:

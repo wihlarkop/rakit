@@ -3,6 +3,7 @@ import logging
 import sys
 from collections.abc import Mapping
 from contextvars import Token
+from http import HTTPStatus
 from typing import Any, TextIO, cast
 
 import structlog
@@ -174,7 +175,7 @@ def _attach_bridge_handler(name: str, *, renderer: Processor, level: int) -> Non
         raise RakitError(
             code=ErrorCode.CONFIG_INVALID,
             message="Logger namespace must be a non-empty, non-whitespace string.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             details={"name": repr(name)},
         )
 

@@ -13,6 +13,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import timedelta
+from http import HTTPStatus
 
 from rakit_core.actions import (
     ActionAvailability,
@@ -155,13 +156,13 @@ def _decode_selection(
         raise RakitError(
             code=ErrorCode.VALIDATION_FAILED,
             message="Select at least one resource before running a bulk action.",
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
         )
     if len(encoded) > policy.synchronous_maximum:
         raise RakitError(
             code=ErrorCode.VALIDATION_FAILED,
             message="Bulk selection exceeds the synchronous execution limit.",
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
             details={"maximum": policy.synchronous_maximum},
         )
 
@@ -173,14 +174,14 @@ def _decode_selection(
             raise RakitError(
                 code=ErrorCode.VALIDATION_FAILED,
                 message="Bulk selection contains an invalid identity.",
-                status_code=400,
+                status_code=HTTPStatus.BAD_REQUEST,
             ) from exc
         by_token[binding.codec.encode(identity)] = identity
     if not by_token:
         raise RakitError(
             code=ErrorCode.VALIDATION_FAILED,
             message="Select at least one resource before running a bulk action.",
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
         )
     return tuple(by_token[token] for token in sorted(by_token))
 
@@ -196,7 +197,7 @@ async def _load_selection(
             raise RakitError(
                 code=ErrorCode.RESOURCE_NOT_FOUND,
                 message="A selected resource is no longer available.",
-                status_code=404,
+                status_code=HTTPStatus.NOT_FOUND,
             )
         targets.append(BulkTarget(identity=identity, record=record))
     return BulkSelection(tuple(targets))
@@ -291,7 +292,7 @@ def _selection_tokens_from_form(form: FormData) -> list[str]:
         raise RakitError(
             code=ErrorCode.VALIDATION_FAILED,
             message="Bulk selection contains an invalid identity.",
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
         )
     return [value for value in values if isinstance(value, str)]
 
@@ -312,7 +313,7 @@ def _submitted_values(form: FormData) -> dict[str, object]:
             raise RakitError(
                 code=ErrorCode.VALIDATION_FAILED,
                 message="Invalid bulk action input.",
-                status_code=400,
+                status_code=HTTPStatus.BAD_REQUEST,
             )
         submitted[name] = value
     return submitted
@@ -326,7 +327,7 @@ def _parse_input(
         raise RakitError(
             code=ErrorCode.VALIDATION_FAILED,
             message="Bulk action input has too many fields.",
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
         )
     submitted = _submitted_values(form)
     if action.input_schema is None:
@@ -334,7 +335,7 @@ def _parse_input(
             raise RakitError(
                 code=ErrorCode.VALIDATION_FAILED,
                 message="Invalid bulk action input.",
-                status_code=400,
+                status_code=HTTPStatus.BAD_REQUEST,
             )
         return submitted, None
     try:
@@ -345,7 +346,7 @@ def _parse_input(
         raise RakitError(
             code=ErrorCode.VALIDATION_FAILED,
             message="Invalid bulk action input.",
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
         ) from exc
 
 
@@ -386,7 +387,7 @@ async def _target_contexts(
             raise RakitError(
                 code=ErrorCode.AUTH_FORBIDDEN,
                 message="Forbidden",
-                status_code=403,
+                status_code=HTTPStatus.FORBIDDEN,
             )
         context = _bulk_context(
             request,
@@ -401,7 +402,7 @@ async def _target_contexts(
             raise RakitError(
                 code=ErrorCode.RESOURCE_CONFLICT,
                 message="A selected resource is no longer eligible for this action.",
-                status_code=409,
+                status_code=HTTPStatus.CONFLICT,
             )
         contexts.append(context)
     return tuple(contexts)
@@ -435,7 +436,7 @@ def _concurrency_form_tokens(form: FormData) -> list[str]:
         raise RakitError(
             code=ErrorCode.VALIDATION_FAILED,
             message="Invalid bulk concurrency snapshot.",
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
         )
     return [value for value in values if isinstance(value, str)]
 
@@ -453,14 +454,14 @@ def _verify_concurrency_tokens(
             raise RakitError(
                 code=ErrorCode.VALIDATION_FAILED,
                 message="Unexpected bulk concurrency snapshot.",
-                status_code=400,
+                status_code=HTTPStatus.BAD_REQUEST,
             )
         return
     if len(tokens) != len(selection.targets):
         raise RakitError(
             code=ErrorCode.RESOURCE_CONFLICT,
             message="Bulk concurrency snapshot is missing or stale.",
-            status_code=409,
+            status_code=HTTPStatus.CONFLICT,
         )
     assert binding.concurrency is not None
     assert binding.concurrency_resource_id is not None
@@ -477,7 +478,7 @@ def _verify_concurrency_tokens(
         raise RakitError(
             code=ErrorCode.RESOURCE_CONFLICT,
             message="A selected resource changed after the bulk action was opened.",
-            status_code=409,
+            status_code=HTTPStatus.CONFLICT,
         ) from exc
 
 
@@ -796,7 +797,7 @@ def build_bulk_action_routes(binding: BulkActionBinding) -> list[Route]:
                     selection,
                     submitted=submitted,
                     issues=exc.state.issues,
-                    status_code=422,
+                    status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                 )
             except RakitError as exc:
                 return _rejected_response(request, exc.message, exc.status_code)
@@ -854,7 +855,7 @@ def build_bulk_action_routes(binding: BulkActionBinding) -> list[Route]:
                         raise RakitError(
                             code=ErrorCode.RESOURCE_CONFLICT,
                             message="Bulk action confirmation is invalid or stale",
-                            status_code=409,
+                            status_code=HTTPStatus.CONFLICT,
                         )
                 _verify_concurrency_tokens(
                     binding,

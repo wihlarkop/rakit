@@ -10,6 +10,7 @@ dependencies = [
     "click>=8.4.2",
     "rakit-core==0.1.0a1",
     "rakit-server==0.1.0a1",
+    "rakit-storage==0.1.0a1",
     "rakit-web==0.1.0a1",
 ]
 
@@ -37,6 +38,7 @@ rakit-server-uvicorn = { workspace = true }
 rakit-server-granian = { workspace = true }
 rakit-sqlalchemy = { workspace = true }
 rakit-auth-sqlalchemy = { workspace = true }
+rakit-storage = { workspace = true }
 rakit-storage-local = { workspace = true }
 rakit-web = { workspace = true }
 

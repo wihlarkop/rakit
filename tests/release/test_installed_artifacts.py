@@ -48,6 +48,13 @@ def test_standard_extra_contains_release_reference_stack(
     checker.check_standard_extra(repository)
 
 
+def test_facade_declares_storage_contract_dependency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository, checker = _load_checker(monkeypatch)
+    checker.check_facade_dependencies(repository)
+
+
 def test_artifact_checker_does_not_write_dist_into_repository(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -74,6 +81,37 @@ def test_clean_install_resolves_cli_after_standard_install(
 ) -> None:
     repository, _checker = _load_checker(monkeypatch)
     source = (repository / "scripts" / "check_artifacts.py").read_text(encoding="utf-8")
-    install_marker = 'f"rakit[standard]=={VERSION}"'
+    install_marker = '_install_extra(dist, python, workspace, "standard")'
     cli_marker = "cli = _venv_rakit(venv)"
     assert source.index(install_marker) < source.index(cli_marker)
+
+
+def test_release_gate_requires_complete_web_runtime_assets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _repository, checker = _load_checker(monkeypatch)
+    required = set(checker._REQUIRED_WHEEL_PATHS["rakit-web"])
+
+    assert {
+        "rakit_web/static/rakit.css",
+        "rakit_web/static/rakit-ui.js",
+        "rakit_web/static/rakit-widgets.js",
+        "rakit_web/static/rakit-shell.js",
+        "rakit_web/static/theme.js",
+        "rakit_web/static/htmx.min.js",
+        "rakit_web/static/HTMX_LICENSE.txt",
+        "rakit_web/static/HTMX_PROVENANCE.md",
+    } <= required
+
+
+def test_release_gate_smokes_optional_granian_extra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository, checker = _load_checker(monkeypatch)
+    source = (repository / "scripts" / "check_artifacts.py").read_text(encoding="utf-8")
+
+    assert checker._GRANIAN_MODULES == (
+        "rakit.server.granian",
+        "rakit_server_granian",
+    )
+    assert '_install_extra(dist, python, workspace, "granian")' in source
