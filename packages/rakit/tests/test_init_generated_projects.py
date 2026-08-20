@@ -66,4 +66,7 @@ def test_generated_minimal_project_passes_existing_check_command(monkeypatch) ->
         check = runner.invoke(cli, ["check", "minimal_generated.app:admin"])
         assert check.exit_code == 0, check.output
         assert "Rakit configuration is valid." in check.output
-        assert "minimal_generated" not in generated.output or "Package: minimal_generated" in generated.output
+        assert (
+            "minimal_generated" not in generated.output
+            or "Package: minimal_generated" in generated.output
+        )
