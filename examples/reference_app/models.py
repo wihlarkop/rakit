@@ -39,9 +39,7 @@ class StoredFileType(TypeDecorator[dict[str, Any]]):
             raise TypeError("product image must be a StoredFile descriptor")
         return value.model_dump(mode="json")
 
-    def process_result_value(
-        self, value: object, dialect: object
-    ) -> StoredFile | None:
+    def process_result_value(self, value: object, dialect: object) -> StoredFile | None:
         del dialect
         if value is None:
             return None
@@ -55,6 +53,7 @@ class Customer(Base):
     name: Mapped[str] = mapped_column(String(200))
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
     status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     orders: Mapped[list[Order]] = relationship(back_populates="customer")
@@ -70,6 +69,7 @@ class Product(Base):
     inventory_count: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(32), default="active", index=True)
     image: Mapped[StoredFile | None] = mapped_column(StoredFileType(), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     order_items: Mapped[list[OrderItem]] = relationship(back_populates="product")
@@ -84,6 +84,7 @@ class Order(Base):
     )
     status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
     total_cents: Mapped[int] = mapped_column(Integer)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     customer: Mapped[Customer] = relationship(back_populates="orders")
