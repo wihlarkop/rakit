@@ -88,9 +88,11 @@ async def _seed_auth(admin: Admin, session: AsyncSession) -> None:
         .where(Role.name == OPERATIONS_ROLE)
     )
     if role is None:
+        # Keep the new role transient while populating relationship collections.
+        # Flushing first would make an attribute assignment attempt an async lazy
+        # load of the previous collection, which is invalid outside greenlet_spawn.
         role = Role(name=OPERATIONS_ROLE)
         session.add(role)
-        await session.flush()
 
     allowed_keys = {
         f"{admin.config.admin_id}.access",
