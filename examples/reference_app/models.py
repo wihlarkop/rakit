@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from rakit.storage import StoredFile
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator
 

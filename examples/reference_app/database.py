@@ -167,10 +167,9 @@ async def bootstrap_database(admin: Admin) -> None:
     """Create and seed the development database without destructive resets."""
 
     await _create_tables()
-    async with session_factory() as session:
-        async with session.begin():
-            await _seed_auth(admin, session)
-            await _seed_commerce(session)
+    async with session_factory() as session, session.begin():
+        await _seed_auth(admin, session)
+        await _seed_commerce(session)
 
 
 async def dispose_database() -> None:

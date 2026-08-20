@@ -42,25 +42,23 @@ def _identity_id(context: ActionContext) -> int:
 
 async def _mark_paid(context: ActionContext) -> ActionSuccess[None]:
     order_id = _identity_id(context)
-    async with session_factory() as session:
-        async with session.begin():
-            await session.execute(
-                update(Order)
-                .where(Order.id == order_id)
-                .values(status="paid", version=Order.version + 1)
-            )
+    async with session_factory() as session, session.begin():
+        await session.execute(
+            update(Order)
+            .where(Order.id == order_id)
+            .values(status="paid", version=Order.version + 1)
+        )
     return ActionSuccess(message=f"Order #{order_id} marked paid.")
 
 
 async def _mark_processing(context: ActionContext) -> ActionSuccess[None]:
     order_id = _identity_id(context)
-    async with session_factory() as session:
-        async with session.begin():
-            await session.execute(
-                update(Order)
-                .where(Order.id == order_id)
-                .values(status="processing", version=Order.version + 1)
-            )
+    async with session_factory() as session, session.begin():
+        await session.execute(
+            update(Order)
+            .where(Order.id == order_id)
+            .values(status="processing", version=Order.version + 1)
+        )
     return ActionSuccess(message=f"Order #{order_id} moved to processing.")
 
 
