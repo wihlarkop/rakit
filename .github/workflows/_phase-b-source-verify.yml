@@ -1,0 +1,66 @@
+name: Phase B source verification
+
+on:
+  push:
+    branches: [phase-b-reference-app-hardening]
+
+permissions:
+  contents: write
+
+jobs:
+  source-verification:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: phase-b-reference-app-hardening
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-packages --dev --locked
+      - name: Normalize source formatting and imports
+        run: |
+          uv run ruff format packages/rakit/src/rakit packages/rakit-web/src/rakit_web examples/reference_app
+          uv run ruff check --fix packages/rakit/src/rakit packages/rakit-web/src/rakit_web examples/reference_app
+          git diff --check
+      - name: Commit deterministic formatting
+        run: |
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/rakit/src/rakit packages/rakit-web/src/rakit_web examples/reference_app
+          git commit -m "style: normalize Phase B source"
+          git push origin HEAD:phase-b-reference-app-hardening
+      - run: uv run ty check
+      - run: uv run python -m compileall -q examples/reference_app
+      - name: Compile reference application through public composition
+        run: |
+          uv run python - <<'PY'
+          from examples.reference_app.app import admin, app
+
+          compiled = admin.compile()
+          assert app is not None
+          assert {resource.resource_id for resource in compiled.resources} == {
+              "customers",
+              "products",
+              "orders",
+              "order_items",
+          }
+          assert {action.action_id for action in compiled.actions} == {
+              "mark_paid",
+              "mark_processing",
+          }
+          assert {page.page_id for page in compiled.pages} == {"operations"}
+          assert {api.resource_id for api in compiled.compiled_resource_apis} == {
+              "customers",
+              "products",
+              "orders",
+          }
+          print("reference app public composition: OK")
+          PY
+
+# Temporary source-only gate. Remove before the Phase B pull request.
