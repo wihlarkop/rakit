@@ -21,9 +21,7 @@ def _dependency_selection(
     config: InitConfig,
 ) -> tuple[tuple[InstallExtra, ...], tuple[str, ...]]:
     server = (
-        InstallExtra.UVICORN
-        if config.server is ServerAdapter.UVICORN
-        else InstallExtra.GRANIAN
+        InstallExtra.UVICORN if config.server is ServerAdapter.UVICORN else InstallExtra.GRANIAN
     )
     if config.template is StarterTemplate.STANDARD:
         return ((InstallExtra.STANDARD, server), ("aiosqlite",))
