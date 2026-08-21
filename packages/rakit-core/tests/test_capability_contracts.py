@@ -1,6 +1,6 @@
 import pytest
-from rakit_core import adapter_capabilities, capability_contracts
-from rakit_core.capabilities import Capability, CapabilitySet
+import rakit_core.adapter_capabilities as adapter_capabilities
+import rakit_core.capability_contracts as capability_contracts
 
 
 EXPECTED_CANONICAL_NAMES = {
@@ -44,37 +44,48 @@ def test_relationships_and_optimistic_concurrency_have_semantic_prerequisites() 
 
 
 def test_duplicate_contract_is_rejected() -> None:
-    contract = capability_contracts.CapabilityContract(Capability("test.one"), 1, "test")
+    contract = capability_contracts.CapabilityContract(
+        capability_contracts.Capability("test.one"), 1, "test"
+    )
     with pytest.raises(ValueError, match="Duplicate canonical capability contract"):
         capability_contracts.validate_capability_contracts((contract, contract))
 
 
 def test_unknown_prerequisite_is_rejected() -> None:
     contract = capability_contracts.CapabilityContract(
-        Capability("test.one"),
+        capability_contracts.Capability("test.one"),
         1,
         "test",
-        CapabilitySet.of(Capability("test.missing")),
+        capability_contracts.CapabilitySet.of(
+            capability_contracts.Capability("test.missing")
+        ),
     )
     with pytest.raises(ValueError, match="requires unknown capability"):
         capability_contracts.validate_capability_contracts((contract,))
 
 
 def test_self_prerequisite_is_rejected() -> None:
-    capability = Capability("test.self")
+    capability = capability_contracts.Capability("test.self")
     contract = capability_contracts.CapabilityContract(
-        capability, 1, "test", CapabilitySet.of(capability)
+        capability,
+        1,
+        "test",
+        capability_contracts.CapabilitySet.of(capability),
     )
     with pytest.raises(ValueError, match="cannot require itself"):
         capability_contracts.validate_capability_contracts((contract,))
 
 
 def test_prerequisite_cycle_is_rejected_deterministically() -> None:
-    first = Capability("test.first")
-    second = Capability("test.second")
+    first = capability_contracts.Capability("test.first")
+    second = capability_contracts.Capability("test.second")
     contracts = (
-        capability_contracts.CapabilityContract(first, 1, "test", CapabilitySet.of(second)),
-        capability_contracts.CapabilityContract(second, 1, "test", CapabilitySet.of(first)),
+        capability_contracts.CapabilityContract(
+            first, 1, "test", capability_contracts.CapabilitySet.of(second)
+        ),
+        capability_contracts.CapabilityContract(
+            second, 1, "test", capability_contracts.CapabilitySet.of(first)
+        ),
     )
     with pytest.raises(ValueError, match=r"test\.first -> test\.second -> test\.first"):
         capability_contracts.validate_capability_contracts(contracts)
@@ -82,6 +93,10 @@ def test_prerequisite_cycle_is_rejected_deterministically() -> None:
 
 def test_invalid_contract_version_and_category_are_rejected() -> None:
     with pytest.raises(ValueError, match="version must be >= 1"):
-        capability_contracts.CapabilityContract(Capability("test.zero"), 0, "test")
+        capability_contracts.CapabilityContract(
+            capability_contracts.Capability("test.zero"), 0, "test"
+        )
     with pytest.raises(ValueError, match="category must be a non-empty trimmed string"):
-        capability_contracts.CapabilityContract(Capability("test.category"), 1, " test ")
+        capability_contracts.CapabilityContract(
+            capability_contracts.Capability("test.category"), 1, " test "
+        )
