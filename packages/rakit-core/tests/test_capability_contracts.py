@@ -2,7 +2,6 @@ import pytest
 import rakit_core.adapter_capabilities as adapter_capabilities
 import rakit_core.capability_contracts as capability_contracts
 
-
 Capability = capability_contracts.Capability
 CapabilitySet = capability_contracts.CapabilitySet
 CapabilityContract = capability_contracts.CapabilityContract
