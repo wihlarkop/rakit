@@ -19,6 +19,7 @@ def test_granian_facade_raises_friendly_error_when_missing(monkeypatch: pytest.M
     with pytest.raises(RakitOptionalDependencyError) as caught:
         import rakit.server.granian  # noqa: F401
 
+    assert "Granian support is not installed." in str(caught.value)
     assert 'uv add "rakit[granian]"' in str(caught.value)
 
 
@@ -55,6 +56,7 @@ def test_local_storage_facade_raises_friendly_error_when_missing(
     with pytest.raises(RakitOptionalDependencyError) as caught:
         import rakit.storage.local  # noqa: F401
 
+    assert "Local storage support is not installed." in str(caught.value)
     assert 'uv add "rakit[storage-local]"' in str(caught.value)
 
 
