@@ -46,8 +46,19 @@ jobs:
               if next_step == -1:
                   next_step = len(text)
               raw = text[start:next_step]
-              lines = raw.splitlines()
-              normalized = [line[10:] if line.startswith('          ') else line for line in lines]
+              normalized: list[str] = []
+              in_source_literal = False
+              for line in raw.splitlines():
+                  if in_source_literal:
+                      normalized.append(line)
+                  else:
+                      normalized.append(
+                          line[10:] if line.startswith('          ') else line
+                      )
+                  if line.count("'''") % 2 == 1:
+                      in_source_literal = not in_source_literal
+              if in_source_literal:
+                  raise RuntimeError(f'Unclosed source literal while extracting {name}')
               return '\n'.join(normalized) + '\n'
 
           for name in wanted:
