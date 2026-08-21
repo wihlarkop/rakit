@@ -1,16 +1,15 @@
 from dataclasses import replace
 
 import pytest
-from rakit_core import adapter_capabilities, conformance
-from rakit_core.capabilities import CapabilitySet
-from rakit_core.integrations import IntegrationDescriptor
+import rakit_core.adapter_capabilities as adapter_capabilities
+import rakit_core.conformance as conformance
 
 
-TEST_PERSISTENCE_INTEGRATION = IntegrationDescriptor(
+TEST_PERSISTENCE_INTEGRATION = conformance.IntegrationDescriptor(
     integration_id="test.persistence",
     category="persistence",
     display_name="Test Persistence",
-    advertised_capabilities=CapabilitySet.of(
+    advertised_capabilities=conformance.CapabilitySet.of(
         adapter_capabilities.PERSISTENCE_READ,
         adapter_capabilities.PERSISTENCE_WRITE,
         adapter_capabilities.TRANSACTIONS_ROOT_UOW,
@@ -34,7 +33,7 @@ async def _fail_two(_harness: object) -> None:
 def test_missing_advertised_prerequisites_are_hard_failures() -> None:
     descriptor = replace(
         TEST_PERSISTENCE_INTEGRATION,
-        advertised_capabilities=CapabilitySet.of(
+        advertised_capabilities=conformance.CapabilitySet.of(
             adapter_capabilities.CONCURRENCY_ATOMIC_OPTIMISTIC
         ),
     )
@@ -116,7 +115,9 @@ async def test_missing_spec_and_missing_harness_fail_closed() -> None:
     integration_result = await conformance.run_integration_conformance(
         descriptor=replace(
             TEST_PERSISTENCE_INTEGRATION,
-            advertised_capabilities=CapabilitySet.of(adapter_capabilities.PERSISTENCE_READ),
+            advertised_capabilities=conformance.CapabilitySet.of(
+                adapter_capabilities.PERSISTENCE_READ
+            ),
         ),
         harnesses={},
         specs={},
