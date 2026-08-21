@@ -54,6 +54,43 @@ class ErrorDetail(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict)
 
 
+def _preserve_capability_error_compatibility(details: dict[str, Any]) -> dict[str, Any]:
+    if details.get("reason") != "missing_capabilities":
+        return details
+    if "requirement" in details and "missing" in details:
+        return details
+
+    requirements = details.get("requirements")
+    if not isinstance(requirements, list):
+        return details
+
+    first_missing = next(
+        (
+            requirement
+            for requirement in requirements
+            if isinstance(requirement, dict) and requirement.get("status") == "missing"
+        ),
+        None,
+    )
+    if first_missing is None:
+        return details
+
+    normalized = dict(details)
+    normalized["requirement"] = first_missing.get("id")
+    normalized["required"] = list(first_missing.get("required", []))
+    normalized["available"] = list(first_missing.get("available", []))
+    normalized["missing"] = list(first_missing.get("missing", []))
+
+    aggregate_providers = normalized.get("providers")
+    if isinstance(aggregate_providers, list) and any(
+        isinstance(provider, dict) for provider in aggregate_providers
+    ):
+        normalized["provider_details"] = aggregate_providers
+        normalized["providers"] = list(first_missing.get("providers", []))
+
+    return normalized
+
+
 class RakitError(Exception):
     def __init__(
         self,
@@ -68,7 +105,7 @@ class RakitError(Exception):
         self.code = str(code)
         self.message = message
         self.status_code = status_code
-        self.details = details or {}
+        self.details = _preserve_capability_error_compatibility(details or {})
         self.__cause__ = cause
 
     def to_public_dict(self) -> dict[str, Any]:
