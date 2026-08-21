@@ -70,8 +70,7 @@ def _load_schema_adapter(
         raise RakitError(
             code=ErrorCode.CONFIG_INVALID,
             message=(
-                "Schema adapter entry point integration metadata "
-                "does not match its identifier."
+                "Schema adapter entry point integration metadata does not match its identifier."
             ),
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             details={

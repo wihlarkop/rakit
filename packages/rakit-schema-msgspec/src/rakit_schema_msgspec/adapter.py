@@ -1,5 +1,5 @@
-from collections.abc import Mapping
 import re
+from collections.abc import Mapping
 
 import msgspec
 from rakit_core.schema import SchemaField, SchemaValidationError, SchemaValidationIssue
