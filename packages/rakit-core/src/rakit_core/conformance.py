@@ -52,11 +52,7 @@ class IntegrationConformanceResult:
 
     @property
     def failures(self) -> tuple[ConformanceFailure, ...]:
-        return tuple(
-            failure
-            for result in self.results
-            for failure in result.failures
-        )
+        return tuple(failure for result in self.results for failure in result.failures)
 
 
 CapabilityCheckCallable = Callable[[object], Awaitable[None]]
@@ -84,9 +80,7 @@ class CapabilityConformanceSpec:
         seen: set[str] = set()
         for check in self.checks:
             if check.check_id in seen:
-                raise ValueError(
-                    f'Duplicate conformance check id: "{check.check_id}"'
-                )
+                raise ValueError(f'Duplicate conformance check id: "{check.check_id}"')
             seen.add(check.check_id)
 
 
@@ -130,14 +124,11 @@ def build_conformance_spec_registry(
     for spec in specs:
         key = _spec_key(spec.capability, spec.version)
         if key in registry:
-            raise ValueError(
-                f'Duplicate conformance spec for capability "{key[0]}" v{key[1]}'
-            )
+            raise ValueError(f'Duplicate conformance spec for capability "{key[0]}" v{key[1]}')
         contract = get_capability_contract(spec.capability)
         if contract is None:
             raise ValueError(
-                f'Conformance spec references non-canonical capability '
-                f'"{spec.capability.name}"'
+                f'Conformance spec references non-canonical capability "{spec.capability.name}"'
             )
         if contract.version != spec.version:
             raise ValueError(
@@ -199,7 +190,7 @@ async def run_capability_conformance(
                     kind=ConformanceFailureKind.REGISTRY,
                     capability=contract.capability.name,
                     message=(
-                        f'No conformance spec exists for canonical capability '
+                        f"No conformance spec exists for canonical capability "
                         f'"{contract.capability.name}" v{contract.version}'
                     ),
                 ),
