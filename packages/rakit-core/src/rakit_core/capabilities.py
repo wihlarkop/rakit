@@ -1,8 +1,6 @@
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
-from .errors import ErrorCode, RakitError
-
 
 @dataclass(frozen=True, slots=True, order=True)
 class Capability:
@@ -95,6 +93,22 @@ class CapabilityReport:
         return tuple(provider.provider_id for provider in self.providers)
 
 
+@dataclass(frozen=True, slots=True)
+class CapabilityAnalysis:
+    providers: tuple[CapabilityProvider, ...]
+    requirements: tuple[CapabilityRequirement, ...]
+    reports: tuple[CapabilityReport, ...]
+    available: CapabilitySet
+
+    @property
+    def valid(self) -> bool:
+        return all(report.satisfied for report in self.reports)
+
+    @property
+    def missing_requirements(self) -> tuple[CapabilityRequirement, ...]:
+        return tuple(report.requirement for report in self.reports if not report.satisfied)
+
+
 def evaluate_capabilities(
     requirement: CapabilityRequirement,
     providers: Iterable[CapabilityProvider],
@@ -112,26 +126,51 @@ def evaluate_capabilities(
     )
 
 
-def require_capabilities(
-    requirement: CapabilityRequirement,
+def _reject_duplicate_ids(values: Iterable[str], *, kind: str) -> None:
+    seen: set[str] = set()
+    for value in values:
+        if value in seen:
+            raise ValueError(f'Duplicate capability {kind} id: "{value}"')
+        seen.add(value)
+
+
+def analyze_capabilities(
+    requirements: Iterable[CapabilityRequirement],
     providers: Iterable[CapabilityProvider],
-) -> CapabilityReport:
-    report = evaluate_capabilities(requirement, providers)
-    if report.satisfied:
-        return report
-    raise RakitError(
-        code=ErrorCode.CONFIG_INVALID,
-        message=(
-            f'Capability requirement "{requirement.requirement_id}" is not satisfied; '
-            f"missing: {', '.join(report.missing.names)}."
-        ),
-        status_code=500,
-        details={
-            "requirement": requirement.requirement_id,
-            "required": list(requirement.required.names),
-            "available": list(report.available.names),
-            "missing": list(report.missing.names),
-            "providers": list(report.provider_ids),
-            "reason": "missing_capabilities",
-        },
+) -> CapabilityAnalysis:
+    provider_tuple = tuple(sorted(providers, key=lambda item: item.provider_id))
+    requirement_tuple = tuple(requirements)
+    _reject_duplicate_ids(
+        (provider.provider_id for provider in provider_tuple),
+        kind="provider",
     )
+    _reject_duplicate_ids(
+        (requirement.requirement_id for requirement in requirement_tuple),
+        kind="requirement",
+    )
+
+    available = CapabilitySet()
+    for provider in provider_tuple:
+        available = available.union(provider.capabilities)
+
+    reports = tuple(
+        evaluate_capabilities(requirement, provider_tuple) for requirement in requirement_tuple
+    )
+    return CapabilityAnalysis(
+        providers=provider_tuple,
+        requirements=requirement_tuple,
+        reports=reports,
+        available=available,
+    )
+
+
+__all__ = [
+    "Capability",
+    "CapabilityAnalysis",
+    "CapabilityProvider",
+    "CapabilityReport",
+    "CapabilityRequirement",
+    "CapabilitySet",
+    "analyze_capabilities",
+    "evaluate_capabilities",
+]

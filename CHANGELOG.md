@@ -50,6 +50,10 @@ The project follows Semantic Versioning. Until a release is actually tagged, cha
   packages such as database drivers explicit.
 - Capability-specific missing-dependency errors for SQLAlchemy, SQLAlchemy authentication, local
   storage, Uvicorn, and Granian facades without masking transitive `ModuleNotFoundError` failures.
+- Capability discovery through `rakit capabilities`, with separate configured-application and
+  installed-environment views, deterministic human-readable output, JSON schema version 1, strict
+  `rakit.integrations` entry-point validation, and lightweight first-party discovery metadata for
+  web, schema, persistence, authentication, storage, Uvicorn, and Granian integrations.
 - Tag-gated trusted-publishing workflow preparation without a release tag or publish action.
 
 ### Changed
@@ -61,6 +65,11 @@ The project follows Semantic Versioning. Until a release is actually tagged, cha
 - Standard scaffolds now select `rakit[standard,uvicorn]` or `rakit[standard,granian]` explicitly and
   keep `aiosqlite` as a separate application dependency instead of hiding either server or driver
   selection inside the `standard` extra.
+- Capability validation now evaluates the complete configured requirement graph before failing, so
+  `rakit check` reports every missing capability requirement in one run while remaining fail-closed.
+  Installed integration metadata never implies configured or active application state.
+- Missing first-party server adapter guidance now reuses the canonical typed installation vocabulary
+  and emits `uv add` commands instead of maintaining separate package-install strings.
 - Official examples prefer the `rakit` facade for public contracts and adapters instead of importing
   implementation packages directly when an ergonomic facade exists.
 - Reference application bootstrap is additive and application-owned; Rakit continues to keep ORM

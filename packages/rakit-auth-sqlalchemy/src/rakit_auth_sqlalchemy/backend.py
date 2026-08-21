@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
+from .discovery import AUTH_SQLALCHEMY_INTEGRATION
 from .models import Role, User
 from .passwords import Argon2PasswordHasher
 
@@ -25,6 +26,8 @@ class SQLAlchemyAuthBackend:
     same way `User.email` is itself stored normalized -- so "Ada@x" at
     login matches a user stored as "ada@x".
     """
+
+    rakit_integration = AUTH_SQLALCHEMY_INTEGRATION
 
     def __init__(
         self,

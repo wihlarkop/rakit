@@ -10,6 +10,7 @@ from sqlalchemy import select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, async_sessionmaker
 
+from .discovery import AUTH_SQLALCHEMY_INTEGRATION
 from .models import Session as SessionRow
 
 _DEFAULT_IDLE_TIMEOUT = timedelta(hours=2)
@@ -76,6 +77,8 @@ class SQLAlchemySessionStore:
     databases are process-local, while file-backed SQLite does not provide the
     shared multi-worker deployment semantics this security contract promises.
     """
+
+    rakit_integration = AUTH_SQLALCHEMY_INTEGRATION
 
     def __init__(
         self,

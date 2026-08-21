@@ -1,0 +1,122 @@
+name: C4 closure gate
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  closure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: phase-c4-capability-discovery
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-packages --dev --locked
+      - name: Apply canonical C4 roadmap closure
+        run: |
+          uv run python - <<'PY'
+          from pathlib import Path
+
+          path = Path("docs/roadmap.md")
+          text = path.read_text()
+
+          replacements = {
+              "| Phase C4 capability discovery | **Next** |":
+                  "| Phase C4 capability discovery | **Complete** |",
+              "| Phase C developer experience and lifecycle ergonomics | **Next** |":
+                  "| Phase C developer experience and lifecycle ergonomics | **Complete** |",
+              "| Phase D adapter ecosystem | **Planned** |":
+                  "| Phase D adapter ecosystem | **Next** |",
+              "## Phase C — Developer experience and lifecycle ergonomics\n\n**Status: Next**":
+                  "## Phase C — Developer experience and lifecycle ergonomics\n\n**Status: Complete**",
+          }
+          for old, new in replacements.items():
+              if text.count(old) != 1:
+                  raise RuntimeError(f"Expected exactly one roadmap match: {old!r}")
+              text = text.replace(old, new, 1)
+
+          old_c4 = '''### C4 — Capability discovery
+
+**Status: Next**
+
+Expand diagnostics such as `rakit check` and capability inspection.
+
+Potential capability groups include:
+
+- servers.
+- persistence.
+- schema.
+- storage.
+- authentication.
+- generated API transports.
+'''
+          new_c4 = '''### C4 — Capability discovery
+
+**Status: Complete**
+
+C4 makes Rakit's capability state inspectable without confusing package presence with runtime configuration:
+
+- `rakit capabilities TARGET` reports configured integrations, capability providers, and every configured requirement from one normalized inspection model.
+- `rakit capabilities --installed` discovers environment integrations through the strict `rakit.integrations` entry-point group without activating them.
+- configured and installed views can be combined while remaining explicitly separate; installed never implies configured or active.
+- `rakit capabilities --json` exposes deterministic machine-readable diagnostics with `schema_version: 1`.
+- invalid capability graphs remain inspectable with `valid: false`, while `rakit check TARGET` remains the fail-closed validator and now reports every missing requirement in one run.
+- configured metadata covers first-party web/schema, SQLAlchemy persistence, SQLAlchemy authentication, and local storage when actually wired, while custom schema/auth implementations without official metadata remain honestly identified as custom/unknown.
+- first-party installed descriptors cover `web.starlette`, `schema.pydantic`, `persistence.sqlalchemy`, `auth.sqlalchemy`, `storage.local`, `server.uvicorn`, and `server.granian`.
+- Uvicorn and Granian discovery metadata remains lightweight and separate from runtime server loading, preserving the existing `rakit.servers` execution contract.
+- strict descriptor validation rejects malformed values, entry-point/id mismatches, duplicate integration ids, and load failures instead of silently guessing.
+
+C4 was verified source-first with plain-Python aggregate/configured/installed smoke checks, real human/JSON CLI checks, strict entry-point failure cases, lightweight server-import checks, and source-only type checking. Regression verification then covered aggregate compiler diagnostics, configured-integration rollback, configured-vs-installed separation, custom integration metadata, first-party descriptors, server install guidance, and CLI schema behavior before the final repository-wide CI gate.
+'''
+          if text.count(old_c4) != 1:
+              raise RuntimeError("Expected exactly one C4 roadmap section")
+          text = text.replace(old_c4, new_c4, 1)
+
+          old_order = '''## Near-term execution order
+
+With Phase B, C1, and C2 complete, the preferred sequence is now:
+
+1. **C3** — normalize installation/extras UX.
+2. **C4** — strengthen capability discovery and diagnostics.
+3. **D** — prove the capability architecture with a carefully selected second adapter.
+4. **E** — mature generated REST into a documented API product with OpenAPI and machine authentication.
+5. Continue through F–P according to user value, architectural pressure, and implementation evidence.
+'''
+          new_order = '''## Near-term execution order
+
+With Phases B and C complete, the preferred sequence is now:
+
+1. **D** — prove the capability architecture with a carefully selected second adapter.
+2. **E** — mature generated REST into a documented API product with OpenAPI and machine authentication.
+3. Continue through F–P according to user value, architectural pressure, and implementation evidence.
+'''
+          if text.count(old_order) != 1:
+              raise RuntimeError("Expected exactly one near-term execution block")
+          path.write_text(text.replace(old_order, new_order, 1))
+          PY
+      - name: Verify adjacent source and regression
+        run: |
+          uv run ruff format --check packages/rakit/src/rakit/_server.py packages/rakit/tests/test_install_ux.py
+          uv run ruff check packages/rakit/src/rakit/_server.py packages/rakit/tests/test_install_ux.py
+          uv run ty check packages/rakit/src/rakit/_server.py packages/rakit/tests/test_install_ux.py
+          uv run pytest -q packages/rakit/tests/test_install_ux.py
+      - name: Verify documentation
+        run: uv run mkdocs build --strict
+      - name: Commit roadmap closure
+        run: |
+          git add docs/roadmap.md
+          if git diff --cached --quiet; then
+            echo "Roadmap already closed."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "docs: close C4 capability discovery roadmap"
+          git push origin HEAD:phase-c4-capability-discovery

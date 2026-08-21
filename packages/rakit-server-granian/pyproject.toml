@@ -14,6 +14,9 @@ dependencies = [
 [project.entry-points."rakit.servers"]
 granian = "rakit_server_granian:GranianServer"
 
+[project.entry-points."rakit.integrations"]
+"server.granian" = "rakit_server_granian.discovery:GRANIAN_INTEGRATION"
+
 [tool.uv.sources]
 rakit-server = { workspace = true }
 

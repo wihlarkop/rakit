@@ -2,6 +2,7 @@ from datetime import timedelta
 
 import pytest
 from rakit_auth_sqlalchemy.backend import SQLAlchemyAuthBackend
+from rakit_auth_sqlalchemy.discovery import AUTH_SQLALCHEMY_INTEGRATION
 from rakit_auth_sqlalchemy.plugin import SQLAlchemyAuthPlugin
 from rakit_auth_sqlalchemy.sessions import SQLAlchemySessionStore
 from rakit_core.errors import RakitError
@@ -21,6 +22,15 @@ def test_plugin_composes_a_matching_backend_and_session_store() -> None:
     assert isinstance(plugin.session_store, SQLAlchemySessionStore)
     assert plugin.auth_backend._session_factory is factory
     assert plugin.session_store._session_factory is factory
+
+
+def test_auth_backend_and_session_store_share_discovery_identity() -> None:
+    plugin = SQLAlchemyAuthPlugin(_session_factory())
+
+    assert AUTH_SQLALCHEMY_INTEGRATION.integration_id == "auth.sqlalchemy"
+    assert AUTH_SQLALCHEMY_INTEGRATION.category == "authentication"
+    assert plugin.auth_backend.rakit_integration is AUTH_SQLALCHEMY_INTEGRATION
+    assert plugin.session_store.rakit_integration is AUTH_SQLALCHEMY_INTEGRATION
 
 
 def test_plugin_accepts_a_custom_password_hasher() -> None:

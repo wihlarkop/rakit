@@ -3,12 +3,14 @@ from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.di import ServiceScope
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.generated_runtime import ResourceAdapterRuntime
+from rakit_core.integrations import ConfiguredIntegration
 from rakit_core.transactions import OperationUnitOfWorkFactory
 from sqlalchemy.exc import NoInspectionAvailable
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .capabilities import SQLALCHEMY_CAPABILITIES
 from .datasource import SQLAlchemyDataSource
+from .discovery import SQLALCHEMY_INTEGRATION
 from .generated import SQLAlchemyGeneratedResourceExecutorProvider
 from .introspection import UnsupportedFieldPolicyError, UnsupportedIdentityError, inspect_model
 from .uow import SQLAlchemyOperationUnitOfWorkFactory
@@ -23,6 +25,9 @@ class SQLAlchemyPlugin:
 
     def configure(self, builder: ApplicationBuilder) -> None:
         builder.register_capability_provider(SQLALCHEMY_CAPABILITIES)
+        builder.register_configured_integration(
+            ConfiguredIntegration.from_descriptor(SQLALCHEMY_INTEGRATION)
+        )
         builder.registry.add_value(
             async_sessionmaker, self._session_factory, scope=ServiceScope.APPLICATION
         )

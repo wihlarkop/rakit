@@ -5,10 +5,11 @@ from typing import Protocol
 from .actions import ActionDefinition, ActionScope
 from .bulk import BulkExecutionPolicy
 from .capabilities import (
+    CapabilityAnalysis,
     CapabilityProvider,
     CapabilityReport,
     CapabilityRequirement,
-    require_capabilities,
+    analyze_capabilities,
 )
 from .compatibility import validate_official_package_versions
 from .datasource import DataSource
@@ -27,6 +28,7 @@ from .errors import ErrorCode, RakitError
 from .generated_api import ApiExposure, CompiledResourceApi, GeneratedCrudOperation
 from .generated_compiler import compile_generated_resource_apis
 from .generated_runtime import GeneratedResourceExecutorProvider, ResourceAdapterRuntime
+from .integrations import ConfiguredIntegration
 from .pagination import PaginationStrategy
 from .permissions import PermissionRequirement
 from .relationships import CompiledRelationship
@@ -184,6 +186,7 @@ class ApplicationBuilder:
     )
     _capability_providers: dict[str, CapabilityProvider] = field(default_factory=dict)
     _capability_requirements: dict[str, CapabilityRequirement] = field(default_factory=dict)
+    _configured_integrations: list[ConfiguredIntegration] = field(default_factory=list)
     _compiled: bool = field(default=False, init=False)
     _install_depth: int = field(default=0, init=False)
 
@@ -222,6 +225,20 @@ class ApplicationBuilder:
     @property
     def capability_requirements(self) -> tuple[CapabilityRequirement, ...]:
         return tuple(self._capability_requirements.values())
+
+    @property
+    def configured_integrations(self) -> tuple[ConfiguredIntegration, ...]:
+        return tuple(
+            sorted(
+                self._configured_integrations,
+                key=lambda item: (
+                    item.integration_id is None,
+                    item.integration_id or "",
+                    item.category,
+                    item.display_name,
+                ),
+            )
+        )
 
     @property
     def generated_resource_executor_providers(
@@ -314,6 +331,25 @@ class ApplicationBuilder:
                 details={"adapter": name},
             )
         self._adapters[name] = claim
+
+    def register_configured_integration(self, integration: ConfiguredIntegration) -> None:
+        self._check_not_compiled()
+        if integration.integration_id is not None and any(
+            existing.integration_id == integration.integration_id
+            for existing in self._configured_integrations
+        ):
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message=(
+                    f'Configured integration "{integration.integration_id}" is already registered.'
+                ),
+                status_code=500,
+                details={
+                    "integration": integration.integration_id,
+                    "reason": "duplicate_configured_integration",
+                },
+            )
+        self._configured_integrations.append(integration)
 
     def register_capability_provider(self, provider: CapabilityProvider) -> None:
         self._check_not_compiled()
@@ -430,6 +466,7 @@ class _InstallSnapshot:
     resource_generated_executor_providers: dict[str, GeneratedResourceExecutorProvider]
     capability_providers: dict[str, CapabilityProvider]
     capability_requirements: dict[str, CapabilityRequirement]
+    configured_integrations: list[ConfiguredIntegration]
     compiled: bool
     registry: _RegistrySnapshot
 
@@ -450,6 +487,7 @@ class _InstallSnapshot:
             ),
             capability_providers=dict(builder._capability_providers),
             capability_requirements=dict(builder._capability_requirements),
+            configured_integrations=list(builder._configured_integrations),
             compiled=builder._compiled,
             registry=builder.registry._snapshot(),
         )
@@ -475,6 +513,7 @@ class _InstallSnapshot:
         builder._capability_providers.update(self.capability_providers)
         builder._capability_requirements.clear()
         builder._capability_requirements.update(self.capability_requirements)
+        builder._configured_integrations[:] = self.configured_integrations
         builder._compiled = self.compiled
         builder.registry._restore(self.registry)
 
@@ -499,6 +538,58 @@ class CompiledApplication:
     capability_providers: tuple[CapabilityProvider, ...] = ()
     capability_requirements: tuple[CapabilityRequirement, ...] = ()
     capability_reports: tuple[CapabilityReport, ...] = ()
+    configured_integrations: tuple[ConfiguredIntegration, ...] = ()
+    capability_analysis: CapabilityAnalysis | None = None
+
+
+class CapabilityConfigurationError(RakitError):
+    def __init__(
+        self,
+        *,
+        analysis: CapabilityAnalysis,
+        configured_integrations: tuple[ConfiguredIntegration, ...],
+    ) -> None:
+        self.analysis = analysis
+        self.configured_integrations = configured_integrations
+        missing_ids = tuple(
+            requirement.requirement_id for requirement in analysis.missing_requirements
+        )
+        super().__init__(
+            code=ErrorCode.CONFIG_INVALID,
+            message=("Capability requirements are not satisfied: " + ", ".join(missing_ids) + "."),
+            status_code=500,
+            details={
+                "reason": "missing_capabilities",
+                "available": list(analysis.available.names),
+                "providers": [
+                    {
+                        "id": provider.provider_id,
+                        "capabilities": list(provider.capabilities.names),
+                    }
+                    for provider in analysis.providers
+                ],
+                "requirements": [
+                    {
+                        "id": report.requirement.requirement_id,
+                        "status": "satisfied" if report.satisfied else "missing",
+                        "required": list(report.requirement.required.names),
+                        "available": list(report.available.names),
+                        "missing": list(report.missing.names),
+                        "providers": list(report.provider_ids),
+                    }
+                    for report in analysis.reports
+                ],
+                "missing_requirements": list(missing_ids),
+                "configured_integrations": [
+                    {
+                        "id": integration.integration_id,
+                        "category": integration.category,
+                        "display_name": integration.display_name,
+                    }
+                    for integration in configured_integrations
+                ],
+            },
+        )
 
 
 def _invalid_datasource(resource_id: str, reason: str) -> RakitError:
@@ -1024,10 +1115,27 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
         *builder.capability_requirements,
         *generated_api.requirements,
     )
-    capability_reports = tuple(
-        require_capabilities(requirement, builder.capability_providers)
-        for requirement in capability_requirements
-    )
+    try:
+        capability_analysis = analyze_capabilities(
+            capability_requirements,
+            builder.capability_providers,
+        )
+    except ValueError as exc:
+        raise RakitError(
+            code=ErrorCode.CONFIG_INVALID,
+            message="Capability graph contains duplicate identifiers.",
+            status_code=500,
+            details={
+                "reason": "duplicate_capability_identifier",
+                "error": str(exc),
+            },
+            cause=exc,
+        ) from exc
+    if not capability_analysis.valid:
+        raise CapabilityConfigurationError(
+            analysis=capability_analysis,
+            configured_integrations=builder.configured_integrations,
+        )
     generated_executor_providers = dict(builder.generated_resource_executor_providers)
     for api in generated_api.resources:
         if (
@@ -1061,7 +1169,9 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
         _action_route_pairs(all_routes, compiled_actions),
         compiled_resource_apis=generated_api.resources,
         generated_resource_executor_providers=(builder.generated_resource_executor_providers),
-        capability_providers=builder.capability_providers,
-        capability_requirements=capability_requirements,
-        capability_reports=capability_reports,
+        capability_providers=capability_analysis.providers,
+        capability_requirements=capability_analysis.requirements,
+        capability_reports=capability_analysis.reports,
+        configured_integrations=builder.configured_integrations,
+        capability_analysis=capability_analysis,
     )

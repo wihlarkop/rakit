@@ -21,6 +21,7 @@ nav:
       - Pages and Actions: guides/pages-actions.md
       - Dashboards: guides/dashboards.md
       - Local File Storage: guides/local-file-storage.md
+      - Capability Discovery: guides/capability-discovery.md
   - Concepts:
       - Architecture: concepts/architecture.md
       - Operation Pipeline: concepts/operation-pipeline.md
