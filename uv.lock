@@ -1264,15 +1264,11 @@ auth-sqlalchemy = [
 granian = [
     { name = "rakit-server-granian" },
 ]
-server-uvicorn = [
-    { name = "rakit-server-uvicorn" },
-]
 sqlalchemy = [
     { name = "rakit-sqlalchemy" },
 ]
 standard = [
     { name = "rakit-auth-sqlalchemy" },
-    { name = "rakit-server-uvicorn" },
     { name = "rakit-sqlalchemy" },
     { name = "rakit-storage-local" },
 ]
@@ -1291,8 +1287,6 @@ requires-dist = [
     { name = "rakit-core", editable = "packages/rakit-core" },
     { name = "rakit-server", editable = "packages/rakit-server" },
     { name = "rakit-server-granian", marker = "extra == 'granian'", editable = "packages/rakit-server-granian" },
-    { name = "rakit-server-uvicorn", marker = "extra == 'server-uvicorn'", editable = "packages/rakit-server-uvicorn" },
-    { name = "rakit-server-uvicorn", marker = "extra == 'standard'", editable = "packages/rakit-server-uvicorn" },
     { name = "rakit-server-uvicorn", marker = "extra == 'uvicorn'", editable = "packages/rakit-server-uvicorn" },
     { name = "rakit-sqlalchemy", marker = "extra == 'sqlalchemy'", editable = "packages/rakit-sqlalchemy" },
     { name = "rakit-sqlalchemy", marker = "extra == 'standard'", editable = "packages/rakit-sqlalchemy" },
@@ -1301,7 +1295,7 @@ requires-dist = [
     { name = "rakit-storage-local", marker = "extra == 'storage-local'", editable = "packages/rakit-storage-local" },
     { name = "rakit-web", editable = "packages/rakit-web" },
 ]
-provides-extras = ["uvicorn", "granian", "server-uvicorn", "sqlalchemy", "auth-sqlalchemy", "storage-local", "standard"]
+provides-extras = ["uvicorn", "granian", "sqlalchemy", "auth-sqlalchemy", "storage-local", "standard"]
 
 [[package]]
 name = "rakit-auth-sqlalchemy"
