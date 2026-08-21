@@ -17,9 +17,9 @@ from rakit_core.mutations import OperationAuthorization
 from rakit_core.pages import DomainPageHandler, PageContext, PageRedirect, PageRejected, PageResult
 from rakit_core.permissions import PermissionRequirement
 from rakit_core.transactions import TransactionPolicy
+from rakit_schema_pydantic import PydanticSchemaAdapter
 from rakit_web.page_routes import PageBinding, build_page_routes
 from rakit_web.resource_routes import build_templates
-from rakit_web.schema import PydanticSchemaAdapter
 from starlette.applications import Starlette
 from starlette.requests import Request
 

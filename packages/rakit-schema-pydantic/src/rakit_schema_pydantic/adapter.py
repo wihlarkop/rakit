@@ -1,6 +1,7 @@
 from collections.abc import Mapping
+from typing import Annotated
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from rakit_core.schema import SchemaField, SchemaValidationError, SchemaValidationIssue
 
 from .capabilities import PYDANTIC_SCHEMA_CAPABILITIES
@@ -48,11 +49,35 @@ class PydanticSchemaAdapter:
         values: Mapping[str, object],
     ) -> Mapping[str, object]:
         model = self._model_type(schema)
-        try:
-            validated = model.model_validate(dict(values))
-        except ValidationError as exc:
-            raise SchemaValidationError(self._issues(exc)) from exc
-        return validated.model_dump(mode="json", exclude_unset=True)
+        validated: dict[str, object] = {}
+        issues: list[SchemaValidationIssue] = []
+
+        for name, value in values.items():
+            field = model.model_fields.get(name)
+            if field is None:
+                issues.append(
+                    SchemaValidationIssue(
+                        location=(name,),
+                        code="extra_forbidden",
+                        message="Field is not declared by the schema",
+                    )
+                )
+                continue
+
+            annotation: object = field.annotation
+            if field.metadata:
+                annotation = Annotated[field.annotation, *field.metadata]
+            adapter = TypeAdapter(annotation)
+            try:
+                field_value = adapter.validate_python(value)
+            except ValidationError as exc:
+                issues.extend(self._issues(exc, prefix=(name,)))
+                continue
+            validated[name] = adapter.dump_python(field_value, mode="json")
+
+        if issues:
+            raise SchemaValidationError(tuple(issues))
+        return validated
 
     def serialize_output(self, schema: type[object], value: object) -> object:
         model = self._model_type(schema)
@@ -63,10 +88,14 @@ class PydanticSchemaAdapter:
         return validated.model_dump(mode="json")
 
     @staticmethod
-    def _issues(exc: ValidationError) -> tuple[SchemaValidationIssue, ...]:
+    def _issues(
+        exc: ValidationError,
+        *,
+        prefix: tuple[str, ...] = (),
+    ) -> tuple[SchemaValidationIssue, ...]:
         return tuple(
             SchemaValidationIssue(
-                location=tuple(str(part) for part in error.get("loc", ())),
+                location=prefix + tuple(str(part) for part in error.get("loc", ())),
                 code=str(error.get("type", "invalid")),
                 message=str(error.get("msg", "Invalid value")),
             )
@@ -78,7 +107,4 @@ class PydanticSchemaAdapter:
         )
 
 
-__all__ = [
-    "PYDANTIC_SCHEMA_CAPABILITIES",
-    "PydanticSchemaAdapter",
-]
+__all__ = ["PydanticSchemaAdapter"]

@@ -42,6 +42,8 @@ branch = true
 source = [
   "rakit_core",
   "rakit_web",
+  "rakit_schema_pydantic",
+  "rakit_schema_msgspec",
   "rakit_sqlalchemy",
   "rakit_auth_sqlalchemy",
   "rakit_storage",

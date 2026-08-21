@@ -2,9 +2,9 @@ import pytest
 from pydantic import BaseModel
 from rakit_core.di import ServiceKey
 from rakit_core.schema import SchemaAdapter, SchemaValidationError
+from rakit_schema_pydantic import PYDANTIC_SCHEMA_CAPABILITIES, PydanticSchemaAdapter
 from rakit_web.admin import Admin
 from rakit_web.capabilities import STARLETTE_WEB_CAPABILITIES
-from rakit_web.schema import PYDANTIC_SCHEMA_CAPABILITIES, PydanticSchemaAdapter
 
 
 class Payload(BaseModel):

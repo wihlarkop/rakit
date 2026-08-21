@@ -19,8 +19,9 @@ from rakit_core.testing.capability_conformance import (
     SchemaConformanceHarness,
     WebConformanceHarness,
 )
-from rakit_web.discovery import PYDANTIC_INTEGRATION, STARLETTE_INTEGRATION
-from rakit_web.schema import PydanticSchemaAdapter
+from rakit_schema_pydantic import PydanticSchemaAdapter
+from rakit_schema_pydantic.discovery import PYDANTIC_INTEGRATION
+from rakit_web.discovery import STARLETTE_INTEGRATION
 from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse, StreamingResponse
 from starlette.routing import Route

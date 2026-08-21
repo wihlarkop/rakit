@@ -64,6 +64,7 @@ _STANDARD_MODULES = (
     "rakit_core",
     "rakit_core.testing",
     "rakit_web",
+    "rakit_schema_pydantic",
     "rakit_sqlalchemy",
     "rakit_auth_sqlalchemy",
     "rakit_storage",
@@ -75,6 +76,7 @@ _GRANIAN_MODULES = (
     "rakit.server.granian",
     "rakit_server_granian",
 )
+_MSGSPEC_MODULES = ("rakit_schema_msgspec",)
 
 
 @dataclass(frozen=True)
@@ -406,6 +408,16 @@ def clean_install_smoke(dist: Path, root: Path, workspace: Path) -> None:
     _assert_installed_imports(
         python,
         modules=_GRANIAN_MODULES,
+        cwd=workspace,
+        repository=root,
+    )
+
+    # msgspec is optional: prove its root convenience extra resolves from the
+    # locally built artifacts without changing the default Pydantic selection.
+    _install_extra(dist, python, workspace, "msgspec")
+    _assert_installed_imports(
+        python,
+        modules=_MSGSPEC_MODULES,
         cwd=workspace,
         repository=root,
     )

@@ -20,7 +20,6 @@ dev = ["aiosqlite>=0.20", "rakit-sqlalchemy"]
 
 [project.entry-points."rakit.integrations"]
 "web.starlette" = "rakit_web.discovery:STARLETTE_INTEGRATION"
-"schema.pydantic" = "rakit_web.discovery:PYDANTIC_INTEGRATION"
 
 [tool.uv.sources]
 rakit-core = { workspace = true }

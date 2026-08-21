@@ -95,7 +95,7 @@ from .resource_routes import (
     build_resource_routes,
     build_templates,
 )
-from .schema import PydanticSchemaAdapter
+from .schema_selection import resolve_schema_adapter
 from .security.authentication import (
     LOGIN_PATH,
     LOGOUT_PATH,
@@ -211,6 +211,7 @@ class Admin:
         operation_idempotency_store: IdempotencyStore | None = None,
         advanced_action_response_adapter: AdvancedActionResponseAdapter | None = None,
         schema_adapter: SchemaAdapter | None = None,
+        schema_integration_id: str | None = None,
     ) -> None:
         security_config: dict[str, object] = {
             "secret_key": secret_key,
@@ -269,7 +270,9 @@ class Admin:
         self._builder.register_configured_integration(
             ConfiguredIntegration.from_descriptor(STARLETTE_INTEGRATION)
         )
-        self._schema_adapter = schema_adapter or PydanticSchemaAdapter()
+        self._schema_adapter = resolve_schema_adapter(
+            schema_adapter, schema_integration_id=schema_integration_id
+        )
         self._builder.register_capability_provider(self._schema_adapter.provider)
         try:
             schema_descriptor = integration_descriptor_from(self._schema_adapter)

@@ -19,8 +19,8 @@ from rakit_core.operations import OperationExecutorCapabilities
 from rakit_core.query import PageResult
 from rakit_core.resources import ResourceService
 from rakit_core.transactions import TransactionPolicy
+from rakit_schema_pydantic import PydanticSchemaAdapter
 from rakit_web.generated_rest_runtime import GeneratedRestBinding, build_generated_rest_routes
-from rakit_web.schema import PydanticSchemaAdapter
 from starlette.applications import Starlette
 
 

@@ -9,6 +9,7 @@ requires-python = ">=3.12"
 dependencies = [
     "click>=8.4.2",
     "rakit-core==0.1.0a1",
+    "rakit-schema-pydantic==0.1.0a1",
     "rakit-server==0.1.0a1",
     "rakit-storage==0.1.0a1",
     "rakit-web==0.1.0a1",
@@ -20,6 +21,7 @@ granian = ["rakit-server-granian==0.1.0a1"]
 sqlalchemy = ["rakit-sqlalchemy==0.1.0a1"]
 auth-sqlalchemy = ["rakit-auth-sqlalchemy==0.1.0a1"]
 storage-local = ["rakit-storage-local==0.1.0a1"]
+msgspec = ["rakit-schema-msgspec==0.1.0a1"]
 standard = [
     "rakit-sqlalchemy==0.1.0a1",
     "rakit-auth-sqlalchemy==0.1.0a1",
@@ -31,6 +33,8 @@ rakit = "rakit.cli:cli"
 
 [tool.uv.sources]
 rakit-core = { workspace = true }
+rakit-schema-pydantic = { workspace = true }
+rakit-schema-msgspec = { workspace = true }
 rakit-server = { workspace = true }
 rakit-server-uvicorn = { workspace = true }
 rakit-server-granian = { workspace = true }

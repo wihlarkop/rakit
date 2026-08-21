@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rakit-schema-msgspec"
+version = "0.1.0a1"
+requires-python = ">=3.12"
+dependencies = [
+    "rakit-core==0.1.0a1",
+    "msgspec>=0.19",
+]
+
+[project.entry-points."rakit.integrations"]
+"schema.msgspec" = "rakit_schema_msgspec.discovery:MSGSPEC_INTEGRATION"
+
+[project.entry-points."rakit.schema_adapters"]
+"schema.msgspec" = "rakit_schema_msgspec.adapter:MsgspecSchemaAdapter"
+
+[tool.uv.sources]
+rakit-core = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rakit_schema_msgspec"]

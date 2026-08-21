@@ -8,6 +8,7 @@ class InstallExtra(str, Enum):
     SQLALCHEMY = "sqlalchemy"
     AUTH_SQLALCHEMY = "auth-sqlalchemy"
     STORAGE_LOCAL = "storage-local"
+    MSGSPEC = "msgspec"
     UVICORN = "uvicorn"
     GRANIAN = "granian"
 
@@ -17,8 +18,9 @@ _EXTRA_ORDER = {
     InstallExtra.SQLALCHEMY: 1,
     InstallExtra.AUTH_SQLALCHEMY: 2,
     InstallExtra.STORAGE_LOCAL: 3,
-    InstallExtra.UVICORN: 4,
-    InstallExtra.GRANIAN: 5,
+    InstallExtra.MSGSPEC: 4,
+    InstallExtra.UVICORN: 5,
+    InstallExtra.GRANIAN: 6,
 }
 
 

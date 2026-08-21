@@ -29,9 +29,12 @@ Rakit remains under active pre-release development. The current package version 
 | Phase C1 friendly CRUD and lifecycle APIs | **Complete** |
 | Phase C2 project initialization and scaffolding | **Complete** |
 | Phase C3 installation and extras UX | **Complete** |
-| Phase C4 capability discovery | **Next** |
-| Phase C developer experience and lifecycle ergonomics | **Next** |
-| Phase D adapter ecosystem | **Planned** |
+| Phase C4 capability discovery | **Complete** |
+| **Phase C overall** | **Complete** |
+| Phase D1 adapter contract hardening | **Complete** |
+| Phase D2 schema adapter ecosystem | **Complete** |
+| Phase D3 persistence adapter ecosystem | **Next** |
+| Phase D adapter ecosystem | **Next** |
 | Phase E generated APIs v1 | **Planned; foundation exists** |
 | Public release | **Deferred until explicit maintainer approval** |
 
@@ -274,7 +277,7 @@ No release, tag, version bump, TestPyPI upload, or PyPI publication is implied b
 
 ## Phase C — Developer experience and lifecycle ergonomics
 
-**Status: Next**
+**Status: Complete**
 
 ### C1 — Friendly CRUD and lifecycle APIs
 
@@ -346,51 +349,97 @@ dry-run, and generated web-asset reproducibility.
 
 ### C4 — Capability discovery
 
-**Status: Next**
+**Status: Complete**
 
-Expand diagnostics such as `rakit check` and capability inspection.
+C4 established first-party capability discovery as a stable diagnostic surface:
 
-Potential capability groups include:
+- canonical capability identifiers and provider metadata;
+- installed integration inventory through `rakit.integrations` entry points;
+- configured-versus-installed integration reporting;
+- `rakit capabilities` human and JSON output;
+- aggregate `rakit check` capability diagnostics;
+- server, schema, persistence, authentication, and storage metadata;
+- fail-closed duplicate integration identifiers and actionable configuration diagnostics.
 
-- servers.
-- persistence.
-- schema.
-- storage.
-- authentication.
-- generated API transports.
+C4 closed with canonical CI and became the discovery foundation used by Phase D adapter work.
 
 ## Phase D — Adapter ecosystem
 
+**Status: Next**
+
+Phase D proves that Rakit's capability architecture works across multiple concrete implementations. New adapters are added deliberately and must advertise only behavior they can prove against canonical contracts.
+
+### D1 — Adapter Contract Hardening
+
+**Status: Complete**
+
+- versioned canonical capability contracts;
+- hard prerequisite validation and fail-closed conformance;
+- deterministic maintainer conformance matrix;
+- behavioral proof coverage for first-party SQLAlchemy, Pydantic, and Starlette integrations;
+- C4 compatibility gate for capability discovery metadata.
+
+### D2 — Schema Adapter Ecosystem
+
+**Status: Complete**
+
+- extracted Pydantic ownership from `rakit-web` into `rakit-schema-pydantic`;
+- added `rakit-schema-msgspec` as a peer first-party schema integration;
+- retained Pydantic as the deterministic default experience without concrete schema coupling in `rakit-core` or `rakit-web`;
+- added explicit runtime schema selection and actionable invalid-selection diagnostics;
+- proved both Pydantic and msgspec against all four `schema.*@1` contracts;
+- locked presence-aware partial-update semantics where missing differs from explicit `None`;
+- added package/discovery metadata, install UX, artifact verification, and cross-adapter regression coverage.
+
+### D3 — Persistence Adapter Ecosystem
+
+**Status: Next**
+
+Add a second persistence implementation and use it to pressure-test data-source, write-service, transaction, pagination, relationship, and generated-operation contracts without importing ORM-specific semantics into core.
+
+### D4 — Web Framework Integrations
+
 **Status: Planned**
 
-Rakit should prove that its capability architecture works beyond the first implementation in each category.
+#### D4.0 — Web Integration Contract
 
-The preferred strategy is to add one well-chosen second adapter at a time and use the resulting pressure to improve contracts, rather than supporting many libraries superficially.
+Define the framework-integration boundary and acceptance matrix before adding more host frameworks.
 
-Potential web integrations:
+#### D4.1 — Litestar
 
-- FastAPI.
-- Starlette.
-- Litestar.
-- Sanic.
-- Flask.
+Add first-class Litestar integration against the D4.0 contract.
 
-Potential persistence integrations:
+#### D4.2 — FastAPI
 
-- SQLAlchemy ORM/Core.
-- Tortoise ORM.
-- Peewee.
-- Masonite ORM or another ecosystem where the capability model fits honestly.
+Promote FastAPI mounting/composition from guidance into a first-class integration where that adds real value beyond Starlette compatibility.
 
-Potential schema integrations:
+#### D4.3 — Starlette
 
-- Pydantic.
-- msgspec.
-- dataclass-based adapters.
+Harden and document Starlette as the canonical ASGI/reference integration under the shared web contract.
 
-Likely early candidates for proving a second implementation include Litestar, Tortoise ORM, or msgspec.
+#### D4.4 — Flask
 
-Unsupported capabilities must fail explicitly rather than being silently approximated.
+Explore and implement an honest Flask integration without pretending WSGI and ASGI semantics are identical.
+
+#### D4.5 — Sanic
+
+Add Sanic integration if the D4 contract maps cleanly to its runtime model.
+
+#### D4.6 — Integration DX & Compatibility Matrix
+
+Unify install guidance, discovery, conformance, examples, and supported-version policy across first-party web integrations.
+
+### D5 — Adapter Authoring DX / SDK
+
+**Status: Planned**
+
+Turn the internal conformance machinery proven by D1-D4 into a supported authoring experience for third-party adapter maintainers, without exposing unstable internals prematurely.
+
+### D6 — Additional First-party Adapters
+
+**Status: Planned**
+
+Add further schema, persistence, storage, authentication, or transport adapters only where ecosystem demand and the capability model justify first-party ownership.
 
 ## Phase E — Generated APIs v1
 
