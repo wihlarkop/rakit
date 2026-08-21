@@ -14,6 +14,9 @@ dependencies = [
 [project.entry-points."rakit.integrations"]
 "schema.msgspec" = "rakit_schema_msgspec.discovery:MSGSPEC_INTEGRATION"
 
+[project.entry-points."rakit.schema_adapters"]
+"schema.msgspec" = "rakit_schema_msgspec.adapter:MsgspecSchemaAdapter"
+
 [tool.uv.sources]
 rakit-core = { workspace = true }
 
