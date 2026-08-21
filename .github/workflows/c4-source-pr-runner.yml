@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: "3.12"
           enable-cache: true
-      - name: Sync tooling needed to read harness
+      - name: Sync tooling needed to execute harness
         run: uv sync --all-packages --dev --locked
       - name: Execute source-first harness steps
         shell: bash
@@ -27,26 +27,33 @@ jobs:
           uv run python - <<'PY'
           from pathlib import Path
           import subprocess
-          import yaml
 
-          workflow = yaml.safe_load(
-              Path('.github/workflows/c4-source-implementation.yml').read_text()
-          )
-          steps = workflow['jobs']['implement-and-smoke']['steps']
-          wanted = {
+          text = Path('.github/workflows/c4-source-implementation.yml').read_text()
+          wanted = (
               'Apply C4 source changes',
               'Plain Python source smoke',
               'Real CLI source smoke',
               'Static source verification',
               'Commit verified source',
-          }
-          for step in steps:
-              name = step.get('name')
-              if name not in wanted:
-                  continue
+          )
+
+          def extract_run(name: str) -> str:
+              marker = f'      - name: {name}\n'
+              start = text.index(marker) + len(marker)
+              run_marker = '        run: |\n'
+              start = text.index(run_marker, start) + len(run_marker)
+              next_step = text.find('\n      - name:', start)
+              if next_step == -1:
+                  next_step = len(text)
+              raw = text[start:next_step]
+              lines = raw.splitlines()
+              normalized = [line[10:] if line.startswith('          ') else line for line in lines]
+              return '\n'.join(normalized) + '\n'
+
+          for name in wanted:
               print(f'::group::{name}', flush=True)
               subprocess.run(
-                  ['bash', '-euo', 'pipefail', '-c', step['run']],
+                  ['bash', '-euo', 'pipefail', '-c', extract_run(name)],
                   check=True,
               )
               print('::endgroup::', flush=True)
