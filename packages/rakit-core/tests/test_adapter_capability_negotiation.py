@@ -4,8 +4,13 @@ from rakit_core.capabilities import (
     CapabilityRequirement,
     CapabilitySet,
 )
-from rakit_core.compiler import ApplicationBuilder, compile_application
+from rakit_core.compiler import (
+    ApplicationBuilder,
+    CapabilityConfigurationError,
+    compile_application,
+)
 from rakit_core.errors import RakitError
+from rakit_core.integrations import ConfiguredIntegration
 
 
 def _provider(provider_id: str, *capabilities: str) -> CapabilityProvider:
@@ -21,6 +26,8 @@ def test_compilation_records_satisfied_capability_requirements() -> None:
 
     compiled = compile_application(builder)
 
+    assert compiled.capability_analysis is not None
+    assert compiled.capability_analysis.valid is True
     assert tuple(provider.provider_id for provider in compiled.capability_providers) == (
         "schema.example",
     )
@@ -31,7 +38,7 @@ def test_compilation_records_satisfied_capability_requirements() -> None:
     assert compiled.capability_reports[0].satisfied is True
 
 
-def test_compilation_fails_closed_when_requirement_is_not_satisfied() -> None:
+def test_compilation_reports_all_missing_capability_requirements() -> None:
     builder = ApplicationBuilder()
     builder.register_capability_provider(_provider("schema.example", "schema.input-validation"))
     builder.require_capabilities(
@@ -41,15 +48,40 @@ def test_compilation_fails_closed_when_requirement_is_not_satisfied() -> None:
             "schema.partial-update",
         )
     )
+    builder.require_capabilities(
+        CapabilityRequirement.of("generated-api.write", "transactions.root-uow")
+    )
 
-    with pytest.raises(RakitError) as captured:
+    with pytest.raises(CapabilityConfigurationError) as captured:
         compile_application(builder)
 
-    assert captured.value.code == "config.invalid"
-    assert captured.value.details["reason"] == "missing_capabilities"
-    assert captured.value.details["requirement"] == "generated-api.patch"
-    assert captured.value.details["missing"] == ["schema.partial-update"]
-    assert captured.value.details["providers"] == ["schema.example"]
+    error = captured.value
+    assert error.code == "config.invalid"
+    assert error.details["reason"] == "missing_capabilities"
+    assert error.details["missing_requirements"] == [
+        "generated-api.patch",
+        "generated-api.write",
+    ]
+    requirements = error.details["requirements"]
+    assert isinstance(requirements, list)
+    assert requirements == [
+        {
+            "id": "generated-api.patch",
+            "status": "missing",
+            "required": ["schema.input-validation", "schema.partial-update"],
+            "available": ["schema.input-validation"],
+            "missing": ["schema.partial-update"],
+            "providers": ["schema.example"],
+        },
+        {
+            "id": "generated-api.write",
+            "status": "missing",
+            "required": ["transactions.root-uow"],
+            "available": ["schema.input-validation"],
+            "missing": ["transactions.root-uow"],
+            "providers": ["schema.example"],
+        },
+    ]
 
 
 def test_duplicate_capability_provider_id_is_rejected() -> None:
@@ -80,7 +112,24 @@ def test_duplicate_capability_requirement_id_is_rejected() -> None:
     }
 
 
-def test_plugin_failure_rolls_back_capability_provider_registration() -> None:
+def test_duplicate_configured_integration_id_is_rejected() -> None:
+    builder = ApplicationBuilder()
+    builder.register_configured_integration(
+        ConfiguredIntegration("schema.example", "schema", "Example schema")
+    )
+
+    with pytest.raises(RakitError) as captured:
+        builder.register_configured_integration(
+            ConfiguredIntegration("schema.example", "schema", "Second schema")
+        )
+
+    assert captured.value.details == {
+        "integration": "schema.example",
+        "reason": "duplicate_configured_integration",
+    }
+
+
+def test_plugin_failure_rolls_back_capability_and_configured_integration_registration() -> None:
     class BrokenPlugin:
         plugin_id = "broken"
 
@@ -88,6 +137,9 @@ def test_plugin_failure_rolls_back_capability_provider_registration() -> None:
             builder.register_capability_provider(_provider("broken.provider", "example.capability"))
             builder.require_capabilities(
                 CapabilityRequirement.of("broken.requirement", "example.capability")
+            )
+            builder.register_configured_integration(
+                ConfiguredIntegration("broken.integration", "example", "Broken")
             )
             raise RuntimeError("boom")
 
@@ -98,6 +150,7 @@ def test_plugin_failure_rolls_back_capability_provider_registration() -> None:
 
     assert builder.capability_providers == ()
     assert builder.capability_requirements == ()
+    assert builder.configured_integrations == ()
     assert builder.plugins == ()
 
 
