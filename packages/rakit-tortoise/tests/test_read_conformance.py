@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import cast
 
+from rakit_core.conformance import run_integration_conformance
 from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.filters import Filter, FilterOperator
 from rakit_core.identity import RecordIdentity
 from rakit_core.pagination import LimitOffsetPagination, LimitOffsetResult, PageResult
 from rakit_core.query import ResourceQuery
-from rakit_core.conformance import run_integration_conformance
 from rakit_core.testing.capability_conformance import CANONICAL_CONFORMANCE_SPEC_REGISTRY
 from rakit_tortoise.datasource import TortoiseDataSource
 from rakit_tortoise.discovery import TORTOISE_INTEGRATION
@@ -38,7 +39,7 @@ class TortoiseReadHarness:
             )
         )
         assert isinstance(page, PageResult)
-        assert [getattr(item, "name") for item in page.items] == ["alpha", "bravo"]
+        assert [cast(Widget, item).name for item in page.items] == ["alpha", "bravo"]
         assert page.has_next is True
         assert page.total_count == 3
 
@@ -52,7 +53,7 @@ class TortoiseReadHarness:
                 search="a",
             )
         )
-        assert [getattr(item, "name") for item in filtered.items] == ["bravo", "charlie"]
+        assert [cast(Widget, item).name for item in filtered.items] == ["bravo", "charlie"]
 
         offset = await self.source.list(
             ResourceQuery.from_components(
@@ -63,12 +64,12 @@ class TortoiseReadHarness:
             )
         )
         assert isinstance(offset, LimitOffsetResult)
-        assert [getattr(item, "name") for item in offset.items] == ["bravo"]
+        assert [cast(Widget, item).name for item in offset.items] == ["bravo"]
         assert offset.has_previous is True
         assert offset.has_next is True
 
-        record = await self.source.detail(RecordIdentity(values={"id": 2}))
-        assert getattr(record, "name") == "alpha"
+        record = cast(Widget, await self.source.detail(RecordIdentity(values={"id": 2})))
+        assert record.name == "alpha"
 
         try:
             await self.source.detail(RecordIdentity(values={"id": 999}))
