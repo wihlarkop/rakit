@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+  push:
+    branches: [phase-d2-schema-adapter-ecosystem]
 
 permissions:
   contents: write
@@ -12,11 +14,25 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.head_ref }}
-      - name: Patch roadmap and artifact smoke
+          ref: phase-d2-schema-adapter-ecosystem
+      - name: Patch D2 closure state
         shell: python
         run: |
           from pathlib import Path
+
+          # Update the one large legacy package-count test without rewriting it through API.
+          test_path = Path("tests/examples/test_read_examples.py")
+          text = test_path.read_text()
+          text = text.replace(
+              "def test_all_packages_builds_exactly_the_ten_official_distributions(",
+              "def test_all_packages_builds_exactly_the_twelve_official_distributions(",
+          )
+          text = text.replace(
+              '        "rakit_core",\n        "rakit_server",',
+              '        "rakit_core",\n        "rakit_schema_msgspec",\n        "rakit_schema_pydantic",\n        "rakit_server",',
+              1,
+          )
+          test_path.write_text(text)
 
           roadmap = Path("docs/roadmap.md")
           text = roadmap.read_text()
@@ -157,7 +173,10 @@ Add further schema, persistence, storage, authentication, or transport adapters 
         repository=root,
     )
 '''
-          replacement = marker + '''
+          if "_MSGSPEC_MODULES" not in text:
+              raise SystemExit("msgspec artifact module declaration patch failed")
+          if '_install_extra(dist, python, workspace, "msgspec")' not in text:
+              replacement = marker + '''
     # msgspec is optional: prove its root convenience extra resolves from the
     # locally built artifacts without changing the default Pydantic selection.
     _install_extra(dist, python, workspace, "msgspec")
@@ -168,9 +187,9 @@ Add further schema, persistence, storage, authentication, or transport adapters 
         repository=root,
     )
 '''
-          if marker not in text:
-              raise SystemExit("artifact smoke patch marker missing")
-          text = text.replace(marker, replacement, 1)
+              if marker not in text:
+                  raise SystemExit("artifact smoke patch marker missing")
+              text = text.replace(marker, replacement, 1)
           artifacts.write_text(text)
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
@@ -178,16 +197,20 @@ Add further schema, persistence, storage, authentication, or transport adapters 
           enable-cache: true
       - run: |
           uv sync --all-packages --dev --locked
-          uv run ruff format scripts/check_artifacts.py
-          uv run ruff check --fix scripts/check_artifacts.py
-          uv run ruff format scripts/check_artifacts.py
+          uv run ruff format scripts/check_artifacts.py tests/examples/test_read_examples.py
+          uv run ruff check --fix scripts/check_artifacts.py tests/examples/test_read_examples.py
+          uv run ruff format scripts/check_artifacts.py tests/examples/test_read_examples.py
           uv run mkdocs build --strict
       - name: Commit D2 closure patch
         shell: bash
         run: |
           set -euo pipefail
+          if git diff --quiet; then
+            echo "D2 closure patch already applied"
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- docs/roadmap.md scripts/check_artifacts.py
+          git add -- docs/roadmap.md scripts/check_artifacts.py tests/examples/test_read_examples.py
           git commit -m "docs(schema): close D2 roadmap and artifact wiring"
-          git push origin HEAD:${{ github.head_ref }}
+          git push origin HEAD:phase-d2-schema-adapter-ecosystem
