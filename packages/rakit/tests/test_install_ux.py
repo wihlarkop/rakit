@@ -11,7 +11,6 @@ from rakit._install import (
     uv_add_command,
 )
 
-
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _RAKIT_PYPROJECT = _REPOSITORY_ROOT / "packages" / "rakit" / "pyproject.toml"
 
