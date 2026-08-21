@@ -3,9 +3,11 @@ from collections.abc import Mapping
 from rakit_server import ServerAdapterNotFoundError
 from rakit_server import run as _run_server
 
-_INSTALL_HINTS = {
-    "uvicorn": 'pip install "rakit[uvicorn]"',
-    "granian": 'pip install "rakit[granian]"',
+from ._install import InstallExtra, format_uv_add_command
+
+_SERVER_EXTRAS = {
+    "uvicorn": InstallExtra.UVICORN,
+    "granian": InstallExtra.GRANIAN,
 }
 
 
@@ -33,7 +35,8 @@ def run(
             server_options=server_options,
         )
     except ServerAdapterNotFoundError as exc:
-        hint = _INSTALL_HINTS.get(server)
-        if hint is None:
+        extra = _SERVER_EXTRAS.get(server)
+        if extra is None:
             raise
+        hint = format_uv_add_command(extra)
         raise ServerAdapterNotFoundError(f"{exc}. Install it with: {hint}") from exc
