@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
 from typing import Any
 
 from rakit_core.datasource import DataSourceCapabilities
@@ -39,7 +38,9 @@ _FILTER_SUFFIXES: dict[FilterOperator, str] = {
 }
 
 
-def _validation_error(message: str, *, field: str | None = None, cause: Exception | None = None) -> RakitError:
+def _validation_error(
+    message: str, *, field: str | None = None, cause: Exception | None = None
+) -> RakitError:
     details = {"field": field} if field is not None else None
     return RakitError(
         code=ErrorCode.VALIDATION_FAILED,
@@ -111,7 +112,10 @@ class TortoiseDataSource:
         for sort in (*query.sorting, *query.identity_tie_breakers):
             if sort.nulls is not NullPlacement.AUTO:
                 raise _validation_error("Explicit NULL sort placement is not portable for Tortoise")
-            if sort.field not in self._field_policy.sort_fields and sort.field not in self.identity_fields:
+            if (
+                sort.field not in self._field_policy.sort_fields
+                and sort.field not in self.identity_fields
+            ):
                 raise _validation_error("Sort field is not allowed", field=sort.field)
             prefix = "-" if sort.direction.value == "desc" else ""
             terms.append(f"{prefix}{sort.field}")
