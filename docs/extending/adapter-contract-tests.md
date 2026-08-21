@@ -41,8 +41,8 @@ The first-party proof mapping for D1 is:
 | Integration | Canonical capabilities | Behavioral evidence |
 | --- | --- | --- |
 | `persistence.sqlalchemy` | read, write, relationships, root UoW, atomic optimistic concurrency | datasource contract plus generated mutation, relationship, UoW, and concurrency regression suites in `packages/rakit-sqlalchemy/tests/` |
-| `schema.pydantic` | field introspection, input validation, output serialization, partial update | Pydantic adapter conformance regression in `packages/rakit-web/tests/test_capability_conformance.py` |
-| `web.starlette` | ASGI, HTTP routing, streaming response | raw-ASGI conformance regression in `packages/rakit-web/tests/test_capability_conformance.py` |
+| `schema.pydantic` | field introspection, input validation, output serialization, partial update | Pydantic adapter conformance regression in `packages/rakit-web/tests/test_web_adapter_capability_conformance.py` |
+| `web.starlette` | ASGI, HTTP routing, streaming response | raw-ASGI conformance regression in `packages/rakit-web/tests/test_web_adapter_capability_conformance.py` |
 
 The capability-level matrix is maintainer evidence, not a third-party certification or compatibility
 badge. A future public authoring/testing surface may reuse these internals, but D5 owns that API
