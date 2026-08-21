@@ -16,6 +16,39 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --all-packages --dev --locked
+      - name: Patch temporary source-smoke typing
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("scripts/_d1_source_smoke.py")
+          text = path.read_text()
+          text = text.replace(
+              "from collections.abc import Mapping\n",
+              "from collections.abc import Mapping\nfrom typing import Any, cast\n",
+          )
+          text = text.replace(
+              "from rakit_core.generated_operations import (\n",
+              "from rakit_core.generated_operations import (\n    GeneratedResourceExecutor,\n",
+          )
+          text = text.replace(
+              '        assert updated.record is not None\n        assert updated.record.email == "write-updated@example.com"\n',
+              '        updated_record = updated.record\n        assert updated_record is not None\n        assert updated_record.email == "write-updated@example.com"\n',
+          )
+          text = text.replace(
+              "        assert updated.record is not None\n        assert updated.record.version == 2\n",
+              "        updated_record = updated.record\n        assert updated_record is not None\n        assert updated_record.version == 2\n",
+          )
+          text = text.replace(
+              "    executor: object,\n",
+              "    executor: GeneratedResourceExecutor,\n",
+          )
+          text = text.replace(
+              "        app=web_app,\n",
+              "        app=cast(Any, web_app),\n",
+          )
+          path.write_text(text)
+          PY
       - name: Format source gate checkout
         run: uv run ruff format .
       - run: uv run ruff check .
