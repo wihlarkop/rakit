@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from rakit_core.definitions import ResourceFieldPolicy
@@ -79,7 +79,7 @@ def inspect_model(model: type[object]) -> TortoiseModelMetadata:
     if not is_tortoise_model(model):
         raise TypeError("Tortoise resources must subclass tortoise.models.Model")
 
-    concrete_model = model
+    concrete_model = cast(type[Model], model)
     meta = concrete_model._meta
     identity_field = meta.pk_attr
     fields_map = meta.fields_map
