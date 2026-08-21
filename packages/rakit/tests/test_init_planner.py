@@ -41,7 +41,7 @@ def test_standard_uvicorn_plan_contains_modern_starter_surface(tmp_path: Path) -
 
     pyproject = next(item.content for item in plan.files if item.path.name == "pyproject.toml")
     resources = next(item.content for item in plan.files if item.path.name == "resources.py")
-    assert '"rakit[standard]"' in pyproject
+    assert '"rakit[standard,uvicorn]"' in pyproject
     assert '"aiosqlite"' in pyproject
     assert "ResourceWriteDefinition" in resources
     assert 'writable_fields=("name", "description", "enabled")' in resources
@@ -73,7 +73,7 @@ def test_standard_granian_uses_current_explicit_extra_names(tmp_path: Path) -> N
     plan = build_scaffold_plan(_new_config(tmp_path, server=ServerAdapter.GRANIAN))
     pyproject = next(item.content for item in plan.files if item.path.name == "pyproject.toml")
 
-    assert '"rakit[sqlalchemy,auth-sqlalchemy,storage-local,granian]"' in pyproject
+    assert '"rakit[standard,granian]"' in pyproject
     assert '"aiosqlite"' in pyproject
 
 
@@ -103,6 +103,35 @@ def test_existing_standard_plan_is_additive_and_isolated(tmp_path: Path) -> None
     assert any('app.mount("/admin", rakit_app' in line for line in plan.guidance)
     db_source = next(item.content for item in plan.files if item.path.name == "db.py")
     assert '".rakit"' in db_source
+
+
+def test_existing_standard_install_command_uses_bundle_and_explicit_server(
+    tmp_path: Path,
+) -> None:
+    for server, requirement in (
+        (ServerAdapter.UVICORN, "rakit[standard,uvicorn]"),
+        (ServerAdapter.GRANIAN, "rakit[standard,granian]"),
+    ):
+        target = tmp_path / server.value
+        module_root = target / "src" / "host_app" / "rakit_admin"
+        config = InitConfig(
+            mode=InitMode.EXISTING,
+            target=target,
+            distribution_name=None,
+            import_package="host_app.rakit_admin",
+            module_root=module_root,
+            template=StarterTemplate.STANDARD,
+            server=server,
+            install_dependencies=True,
+            dry_run=True,
+            host_package="host_app",
+            host_framework=None,
+        )
+
+        plan = build_scaffold_plan(config)
+
+        assert plan.dependency_action is not None
+        assert plan.dependency_action.argv == ("uv", "add", requirement, "aiosqlite")
 
 
 def test_planning_is_deterministic(tmp_path: Path) -> None:
