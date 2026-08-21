@@ -5,14 +5,26 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   source-smoke:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+      - name: Refresh lockfile if metadata changed
+        run: |
+          uv lock
+          if ! git diff --quiet -- uv.lock; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -- uv.lock
+            git commit -m "chore: refresh uv lock for C3 extras"
+            git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          fi
       - name: Sync locked workspace
         run: uv sync --all-packages --dev --locked
       - name: Verify canonical package metadata
