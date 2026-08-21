@@ -1,12 +1,13 @@
 from ._install import InstallExtra
 from ._optional import OptionalDependency, optional_import
 
-_DEPENDENCY = OptionalDependency(
-    extra=InstallExtra.SQLALCHEMY,
-    label="SQLAlchemy",
-)
-
-with optional_import("rakit_sqlalchemy", dependency=_DEPENDENCY):
+with optional_import(
+    "rakit_sqlalchemy",
+    dependency=OptionalDependency(
+        extra=InstallExtra.SQLALCHEMY,
+        label="SQLAlchemy",
+    ),
+):
     import rakit_sqlalchemy  # noqa: F401
 
 from rakit_sqlalchemy.action_mutations import SQLAlchemyActionUpdateExecutor

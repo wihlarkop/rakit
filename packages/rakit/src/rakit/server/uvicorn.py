@@ -1,11 +1,6 @@
 from .._install import InstallExtra
 from .._optional import OptionalDependency, optional_import
 
-_DEPENDENCY = OptionalDependency(
-    extra=InstallExtra.UVICORN,
-    label="Uvicorn",
-)
-
 # Guard a single-level import first: a dotted `from rakit_server_uvicorn.server
 # import ...` raises ModuleNotFoundError(name="rakit_server_uvicorn.server") when
 # the top-level package is missing, not name="rakit_server_uvicorn" -- which
@@ -13,7 +8,13 @@ _DEPENDENCY = OptionalDependency(
 # Guarding the plain top-level import first gets the exception with the
 # expected `.name`, then the real (unconditional, statically-typed) import
 # below only runs once the package is confirmed present.
-with optional_import("rakit_server_uvicorn", dependency=_DEPENDENCY):
+with optional_import(
+    "rakit_server_uvicorn",
+    dependency=OptionalDependency(
+        extra=InstallExtra.UVICORN,
+        label="Uvicorn",
+    ),
+):
     import rakit_server_uvicorn  # noqa: F401
 
 from rakit_server_uvicorn.server import UvicornServer

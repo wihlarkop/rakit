@@ -4,7 +4,6 @@ import tomllib
 from pathlib import Path
 
 import pytest
-
 from rakit._install import InstallExtra, format_uv_add_command, rakit_requirement, uv_add_command
 
 
