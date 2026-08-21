@@ -139,7 +139,7 @@ def analyze_capabilities(
     providers: Iterable[CapabilityProvider],
 ) -> CapabilityAnalysis:
     provider_tuple = tuple(sorted(providers, key=lambda item: item.provider_id))
-    requirement_tuple = tuple(sorted(requirements, key=lambda item: item.requirement_id))
+    requirement_tuple = tuple(requirements)
     _reject_duplicate_ids(
         (provider.provider_id for provider in provider_tuple),
         kind="provider",
