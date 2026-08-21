@@ -31,9 +31,7 @@ class CapabilityContract:
         if self.version < 1:
             raise ValueError("Capability contract version must be >= 1")
         if not self.category or self.category != self.category.strip():
-            raise ValueError(
-                "Capability contract category must be a non-empty trimmed string"
-            )
+            raise ValueError("Capability contract category must be a non-empty trimmed string")
 
 
 CANONICAL_CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
@@ -78,9 +76,7 @@ def validate_capability_contracts(
         for prerequisite in contract.prerequisites.values:
             prerequisite_name = prerequisite.name
             if prerequisite_name == name:
-                raise ValueError(
-                    f'Canonical capability "{name}" cannot require itself'
-                )
+                raise ValueError(f'Canonical capability "{name}" cannot require itself')
             if prerequisite_name not in by_name:
                 raise ValueError(
                     f'Canonical capability "{name}" requires unknown capability '
@@ -96,9 +92,7 @@ def validate_capability_contracts(
         if name in visiting:
             cycle_start = path.index(name)
             cycle = (*path[cycle_start:], name)
-            raise ValueError(
-                "Canonical capability prerequisite cycle: " + " -> ".join(cycle)
-            )
+            raise ValueError("Canonical capability prerequisite cycle: " + " -> ".join(cycle))
 
         visiting.add(name)
         contract = by_name[name]
@@ -117,8 +111,7 @@ _VALIDATED_CANONICAL_CAPABILITY_CONTRACTS = validate_capability_contracts(
     CANONICAL_CAPABILITY_CONTRACTS
 )
 _CONTRACTS_BY_NAME = {
-    contract.capability.name: contract
-    for contract in _VALIDATED_CANONICAL_CAPABILITY_CONTRACTS
+    contract.capability.name: contract for contract in _VALIDATED_CANONICAL_CAPABILITY_CONTRACTS
 }
 
 
