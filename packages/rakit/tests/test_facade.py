@@ -2,7 +2,16 @@ import sys
 
 import pytest
 from rakit import RakitConfig
-from rakit._optional import RakitOptionalDependencyError, optional_import, require_module
+from rakit._install import InstallExtra
+from rakit._optional import (
+    OptionalDependency,
+    RakitOptionalDependencyError,
+    optional_import,
+    require_module,
+)
+
+_SQLALCHEMY_DEPENDENCY = OptionalDependency(InstallExtra.SQLALCHEMY, "SQLAlchemy")
+_UVICORN_DEPENDENCY = OptionalDependency(InstallExtra.UVICORN, "Uvicorn")
 
 
 def test_core_type_is_reexported() -> None:
@@ -90,7 +99,8 @@ def test_importing_core_plan02_facade_does_not_load_optional_sqlalchemy(monkeypa
 
 def test_missing_dependency_includes_uv_command() -> None:
     with pytest.raises(RakitOptionalDependencyError) as caught:
-        require_module("missing_rakit_dependency", extra="sqlalchemy")
+        require_module("missing_rakit_dependency", dependency=_SQLALCHEMY_DEPENDENCY)
+    assert "SQLAlchemy support is not installed." in str(caught.value)
     assert 'uv add "rakit[sqlalchemy]"' in str(caught.value)
 
 
@@ -101,7 +111,7 @@ def test_transitive_missing_dependency_propagates_unchanged(tmp_path, monkeypatc
     monkeypatch.syspath_prepend(str(tmp_path))
 
     with pytest.raises(ModuleNotFoundError) as caught:
-        require_module("rakit_test_fake_optional", extra="whatever")
+        require_module("rakit_test_fake_optional", dependency=_SQLALCHEMY_DEPENDENCY)
 
     assert caught.value.name == "this_transitive_dependency_does_not_exist_anywhere"
     assert not isinstance(caught.value, RakitOptionalDependencyError)
@@ -110,10 +120,11 @@ def test_transitive_missing_dependency_propagates_unchanged(tmp_path, monkeypatc
 def test_optional_import_converts_expected_missing_module() -> None:
     with (
         pytest.raises(RakitOptionalDependencyError) as caught,
-        optional_import("missing_rakit_dependency", extra="server-uvicorn"),
+        optional_import("missing_rakit_dependency", dependency=_UVICORN_DEPENDENCY),
     ):
         import missing_rakit_dependency  # noqa: F401  # ty: ignore[unresolved-import]
-    assert 'uv add "rakit[server-uvicorn]"' in str(caught.value)
+    assert "Uvicorn support is not installed." in str(caught.value)
+    assert 'uv add "rakit[uvicorn]"' in str(caught.value)
 
 
 def test_optional_import_propagates_transitive_missing_dependency_unchanged(
@@ -126,7 +137,7 @@ def test_optional_import_propagates_transitive_missing_dependency_unchanged(
 
     with (
         pytest.raises(ModuleNotFoundError) as caught,
-        optional_import("rakit_test_fake_optional_ctx", extra="whatever"),
+        optional_import("rakit_test_fake_optional_ctx", dependency=_SQLALCHEMY_DEPENDENCY),
     ):
         from rakit_test_fake_optional_ctx import (  # noqa: F401  # ty: ignore[unresolved-import]
             something,
@@ -172,6 +183,7 @@ def test_server_uvicorn_facade_raises_friendly_error_when_missing(monkeypatch) -
     with pytest.raises(RakitOptionalDependencyError) as caught:
         import rakit.server.uvicorn  # noqa: F401
 
+    assert "Uvicorn support is not installed." in str(caught.value)
     assert 'uv add "rakit[uvicorn]"' in str(caught.value)
 
 
@@ -189,6 +201,7 @@ def test_auth_sqlalchemy_facade_raises_friendly_error_when_missing(monkeypatch) 
     with pytest.raises(RakitOptionalDependencyError) as caught:
         import rakit.auth.sqlalchemy  # noqa: F401
 
+    assert "SQLAlchemy authentication support is not installed." in str(caught.value)
     assert 'uv add "rakit[auth-sqlalchemy]"' in str(caught.value)
 
 

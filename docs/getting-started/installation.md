@@ -2,27 +2,64 @@
 
 Rakit requires Python 3.12 or newer.
 
-Install the facade package first:
+Rakit uses ordinary Python package metadata, so standards-compliant package managers can install
+it. First-party documentation and generated project guidance use [uv](https://docs.astral.sh/uv/)
+as the canonical workflow.
+
+Install the facade package without optional adapters:
 
 ```bash
-pip install rakit
+uv add rakit
 ```
 
-Add extras only for the capabilities your application needs. Public server extras use the short
-adapter names:
+Add only the concrete implementations your application needs:
 
 ```bash
-pip install "rakit[uvicorn]"
-pip install "rakit[granian]"
+uv add "rakit[uvicorn]"
+uv add "rakit[granian]"
+uv add "rakit[sqlalchemy]"
+uv add "rakit[auth-sqlalchemy]"
+uv add "rakit[storage-local]"
 ```
 
-Other current extras include `sqlalchemy`, `auth-sqlalchemy`, and `storage-local`; `standard`
-installs the reference SQLAlchemy/auth/local-storage stack with Uvicorn. The older
-`server-uvicorn` extra remains a compatibility alias, but new documentation and install hints use
-`uvicorn`. Check your lockfile after selecting extras; adapters are explicit and Rakit does not
-silently install an ORM, authentication backend, storage implementation, or alternate server.
+The extra names are implementation-specific on purpose. Rakit does not silently choose a server,
+persistence implementation, authentication backend, or storage provider for the application.
 
-The facade keeps adapter-specific imports namespaced. For example:
+## Standard bundle
+
+`rakit[standard]` is a server-neutral convenience bundle containing the current common Rakit
+capabilities:
+
+- SQLAlchemy persistence;
+- SQLAlchemy authentication and durable idempotency;
+- local private storage.
+
+Choose the server explicitly:
+
+```bash
+uv add "rakit[standard,uvicorn]"
+uv add "rakit[standard,granian]"
+```
+
+The standard bundle does not choose a database driver. Database engines and drivers remain
+application-owned. For example, the generated SQLite starter uses `aiosqlite` explicitly:
+
+```bash
+uv add "rakit[standard,uvicorn]" aiosqlite
+```
+
+A PostgreSQL application may instead choose its own async driver:
+
+```bash
+uv add "rakit[standard,uvicorn]" asyncpg
+```
+
+The same rule applies to other SQLAlchemy-supported databases and drivers: Rakit owns the adapter
+capability, while the application owns its database choice and connection configuration.
+
+## Adapter imports
+
+The facade keeps implementation-specific imports namespaced:
 
 ```python
 from rakit.server.granian import GranianServer
@@ -30,6 +67,13 @@ from rakit.server.uvicorn import UvicornServer
 from rakit.storage import FileStorage
 from rakit.storage.local import LocalStorage
 ```
+
+If an optional facade is imported without its implementation installed, Rakit reports the exact
+canonical `uv add` command for that capability. It does not auto-install dependencies. A broken
+transitive dependency inside an already-installed adapter is surfaced unchanged rather than being
+misreported as a missing Rakit extra.
+
+## Repository development
 
 For repository development:
 

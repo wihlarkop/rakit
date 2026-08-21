@@ -1,6 +1,13 @@
-from .._optional import optional_import
+from .._install import InstallExtra
+from .._optional import OptionalDependency, optional_import
 
-with optional_import("rakit_auth_sqlalchemy", extra="auth-sqlalchemy"):
+with optional_import(
+    "rakit_auth_sqlalchemy",
+    dependency=OptionalDependency(
+        extra=InstallExtra.AUTH_SQLALCHEMY,
+        label="SQLAlchemy authentication",
+    ),
+):
     import rakit_auth_sqlalchemy  # noqa: F401
 
 from rakit_auth_sqlalchemy.idempotency import SQLAlchemyIdempotencyStore

@@ -41,7 +41,7 @@ def test_every_official_source_distribution_is_typed(
         assert typed.is_file(), f"{project.name} is missing {typed.relative_to(repository)}"
 
 
-def test_standard_extra_contains_release_reference_stack(
+def test_standard_extra_is_server_neutral_reference_stack(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repository, checker = _load_checker(monkeypatch)
@@ -76,12 +76,12 @@ def test_clean_import_probe_uses_isolated_interpreter(
     assert sys.version_info >= (3, 12)
 
 
-def test_clean_install_resolves_cli_after_standard_install(
+def test_clean_install_resolves_cli_after_standard_uvicorn_install(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repository, _checker = _load_checker(monkeypatch)
     source = (repository / "scripts" / "check_artifacts.py").read_text(encoding="utf-8")
-    install_marker = '_install_extra(dist, python, workspace, "standard")'
+    install_marker = '_install_extra(dist, python, workspace, "standard,uvicorn")'
     cli_marker = "cli = _venv_rakit(venv)"
     assert source.index(install_marker) < source.index(cli_marker)
 

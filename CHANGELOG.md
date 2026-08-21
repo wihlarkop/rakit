@@ -45,12 +45,22 @@ The project follows Semantic Versioning. Until a release is actually tagged, cha
   deterministic non-interactive flows, `standard` and `minimal` starters, Uvicorn/Granian choices,
   `uv`-based dependency guidance, safe dry-runs, additive existing-project integration, and
   generated starters that use the current declarative CRUD/lifecycle APIs.
+- A typed internal installation vocabulary shared by optional-dependency diagnostics and `rakit init`,
+  producing deterministic `uv add` guidance for Rakit extras while keeping application-owned
+  packages such as database drivers explicit.
+- Capability-specific missing-dependency errors for SQLAlchemy, SQLAlchemy authentication, local
+  storage, Uvicorn, and Granian facades without masking transitive `ModuleNotFoundError` failures.
 - Tag-gated trusted-publishing workflow preparation without a release tag or publish action.
 
 ### Changed
 
-- Public server install guidance now prefers `rakit[uvicorn]` and `rakit[granian]`; the existing
-  `server-uvicorn` extra remains a compatibility alias.
+- Optional capability installation is normalized to exactly six public extras: `uvicorn`, `granian`,
+  `sqlalchemy`, `auth-sqlalchemy`, `storage-local`, and `standard`. The `standard` bundle is now
+  server-neutral and database-driver-neutral, server choice stays explicit, and the unpublished
+  `server-uvicorn` alias has been removed.
+- Standard scaffolds now select `rakit[standard,uvicorn]` or `rakit[standard,granian]` explicitly and
+  keep `aiosqlite` as a separate application dependency instead of hiding either server or driver
+  selection inside the `standard` extra.
 - Official examples prefer the `rakit` facade for public contracts and adapters instead of importing
   implementation packages directly when an ergonomic facade exists.
 - Reference application bootstrap is additive and application-owned; Rakit continues to keep ORM

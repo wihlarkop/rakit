@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from textwrap import dedent
 
+from .._install import InstallExtra, rakit_requirement, uv_add_command
 from .model import (
     DependencyAction,
     InitConfig,
@@ -16,20 +17,27 @@ def _text(value: str) -> str:
     return dedent(value).lstrip("\n").rstrip() + "\n"
 
 
-def _dependency_specs(config: InitConfig) -> tuple[str, ...]:
+def _dependency_selection(
+    config: InitConfig,
+) -> tuple[tuple[InstallExtra, ...], tuple[str, ...]]:
+    server = (
+        InstallExtra.UVICORN if config.server is ServerAdapter.UVICORN else InstallExtra.GRANIAN
+    )
     if config.template is StarterTemplate.STANDARD:
-        if config.server is ServerAdapter.UVICORN:
-            return ("rakit[standard]", "aiosqlite")
-        return ("rakit[sqlalchemy,auth-sqlalchemy,storage-local,granian]", "aiosqlite")
-    if config.server is ServerAdapter.UVICORN:
-        return ("rakit[uvicorn]",)
-    return ("rakit[granian]",)
+        return ((InstallExtra.STANDARD, server), ("aiosqlite",))
+    return ((server,), ())
+
+
+def _dependency_specs(config: InitConfig) -> tuple[str, ...]:
+    extras, packages = _dependency_selection(config)
+    return (rakit_requirement(*extras), *packages)
 
 
 def dependency_command_for(config: InitConfig) -> tuple[str, ...]:
     if config.mode is InitMode.NEW:
         return ("uv", "sync")
-    return ("uv", "add", *_dependency_specs(config))
+    extras, packages = _dependency_selection(config)
+    return uv_add_command(*extras, packages=packages)
 
 
 def dependency_action_for(config: InitConfig) -> DependencyAction | None:

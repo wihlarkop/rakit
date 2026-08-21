@@ -17,7 +17,6 @@ dependencies = [
 [project.optional-dependencies]
 uvicorn = ["rakit-server-uvicorn==0.1.0a1"]
 granian = ["rakit-server-granian==0.1.0a1"]
-server-uvicorn = ["rakit-server-uvicorn==0.1.0a1"]
 sqlalchemy = ["rakit-sqlalchemy==0.1.0a1"]
 auth-sqlalchemy = ["rakit-auth-sqlalchemy==0.1.0a1"]
 storage-local = ["rakit-storage-local==0.1.0a1"]
@@ -25,7 +24,6 @@ standard = [
     "rakit-sqlalchemy==0.1.0a1",
     "rakit-auth-sqlalchemy==0.1.0a1",
     "rakit-storage-local==0.1.0a1",
-    "rakit-server-uvicorn==0.1.0a1",
 ]
 
 [project.scripts]
