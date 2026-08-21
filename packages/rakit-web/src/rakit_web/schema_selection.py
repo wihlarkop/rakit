@@ -69,7 +69,10 @@ def _load_schema_adapter(
     if descriptor is None or descriptor.integration_id != integration_id:
         raise RakitError(
             code=ErrorCode.CONFIG_INVALID,
-            message="Schema adapter entry point integration metadata does not match its identifier.",
+            message=(
+                "Schema adapter entry point integration metadata "
+                "does not match its identifier."
+            ),
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             details={
                 "reason": "schema_adapter_metadata_mismatch",
