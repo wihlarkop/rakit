@@ -1,25 +1,9 @@
 from dataclasses import replace
 
 import pytest
-from rakit_core.adapter_capabilities import (
-    CONCURRENCY_ATOMIC_OPTIMISTIC,
-    PERSISTENCE_READ,
-    PERSISTENCE_WRITE,
-    TRANSACTIONS_ROOT_UOW,
-)
+import rakit_core.adapter_capabilities as adapter_capabilities
+import rakit_core.conformance as conformance
 from rakit_core.capabilities import CapabilitySet
-from rakit_core.conformance import (
-    CapabilityBehaviorCheck,
-    CapabilityConformanceResult,
-    CapabilityConformanceSpec,
-    ConformanceFailureKind,
-    IntegrationConformanceResult,
-    build_conformance_spec_registry,
-    conformance_matrix_rows,
-    run_capability_conformance,
-    run_integration_conformance,
-    validate_advertised_capabilities,
-)
 from rakit_core.integrations import IntegrationDescriptor
 
 
@@ -28,10 +12,10 @@ TEST_PERSISTENCE_INTEGRATION = IntegrationDescriptor(
     category="persistence",
     display_name="Test Persistence",
     advertised_capabilities=CapabilitySet.of(
-        PERSISTENCE_READ,
-        PERSISTENCE_WRITE,
-        TRANSACTIONS_ROOT_UOW,
-        CONCURRENCY_ATOMIC_OPTIMISTIC,
+        adapter_capabilities.PERSISTENCE_READ,
+        adapter_capabilities.PERSISTENCE_WRITE,
+        adapter_capabilities.TRANSACTIONS_ROOT_UOW,
+        adapter_capabilities.CONCURRENCY_ATOMIC_OPTIMISTIC,
     ),
 )
 
@@ -51,36 +35,38 @@ async def _fail_two(_harness: object) -> None:
 def test_missing_advertised_prerequisites_are_hard_failures() -> None:
     descriptor = replace(
         TEST_PERSISTENCE_INTEGRATION,
-        advertised_capabilities=CapabilitySet.of(CONCURRENCY_ATOMIC_OPTIMISTIC),
+        advertised_capabilities=CapabilitySet.of(
+            adapter_capabilities.CONCURRENCY_ATOMIC_OPTIMISTIC
+        ),
     )
-    failures = validate_advertised_capabilities(descriptor)
+    failures = conformance.validate_advertised_capabilities(descriptor)
     assert len(failures) == 1
     failure = failures[0]
-    assert failure.kind is ConformanceFailureKind.ADVERTISEMENT
-    assert failure.capability == CONCURRENCY_ATOMIC_OPTIMISTIC.name
-    assert PERSISTENCE_WRITE.name in failure.message
-    assert TRANSACTIONS_ROOT_UOW.name in failure.message
+    assert failure.kind is conformance.ConformanceFailureKind.ADVERTISEMENT
+    assert failure.capability == adapter_capabilities.CONCURRENCY_ATOMIC_OPTIMISTIC.name
+    assert adapter_capabilities.PERSISTENCE_WRITE.name in failure.message
+    assert adapter_capabilities.TRANSACTIONS_ROOT_UOW.name in failure.message
 
 
 def test_valid_first_party_shaped_advertisement_has_no_prerequisite_failure() -> None:
-    assert validate_advertised_capabilities(TEST_PERSISTENCE_INTEGRATION) == ()
+    assert conformance.validate_advertised_capabilities(TEST_PERSISTENCE_INTEGRATION) == ()
 
 
 def test_spec_registry_rejects_duplicate_and_wrong_version_specs() -> None:
-    spec = CapabilityConformanceSpec(
-        PERSISTENCE_READ,
+    spec = conformance.CapabilityConformanceSpec(
+        adapter_capabilities.PERSISTENCE_READ,
         1,
-        (CapabilityBehaviorCheck("read.pass", _pass),),
+        (conformance.CapabilityBehaviorCheck("read.pass", _pass),),
     )
     with pytest.raises(ValueError, match="Duplicate conformance spec"):
-        build_conformance_spec_registry((spec, spec))
+        conformance.build_conformance_spec_registry((spec, spec))
     with pytest.raises(ValueError, match="version mismatch"):
-        build_conformance_spec_registry(
+        conformance.build_conformance_spec_registry(
             (
-                CapabilityConformanceSpec(
-                    PERSISTENCE_READ,
+                conformance.CapabilityConformanceSpec(
+                    adapter_capabilities.PERSISTENCE_READ,
                     2,
-                    (CapabilityBehaviorCheck("read.v2", _pass),),
+                    (conformance.CapabilityBehaviorCheck("read.v2", _pass),),
                 ),
             )
         )
@@ -88,28 +74,28 @@ def test_spec_registry_rejects_duplicate_and_wrong_version_specs() -> None:
 
 @pytest.mark.anyio
 async def test_behavior_failures_are_structured_and_deterministic() -> None:
-    specs = build_conformance_spec_registry(
+    specs = conformance.build_conformance_spec_registry(
         (
-            CapabilityConformanceSpec(
-                PERSISTENCE_READ,
+            conformance.CapabilityConformanceSpec(
+                adapter_capabilities.PERSISTENCE_READ,
                 1,
                 (
-                    CapabilityBehaviorCheck("read.first", _fail_one),
-                    CapabilityBehaviorCheck("read.second", _fail_two),
+                    conformance.CapabilityBehaviorCheck("read.first", _fail_one),
+                    conformance.CapabilityBehaviorCheck("read.second", _fail_two),
                 ),
             ),
         )
     )
-    result = await run_capability_conformance(
+    result = await conformance.run_capability_conformance(
         descriptor=TEST_PERSISTENCE_INTEGRATION,
-        capability=PERSISTENCE_READ,
+        capability=adapter_capabilities.PERSISTENCE_READ,
         harness=object(),
         specs=specs,
     )
     assert not result.passed
     assert [failure.kind for failure in result.failures] == [
-        ConformanceFailureKind.BEHAVIOR,
-        ConformanceFailureKind.BEHAVIOR,
+        conformance.ConformanceFailureKind.BEHAVIOR,
+        conformance.ConformanceFailureKind.BEHAVIOR,
     ]
     assert [failure.check_id for failure in result.failures] == ["read.first", "read.second"]
     assert "first failure" in result.failures[0].message
@@ -118,38 +104,38 @@ async def test_behavior_failures_are_structured_and_deterministic() -> None:
 
 @pytest.mark.anyio
 async def test_missing_spec_and_missing_harness_fail_closed() -> None:
-    missing_spec = await run_capability_conformance(
+    missing_spec = await conformance.run_capability_conformance(
         descriptor=TEST_PERSISTENCE_INTEGRATION,
-        capability=PERSISTENCE_READ,
+        capability=adapter_capabilities.PERSISTENCE_READ,
         harness=object(),
         specs={},
     )
     assert not missing_spec.passed
-    assert missing_spec.failures[0].kind is ConformanceFailureKind.REGISTRY
+    assert missing_spec.failures[0].kind is conformance.ConformanceFailureKind.REGISTRY
     assert "No conformance spec exists" in missing_spec.failures[0].message
 
-    integration_result = await run_integration_conformance(
+    integration_result = await conformance.run_integration_conformance(
         descriptor=replace(
             TEST_PERSISTENCE_INTEGRATION,
-            advertised_capabilities=CapabilitySet.of(PERSISTENCE_READ),
+            advertised_capabilities=CapabilitySet.of(adapter_capabilities.PERSISTENCE_READ),
         ),
         harnesses={},
         specs={},
     )
     assert not integration_result.passed
-    assert integration_result.failures[0].kind is ConformanceFailureKind.REGISTRY
+    assert integration_result.failures[0].kind is conformance.ConformanceFailureKind.REGISTRY
     assert "No conformance harness exists" in integration_result.failures[0].message
 
 
 def test_matrix_rows_sort_without_reordering_runtime_declarations() -> None:
-    integration = IntegrationConformanceResult(
+    integration = conformance.IntegrationConformanceResult(
         integration_id="example.integration",
         results=(
-            CapabilityConformanceResult("z.capability", 1),
-            CapabilityConformanceResult("a.capability", 1),
+            conformance.CapabilityConformanceResult("z.capability", 1),
+            conformance.CapabilityConformanceResult("a.capability", 1),
         ),
     )
-    rows = conformance_matrix_rows((integration,))
+    rows = conformance.conformance_matrix_rows((integration,))
     assert [row.capability for row in rows] == ["a.capability", "z.capability"]
     assert [result.capability for result in integration.results] == [
         "z.capability",
