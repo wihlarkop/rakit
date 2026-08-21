@@ -1,9 +1,8 @@
 from dataclasses import replace
 
 import pytest
-import rakit_core.adapter_capabilities as adapter_capabilities
+from rakit_core import adapter_capabilities, conformance
 from rakit_core.capabilities import CapabilitySet
-import rakit_core.conformance as conformance
 from rakit_core.integrations import IntegrationDescriptor
 
 
