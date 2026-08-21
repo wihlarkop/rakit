@@ -29,13 +29,30 @@ jobs:
             uv run python - <<'PY'
           from pathlib import Path
 
-          path = Path("packages/rakit/src/rakit/_capability_inspection.py")
-          text = path.read_text()
+          inspection = Path("packages/rakit/src/rakit/_capability_inspection.py")
+          text = inspection.read_text()
           broken = '    return "\n".join(lines)\n'
           fixed = '    return "\\n".join(lines)\n'
           if broken not in text:
               raise RuntimeError("Expected generated renderer escape bug was not found")
-          path.write_text(text.replace(broken, fixed, 1))
+          inspection.write_text(text.replace(broken, fixed, 1))
+
+          typing_fixes = {
+              "packages/rakit-server-uvicorn/src/rakit_server_uvicorn/server.py": (
+                  "from typing import Any, cast\n",
+                  "from typing import Any, ClassVar, cast\n",
+              ),
+              "packages/rakit-server-granian/src/rakit_server_granian/server.py": (
+                  "from typing import Any\n",
+                  "from typing import Any, ClassVar\n",
+              ),
+          }
+          for filename, (old, new) in typing_fixes.items():
+              path = Path(filename)
+              content = path.read_text()
+              if old not in content:
+                  raise RuntimeError(f"Expected generated typing import not found: {filename}")
+              path.write_text(content.replace(old, new, 1))
           PY
             uv lock
           fi
@@ -74,6 +91,7 @@ jobs:
             packages/rakit/src/rakit/cli.py
           )
           uv run ruff format "${files[@]}"
+          uv run ruff check --fix "${files[@]}"
           uv run ruff check "${files[@]}"
       - name: Plain Python capability smoke
         shell: bash
@@ -82,10 +100,7 @@ jobs:
           uv run python - <<'PY'
           from tempfile import TemporaryDirectory
 
-          from rakit._integration_discovery import (
-              InstalledIntegrationDiscoveryError,
-              discover_installed_integrations,
-          )
+          from rakit._integration_discovery import discover_installed_integrations
           from rakit_auth_sqlalchemy.plugin import SQLAlchemyAuthPlugin
           from rakit_core.capabilities import CapabilityRequirement, analyze_capabilities
           from rakit_core.compiler import (
