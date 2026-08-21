@@ -2,138 +2,107 @@ name: CI
 
 on:
   pull_request:
+  push:
+    branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  close-c3-docs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
-      - name: Update roadmap and execution evidence
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - run: uv sync --all-packages --dev --locked
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run ty check
+      - run: uv run pytest
+
+  web-assets:
+    name: Web asset reproducibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.3.14"
+      - run: bun install --frozen-lockfile
+      - run: bun run css:build
+      - name: Verify committed CSS matches canonical source
+        run: git diff --exit-code -- packages/rakit-web/src/rakit_web/static/rakit.css
+
+  dependency-compatibility:
+    name: Dependencies (${{ matrix.mode }})
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [lowest-direct, latest]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Sync minimum supported direct dependencies
+        if: matrix.mode == 'lowest-direct'
+        run: uv sync --all-packages --dev --resolution lowest-direct
+      - name: Sync latest allowed dependencies
+        if: matrix.mode == 'latest'
+        run: uv sync --all-packages --dev --upgrade
+      - name: Run test suite without re-syncing
+        run: uv run --no-sync pytest -q --tb=short --maxfail=5
+
+  release-gate:
+    name: Plan 07 release gate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-packages --dev --locked
+      - run: uv run pytest --cov
+      - run: uv run mkdocs build --strict
+      - run: uv run python scripts/check_artifacts.py
+
+  artifact-dry-run:
+    name: Artifact dry run
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-packages --dev --locked
+      - run: uv run pytest tests/release -v
+      - name: Build all official distributions
+        shell: bash
         run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          roadmap_path = Path("docs/roadmap.md")
-          roadmap = roadmap_path.read_text(encoding="utf-8")
-
-          current_old = """| Phase C2 project initialization and scaffolding | **Complete** |
-          | Phase C3 installation and extras UX | **Next** |
-          | Phase C developer experience and lifecycle ergonomics | **Next** |
-          """
-          current_new = """| Phase C2 project initialization and scaffolding | **Complete** |
-          | Phase C3 installation and extras UX | **Complete** |
-          | Phase C4 capability discovery | **Next** |
-          | Phase C developer experience and lifecycle ergonomics | **Next** |
-          """
-          if roadmap.count(current_old) != 1:
-              raise SystemExit("current-position C3 block did not match exactly once")
-          roadmap = roadmap.replace(current_old, current_new)
-
-          c3_old = """### C3 — Installation and extras UX
-
-          **Status: Next**
-
-          Continue simplifying optional capability installation.
-
-          Examples:
-
-          ```bash
-          uv add \"rakit[standard]\"
-          uv add \"rakit[uvicorn]\"
-          uv add \"rakit[granian]\"
-          uv add \"rakit[sqlalchemy]\"
-          ```
-
-          Goals:
-
-          - predictable extra names.
-          - clear missing-dependency errors.
-          - no implicit adapter activation.
-          - no unnecessary heavy dependencies in the base install.
-
-          ### C4 — Capability discovery
-
-          Expand diagnostics such as `rakit check` and capability inspection.
-          """
-          c3_new = """### C3 — Installation and extras UX
-
-          **Status: Complete**
-
-          C3 makes optional capability installation explicit, deterministic, and consistent across
-          package metadata, runtime diagnostics, release verification, and `rakit init`:
-
-          - the public facade exposes exactly six canonical extras: `uvicorn`, `granian`,
-            `sqlalchemy`, `auth-sqlalchemy`, `storage-local`, and `standard`.
-          - `standard` is intentionally server-neutral and database-driver-neutral; applications
-            select Uvicorn or Granian and their database driver explicitly.
-          - the unpublished `server-uvicorn` alias was removed rather than carried as compatibility
-            surface before the first public release.
-          - one typed internal install vocabulary produces deterministic Rakit requirement strings,
-            `uv add` argv, and shell-facing guidance without duplicating raw extra names across the
-            framework.
-          - missing top-level optional implementation packages now report the capability that is
-            unavailable plus the exact `uv add` command needed to install it.
-          - transitive `ModuleNotFoundError` failures remain untouched so dependency bugs are not
-            disguised as missing optional capabilities.
-          - C2 scaffold dependency selection uses the same vocabulary: minimal starters select only
-            their server extra, while standard starters select `rakit[standard,<server>]` and keep
-            `aiosqlite` as a separate application-owned dependency.
-          - clean-installed release verification now exercises `rakit[standard,uvicorn]` explicitly
-            and continues to verify Granian independently.
-
-          C3 was verified source-first. A temporary non-pytest source smoke first proved canonical
-          metadata, install vocabulary, all scaffold combinations, optional diagnostics, transitive
-          failure preservation, and removal of the unpublished alias. Regression verification then
-          passed Ruff formatting/linting, `ty`, full pytest on Python 3.12/3.13/3.14, lowest-direct
-          and latest dependency matrices, coverage, strict MkDocs, artifact validation, artifact
-          dry-run, and generated web-asset reproducibility.
-
-          ### C4 — Capability discovery
-
-          **Status: Next**
-
-          Expand diagnostics such as `rakit check` and capability inspection.
-          """
-          if roadmap.count(c3_old) != 1:
-              raise SystemExit("C3 roadmap block did not match exactly once")
-          roadmap = roadmap.replace(c3_old, c3_new)
-          roadmap_path.write_text(roadmap, encoding="utf-8")
-
-          execution = """# C3 Execution State
-
-          - Design: approved.
-          - Implementation plan: approved and executed inline with the user's source-first workflow.
-          - Branch: `phase-c3-installation-extras-ux`.
-          - Baseline source commit: `7bf5cd45eebf1b3e58cf9a69d854dd82d6c4531d` (`main` after C2).
-          - Local isolated checkout: unavailable in this environment; GitHub branch state is authoritative and GitHub Actions provides clean execution verification.
-          - Source implementation completed before C3 regression tests: canonical package metadata, typed install vocabulary, optional dependency diagnostics/facades, C2 scaffold integration, installation docs, and release-smoke alignment.
-          - Manual/source-first verification: `C3 source smoke` run #2 (`32442774805`) passed locked dependency sync, exact-six-extra metadata, install vocabulary and scaffold matrix, optional diagnostics, transitive failure preservation, and active-surface removal of `server-uvicorn`.
-          - `uv.lock` was refreshed because changing optional-dependency metadata correctly made the previous lock stale; locked sync then passed.
-          - Regression coverage was added/updated for install metadata and vocabulary, optional facades, C2 scaffold combinations, auth CLI optional imports, and release artifact semantics.
-          - Pre-closure acceptance CI: run #1029 (`32444922842`) on head `e0ad94fb7e455a08058c398efab33dd94cf382cf` passed Python 3.12/3.13/3.14 Ruff format, Ruff lint, `ty`, and full pytest; lowest-direct/latest dependency suites; coverage; strict MkDocs; clean artifact validation; artifact dry-run; and web asset reproducibility.
-          - All temporary source-smoke, formatter/lint-writer, maintenance workflow, and trigger/debug artifacts were removed; canonical `.github/workflows/ci.yml` was restored byte-for-byte before acceptance verification.
-          - Closure documentation updates this execution record, `CHANGELOG.md`, and the roadmap from C3 **Complete** to C4 **Next**. Because these documentation commits change the branch head, one final exact-head full CI run is required before C3 completion is reported.
-          - Merge/release/tag/version-bump/TestPyPI/PyPI publication remain out of scope until separately requested.
-          """
-          Path("docs/superpowers/plans/2026-08-21-c3-installation-extras-ux-execution-state.md").write_text(
-              execution,
-              encoding="utf-8",
-          )
-
-          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
-          assert "exactly six public extras" in changelog
-          assert "unpublished\n  `server-uvicorn` alias has been removed" in changelog
-          PY
-      - name: Commit closure docs
-        run: |
-          git diff --check
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/roadmap.md docs/superpowers/plans/2026-08-21-c3-installation-extras-ux-execution-state.md
-          git commit -m "docs: close C3 installation UX"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          set -euo pipefail
+          rm -rf dist
+          mkdir -p dist
+          for project in packages/*; do
+            uv build "$project" --out-dir dist
+          done
+          ls -la dist
+      - name: Upload dry-run artifacts
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: pr-python-distributions
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
