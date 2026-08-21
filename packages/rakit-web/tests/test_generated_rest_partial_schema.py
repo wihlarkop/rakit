@@ -18,7 +18,7 @@ from rakit_core.generated_runtime import GeneratedResourceExecutorContext
 from rakit_core.identity import RecordIdentity
 from rakit_core.operations import OperationExecutorCapabilities
 from rakit_core.query import PageResult
-from rakit_web.schema import PydanticSchemaAdapter
+from rakit_schema_pydantic import PydanticSchemaAdapter
 
 
 class UpdateUser(BaseModel):

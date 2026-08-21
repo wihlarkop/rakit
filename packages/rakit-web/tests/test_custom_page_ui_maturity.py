@@ -10,10 +10,10 @@ from rakit_core.compiler import ApplicationBuilder, compile_application
 from rakit_core.definitions import CompiledPageDefinition, PageDefinition, RouteDefinition
 from rakit_core.mutations import OperationAuthorization
 from rakit_core.pages import DomainPageHandler, PageContext, PageResult
+from rakit_schema_pydantic import PydanticSchemaAdapter
 from rakit_web.page_payload import PagePayloadKind, page_payload_view
 from rakit_web.page_routes import PageBinding, _field_views, build_page_routes
 from rakit_web.resource_routes import build_templates
-from rakit_web.schema import PydanticSchemaAdapter
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.routing import Mount
