@@ -4,6 +4,7 @@ import pytest
 from rakit_core.compiler import ApplicationBuilder
 from rakit_storage import FileStorage
 from rakit_storage_local import LocalStorage, LocalStoragePlugin
+from rakit_storage_local.discovery import STORAGE_LOCAL_INTEGRATION
 
 
 @pytest.mark.anyio
@@ -17,6 +18,16 @@ async def test_plugin_registers_multiple_named_local_storages(tmp_path: Path) ->
     async with builder.registry.application_scope() as resolver:
         assert resolver.require(FileStorage, name="documents") is documents
         assert resolver.require(FileStorage, name="avatars") is avatars
+    assert tuple(item.integration_id for item in builder.configured_integrations) == (
+        "storage.local",
+    )
+
+
+def test_local_storage_discovery_descriptor_is_stable() -> None:
+    assert STORAGE_LOCAL_INTEGRATION.integration_id == "storage.local"
+    assert STORAGE_LOCAL_INTEGRATION.category == "storage"
+    assert STORAGE_LOCAL_INTEGRATION.display_name == "Local storage"
+    assert STORAGE_LOCAL_INTEGRATION.advertised_capabilities.names == ()
 
 
 def test_plugin_rejects_duplicate_storage_ids(tmp_path: Path) -> None:
