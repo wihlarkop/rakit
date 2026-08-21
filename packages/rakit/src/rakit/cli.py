@@ -9,9 +9,15 @@ from rakit_core.compiler import CompiledApplication
 from rakit_core.di import ServiceRegistry
 from rakit_core.errors import RakitError
 
-from ._optional import optional_import
+from ._install import InstallExtra
+from ._optional import OptionalDependency, optional_import
 from ._server import run as run_server
 from .scaffold.command import init_command
+
+_AUTH_SQLALCHEMY_DEPENDENCY = OptionalDependency(
+    extra=InstallExtra.AUTH_SQLALCHEMY,
+    label="SQLAlchemy authentication",
+)
 
 
 class Compilable(Protocol):
@@ -177,7 +183,10 @@ def createsuperuser(target: str, email: str, username: str | None) -> None:
 
     Requires the optional ``rakit[auth-sqlalchemy]`` distribution.
     """
-    with optional_import("rakit_auth_sqlalchemy", extra="auth-sqlalchemy"):
+    with optional_import(
+        "rakit_auth_sqlalchemy",
+        dependency=_AUTH_SQLALCHEMY_DEPENDENCY,
+    ):
         from rakit_auth_sqlalchemy.models import User
         from rakit_auth_sqlalchemy.passwords import Argon2PasswordHasher
 
@@ -245,7 +254,10 @@ def permissions_sync(target: str) -> None:
     longer generated is marked orphaned instead. Requires the optional
     ``rakit[auth-sqlalchemy]`` distribution.
     """
-    with optional_import("rakit_auth_sqlalchemy", extra="auth-sqlalchemy"):
+    with optional_import(
+        "rakit_auth_sqlalchemy",
+        dependency=_AUTH_SQLALCHEMY_DEPENDENCY,
+    ):
         from rakit_auth_sqlalchemy.rbac import sync_permissions
 
     from rakit_core.permission_catalogue import generate_permission_catalogue
