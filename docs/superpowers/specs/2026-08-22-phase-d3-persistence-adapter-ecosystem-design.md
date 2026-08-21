@@ -21,26 +21,29 @@ The purpose of D3 is not to replace SQLAlchemy ORM. It is to prove that Rakit ca
 1. **SQLAlchemy ORM remains Rakit's default persistence implementation.** `rakit[standard]` stays SQLAlchemy-based.
 2. **SQLAlchemy Core/Table support is first-party D3 scope.** It lives in the existing `rakit-sqlalchemy` distribution because it shares the same upstream dependency and SQL expression/transaction stack, but it has a distinct integration/provider identity: `persistence.sqlalchemy-core`.
 3. **Tortoise ORM is the primary independent ORM pressure-test** and lives in a new `rakit-tortoise` distribution with integration id `persistence.tortoise`.
-4. **SQLModel is supported as a compatibility profile over the SQLAlchemy ORM adapter, not as a duplicate persistence adapter.** SQLModel models are SQLAlchemy models; creating a second claimant would add ambiguity without adding a new persistence semantic. D3 adds a real SQLModel compatibility/conformance proof and a convenience install extra.
-5. **Piccolo ORM is the second independent async ORM target** and lives in `rakit-piccolo` with integration id `persistence.piccolo`. It is included after Tortoise so the neutral contracts are exercised against more than one non-SQLAlchemy model/query system.
-6. **Django ORM is deliberately deferred from first-party D3 implementation.** Django 6.0 supports async ORM queries but still does not support transactions in async mode; transaction-bound work must be wrapped synchronously. That conflicts with Rakit's async root-UoW contract and would encourage a thread-wrapper compatibility layer instead of a clean adapter. It remains a D6/research candidate.
-7. **Peewee is not a D3 first-party target.** Its 4.x line is active and increasingly async-capable, but the recent major-line transition creates unnecessary maintenance volatility while Tortoise and Piccolo already provide independent ORM pressure tests. It remains a later adapter candidate.
-8. **Document databases/ODMs such as Beanie are not folded into the relational persistence contract in D3.** Their identity, relationship, query, and transaction semantics deserve a separate contract exercise rather than pretending they are relational ORM variants.
-9. D3 does **not** force capability parity. Every provider advertises only capabilities proven by real behavioral conformance.
-10. Native persistence models/schemas remain native. Rakit does not introduce a persistence DSL, base model, or fake wrapper merely to fit the current API.
-11. D3 may be delivered as multiple squash-merged subphase PRs. D3 overall becomes Complete only after all accepted D3 subphases and the compatibility matrix are green on `main`.
-12. No release, tag, or publication is part of D3.
+4. **Peewee 4 is a first-party D3 target** because its current 4.x line has official asyncio support and exercises a different query/model style. It lives in `rakit-peewee` with integration id `persistence.peewee`.
+5. **Piccolo ORM is a first-party D3 target** and lives in `rakit-piccolo` with integration id `persistence.piccolo`. It provides another native async ORM/query model independent of SQLAlchemy and Tortoise.
+6. **Masonite ORM is included as a D3 feasibility/implementation subphase.** The maintained upstream package is now `masonite-framework-orm` while imports remain `masoniteorm`. If its public runtime/transaction APIs satisfy Rakit's async contracts cleanly, Rakit adds `rakit-masonite-orm` / `persistence.masonite`; if not, D3 records the precise pressure point and defers first-party runtime support rather than adding blocking/thread-wrapper semantics merely for parity.
+7. **SQLModel is supported as a compatibility profile over the SQLAlchemy ORM adapter, not as a duplicate persistence adapter.** SQLModel models are SQLAlchemy models; creating a second claimant would add ambiguity without adding a new persistence semantic. D3 adds real SQLModel compatibility/conformance proof and a convenience install extra.
+8. **Django ORM is deliberately deferred from first-party D3 implementation.** Django 6.0 supports async ORM queries but still does not support transactions in async mode; transaction-bound work must be wrapped synchronously. That conflicts with Rakit's async root-UoW contract.
+9. **Document/remote persistence families such as MongoDB/Beanie, Turso/libSQL, and CouchDB remain accepted future ecosystem directions but are not forced through the relational ORM v1 contract.** They move to D6/contract research so identity, query, relationship, and transaction semantics can be modeled honestly.
+10. D3 does **not** force capability parity. Every provider advertises only capabilities proven by real behavioral conformance.
+11. Native persistence models/schemas remain native. Rakit does not introduce a persistence DSL, base model, or fake wrapper merely to fit the current API.
+12. D3 is delivered as multiple squash-merged subphase PRs. D3 overall becomes Complete only after all accepted D3 subphases and the compatibility matrix are green on `main`.
+13. No release, tag, or publication is part of D3.
 
 ## Why D3 is split
 
-Supporting SQLAlchemy Core plus multiple ORMs in one monolithic PR would make review, regression attribution, and rollback unnecessarily risky. D3 therefore becomes an umbrella phase:
+Supporting SQLAlchemy Core plus several independent ORMs in one monolithic PR would make review, regression attribution, and rollback unnecessarily risky. D3 therefore becomes an umbrella phase:
 
 - **D3.0 — Persistence Integration Contract & Adapter Subject Generalization**
 - **D3.1 — SQLAlchemy ORM Hardening + SQLAlchemy Core/Table**
 - **D3.2 — Tortoise ORM**
-- **D3.3 — SQLModel Compatibility Profile**
+- **D3.3 — Peewee 4 Async ORM**
 - **D3.4 — Piccolo ORM**
-- **D3.5 — Persistence Integration DX, Compatibility Matrix & Closure**
+- **D3.5 — Masonite ORM Feasibility / Adapter**
+- **D3.6 — SQLModel Compatibility Profile**
+- **D3.7 — Persistence Integration DX, Compatibility Matrix & Closure**
 
 Each subphase must be independently testable and may use its own PR. Every PR uses squash merge.
 
@@ -48,7 +51,7 @@ Each subphase must be independently testable and may use its own PR. Every PR us
 
 ### Problem
 
-The current adapter claim contract is effectively class-shaped:
+The current adapter claim contract is class-shaped:
 
 ```python
 type AdapterClaim = Callable[
@@ -56,11 +59,11 @@ type AdapterClaim = Callable[
 ]
 ```
 
-That works for SQLAlchemy declarative classes and Tortoise/Piccolo model classes, but SQLAlchemy Core's canonical resource representation is a `sqlalchemy.Table` object. Wrapping a `Table` in a fake class would preserve an accidental constraint rather than improve the abstraction.
+That works for SQLAlchemy declarative classes and most ORM model classes, but SQLAlchemy Core's canonical resource representation is a `sqlalchemy.Table` object. Wrapping a `Table` in a fake class would preserve an accidental constraint rather than improve the abstraction.
 
 ### Decision
 
-Generalize the adapter claim subject from `type` to a backend-neutral `object` (or an equivalent named neutral alias) throughout the compiler/registration path. Existing class-based callers remain valid because classes are objects. Core must not learn about `Table`, Tortoise, Piccolo, or any concrete backend type.
+Generalize the adapter claim subject from `type` to a backend-neutral `object` (or an equivalent named neutral alias) throughout the compiler/registration path. Existing class-based callers remain valid because classes are objects. Core must not learn about `Table`, Tortoise, Peewee, Piccolo, Masonite, or any concrete backend type.
 
 The generalization must preserve:
 
@@ -89,23 +92,23 @@ SQLAlchemyPlugin(session_factory=...)
 SQLAlchemyCorePlugin(engine=...)
 ```
 
-The exact constructor may be refined during implementation, but Core must use SQLAlchemy's async engine/connection transaction APIs directly and must not manufacture ORM classes internally.
+Core uses SQLAlchemy's public async engine/connection and SQL Expression Language directly. It must not manufacture ORM classes internally.
 
 ### SQLAlchemy Core capability policy
 
 Target capabilities, subject to conformance:
 
-- `persistence.read` — target required.
-- `persistence.write` — target required for scalar insert/update/delete.
-- `transactions.root-uow` — target required if one async connection/transaction can own the full operation boundary cleanly.
+- `persistence.read` — required.
+- `persistence.write` — required for scalar insert/update/delete.
+- `transactions.root-uow` — required if one async connection/transaction can own the full operation boundary cleanly.
 - `concurrency.atomic-optimistic` — target only when a conditional update/delete can prove compare-and-write atomicity inside the owning transaction.
-- `persistence.relationships` — **not assumed**. Foreign-key metadata is not equivalent to ORM relationship graph semantics. Advertise only if Rakit's v1 relationship contract can be satisfied without inventing an ORM layer.
+- `persistence.relationships` — **not assumed**. Foreign-key metadata is not equivalent to ORM relationship graph semantics.
 
 ## D3.2 — Tortoise ORM
 
-Tortoise is chosen because its model, query, relationship, and transaction APIs differ materially from SQLAlchemy. It is async-first and provides an explicit transaction context, making it a strong architectural adversary for Rakit.
+Tortoise is chosen because its model, query, relationship, and transaction APIs differ materially from SQLAlchemy. It is async-first and provides explicit transaction contexts, making it a strong architectural adversary for Rakit.
 
-The first-party package is `rakit-tortoise`, importing as `rakit_tortoise`, with provider/integration id `persistence.tortoise`.
+The package is `rakit-tortoise`, importing as `rakit_tortoise`, with provider/integration id `persistence.tortoise`.
 
 The supported dependency line begins at `tortoise-orm>=1.1.7,<2`, subject to lowest-direct CI. SQLite is the canonical contract-test backend.
 
@@ -115,11 +118,57 @@ Target capability policy:
 - `persistence.write` — implement if ordinary scalar CRUD maps cleanly to neutral mutation semantics.
 - `transactions.root-uow` — implement only with one explicit transaction context/connection owning commit/rollback.
 - `persistence.relationships` — optional, only after real FK and collection behavior proves the neutral contract.
-- `concurrency.atomic-optimistic` — optional, only if compare-and-write is genuinely atomic and does not rely on private/brittle APIs.
+- `concurrency.atomic-optimistic` — optional, only if compare-and-write is genuinely atomic and public-API based.
 
 Non-parity is an accepted outcome.
 
-## D3.3 — SQLModel Compatibility Profile
+## D3.3 — Peewee 4 Async ORM
+
+Peewee 4 is active and its official `playhouse.pwasyncio` layer provides asyncio-compatible SQLite, PostgreSQL, and MySQL backends. It intentionally retains Peewee's synchronous query/model construction while yielding database I/O through greenlet-backed async drivers. This makes it useful for testing whether Rakit's async contracts depend on the adapter implementation itself being natively async or only on the observable operation boundary being awaitable and non-blocking for database I/O.
+
+The package is `rakit-peewee`, importing as `rakit_peewee`, with provider/integration id `persistence.peewee`.
+
+Initial support targets Peewee 4.x and its official async database layer. SQLite is the contract backend.
+
+Capability policy:
+
+- `persistence.read` — required if field/query semantics can be mapped cleanly.
+- `persistence.write` — targeted.
+- `transactions.root-uow` — targeted only through public async transaction/database APIs.
+- relationships and optimistic concurrency — optional and behaviorally proven only.
+
+Rakit must not expose `greenlet` as a core requirement; it remains an adapter/upstream implementation detail.
+
+## D3.4 — Piccolo ORM
+
+Piccolo is an active typed ORM/query builder with native asyncio support and Python 3.12–3.14 compatibility. It provides another independent async persistence model and helps distinguish genuinely neutral Rakit semantics from one-off accommodations.
+
+The package is `rakit-piccolo`, importing as `rakit_piccolo`, with provider/integration id `persistence.piccolo`.
+
+Target capability policy:
+
+- `persistence.read` — required.
+- scalar `persistence.write` — targeted.
+- `transactions.root-uow` — targeted only if Piccolo's public transaction API cleanly owns the root boundary.
+- relationships and optimistic concurrency — advertised only after behavioral proof.
+
+No Piccolo migration/admin/auth subsystem is adopted; Rakit integrates only persistence semantics required by its contracts.
+
+## D3.5 — Masonite ORM Feasibility / Adapter
+
+The former `masonite-orm` package is no longer maintained; maintained development continues under the PyPI package `masonite-framework-orm`, while Python imports remain under `masoniteorm`.
+
+D3 includes this ecosystem direction, but implementation is gated by public API fit:
+
+1. verify Python 3.12+ compatibility and safe install surface;
+2. verify database operations can participate in Rakit's async runtime without blocking the event loop or requiring Rakit core to own a generic thread-wrapper abstraction;
+3. verify root transaction ownership semantics if write/UoW capabilities are to be advertised;
+4. if those gates pass, create `rakit-masonite-orm` with integration id `persistence.masonite`;
+5. if they do not pass, publish the compatibility finding and leave it unadvertised/unshipped rather than weakening Rakit's contracts.
+
+A feasibility result is considered valid D3 work; capability parity is not required.
+
+## D3.6 — SQLModel Compatibility Profile
 
 SQLModel is both a Pydantic model system and a SQLAlchemy ORM model layer. D3 therefore does **not** create `rakit-sqlmodel` or a second adapter claim path.
 
@@ -131,23 +180,6 @@ Instead D3 adds:
 - documentation that the configured persistence provider remains `persistence.sqlalchemy`.
 
 This avoids duplicate ownership and keeps capability reporting truthful.
-
-The initial SQLModel compatibility floor targets the current supported 0.0.x line, with the exact lower bound fixed by lowest-direct verification rather than guessed from latest-only behavior.
-
-## D3.4 — Piccolo ORM
-
-Piccolo is an active typed ORM/query builder with native asyncio support and Python 3.12–3.14 compatibility. It provides a second independent async persistence model after Tortoise and therefore helps distinguish genuinely neutral Rakit semantics from one-off Tortoise accommodations.
-
-The package is `rakit-piccolo`, importing as `rakit_piccolo`, with provider/integration id `persistence.piccolo`.
-
-Target capability policy mirrors Tortoise:
-
-- `persistence.read` — required.
-- scalar `persistence.write` — targeted.
-- `transactions.root-uow` — targeted only if Piccolo's public transaction API cleanly owns the root boundary.
-- relationships and optimistic concurrency — advertised only after behavioral proof.
-
-No Piccolo migration/admin/auth subsystem is adopted; Rakit integrates only persistence semantics required by its contracts.
 
 ## Shared canonical capability semantics
 
@@ -164,16 +196,7 @@ A conforming adapter must provide Rakit-neutral:
 
 ### `persistence.write@v1`
 
-A conforming adapter must prove ordinary scalar:
-
-- create;
-- update of explicitly supplied writable fields;
-- delete;
-- durable results after successful completion;
-- rollback/no partial durability on failed mutation;
-- Rakit-neutral error translation.
-
-This capability does not imply relationship graph mutation or optimistic concurrency.
+A conforming adapter must prove ordinary scalar create, update, and delete; durable results after success; rollback/no partial durability on failure; and portable errors. This capability does not imply relationship graph mutation or optimistic concurrency.
 
 ### `persistence.relationships@v1`
 
@@ -197,7 +220,9 @@ rakit-core
    |     `-- persistence.sqlalchemy-core  (Table/Core)
    |
    |-- rakit-tortoise                     (independent ORM)
-   `-- rakit-piccolo                      (independent ORM)
+   |-- rakit-peewee                       (Peewee 4 async adapter)
+   |-- rakit-piccolo                      (independent async ORM)
+   `-- rakit-masonite-orm                 (only if D3.5 feasibility passes)
 
 SQLModel -- compatibility proof --> rakit-sqlalchemy / persistence.sqlalchemy
 
@@ -212,13 +237,15 @@ No first-installed-wins behavior is introduced.
 - SQLAlchemy declarative/SQLModel classes are owned by the SQLAlchemy ORM claimant.
 - SQLAlchemy `Table` objects are owned by the SQLAlchemy Core claimant.
 - Tortoise model classes are owned by Tortoise.
+- Peewee models are owned by Peewee.
 - Piccolo table/model classes are owned by Piccolo.
+- Masonite models are owned by Masonite only if the adapter ships.
 - Explicit adapter selection remains available where the existing registration API supports it.
-- If two adapters claim one subject, compilation fails with the existing ambiguity semantics; D3 does not silently choose based on installation order.
+- If two adapters claim one subject, compilation fails with the existing ambiguity semantics.
 
 ## Identity policy
 
-Initial first-party support remains conservative: one scalar primary key representable by Rakit's existing `RecordIdentity` (`int`, `str`, or `UUID`). Composite-key support is not introduced as a side effect of adding adapters. A future contract version may broaden identity semantics deliberately.
+Initial first-party support remains conservative: one scalar primary key representable by Rakit's existing `RecordIdentity` (`int`, `str`, or `UUID`). Composite-key support is not introduced as a side effect of adding adapters.
 
 ## Field policy
 
@@ -228,7 +255,7 @@ Portable baseline:
 
 - search: text-like fields only;
 - sort: scalar concrete fields;
-- filters: equality/inequality/comparison where coercion is safe, string contains, membership, and null checks where the backend supports them;
+- filters: equality/inequality/comparison where coercion is safe, string contains, membership, and null checks where supported;
 - generated mutation fields: concrete writable non-identity scalar fields;
 - sensitive-field conventions continue to pass through `infer_field_security`.
 
@@ -238,8 +265,10 @@ Unsupported JSON/binary/custom fields may be readable but must not silently pret
 
 - `pip install "rakit[sqlalchemy]"` — SQLAlchemy ORM and Core integration package.
 - `pip install "rakit[tortoise]"` — Tortoise adapter.
-- `pip install "rakit[sqlmodel]"` — SQLAlchemy adapter plus supported SQLModel dependency; provider remains `persistence.sqlalchemy`.
+- `pip install "rakit[peewee]"` — Peewee adapter.
 - `pip install "rakit[piccolo]"` — Piccolo adapter.
+- `pip install "rakit[masonite-orm]"` — only added if D3.5 ships a conforming adapter.
+- `pip install "rakit[sqlmodel]"` — SQLAlchemy adapter plus supported SQLModel dependency; provider remains `persistence.sqlalchemy`.
 - `pip install "rakit[standard]"` — remains SQLAlchemy ORM-oriented; D3 does not turn `standard` into an install-everything bundle.
 
 Direct distribution installation remains supported for first-party adapter packages.
@@ -258,31 +287,39 @@ Implement native `Table` support in `rakit-sqlalchemy`, real Core read/write/UoW
 
 Complete `rakit-tortoise` read support first, then add only write/UoW/higher capabilities proven by the shared contract.
 
-### D3.3 — SQLModel Compatibility Profile
+### D3.3 — Peewee 4 Async ORM
 
-Add real SQLModel compatibility tests and install UX on top of the SQLAlchemy ORM adapter. No duplicate provider.
+Add `rakit-peewee` over Peewee's official async database layer and prove its honest capability profile.
 
 ### D3.4 — Piccolo ORM
 
 Add `rakit-piccolo` and prove its honest capability profile.
 
-### D3.5 — Persistence Integration DX, Compatibility Matrix & Closure
+### D3.5 — Masonite ORM Feasibility / Adapter
+
+Evaluate the maintained `masonite-framework-orm` line against Rakit async/UoW requirements; ship an adapter only if public APIs satisfy the contract cleanly.
+
+### D3.6 — SQLModel Compatibility Profile
+
+Add real SQLModel compatibility tests and install UX on top of the SQLAlchemy ORM adapter. No duplicate provider.
+
+### D3.7 — Persistence Integration DX, Compatibility Matrix & Closure
 
 Publish a provider/capability matrix, clean-install smoke coverage for extras, artifact inventory, lowest/latest dependency compatibility, docs, and canonical roadmap closure. Mark D4 Next only after the accepted D3 matrix is green on `main`.
 
-Each subphase may be a separate PR. Every merge uses **squash**. If implementation reveals that a later adapter would require changing a canonical capability contract rather than merely implementing it, stop that adapter at the highest honest capability set and record the contract pressure point for a future version instead of widening v1 silently.
+Each subphase may be a separate PR. Every merge uses **squash**. If implementation reveals that an adapter would require changing a canonical capability contract rather than merely implementing it, stop that adapter at the highest honest capability set and record the contract pressure point for a future version instead of widening v1 silently.
 
 ## Non-goals
 
 - replacing SQLAlchemy ORM as default;
-- migration-tool abstraction across Alembic/Aerich/Piccolo migrations;
+- migration-tool abstraction across Alembic/Aerich/Piccolo/Masonite migration systems;
 - multi-database routing;
 - composite primary keys;
 - Rakit persistence model DSL/base classes;
 - automatic dependency uninstall/switch CLI;
 - forced capability parity;
 - Django async transaction emulation through thread wrappers;
-- document-database semantics under the relational v1 contract;
+- forcing MongoDB/Beanie, Turso/libSQL, or CouchDB through relational ORM v1 semantics;
 - release, tag, or publication.
 
 ## Acceptance criteria
@@ -293,12 +330,14 @@ D3 overall is complete when:
 2. Existing SQLAlchemy ORM conformance remains green with no capability regression.
 3. Native SQLAlchemy `Table` resources work through a first-party Core integration and every advertised Core capability has a real proof.
 4. `rakit-tortoise` is an official typed distribution and every advertised Tortoise capability has a real proof.
-5. Real SQLModel models pass the supported SQLAlchemy compatibility matrix without a duplicate persistence provider.
+5. `rakit-peewee` is an official typed distribution and every advertised Peewee capability has a real proof.
 6. `rakit-piccolo` is an official typed distribution and every advertised Piccolo capability has a real proof.
-7. Core/web contain no concrete SQLAlchemy, Tortoise, SQLModel, or Piccolo persistence imports.
-8. Discovery/configured-integration metadata is deterministic and actionable.
-9. Clean-installed extras and official artifacts are tested outside the repository checkout.
-10. The public persistence compatibility matrix documents capability differences and intentional non-parity.
-11. No temporary CI/helper files remain in final subphase PRs.
-12. `docs/roadmap.md` exposes D3.0–D3.5 status and marks D3 overall Complete only after all accepted subphases pass canonical CI.
-13. Every D3 PR is exact-head green and squash-merged.
+7. Masonite ORM has either a clean first-party adapter with proven capabilities or a documented feasibility rejection explaining why Rakit intentionally does not ship it yet.
+8. Real SQLModel models pass the supported SQLAlchemy compatibility matrix without a duplicate persistence provider.
+9. Core/web contain no concrete backend persistence imports.
+10. Discovery/configured-integration metadata is deterministic and actionable.
+11. Clean-installed extras and official artifacts are tested outside the repository checkout.
+12. The public persistence compatibility matrix documents capability differences and intentional non-parity.
+13. No temporary CI/helper files remain in final subphase PRs.
+14. `docs/roadmap.md` exposes D3.0–D3.7 status and marks D3 overall Complete only after all accepted subphases pass canonical CI.
+15. Every D3 PR is exact-head green and squash-merged.
