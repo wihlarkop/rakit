@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rakit-schema-pydantic"
+version = "0.1.0a1"
+requires-python = ">=3.12"
+dependencies = [
+    "rakit-core==0.1.0a1",
+    "pydantic>=2",
+]
+
+[project.entry-points."rakit.integrations"]
+"schema.pydantic" = "rakit_schema_pydantic.discovery:PYDANTIC_INTEGRATION"
+
+[tool.uv.sources]
+rakit-core = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rakit_schema_pydantic"]
