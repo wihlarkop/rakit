@@ -28,6 +28,7 @@ def test_canonical_extras_match_package_metadata() -> None:
         "sqlalchemy",
         "auth-sqlalchemy",
         "storage-local",
+        "msgspec",
         "standard",
     }
     assert {extra.value for extra in InstallExtra} == set(optional)
@@ -47,6 +48,7 @@ def test_standard_extra_is_server_neutral_and_driver_neutral() -> None:
 def test_requirement_formatting_is_deterministic_and_deduplicated() -> None:
     assert rakit_requirement() == "rakit"
     assert rakit_requirement(InstallExtra.SQLALCHEMY) == "rakit[sqlalchemy]"
+    assert rakit_requirement(InstallExtra.MSGSPEC) == "rakit[msgspec]"
     assert (
         rakit_requirement(
             InstallExtra.UVICORN,
