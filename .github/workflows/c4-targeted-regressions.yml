@@ -1,0 +1,58 @@
+name: C4 targeted regressions
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  targeted:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-packages --dev --locked
+      - name: Format and lint regression surface
+        run: |
+          uv run ruff format --check \
+            packages/rakit-core/tests/test_capabilities.py \
+            packages/rakit-core/tests/test_adapter_capability_negotiation.py \
+            packages/rakit/tests/test_capability_cli.py \
+            packages/rakit/tests/test_integration_discovery.py \
+            packages/rakit-web/tests/test_capability_discovery.py \
+            packages/rakit-sqlalchemy/tests/test_capability_profile.py \
+            packages/rakit-storage-local/tests/test_local_storage_plugin.py \
+            packages/rakit-auth-sqlalchemy/tests/test_auth_plugin.py
+          uv run ruff check \
+            packages/rakit-core/tests/test_capabilities.py \
+            packages/rakit-core/tests/test_adapter_capability_negotiation.py \
+            packages/rakit/tests/test_capability_cli.py \
+            packages/rakit/tests/test_integration_discovery.py \
+            packages/rakit-web/tests/test_capability_discovery.py \
+            packages/rakit-sqlalchemy/tests/test_capability_profile.py \
+            packages/rakit-storage-local/tests/test_local_storage_plugin.py \
+            packages/rakit-auth-sqlalchemy/tests/test_auth_plugin.py
+      - name: Type-check C4 regression surface
+        run: |
+          uv run ty check \
+            packages/rakit-core/src packages/rakit-core/tests/test_capabilities.py packages/rakit-core/tests/test_adapter_capability_negotiation.py \
+            packages/rakit/src packages/rakit/tests/test_capability_cli.py packages/rakit/tests/test_integration_discovery.py \
+            packages/rakit-web/src packages/rakit-web/tests/test_capability_discovery.py \
+            packages/rakit-sqlalchemy/src packages/rakit-sqlalchemy/tests/test_capability_profile.py \
+            packages/rakit-storage-local/src packages/rakit-storage-local/tests/test_local_storage_plugin.py \
+            packages/rakit-auth-sqlalchemy/src packages/rakit-auth-sqlalchemy/tests/test_auth_plugin.py
+      - name: Run C4 targeted regressions
+        run: |
+          uv run pytest -q \
+            packages/rakit-core/tests/test_capabilities.py \
+            packages/rakit-core/tests/test_adapter_capability_negotiation.py \
+            packages/rakit/tests/test_capability_cli.py \
+            packages/rakit/tests/test_integration_discovery.py \
+            packages/rakit-web/tests/test_capability_discovery.py \
+            packages/rakit-sqlalchemy/tests/test_capability_profile.py \
+            packages/rakit-storage-local/tests/test_local_storage_plugin.py \
+            packages/rakit-auth-sqlalchemy/tests/test_auth_plugin.py
