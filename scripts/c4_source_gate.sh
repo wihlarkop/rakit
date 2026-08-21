@@ -268,7 +268,17 @@ PY
 rm -f c4_smoke_target.py
 rm -rf __pycache__
 
-uv run ty check
+uv run ty check \
+  packages/rakit-core/src \
+  packages/rakit-web/src \
+  packages/rakit-sqlalchemy/src \
+  packages/rakit-auth-sqlalchemy/src \
+  packages/rakit-storage/src \
+  packages/rakit-storage-local/src \
+  packages/rakit-server/src \
+  packages/rakit-server-uvicorn/src \
+  packages/rakit-server-granian/src \
+  packages/rakit/src
 
 git add \
   packages/rakit-core/src \
