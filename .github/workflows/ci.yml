@@ -16,6 +16,70 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --all-packages --dev --locked
+      - name: Patch temporary SQLAlchemy smoke harness ownership
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("scripts/_d1_source_smoke.py")
+          text = path.read_text()
+          old = '''        self.executor = SQLAlchemyGeneratedResourceExecutorProvider(model=ContractUser).build(
+            GeneratedResourceExecutorContext(
+                resource_id="users",
+                data_source=self.data_source,
+                concurrency_provider=self.version_provider,
+                concurrency_tokens=self.tokens,
+            )
+        )
+'''
+          new = '''        provider = SQLAlchemyGeneratedResourceExecutorProvider(model=ContractUser)
+        self.write_executor = provider.build(
+            GeneratedResourceExecutorContext(resource_id="users", data_source=self.data_source)
+        )
+        self.concurrency_executor = provider.build(
+            GeneratedResourceExecutorContext(
+                resource_id="users",
+                data_source=self.data_source,
+                concurrency_provider=self.version_provider,
+                concurrency_tokens=self.tokens,
+            )
+        )
+'''
+          if old not in text:
+              raise SystemExit("temporary harness constructor pattern not found")
+          text = text.replace(old, new, 1)
+          text = text.replace("executor=self.executor,", "executor=self.write_executor,", 1)
+          text = text.replace(
+              "executor=self.executor,\n            request=GeneratedCrudRequest.update_partial(",
+              "executor=(self.concurrency_executor if concurrency_required else self.write_executor),\n            request=GeneratedCrudRequest.update_partial(",
+              1,
+          )
+          old_delete = '''        assert result.record is not None
+        token = self.tokens.issue(
+            "users", result.identity, self.version_provider.version_for(result.record)
+        )
+        return await _execute(
+            api=self.api,
+            executor=self.executor,
+            request=GeneratedCrudRequest.delete(result.identity, concurrency_token=token),
+            authorization=_authorization("delete", result.identity),
+            uow_factory=self.uow_factory,
+            concurrency_required=True,
+        )
+'''
+          new_delete = '''        return await _execute(
+            api=self.api,
+            executor=self.write_executor,
+            request=GeneratedCrudRequest.delete(result.identity),
+            authorization=_authorization("delete", result.identity),
+            uow_factory=self.uow_factory,
+        )
+'''
+          if old_delete not in text:
+              raise SystemExit("temporary harness delete pattern not found")
+          text = text.replace(old_delete, new_delete, 1)
+          path.write_text(text)
+          PY
       - run: uv run ruff format packages/rakit-core/src/rakit_core packages/rakit-core/src/rakit_core/testing scripts/_d1_source_smoke.py
       - run: uv run ruff check packages/rakit-core/src/rakit_core packages/rakit-core/src/rakit_core/testing scripts/_d1_source_smoke.py
       - name: Run real first-party D1 conformance matrix
