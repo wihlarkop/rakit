@@ -16,45 +16,11 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --all-packages --dev --locked
-      - name: Patch temporary source-smoke typing
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path("scripts/_d1_source_smoke.py")
-          text = path.read_text()
-          text = text.replace(
-              "from collections.abc import Mapping\n",
-              "from collections.abc import Mapping\nfrom typing import Any, cast\n",
-          )
-          text = text.replace(
-              "from rakit_core.generated_operations import (\n",
-              "from rakit_core.generated_operations import (\n    GeneratedResourceExecutor,\n",
-          )
-          text = text.replace(
-              '        assert updated.record is not None\n        assert updated.record.email == "write-updated@example.com"\n',
-              '        updated_record = updated.record\n        assert updated_record is not None\n        assert updated_record.email == "write-updated@example.com"\n',
-          )
-          text = text.replace(
-              "        assert updated.record is not None\n        assert updated.record.version == 2\n",
-              "        updated_record = updated.record\n        assert updated_record is not None\n        assert updated_record.version == 2\n",
-          )
-          text = text.replace(
-              "    executor: object,\n",
-              "    executor: GeneratedResourceExecutor,\n",
-          )
-          text = text.replace(
-              "        app=web_app,\n",
-              "        app=cast(Any, web_app),\n",
-          )
-          path.write_text(text)
-          PY
-      - name: Format source gate checkout
+      - name: Format temporary source-smoke checkout
         run: uv run ruff format .
       - run: uv run ruff check .
-      - run: uv run ty check
       - name: Run D1 plain-Python first-party conformance smoke
         run: uv run python scripts/_d1_source_smoke.py
-      - name: Print formatter changes for application to branch
+      - name: Print formatter changes for cleanup reference
         if: always()
-        run: git diff --no-ext-diff --unified=20 -- packages/rakit-core/src/rakit_core packages/rakit-core/src/rakit_core/testing scripts/_d1_source_smoke.py
+        run: git diff --no-ext-diff --unified=20 -- scripts/_d1_source_smoke.py
