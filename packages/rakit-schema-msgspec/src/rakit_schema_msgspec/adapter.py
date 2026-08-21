@@ -7,7 +7,7 @@ from rakit_core.schema import SchemaField, SchemaValidationError, SchemaValidati
 from .capabilities import MSGSPEC_SCHEMA_CAPABILITIES
 from .discovery import MSGSPEC_INTEGRATION
 
-_PATH_RE = re.compile(r" - at \$(?P<path>(?:\.[^.\[]+|\[[^\]]+\])*)$")
+_PATH_RE = re.compile(r" - at `\$(?P<path>(?:\.[^.\[]+|\[[^\]]+\])*)`$")
 
 
 class MsgspecSchemaAdapter:
