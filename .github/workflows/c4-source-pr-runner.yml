@@ -59,7 +59,13 @@ jobs:
                       in_source_literal = not in_source_literal
               if in_source_literal:
                   raise RuntimeError(f'Unclosed source literal while extracting {name}')
-              return '\n'.join(normalized) + '\n'
+              script = '\n'.join(normalized) + '\n'
+              if name == 'Apply C4 source changes':
+                  script = script.replace(
+                      r'    return "\\n".join(lines)',
+                      r'    return "\\\\n".join(lines)',
+                  )
+              return script
 
           for name in wanted:
               print(f'::group::{name}', flush=True)
