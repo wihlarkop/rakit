@@ -138,9 +138,9 @@ async def _schema_output_serialization(harness: object) -> None:
 async def _schema_partial_update(harness: object) -> None:
     assert isinstance(harness, SchemaConformanceHarness)
     assert isinstance(harness.adapter, PartialInputSchemaAdapter)
-    assert dict(harness.adapter.validate_partial_input(harness.schema, harness.partial_input)) == dict(
-        harness.expected_partial_output
-    )
+    assert dict(
+        harness.adapter.validate_partial_input(harness.schema, harness.partial_input)
+    ) == dict(harness.expected_partial_output)
 
 
 async def _asgi_exchange(app: ASGIApp, path: str) -> tuple[dict[str, Any], ...]:
@@ -297,9 +297,7 @@ CANONICAL_CONFORMANCE_SPECS: tuple[CapabilityConformanceSpec, ...] = (
     ),
 )
 
-CANONICAL_CONFORMANCE_SPEC_REGISTRY = build_conformance_spec_registry(
-    CANONICAL_CONFORMANCE_SPECS
-)
+CANONICAL_CONFORMANCE_SPEC_REGISTRY = build_conformance_spec_registry(CANONICAL_CONFORMANCE_SPECS)
 
 
 __all__ = [
