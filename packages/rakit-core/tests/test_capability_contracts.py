@@ -1,7 +1,7 @@
 import pytest
 import rakit_core.adapter_capabilities as adapter_capabilities
-import rakit_core.capability_contracts as capability_contracts
 from rakit_core.capabilities import Capability, CapabilitySet
+import rakit_core.capability_contracts as capability_contracts
 
 
 EXPECTED_CANONICAL_NAMES = {
