@@ -13,6 +13,7 @@ from rakit_core.adapter_capabilities import (
 from rakit_core.capabilities import CapabilitySet
 from rakit_core.conformance import (
     CapabilityBehaviorCheck,
+    CapabilityConformanceResult,
     CapabilityConformanceSpec,
     ConformanceFailureKind,
     IntegrationConformanceResult,
@@ -22,7 +23,20 @@ from rakit_core.conformance import (
     run_integration_conformance,
     validate_advertised_capabilities,
 )
-from rakit_sqlalchemy.discovery import SQLALCHEMY_INTEGRATION
+from rakit_core.integrations import IntegrationDescriptor
+
+
+TEST_PERSISTENCE_INTEGRATION = IntegrationDescriptor(
+    integration_id="test.persistence",
+    category="persistence",
+    display_name="Test Persistence",
+    advertised_capabilities=CapabilitySet.of(
+        PERSISTENCE_READ,
+        PERSISTENCE_WRITE,
+        TRANSACTIONS_ROOT_UOW,
+        CONCURRENCY_ATOMIC_OPTIMISTIC,
+    ),
+)
 
 
 async def _pass(_harness: object) -> None:
@@ -39,7 +53,7 @@ async def _fail_two(_harness: object) -> None:
 
 def test_missing_advertised_prerequisites_are_hard_failures() -> None:
     descriptor = replace(
-        SQLALCHEMY_INTEGRATION,
+        TEST_PERSISTENCE_INTEGRATION,
         advertised_capabilities=CapabilitySet.of(CONCURRENCY_ATOMIC_OPTIMISTIC),
     )
     failures = validate_advertised_capabilities(descriptor)
@@ -51,8 +65,8 @@ def test_missing_advertised_prerequisites_are_hard_failures() -> None:
     assert TRANSACTIONS_ROOT_UOW.name in failure.message
 
 
-def test_valid_first_party_advertisement_has_no_prerequisite_failure() -> None:
-    assert validate_advertised_capabilities(SQLALCHEMY_INTEGRATION) == ()
+def test_valid_first_party_shaped_advertisement_has_no_prerequisite_failure() -> None:
+    assert validate_advertised_capabilities(TEST_PERSISTENCE_INTEGRATION) == ()
 
 
 def test_spec_registry_rejects_duplicate_and_wrong_version_specs() -> None:
@@ -90,7 +104,7 @@ async def test_behavior_failures_are_structured_and_deterministic() -> None:
         )
     )
     result = await run_capability_conformance(
-        descriptor=SQLALCHEMY_INTEGRATION,
+        descriptor=TEST_PERSISTENCE_INTEGRATION,
         capability=PERSISTENCE_READ,
         harness=object(),
         specs=specs,
@@ -108,7 +122,7 @@ async def test_behavior_failures_are_structured_and_deterministic() -> None:
 @pytest.mark.anyio
 async def test_missing_spec_and_missing_harness_fail_closed() -> None:
     missing_spec = await run_capability_conformance(
-        descriptor=SQLALCHEMY_INTEGRATION,
+        descriptor=TEST_PERSISTENCE_INTEGRATION,
         capability=PERSISTENCE_READ,
         harness=object(),
         specs={},
@@ -119,7 +133,7 @@ async def test_missing_spec_and_missing_harness_fail_closed() -> None:
 
     integration_result = await run_integration_conformance(
         descriptor=replace(
-            SQLALCHEMY_INTEGRATION,
+            TEST_PERSISTENCE_INTEGRATION,
             advertised_capabilities=CapabilitySet.of(PERSISTENCE_READ),
         ),
         harnesses={},
@@ -131,8 +145,6 @@ async def test_missing_spec_and_missing_harness_fail_closed() -> None:
 
 
 def test_matrix_rows_sort_without_reordering_runtime_declarations() -> None:
-    from rakit_core.conformance import CapabilityConformanceResult
-
     integration = IntegrationConformanceResult(
         integration_id="example.integration",
         results=(
