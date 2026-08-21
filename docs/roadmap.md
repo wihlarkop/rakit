@@ -28,7 +28,8 @@ Rakit remains under active pre-release development. The current package version 
 | **Phase B overall** | **Complete** |
 | Phase C1 friendly CRUD and lifecycle APIs | **Complete** |
 | Phase C2 project initialization and scaffolding | **Complete** |
-| Phase C3 installation and extras UX | **Next** |
+| Phase C3 installation and extras UX | **Complete** |
+| Phase C4 capability discovery | **Next** |
 | Phase C developer experience and lifecycle ergonomics | **Next** |
 | Phase D adapter ecosystem | **Planned** |
 | Phase E generated APIs v1 | **Planned; foundation exists** |
@@ -312,27 +313,40 @@ C2 was verified source-first with a manual runner matrix covering dry-run, missi
 
 ### C3 — Installation and extras UX
 
-**Status: Next**
+**Status: Complete**
 
-Continue simplifying optional capability installation.
+C3 makes optional capability installation explicit, deterministic, and consistent across
+package metadata, runtime diagnostics, release verification, and `rakit init`:
 
-Examples:
+- the public facade exposes exactly six canonical extras: `uvicorn`, `granian`,
+  `sqlalchemy`, `auth-sqlalchemy`, `storage-local`, and `standard`.
+- `standard` is intentionally server-neutral and database-driver-neutral; applications
+  select Uvicorn or Granian and their database driver explicitly.
+- the unpublished `server-uvicorn` alias was removed rather than carried as compatibility
+  surface before the first public release.
+- one typed internal install vocabulary produces deterministic Rakit requirement strings,
+  `uv add` argv, and shell-facing guidance without duplicating raw extra names across the
+  framework.
+- missing top-level optional implementation packages now report the capability that is
+  unavailable plus the exact `uv add` command needed to install it.
+- transitive `ModuleNotFoundError` failures remain untouched so dependency bugs are not
+  disguised as missing optional capabilities.
+- C2 scaffold dependency selection uses the same vocabulary: minimal starters select only
+  their server extra, while standard starters select `rakit[standard,<server>]` and keep
+  `aiosqlite` as a separate application-owned dependency.
+- clean-installed release verification now exercises `rakit[standard,uvicorn]` explicitly
+  and continues to verify Granian independently.
 
-```bash
-uv add "rakit[standard]"
-uv add "rakit[uvicorn]"
-uv add "rakit[granian]"
-uv add "rakit[sqlalchemy]"
-```
-
-Goals:
-
-- predictable extra names.
-- clear missing-dependency errors.
-- no implicit adapter activation.
-- no unnecessary heavy dependencies in the base install.
+C3 was verified source-first. A temporary non-pytest source smoke first proved canonical
+metadata, install vocabulary, all scaffold combinations, optional diagnostics, transitive
+failure preservation, and removal of the unpublished alias. Regression verification then
+passed Ruff formatting/linting, `ty`, full pytest on Python 3.12/3.13/3.14, lowest-direct
+and latest dependency matrices, coverage, strict MkDocs, artifact validation, artifact
+dry-run, and generated web-asset reproducibility.
 
 ### C4 — Capability discovery
+
+**Status: Next**
 
 Expand diagnostics such as `rakit check` and capability inspection.
 
