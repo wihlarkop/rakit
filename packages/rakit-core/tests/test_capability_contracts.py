@@ -21,13 +21,10 @@ EXPECTED_CANONICAL_NAMES = {
 
 
 def test_canonical_registry_covers_exact_v1_vocabulary() -> None:
-    assert {
-        contract.capability.name
-        for contract in capability_contracts.CANONICAL_CAPABILITY_CONTRACTS
-    } == EXPECTED_CANONICAL_NAMES
-    assert all(
-        contract.version == 1 for contract in capability_contracts.CANONICAL_CAPABILITY_CONTRACTS
-    )
+    contracts = capability_contracts.CANONICAL_CAPABILITY_CONTRACTS
+    names = {contract.capability.name for contract in contracts}
+    assert names == EXPECTED_CANONICAL_NAMES
+    assert all(contract.version == 1 for contract in contracts)
     assert capability_contracts.get_capability_contract("vendor.custom") is None
 
 
