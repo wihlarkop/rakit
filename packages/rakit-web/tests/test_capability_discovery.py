@@ -102,8 +102,8 @@ def test_custom_auth_is_reported_as_custom_unknown_without_inventing_identity() 
 
     configured = admin.builder.configured_integrations
     assert tuple(item.integration_id for item in configured) == (
-        "web.starlette",
         "schema.pydantic",
+        "web.starlette",
         None,
     )
     assert configured[2].category == "authentication"
