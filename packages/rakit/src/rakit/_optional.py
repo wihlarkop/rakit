@@ -1,50 +1,63 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from importlib import import_module
 from types import ModuleType
+
+from ._install import InstallExtra, format_uv_add_command
 
 
 class RakitOptionalDependencyError(ImportError):
     pass
 
 
-def require_module(module_name: str, *, extra: str) -> ModuleType:
+@dataclass(frozen=True, slots=True)
+class OptionalDependency:
+    extra: InstallExtra
+    label: str
+
+
+def _missing_message(dependency: OptionalDependency) -> str:
+    return (
+        f"{dependency.label} support is not installed.\n\n"
+        "Install it with:\n"
+        f"    {format_uv_add_command(dependency.extra)}\n"
+    )
+
+
+def require_module(module_name: str, *, dependency: OptionalDependency) -> ModuleType:
     try:
         return import_module(module_name)
     except ModuleNotFoundError as exc:
         if exc.name != module_name:
             raise
-        raise RakitOptionalDependencyError(
-            f"Optional Rakit support is not installed. Install it with:\n\n"
-            f'    uv add "rakit[{extra}]"\n'
-        ) from exc
+        raise RakitOptionalDependencyError(_missing_message(dependency)) from exc
 
 
 @contextmanager
-def optional_import(module_name: str, *, extra: str) -> Iterator[None]:
-    """Wrap a static ``from <optional_package> import ...`` statement so a
-    missing optional distribution raises a friendly, actionable
-    ``RakitOptionalDependencyError`` instead of a bare ``ModuleNotFoundError``
-    -- while a transitive dependency of an INSTALLED optional package that's
-    itself missing still propagates unchanged (matching the same safety
-    property as ``require_module``).
+def optional_import(
+    module_name: str,
+    *,
+    dependency: OptionalDependency,
+) -> Iterator[None]:
+    """Guard a statically typed import of an optional Rakit implementation.
 
-    Usage::
-
-        with optional_import("rakit_server_uvicorn", extra="server-uvicorn"):
-            from rakit_server_uvicorn.server import UvicornServer
-
-    This preserves full static typing for the imported names (a real import
-    statement, not a dynamic ``importlib.import_module`` call), unlike
-    ``require_module``, which is for cases where you only need the module
-    object itself and don't need static typing on its contents.
+    A missing top-level implementation package becomes an actionable
+    ``RakitOptionalDependencyError``. Missing transitive dependencies from an
+    installed implementation propagate unchanged so a broken adapter is not
+    misdiagnosed as an uninstalled Rakit extra.
     """
     try:
         yield
     except ModuleNotFoundError as exc:
         if exc.name != module_name:
             raise
-        raise RakitOptionalDependencyError(
-            f"Optional Rakit support is not installed. Install it with:\n\n"
-            f'    uv add "rakit[{extra}]"\n'
-        ) from exc
+        raise RakitOptionalDependencyError(_missing_message(dependency)) from exc
+
+
+__all__ = [
+    "OptionalDependency",
+    "RakitOptionalDependencyError",
+    "optional_import",
+    "require_module",
+]
