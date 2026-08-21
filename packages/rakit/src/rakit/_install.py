@@ -6,6 +6,7 @@ from enum import Enum
 class InstallExtra(str, Enum):
     STANDARD = "standard"
     SQLALCHEMY = "sqlalchemy"
+    TORTOISE = "tortoise"
     AUTH_SQLALCHEMY = "auth-sqlalchemy"
     STORAGE_LOCAL = "storage-local"
     MSGSPEC = "msgspec"
@@ -16,11 +17,12 @@ class InstallExtra(str, Enum):
 _EXTRA_ORDER = {
     InstallExtra.STANDARD: 0,
     InstallExtra.SQLALCHEMY: 1,
-    InstallExtra.AUTH_SQLALCHEMY: 2,
-    InstallExtra.STORAGE_LOCAL: 3,
-    InstallExtra.MSGSPEC: 4,
-    InstallExtra.UVICORN: 5,
-    InstallExtra.GRANIAN: 6,
+    InstallExtra.TORTOISE: 2,
+    InstallExtra.AUTH_SQLALCHEMY: 3,
+    InstallExtra.STORAGE_LOCAL: 4,
+    InstallExtra.MSGSPEC: 5,
+    InstallExtra.UVICORN: 6,
+    InstallExtra.GRANIAN: 7,
 }
 
 
