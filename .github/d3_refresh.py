@@ -19,3 +19,8 @@ replace_once(
     '        "rakit_sqlalchemy",\n        "rakit_storage",',
     '        "rakit_sqlalchemy",\n        "rakit_tortoise",\n        "rakit_storage",',
 )
+replace_once(
+    "packages/rakit-tortoise/src/rakit_tortoise/datasource.py",
+    "from collections.abc import Iterable\n",
+    "",
+)
