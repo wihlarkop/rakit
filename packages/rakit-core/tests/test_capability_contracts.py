@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from rakit_core.adapter_capabilities import (
     CONCURRENCY_ATOMIC_OPTIMISTIC,
     PERSISTENCE_READ,
