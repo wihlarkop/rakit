@@ -14,6 +14,9 @@ dependencies = [
 [project.entry-points."rakit.integrations"]
 "schema.pydantic" = "rakit_schema_pydantic.discovery:PYDANTIC_INTEGRATION"
 
+[project.entry-points."rakit.schema_adapters"]
+"schema.pydantic" = "rakit_schema_pydantic.adapter:PydanticSchemaAdapter"
+
 [tool.uv.sources]
 rakit-core = { workspace = true }
 
