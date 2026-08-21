@@ -263,7 +263,7 @@ async def run_integration_conformance(
                             kind=ConformanceFailureKind.REGISTRY,
                             capability=capability_name,
                             message=(
-                                f'No conformance harness exists for integration '
+                                f"No conformance harness exists for integration "
                                 f'"{descriptor.integration_id}" capability "{capability_name}"'
                             ),
                         ),
@@ -292,8 +292,7 @@ def conformance_matrix_rows(
     for integration_result in results:
         for result in integration_result.results:
             advertisement_failed = any(
-                failure.kind is ConformanceFailureKind.ADVERTISEMENT
-                for failure in result.failures
+                failure.kind is ConformanceFailureKind.ADVERTISEMENT for failure in result.failures
             )
             behavior_failed = any(
                 failure.kind in {ConformanceFailureKind.BEHAVIOR, ConformanceFailureKind.REGISTRY}
