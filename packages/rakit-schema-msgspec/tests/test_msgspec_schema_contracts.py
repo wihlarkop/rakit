@@ -81,3 +81,27 @@ def test_msgspec_partial_update_rejects_invalid_present_and_unknown_fields() -> 
 
     with pytest.raises(SchemaValidationError):
         adapter.validate_partial_input(ContactSchema, {"unknown": "value"})
+
+
+def test_msgspec_rejects_non_struct_schema_types() -> None:
+    adapter = MsgspecSchemaAdapter()
+
+    with pytest.raises(TypeError, match="msgspec.Struct"):
+        adapter.fields(dict)
+    with pytest.raises(TypeError, match="msgspec.Struct"):
+        adapter.validate_input(dict, {})
+    with pytest.raises(TypeError, match="msgspec.Struct"):
+        adapter.validate_partial_input(dict, {})
+
+
+def test_msgspec_validation_errors_are_translated_to_rakit_issues() -> None:
+    adapter = MsgspecSchemaAdapter()
+
+    with pytest.raises(SchemaValidationError) as exc_info:
+        adapter.validate_input(ContactSchema, {"name": "Ada", "age": "bad"})
+
+    assert exc_info.value.issues
+    issue = exc_info.value.issues[0]
+    assert issue.location
+    assert issue.code == "validation_error"
+    assert issue.message
