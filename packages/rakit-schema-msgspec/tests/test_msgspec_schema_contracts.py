@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import msgspec
 import pytest
 from rakit_core.adapter_capabilities import (
@@ -24,8 +26,7 @@ class ContactSchema(msgspec.Struct):
     nickname: str | None = None
 
 
-@pytest.mark.anyio
-async def test_msgspec_schema_adapter_conforms_to_all_advertised_v1_contracts() -> None:
+def test_msgspec_schema_adapter_conforms_to_all_advertised_v1_contracts() -> None:
     adapter = MsgspecSchemaAdapter()
     harness = SchemaConformanceHarness(
         adapter=adapter,
@@ -49,10 +50,12 @@ async def test_msgspec_schema_adapter_conforms_to_all_advertised_v1_contracts() 
         SCHEMA_PARTIAL_UPDATE.name: harness,
     }
 
-    result = await run_integration_conformance(
-        descriptor=MSGSPEC_INTEGRATION,
-        harnesses=harnesses,
-        specs=CANONICAL_CONFORMANCE_SPEC_REGISTRY,
+    result = asyncio.run(
+        run_integration_conformance(
+            descriptor=MSGSPEC_INTEGRATION,
+            harnesses=harnesses,
+            specs=CANONICAL_CONFORMANCE_SPEC_REGISTRY,
+        )
     )
 
     assert result.passed, result.failures
