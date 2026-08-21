@@ -5,12 +5,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import rakit._server as server_facade
 from rakit._install import (
     InstallExtra,
     format_uv_add_command,
     rakit_requirement,
     uv_add_command,
 )
+from rakit_server import ServerAdapterNotFoundError
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _RAKIT_PYPROJECT = _REPOSITORY_ROOT / "packages" / "rakit" / "pyproject.toml"
@@ -79,6 +81,20 @@ def test_uv_add_command_keeps_application_packages_outside_extras() -> None:
         )
         == 'uv add "rakit[standard,granian]" asyncpg'
     )
+
+
+def test_missing_server_hint_reuses_canonical_uv_install_guidance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def missing_server(*args: object, **kwargs: object) -> None:
+        raise ServerAdapterNotFoundError('Server adapter "uvicorn" is not installed')
+
+    monkeypatch.setattr(server_facade, "_run_server", missing_server)
+
+    with pytest.raises(ServerAdapterNotFoundError) as captured:
+        server_facade.run(object(), server="uvicorn")
+
+    assert str(captured.value).endswith('Install it with: uv add "rakit[uvicorn]"')
 
 
 def test_raw_extra_names_are_rejected_at_runtime() -> None:
