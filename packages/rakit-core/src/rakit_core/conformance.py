@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
 from .capabilities import Capability, CapabilitySet
-from .capability_contracts import (
-    CapabilityContract,
-    get_capability_contract,
-)
+from .capability_contracts import CapabilityContract, get_capability_contract
 from .integrations import IntegrationDescriptor
 
 
@@ -53,6 +50,19 @@ class IntegrationConformanceResult:
     @property
     def failures(self) -> tuple[ConformanceFailure, ...]:
         return tuple(failure for result in self.results for failure in result.failures)
+
+
+@dataclass(frozen=True, slots=True)
+class ConformanceMatrixRow:
+    integration_id: str
+    capability: str
+    contract_version: int
+    prerequisite_valid: bool
+    behavior_valid: bool
+
+    @property
+    def passed(self) -> bool:
+        return self.prerequisite_valid and self.behavior_valid
 
 
 CapabilityCheckCallable = Callable[[object], Awaitable[None]]
@@ -140,7 +150,7 @@ def build_conformance_spec_registry(
 
 
 def get_conformance_spec(
-    specs: dict[tuple[str, int], CapabilityConformanceSpec],
+    specs: Mapping[tuple[str, int], CapabilityConformanceSpec],
     contract: CapabilityContract,
 ) -> CapabilityConformanceSpec | None:
     return specs.get(_spec_key(contract.capability, contract.version))
@@ -151,7 +161,7 @@ async def run_capability_conformance(
     descriptor: IntegrationDescriptor,
     capability: Capability | str,
     harness: object,
-    specs: dict[tuple[str, int], CapabilityConformanceSpec],
+    specs: Mapping[tuple[str, int], CapabilityConformanceSpec],
 ) -> CapabilityConformanceResult:
     contract = get_capability_contract(capability)
     name = capability.name if isinstance(capability, Capability) else capability
@@ -190,7 +200,7 @@ async def run_capability_conformance(
                     kind=ConformanceFailureKind.REGISTRY,
                     capability=contract.capability.name,
                     message=(
-                        f"No conformance spec exists for canonical capability "
+                        "No conformance spec exists for canonical capability "
                         f'"{contract.capability.name}" v{contract.version}'
                     ),
                 ),
@@ -232,16 +242,88 @@ def advertised_canonical_capabilities(
     )
 
 
+async def run_integration_conformance(
+    *,
+    descriptor: IntegrationDescriptor,
+    harnesses: Mapping[str, object],
+    specs: Mapping[tuple[str, int], CapabilityConformanceSpec],
+) -> IntegrationConformanceResult:
+    results: list[CapabilityConformanceResult] = []
+    for capability_name in advertised_canonical_capabilities(descriptor).names:
+        contract = get_capability_contract(capability_name)
+        assert contract is not None
+        harness = harnesses.get(capability_name)
+        if harness is None:
+            results.append(
+                CapabilityConformanceResult(
+                    capability=capability_name,
+                    contract_version=contract.version,
+                    failures=(
+                        ConformanceFailure(
+                            kind=ConformanceFailureKind.REGISTRY,
+                            capability=capability_name,
+                            message=(
+                                f'No conformance harness exists for integration '
+                                f'"{descriptor.integration_id}" capability "{capability_name}"'
+                            ),
+                        ),
+                    ),
+                )
+            )
+            continue
+        results.append(
+            await run_capability_conformance(
+                descriptor=descriptor,
+                capability=capability_name,
+                harness=harness,
+                specs=specs,
+            )
+        )
+    return IntegrationConformanceResult(
+        integration_id=descriptor.integration_id,
+        results=tuple(results),
+    )
+
+
+def conformance_matrix_rows(
+    results: Iterable[IntegrationConformanceResult],
+) -> tuple[ConformanceMatrixRow, ...]:
+    rows: list[ConformanceMatrixRow] = []
+    for integration_result in results:
+        for result in integration_result.results:
+            advertisement_failed = any(
+                failure.kind is ConformanceFailureKind.ADVERTISEMENT
+                for failure in result.failures
+            )
+            behavior_failed = any(
+                failure.kind in {ConformanceFailureKind.BEHAVIOR, ConformanceFailureKind.REGISTRY}
+                for failure in result.failures
+            )
+            rows.append(
+                ConformanceMatrixRow(
+                    integration_id=integration_result.integration_id,
+                    capability=result.capability,
+                    contract_version=result.contract_version,
+                    prerequisite_valid=not advertisement_failed,
+                    behavior_valid=not behavior_failed,
+                )
+            )
+    return tuple(sorted(rows, key=lambda row: (row.integration_id, row.capability)))
+
+
 __all__ = [
     "CapabilityBehaviorCheck",
     "CapabilityConformanceResult",
     "CapabilityConformanceSpec",
     "ConformanceFailure",
     "ConformanceFailureKind",
+    "ConformanceMatrixRow",
     "IntegrationConformanceResult",
     "advertised_canonical_capabilities",
     "build_conformance_spec_registry",
+    "conformance_matrix_rows",
     "get_conformance_spec",
     "run_capability_conformance",
+    "run_integration_conformance",
     "validate_advertised_capabilities",
 ]
