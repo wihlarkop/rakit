@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from rakit_core.adapter_capabilities import (
     CONCURRENCY_ATOMIC_OPTIMISTIC,
@@ -26,6 +26,7 @@ from rakit_core.conformance import (
 from rakit_core.schema import PartialInputSchemaAdapter, SchemaAdapter, SchemaValidationError
 
 
+@runtime_checkable
 class PersistenceConformanceHarness(Protocol):
     """Behavior-only proof seam for persistence capability implementations.
 
@@ -158,7 +159,7 @@ async def _asgi_exchange(app: ASGIApp, path: str) -> tuple[dict[str, Any], ...]:
 
     scope: dict[str, Any] = {
         "type": "http",
-        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "asgi": {"version": "3.0", "spec_version": "2.4"},
         "http_version": "1.1",
         "method": "GET",
         "scheme": "http",
@@ -254,7 +255,11 @@ CANONICAL_CONFORMANCE_SPECS: tuple[CapabilityConformanceSpec, ...] = (
     CapabilityConformanceSpec(
         SCHEMA_FIELD_INTROSPECTION,
         1,
-        (CapabilityBehaviorCheck("schema.field-introspection.behavior", _schema_field_introspection),),
+        (
+            CapabilityBehaviorCheck(
+                "schema.field-introspection.behavior", _schema_field_introspection
+            ),
+        ),
     ),
     CapabilityConformanceSpec(
         SCHEMA_INPUT_VALIDATION,
