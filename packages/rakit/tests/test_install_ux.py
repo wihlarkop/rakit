@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
+from typing import Any
 
 import pytest
 from rakit._install import (
@@ -81,5 +82,6 @@ def test_uv_add_command_keeps_application_packages_outside_extras() -> None:
 
 
 def test_raw_extra_names_are_rejected_at_runtime() -> None:
+    raw_extra: Any = "uvicorn"
     with pytest.raises(TypeError, match="InstallExtra"):
-        rakit_requirement("uvicorn")  # type: ignore[arg-type]
+        rakit_requirement(raw_extra)
