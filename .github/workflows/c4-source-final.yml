@@ -1,0 +1,24 @@
+name: C4 source final gate
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  source-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: phase-c4-capability-discovery
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Sync baseline tooling
+        run: uv sync --all-packages --dev --locked
+      - name: Source-first verification and commit
+        run: bash scripts/c4_source_gate.sh
