@@ -4,7 +4,6 @@ import pytest
 import rakit_core.adapter_capabilities as adapter_capabilities
 import rakit_core.conformance as conformance
 
-
 TEST_PERSISTENCE_INTEGRATION = conformance.IntegrationDescriptor(
     integration_id="test.persistence",
     category="persistence",
