@@ -6,7 +6,6 @@ from typing import Any, ClassVar, cast
 import uvicorn
 from rakit_server import (
     ASGIApplication,
-    ServerCapabilities,
     ServerConfig,
     ServerConfigurationError,
     ServerTarget,
@@ -14,6 +13,8 @@ from rakit_server import (
     load_application,
     resolve_server_target,
 )
+
+from .capabilities import UVICORN_SERVER_CAPABILITIES
 
 _RESERVED_OPTIONS = {"app", "host", "port", "workers", "reload", "log_level"}
 
@@ -38,14 +39,7 @@ class UvicornServer:
     _active_server: uvicorn.Server | None = field(default=None, init=False, repr=False)
 
     name: ClassVar[str] = "uvicorn"
-    capabilities: ClassVar[ServerCapabilities] = ServerCapabilities(
-        async_serve=True,
-        graceful_stop=True,
-        reload=True,
-        workers=True,
-        app_object=True,
-        import_string=True,
-    )
+    capabilities = UVICORN_SERVER_CAPABILITIES
 
     def _default_config(self) -> ServerConfig:
         return ServerConfig(

@@ -4,8 +4,10 @@ from collections.abc import Iterable
 
 from rakit_core.compiler import ApplicationBuilder
 from rakit_core.di import ServiceScope
+from rakit_core.integrations import ConfiguredIntegration
 from rakit_storage import FileStorage
 
+from .discovery import STORAGE_LOCAL_INTEGRATION
 from .storage import LocalStorage
 
 
@@ -28,6 +30,9 @@ class LocalStoragePlugin:
         return self._storages
 
     def configure(self, builder: ApplicationBuilder) -> None:
+        builder.register_configured_integration(
+            ConfiguredIntegration.from_descriptor(STORAGE_LOCAL_INTEGRATION)
+        )
         for storage in self._storages:
             builder.registry.add_value(
                 FileStorage,

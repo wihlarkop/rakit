@@ -8,6 +8,9 @@ version = "0.1.0a1"
 requires-python = ">=3.12"
 dependencies = ["rakit-storage==0.1.0a1", "rakit-core==0.1.0a1"]
 
+[project.entry-points."rakit.integrations"]
+"storage.local" = "rakit_storage_local.discovery:STORAGE_LOCAL_INTEGRATION"
+
 [tool.uv.sources]
 rakit-storage = { workspace = true }
 rakit-core = { workspace = true }

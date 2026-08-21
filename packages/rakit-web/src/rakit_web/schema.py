@@ -1,28 +1,15 @@
 from collections.abc import Mapping
 
 from pydantic import BaseModel, ValidationError
-from rakit_core.adapter_capabilities import (
-    SCHEMA_FIELD_INTROSPECTION,
-    SCHEMA_INPUT_VALIDATION,
-    SCHEMA_OUTPUT_SERIALIZATION,
-    SCHEMA_PARTIAL_UPDATE,
-)
-from rakit_core.capabilities import CapabilityProvider, CapabilitySet
 from rakit_core.schema import SchemaField, SchemaValidationError, SchemaValidationIssue
 
-PYDANTIC_SCHEMA_CAPABILITIES = CapabilityProvider(
-    provider_id="schema.pydantic",
-    capabilities=CapabilitySet.of(
-        SCHEMA_FIELD_INTROSPECTION,
-        SCHEMA_INPUT_VALIDATION,
-        SCHEMA_OUTPUT_SERIALIZATION,
-        SCHEMA_PARTIAL_UPDATE,
-    ),
-)
+from .capabilities import PYDANTIC_SCHEMA_CAPABILITIES
+from .discovery import PYDANTIC_INTEGRATION
 
 
 class PydanticSchemaAdapter:
     provider = PYDANTIC_SCHEMA_CAPABILITIES
+    rakit_integration = PYDANTIC_INTEGRATION
 
     @staticmethod
     def _model_type(schema: type[object]) -> type[BaseModel]:

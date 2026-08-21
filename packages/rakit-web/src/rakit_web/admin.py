@@ -37,6 +37,7 @@ from rakit_core.generated_runtime import (
 )
 from rakit_core.idempotency import IdempotencyStore
 from rakit_core.identity import IdentityCodec, RecordIdentity
+from rakit_core.integrations import ConfiguredIntegration, integration_descriptor_from
 from rakit_core.mutations import (
     MutationAuthorization,
     MutationOperation,
@@ -71,6 +72,7 @@ from .assets import static_files
 from .auth_routes import _verify_csrf, build_auth_routes
 from .bulk_admin import build_admin_bulk_action_routes
 from .capabilities import STARLETTE_WEB_CAPABILITIES
+from .discovery import STARLETTE_INTEGRATION
 from .form_routes import CreateMutationService, WriteResourceBinding, build_write_routes
 from .generated_rest_runtime import (
     GeneratedRestBinding,
@@ -264,8 +266,71 @@ class Admin:
         )
         self._builder = ApplicationBuilder(admin_id=admin_id)
         self._builder.register_capability_provider(STARLETTE_WEB_CAPABILITIES)
+        self._builder.register_configured_integration(
+            ConfiguredIntegration.from_descriptor(STARLETTE_INTEGRATION)
+        )
         self._schema_adapter = schema_adapter or PydanticSchemaAdapter()
         self._builder.register_capability_provider(self._schema_adapter.provider)
+        try:
+            schema_descriptor = integration_descriptor_from(self._schema_adapter)
+        except TypeError as exc:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="Schema adapter integration metadata is invalid.",
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                details={"reason": "schema_integration_metadata_invalid"},
+                cause=exc,
+            ) from exc
+        if schema_descriptor is None:
+            self._builder.register_configured_integration(
+                ConfiguredIntegration(
+                    integration_id=None,
+                    category="schema",
+                    display_name="Custom / unknown schema",
+                )
+            )
+        else:
+            self._builder.register_configured_integration(
+                ConfiguredIntegration.from_descriptor(schema_descriptor)
+            )
+        if auth_backend is not None and session_store is not None:
+            try:
+                auth_descriptor = integration_descriptor_from(auth_backend)
+                session_descriptor = integration_descriptor_from(session_store)
+            except TypeError as exc:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID,
+                    message="Authentication integration metadata is invalid.",
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                    details={"reason": "auth_integration_metadata_invalid"},
+                    cause=exc,
+                ) from exc
+            if auth_descriptor is None and session_descriptor is None:
+                self._builder.register_configured_integration(
+                    ConfiguredIntegration(
+                        integration_id=None,
+                        category="authentication",
+                        display_name="Custom / unknown authentication",
+                    )
+                )
+            elif auth_descriptor is None or session_descriptor is None:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID,
+                    message="Authentication integration metadata is incomplete.",
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                    details={"reason": "auth_integration_metadata_incomplete"},
+                )
+            elif auth_descriptor != session_descriptor:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID,
+                    message="Authentication integration metadata conflicts.",
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                    details={"reason": "auth_integration_metadata_conflict"},
+                )
+            else:
+                self._builder.register_configured_integration(
+                    ConfiguredIntegration.from_descriptor(auth_descriptor)
+                )
         self._builder.registry.add_value(
             SchemaAdapter, self._schema_adapter, scope=ServiceScope.APPLICATION
         )

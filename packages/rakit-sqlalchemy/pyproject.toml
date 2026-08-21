@@ -11,6 +11,9 @@ dependencies = ["rakit-core==0.1.0a1", "sqlalchemy[asyncio]>=2.0.16,<2.1"]
 [dependency-groups]
 dev = ["aiosqlite>=0.20", "pytest>=8.3,<9", "pytest-anyio>=0.0.0"]
 
+[project.entry-points."rakit.integrations"]
+"persistence.sqlalchemy" = "rakit_sqlalchemy.discovery:SQLALCHEMY_INTEGRATION"
+
 [tool.uv.sources]
 rakit-core = { workspace = true }
 

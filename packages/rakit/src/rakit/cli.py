@@ -1,15 +1,26 @@
 import asyncio
 import importlib
+import json
 import sys
 from pathlib import Path
 from typing import Any, Protocol, cast
 
 import click
-from rakit_core.compiler import CompiledApplication
+from rakit_core.compiler import CapabilityConfigurationError, CompiledApplication
 from rakit_core.di import ServiceRegistry
 from rakit_core.errors import RakitError
 
+from ._capability_inspection import (
+    inspection_from_capability_error,
+    inspection_from_compiled,
+    inspection_installed_only,
+    render_capability_inspection,
+)
 from ._install import InstallExtra
+from ._integration_discovery import (
+    InstalledIntegrationDiscoveryError,
+    discover_installed_integrations,
+)
 from ._optional import OptionalDependency, optional_import
 from ._server import run as run_server
 from .scaffold.command import init_command
@@ -88,24 +99,24 @@ def cli() -> None:
 cli.add_command(init_command)
 
 
-def _capability_diagnostics(compiled: CompiledApplication) -> None:
-    providers = sorted(compiled.capability_providers, key=lambda item: item.provider_id)
-    if providers:
+def _echo_check_capabilities(compiled: CompiledApplication) -> None:
+    analysis = compiled.capability_analysis
+    if analysis is None:
+        click.echo("Capability providers: none")
+        click.echo("Capability requirements: none")
+        return
+    if analysis.providers:
         click.echo("Capability providers:")
-        for provider in providers:
+        for provider in analysis.providers:
             names = ", ".join(provider.capabilities.names) or "none"
             click.echo(f"  {provider.provider_id}: {names}")
     else:
         click.echo("Capability providers: none")
-
-    reports = {report.requirement.requirement_id: report for report in compiled.capability_reports}
-    requirements = sorted(compiled.capability_requirements, key=lambda item: item.requirement_id)
-    if requirements:
+    if analysis.reports:
         click.echo("Capability requirements:")
-        for requirement in requirements:
-            report = reports.get(requirement.requirement_id)
-            status = "satisfied" if report is not None and report.satisfied else "missing"
-            click.echo(f"  {requirement.requirement_id}: {status}")
+        for report in analysis.reports:
+            status = "satisfied" if report.satisfied else "missing"
+            click.echo(f"  {report.requirement.requirement_id}: {status}")
     else:
         click.echo("Capability requirements: none")
 
@@ -115,27 +126,63 @@ def _capability_diagnostics(compiled: CompiledApplication) -> None:
 def check(target: str) -> None:
     try:
         compiled = load_object(target).compile()
-    except RakitError as exc:
-        if exc.details.get("reason") != "missing_capabilities":
-            raise
+    except CapabilityConfigurationError as exc:
         click.echo("Rakit configuration is invalid.")
-        click.echo(f"Capability requirement: {exc.details.get('requirement', 'unknown')}")
-        click.echo(
-            "Missing capabilities: "
-            + ", ".join(str(item) for item in exc.details.get("missing", []))
-        )
-        click.echo(
-            "Available capabilities: "
-            + ", ".join(str(item) for item in exc.details.get("available", []))
-        )
-        click.echo(
-            "Providers: " + ", ".join(str(item) for item in exc.details.get("providers", []))
-        )
+        click.echo("Missing capability requirements:")
+        for report in exc.analysis.reports:
+            if report.satisfied:
+                continue
+            click.echo(f"  {report.requirement.requirement_id}")
+            click.echo(f"    missing: {', '.join(report.missing.names)}")
         raise click.ClickException("Required adapter capabilities are not available.") from None
     click.echo("Rakit configuration is valid.")
     click.echo(f"Routes: {len(compiled.routes)}")
     click.echo(f"Plugins: {len(compiled.plugins)}")
-    _capability_diagnostics(compiled)
+    _echo_check_capabilities(compiled)
+
+
+@cli.command()
+@click.argument("target", required=False)
+@click.option("--installed", is_flag=True, default=False)
+@click.option("--json", "json_output", is_flag=True, default=False)
+def capabilities(target: str | None, installed: bool, json_output: bool) -> None:
+    if target is None and not installed:
+        raise click.UsageError("Provide TARGET or use --installed.")
+
+    installed_view = None
+    if installed:
+        try:
+            installed_view = discover_installed_integrations()
+        except InstalledIntegrationDiscoveryError as exc:
+            raise click.ClickException(str(exc)) from None
+
+    if target is None:
+        assert installed_view is not None
+        report = inspection_installed_only(installed_view)
+    else:
+        try:
+            compiled = load_object(target).compile()
+        except CapabilityConfigurationError as exc:
+            report = inspection_from_capability_error(
+                target,
+                exc,
+                installed=installed_view,
+            )
+        except RakitError as exc:
+            raise click.ClickException(exc.message) from None
+        except (ImportError, AttributeError, TypeError, ValueError) as exc:
+            raise click.ClickException(f"Unable to inspect target: {exc}") from None
+        else:
+            report = inspection_from_compiled(
+                target,
+                compiled,
+                installed=installed_view,
+            )
+
+    if json_output:
+        click.echo(json.dumps(report.to_dict(), indent=2))
+    else:
+        click.echo(render_capability_inspection(report))
 
 
 @cli.command()

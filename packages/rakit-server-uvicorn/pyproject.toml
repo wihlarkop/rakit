@@ -14,6 +14,9 @@ dependencies = [
 [project.entry-points."rakit.servers"]
 uvicorn = "rakit_server_uvicorn:UvicornServer"
 
+[project.entry-points."rakit.integrations"]
+"server.uvicorn" = "rakit_server_uvicorn.discovery:UVICORN_INTEGRATION"
+
 [tool.uv.sources]
 rakit-server = { workspace = true }
 

@@ -8,7 +8,6 @@ from granian.constants import Interfaces
 from granian.log import LogLevels
 from rakit_server import (
     ASGIApplication,
-    ServerCapabilities,
     ServerConfig,
     ServerConfigurationError,
     ServerTarget,
@@ -16,6 +15,8 @@ from rakit_server import (
     load_application,
     resolve_server_target,
 )
+
+from .capabilities import GRANIAN_SERVER_CAPABILITIES
 
 _RESERVED_OPTIONS = {
     "target",
@@ -44,12 +45,7 @@ class GranianServer:
     server_options: Mapping[str, object] = field(default_factory=dict)
 
     name: ClassVar[str] = "granian"
-    capabilities: ClassVar[ServerCapabilities] = ServerCapabilities(
-        reload=True,
-        workers=True,
-        app_object=False,
-        import_string=True,
-    )
+    capabilities = GRANIAN_SERVER_CAPABILITIES
 
     def _default_config(self) -> ServerConfig:
         return ServerConfig(

@@ -16,6 +16,9 @@ dependencies = [
 [dependency-groups]
 dev = ["aiosqlite>=0.20", "pytest>=8.3,<9", "pytest-anyio>=0.0.0"]
 
+[project.entry-points."rakit.integrations"]
+"auth.sqlalchemy" = "rakit_auth_sqlalchemy.discovery:AUTH_SQLALCHEMY_INTEGRATION"
+
 [tool.uv.sources]
 rakit-sqlalchemy = { workspace = true }
 rakit-core = { workspace = true }
