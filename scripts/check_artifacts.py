@@ -3,9 +3,9 @@
 
 The checker intentionally derives the package inventory from ``packages/*/pyproject.toml`` rather
 than keeping an independent package count. It builds into a temporary directory, inspects wheels
-and sdists, installs ``rakit[standard]`` from those local wheels into a clean virtual environment,
-starts a copied minimal example outside the repository working tree, and then proves the optional
-Granian adapter can be installed and imported from the built artifacts as well.
+and sdists, installs ``rakit[standard,uvicorn]`` from those local wheels into a clean virtual
+environment, starts a copied minimal example outside the repository working tree, and then proves
+the optional Granian adapter can be installed and imported from the built artifacts as well.
 """
 
 from __future__ import annotations
@@ -342,7 +342,7 @@ def clean_install_smoke(dist: Path, root: Path, workspace: Path) -> None:
     venv = workspace / "venv"
     _run(["uv", "venv", str(venv), "--python", sys.executable], cwd=workspace)
     python = _venv_python(venv)
-    _install_extra(dist, python, workspace, "standard")
+    _install_extra(dist, python, workspace, "standard,uvicorn")
     cli = _venv_rakit(venv)
     _assert_installed_imports(
         python,
@@ -430,15 +430,16 @@ def check_standard_extra(root: Path) -> None:
     if not isinstance(optional, dict):
         raise RuntimeError("rakit optional-dependencies metadata must be a table")
     standard = tuple(optional.get("standard", ()))
-    required = {
+    expected = (
         f"rakit-sqlalchemy=={VERSION}",
         f"rakit-auth-sqlalchemy=={VERSION}",
         f"rakit-storage-local=={VERSION}",
-        f"rakit-server-uvicorn=={VERSION}",
-    }
-    missing = required - set(standard)
-    if missing:
-        raise RuntimeError(f"rakit[standard] missing official capabilities: {sorted(missing)}")
+    )
+    if standard != expected:
+        raise RuntimeError(
+            "rakit[standard] must be server/driver neutral and contain exactly "
+            f"{list(expected)!r}; found {list(standard)!r}"
+        )
 
 
 def main() -> int:
