@@ -151,7 +151,6 @@ class TortoiseDataSource:
 
     async def list(self, query: ResourceQuery) -> ResourceListResult[object]:
         queryset = self._queryset(query)
-        total_count = await queryset.count() if query.count_policy is CountPolicy.EXACT else None
         pagination = query.pagination
         if isinstance(pagination, PagePagination):
             offset, limit = pagination.offset, pagination.per_page
@@ -161,6 +160,9 @@ class TortoiseDataSource:
             raise _validation_error("Tortoise adapter does not support cursor pagination")
 
         try:
+            total_count = (
+                await queryset.count() if query.count_policy is CountPolicy.EXACT else None
+            )
             fetched = tuple(await queryset.offset(offset).limit(limit + 1))
         except RakitError:
             raise
@@ -192,8 +194,8 @@ class TortoiseDataSource:
             total_count=int(total_count) if total_count is not None else None,
         )
 
-    def _identity_kwargs(self, identity: RecordIdentity) -> dict[str, object]:
-        values = dict(identity.values)
+    def _identity_kwargs(self, identity: RecordIdentity) -> dict[str, Any]:
+        values: dict[str, Any] = dict(identity.values)
         expected = self._metadata.identity_field
         if tuple(values) != (expected,):
             raise _validation_error("Invalid resource identity", field=expected)
