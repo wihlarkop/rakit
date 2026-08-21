@@ -216,9 +216,7 @@ def test_capabilities_invalid_target_still_returns_aggregate_diagnostics(
     payload = json.loads(result.output)
     assert payload["valid"] is False
     assert [
-        item["id"]
-        for item in payload["configured"]["requirements"]
-        if item["status"] == "missing"
+        item["id"] for item in payload["configured"]["requirements"] if item["status"] == "missing"
     ] == ["generated-api.patch", "generated-api.write"]
     assert payload["installed"] is None
 

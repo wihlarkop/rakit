@@ -83,5 +83,7 @@ def test_installed_discovery_rejects_duplicate_ids() -> None:
         group="rakit.integrations",
     )
 
-    with pytest.raises(InstalledIntegrationDiscoveryError, match="Duplicate installed integration id"):
+    with pytest.raises(
+        InstalledIntegrationDiscoveryError, match="Duplicate installed integration id"
+    ):
         discover_installed_integrations(candidates=(candidate, candidate))

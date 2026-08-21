@@ -82,9 +82,7 @@ def test_analyze_capabilities_reports_every_missing_requirement_deterministicall
         "generated-api.patch",
         "generated-api.write",
     )
-    assert tuple(
-        requirement.requirement_id for requirement in analysis.missing_requirements
-    ) == (
+    assert tuple(requirement.requirement_id for requirement in analysis.missing_requirements) == (
         "generated-api.patch",
         "generated-api.write",
     )
