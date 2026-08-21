@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from http import HTTPStatus
 from importlib import metadata
 from typing import cast
 
@@ -19,7 +20,7 @@ def _installed_schema_adapter_entry_points() -> dict[str, metadata.EntryPoint]:
             raise RakitError(
                 code=ErrorCode.CONFIG_INVALID,
                 message="Duplicate schema adapter integration identifier.",
-                status_code=500,
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 details={
                     "reason": "schema_adapter_duplicate",
                     "integration_id": entry_point.name,
@@ -43,7 +44,7 @@ def _load_schema_adapter(
         raise RakitError(
             code=ErrorCode.CONFIG_INVALID,
             message="Requested schema adapter integration is not installed.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             details={
                 "reason": "schema_adapter_unavailable",
                 "integration_id": integration_id,
@@ -58,7 +59,7 @@ def _load_schema_adapter(
         raise RakitError(
             code=ErrorCode.CONFIG_INVALID,
             message="Schema adapter entry point does not expose capability metadata.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             details={
                 "reason": "schema_adapter_invalid",
                 "integration_id": integration_id,
@@ -69,7 +70,7 @@ def _load_schema_adapter(
         raise RakitError(
             code=ErrorCode.CONFIG_INVALID,
             message="Schema adapter entry point integration metadata does not match its identifier.",
-            status_code=500,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             details={
                 "reason": "schema_adapter_metadata_mismatch",
                 "integration_id": integration_id,
@@ -90,7 +91,7 @@ def resolve_schema_adapter(
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
                     message="Explicit schema adapter conflicts with schema_integration_id.",
-                    status_code=500,
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                     details={
                         "reason": "schema_adapter_selection_conflict",
                         "integration_id": schema_integration_id,
