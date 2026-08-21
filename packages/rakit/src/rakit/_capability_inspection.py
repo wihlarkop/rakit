@@ -135,7 +135,10 @@ def _configured_from_analysis(
                 missing=report.missing.names,
                 providers=report.provider_ids,
             )
-            for report in analysis.reports
+            for report in sorted(
+                analysis.reports,
+                key=lambda item: item.requirement.requirement_id,
+            )
         ),
     )
 
