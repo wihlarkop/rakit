@@ -81,3 +81,27 @@ def test_pydantic_partial_update_rejects_invalid_present_and_unknown_fields() ->
 
     with pytest.raises(SchemaValidationError):
         adapter.validate_partial_input(ContactSchema, {"unknown": "value"})
+
+
+def test_pydantic_rejects_non_model_schema_types() -> None:
+    adapter = PydanticSchemaAdapter()
+
+    with pytest.raises(TypeError, match="BaseModel"):
+        adapter.fields(dict)
+    with pytest.raises(TypeError, match="BaseModel"):
+        adapter.validate_input(dict, {})
+    with pytest.raises(TypeError, match="BaseModel"):
+        adapter.validate_partial_input(dict, {})
+
+
+def test_pydantic_validation_errors_are_translated_to_rakit_issues() -> None:
+    adapter = PydanticSchemaAdapter()
+
+    with pytest.raises(SchemaValidationError) as exc_info:
+        adapter.validate_input(ContactSchema, {"name": "Ada", "age": "bad"})
+
+    assert exc_info.value.issues
+    issue = exc_info.value.issues[0]
+    assert issue.location == ("age",)
+    assert issue.code
+    assert issue.message
