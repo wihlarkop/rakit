@@ -26,6 +26,17 @@ jobs:
           set -euo pipefail
           if [[ ! -f packages/rakit-core/src/rakit_core/integrations.py ]]; then
             uv run python scripts/c4_apply_source.py
+            uv run python - <<'PY'
+          from pathlib import Path
+
+          path = Path("packages/rakit/src/rakit/_capability_inspection.py")
+          text = path.read_text()
+          broken = '    return "\n".join(lines)\n'
+          fixed = '    return "\\n".join(lines)\n'
+          if broken not in text:
+              raise RuntimeError("Expected generated renderer escape bug was not found")
+          path.write_text(text.replace(broken, fixed, 1))
+          PY
             uv lock
           fi
           uv sync --all-packages --dev --locked
