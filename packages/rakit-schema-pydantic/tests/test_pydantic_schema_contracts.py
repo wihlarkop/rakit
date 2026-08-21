@@ -65,12 +65,8 @@ def test_pydantic_partial_update_is_presence_aware() -> None:
     adapter = PydanticSchemaAdapter()
 
     assert adapter.validate_partial_input(ContactSchema, {}) == {}
-    assert adapter.validate_partial_input(ContactSchema, {"nickname": None}) == {
-        "nickname": None
-    }
-    assert adapter.validate_partial_input(ContactSchema, {"name": "Ada"}) == {
-        "name": "Ada"
-    }
+    assert adapter.validate_partial_input(ContactSchema, {"nickname": None}) == {"nickname": None}
+    assert adapter.validate_partial_input(ContactSchema, {"name": "Ada"}) == {"name": "Ada"}
 
 
 def test_pydantic_partial_update_rejects_invalid_present_and_unknown_fields() -> None:
