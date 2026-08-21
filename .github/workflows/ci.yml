@@ -22,12 +22,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
       - run: uv sync --all-packages --dev --locked
-      - name: Print D1 formatter diff
-        shell: bash
-        run: |
-          uv run ruff format .
-          git diff -- packages/rakit-core/src/rakit_core/capability_contracts.py packages/rakit-core/src/rakit_core/conformance.py
-          exit 1
+      - run: uv run ruff format --check .
       - run: uv run ruff check .
       - run: uv run ty check
       - run: uv run pytest
