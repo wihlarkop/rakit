@@ -104,9 +104,7 @@ class TortoiseGeneratedResourceExecutor:
         identity: RecordIdentity,
     ) -> Model | None:
         return (
-            await self.model.filter(**self._identity_kwargs(identity))
-            .using_db(connection)
-            .first()
+            await self.model.filter(**self._identity_kwargs(identity)).using_db(connection).first()
         )
 
     async def execute(
