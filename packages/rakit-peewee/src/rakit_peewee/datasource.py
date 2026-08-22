@@ -189,9 +189,7 @@ class PeeweeDataSource:
                 if query.count_policy is CountPolicy.EXACT
                 else None
             )
-            fetched = tuple(
-                await self._database.list(queryset.offset(offset).limit(limit + 1))
-            )
+            fetched = tuple(await self._database.list(queryset.offset(offset).limit(limit + 1)))
         except RakitError:
             raise
         except Exception as exc:
