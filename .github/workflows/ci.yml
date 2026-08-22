@@ -32,67 +32,22 @@ jobs:
 
           spec_path = Path("docs/superpowers/specs/2026-08-22-phase-d3-persistence-adapter-ecosystem-design.md")
           spec = spec_path.read_text(encoding="utf-8")
-          spec = replace_once(
-              spec,
-              "7. **SQLModel is supported as a compatibility profile over the SQLAlchemy ORM adapter, not as a duplicate persistence adapter.** SQLModel models are SQLAlchemy models; creating a second claimant would add ambiguity without adding a new persistence semantic. D3 adds real SQLModel compatibility/conformance proof and a convenience install extra.\n8. **Django ORM is deliberately deferred from first-party D3 implementation.**",
-              "7. **Django ORM is deliberately deferred from first-party D3 implementation.**",
-              "spec decision SQLModel",
-          )
+          spec = replace_once(spec, "7. **SQLModel is supported as a compatibility profile over the SQLAlchemy ORM adapter, not as a duplicate persistence adapter.** SQLModel models are SQLAlchemy models; creating a second claimant would add ambiguity without adding a new persistence semantic. D3 adds real SQLModel compatibility/conformance proof and a convenience install extra.\n8. **Django ORM is deliberately deferred from first-party D3 implementation.**", "7. **Django ORM is deliberately deferred from first-party D3 implementation.**", "spec decision SQLModel")
           for old, new in (("9. **Document/remote", "8. **Document/remote"), ("10. D3 does", "9. D3 does"), ("11. Native persistence", "10. Native persistence"), ("12. D3 is delivered", "11. D3 is delivered"), ("13. No release", "12. No release")):
               spec = replace_once(spec, old, new, f"spec decision renumber {old}")
-          spec = replace_once(
-              spec,
-              "- **D3.5 — Masonite ORM Feasibility / Adapter**\n- **D3.6 — SQLModel Compatibility Profile**\n- **D3.7 — Persistence Integration DX, Compatibility Matrix & Closure**",
-              "- **D3.5 — Masonite ORM Feasibility / Adapter**\n- **D3.6 — Persistence Integration DX, Compatibility Matrix & Closure**",
-              "spec phase list",
-          )
-          spec, count = re.subn(
-              r"\n## D3\.6 — SQLModel Compatibility Profile\n.*?(?=\n## Shared canonical capability semantics)",
-              "",
-              spec,
-              flags=re.S,
-          )
+          spec = replace_once(spec, "- **D3.5 — Masonite ORM Feasibility / Adapter**\n- **D3.6 — SQLModel Compatibility Profile**\n- **D3.7 — Persistence Integration DX, Compatibility Matrix & Closure**", "- **D3.5 — Masonite ORM Feasibility / Adapter**\n- **D3.6 — Persistence Integration DX, Compatibility Matrix & Closure**", "spec phase list")
+          spec, count = re.subn(r"\n## D3\.6 — SQLModel Compatibility Profile\n.*?(?=\n## Shared canonical capability semantics)", "", spec, flags=re.S)
           if count != 1:
               raise SystemExit(f"spec SQLModel section: expected 1, got {count}")
-          spec = replace_once(
-              spec,
-              "\nSQLModel -- compatibility proof --> rakit-sqlalchemy / persistence.sqlalchemy\n",
-              "\n",
-              "spec architecture SQLModel",
-          )
-          spec = replace_once(
-              spec,
-              "- SQLAlchemy declarative/SQLModel classes are owned by the SQLAlchemy ORM claimant.",
-              "- SQLAlchemy declarative classes are owned by the SQLAlchemy ORM claimant.",
-              "spec claimant SQLModel",
-          )
-          spec = replace_once(
-              spec,
-              "- `pip install \"rakit[sqlmodel]\"` — SQLAlchemy adapter plus supported SQLModel dependency; provider remains `persistence.sqlalchemy`.\n",
-              "",
-              "spec install SQLModel",
-          )
-          spec, count = re.subn(
-              r"\n### D3\.6 — SQLModel Compatibility Profile\n.*?(?=\n### D3\.7 — Persistence Integration DX, Compatibility Matrix & Closure)",
-              "",
-              spec,
-              flags=re.S,
-          )
+          spec = replace_once(spec, "\nSQLModel -- compatibility proof --> rakit-sqlalchemy / persistence.sqlalchemy\n", "\n", "spec architecture SQLModel")
+          spec = replace_once(spec, "- SQLAlchemy declarative/SQLModel classes are owned by the SQLAlchemy ORM claimant.", "- SQLAlchemy declarative classes are owned by the SQLAlchemy ORM claimant.", "spec claimant SQLModel")
+          spec = replace_once(spec, "- `pip install \"rakit[sqlmodel]\"` — SQLAlchemy adapter plus supported SQLModel dependency; provider remains `persistence.sqlalchemy`.\n", "", "spec install SQLModel")
+          spec, count = re.subn(r"\n### D3\.6 — SQLModel Compatibility Profile\n.*?(?=\n### D3\.7 — Persistence Integration DX, Compatibility Matrix & Closure)", "", spec, flags=re.S)
           if count != 1:
               raise SystemExit(f"spec delivery SQLModel: expected 1, got {count}")
           spec = spec.replace("### D3.7 — Persistence Integration DX, Compatibility Matrix & Closure", "### D3.6 — Persistence Integration DX, Compatibility Matrix & Closure")
-          spec = replace_once(
-              spec,
-              "- forced capability parity;\n",
-              "- forced capability parity;\n- dedicated SQLModel compatibility phases, extras, or provider-specific maintenance; SQLModel follows the SQLAlchemy ORM integration upstream;\n",
-              "spec non-goal SQLModel",
-          )
-          spec = replace_once(
-              spec,
-              "8. Real SQLModel models pass the supported SQLAlchemy compatibility matrix without a duplicate persistence provider.\n9. Core/web contain no concrete backend persistence imports.\n10. Discovery/configured-integration metadata is deterministic and actionable.\n11. Clean-installed extras and official artifacts are tested outside the repository checkout.\n12. The public persistence compatibility matrix documents capability differences and intentional non-parity.\n13. No temporary CI/helper files remain in final subphase PRs.\n14. `docs/roadmap.md` exposes D3.0–D3.7 status and marks D3 overall Complete only after all accepted subphases pass canonical CI.\n15. Every D3 PR is exact-head green and squash-merged.",
-              "8. Core/web contain no concrete backend persistence imports.\n9. Discovery/configured-integration metadata is deterministic and actionable.\n10. Clean-installed extras and official artifacts are tested outside the repository checkout.\n11. The public persistence compatibility matrix documents capability differences and intentional non-parity.\n12. No temporary CI/helper files remain in final subphase PRs.\n13. `docs/roadmap.md` exposes D3.0–D3.6 status and marks D3 overall Complete only after all accepted subphases pass canonical CI.\n14. Every D3 PR is exact-head green and squash-merged.",
-              "spec acceptance SQLModel",
-          )
+          spec = replace_once(spec, "- forced capability parity;\n", "- forced capability parity;\n- dedicated SQLModel compatibility phases, extras, or provider-specific maintenance; SQLModel follows the SQLAlchemy ORM integration upstream;\n", "spec non-goal SQLModel")
+          spec = replace_once(spec, "8. Real SQLModel models pass the supported SQLAlchemy compatibility matrix without a duplicate persistence provider.\n9. Core/web contain no concrete backend persistence imports.\n10. Discovery/configured-integration metadata is deterministic and actionable.\n11. Clean-installed extras and official artifacts are tested outside the repository checkout.\n12. The public persistence compatibility matrix documents capability differences and intentional non-parity.\n13. No temporary CI/helper files remain in final subphase PRs.\n14. `docs/roadmap.md` exposes D3.0–D3.7 status and marks D3 overall Complete only after all accepted subphases pass canonical CI.\n15. Every D3 PR is exact-head green and squash-merged.", "8. Core/web contain no concrete backend persistence imports.\n9. Discovery/configured-integration metadata is deterministic and actionable.\n10. Clean-installed extras and official artifacts are tested outside the repository checkout.\n11. The public persistence compatibility matrix documents capability differences and intentional non-parity.\n12. No temporary CI/helper files remain in final subphase PRs.\n13. `docs/roadmap.md` exposes D3.0–D3.6 status and marks D3 overall Complete only after all accepted subphases pass canonical CI.\n14. Every D3 PR is exact-head green and squash-merged.", "spec acceptance SQLModel")
           spec_path.write_text(spec, encoding="utf-8")
 
           plan_path = Path("docs/superpowers/plans/2026-08-22-phase-d3-persistence-adapter-ecosystem.md")
@@ -102,12 +57,8 @@ jobs:
           plan = replace_once(plan, ", SQLModel 0.0.x", "", "plan tech stack")
           plan = replace_once(plan, "- SQLModel uses the existing `persistence.sqlalchemy` provider; do not create a duplicate SQLModel persistence claimant.\n", "", "plan global SQLModel")
           plan = plan.replace("D3.0–D3.7", "D3.0–D3.6")
-          plan, count = re.subn(
-              r"\n## D3\.6 — SQLModel Compatibility Profile\n.*?(?=\n## D3\.7 — Persistence Integration DX, Compatibility Matrix & Closure)",
-              "",
-              plan,
-              flags=re.S,
-          )
+          plan = plan.replace("until D3.7 closure", "until D3.6 closure")
+          plan, count = re.subn(r"\n## D3\.6 — SQLModel Compatibility Profile\n.*?(?=\n## D3\.7 — Persistence Integration DX, Compatibility Matrix & Closure)", "", plan, flags=re.S)
           if count != 1:
               raise SystemExit(f"plan SQLModel phase: expected 1, got {count}")
           plan = plan.replace("## D3.7 — Persistence Integration DX, Compatibility Matrix & Closure", "## D3.6 — Persistence Integration DX, Compatibility Matrix & Closure")
@@ -124,11 +75,7 @@ jobs:
           roadmap = replace_once(roadmap, "**Status: Next — implementation verified on stacked draft; pending maintainer-directed landing**", "**Status: Complete**", "roadmap D3.0 status")
           roadmap = replace_once(roadmap, "#### D3.1 — SQLAlchemy ORM Hardening + SQLAlchemy Core/Table\n\n**Status: Planned**", "#### D3.1 — SQLAlchemy ORM Hardening + SQLAlchemy Core/Table\n\n**Status: Complete**", "roadmap D3.1 status")
           roadmap = replace_once(roadmap, "#### D3.2 — Tortoise ORM\n\n**Status: Planned; read foundation exists on the D3 umbrella draft**", "#### D3.2 — Tortoise ORM\n\n**Status: Active**", "roadmap D3.2 status")
-          roadmap, count = re.subn(
-              r"\n#### D3\.6 — SQLModel Compatibility Profile\n\n\*\*Status: Planned\*\*\n\nProve SQLModel models through the existing `persistence\.sqlalchemy` provider rather than creating a duplicate persistence claimant, and add convenience install UX if compatibility is verified\.\n",
-              "",
-              roadmap,
-          )
+          roadmap, count = re.subn(r"\n#### D3\.6 — SQLModel Compatibility Profile\n\n\*\*Status: Planned\*\*\n\nProve SQLModel models through the existing `persistence\.sqlalchemy` provider rather than creating a duplicate persistence claimant, and add convenience install UX if compatibility is verified\.\n", "", roadmap)
           if count != 1:
               raise SystemExit(f"roadmap SQLModel block: expected 1, got {count}")
           roadmap = roadmap.replace("#### D3.7 — Persistence Integration DX, Compatibility Matrix & Closure", "#### D3.6 — Persistence Integration DX, Compatibility Matrix & Closure")
