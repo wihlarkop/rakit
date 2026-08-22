@@ -11,7 +11,8 @@ from rakit_peewee.introspection import (
 )
 
 
-def test_peewee_introspection_accepts_async_models_and_keeps_relationships_out_of_scalar_fields() -> None:
+def test_peewee_introspection_accepts_async_models_and_keeps_relationships_out_of_scalar_fields(
+) -> None:
     database = AsyncSqliteDatabase(":memory:")
 
     class Author(database.Model):
