@@ -18,4 +18,13 @@ SQLALCHEMY_CAPABILITIES = CapabilityProvider(
     ),
 )
 
-__all__ = ["SQLALCHEMY_CAPABILITIES"]
+SQLALCHEMY_CORE_CAPABILITIES = CapabilityProvider(
+    provider_id="persistence.sqlalchemy-core",
+    capabilities=CapabilitySet.of(
+        PERSISTENCE_READ,
+        PERSISTENCE_WRITE,
+        TRANSACTIONS_ROOT_UOW,
+    ),
+)
+
+__all__ = ["SQLALCHEMY_CAPABILITIES", "SQLALCHEMY_CORE_CAPABILITIES"]
