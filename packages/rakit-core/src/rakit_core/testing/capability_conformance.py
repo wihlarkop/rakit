@@ -324,9 +324,9 @@ CANONICAL_CONFORMANCE_SPEC_REGISTRY = build_conformance_spec_registry(CANONICAL_
 
 
 __all__ = [
-    "AtomicOptimisticConformanceHarness",
     "CANONICAL_CONFORMANCE_SPEC_REGISTRY",
     "CANONICAL_CONFORMANCE_SPECS",
+    "AtomicOptimisticConformanceHarness",
     "PersistenceConformanceHarness",
     "PersistenceReadConformanceHarness",
     "PersistenceRelationshipsConformanceHarness",
