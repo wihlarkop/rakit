@@ -19,10 +19,6 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --all-packages --dev --locked
-      - name: Apply Ruff safe fixes
-        run: |
-          uv run ruff check --fix packages/rakit-peewee
-          uv run ruff format packages/rakit-peewee
       - name: Shorten overlong regression test name
         run: |
           python - <<'PY'
@@ -35,7 +31,10 @@ jobs:
               text = text.replace(old, new)
           path.write_text(text)
           PY
-          uv run ruff format packages/rakit-peewee/tests/test_peewee_introspection.py
+      - name: Apply Ruff safe fixes
+        run: |
+          uv run ruff check --fix packages/rakit-peewee
+          uv run ruff format packages/rakit-peewee
           uv run ruff check packages/rakit-peewee
       - name: Commit canonical lint fixes
         run: |
