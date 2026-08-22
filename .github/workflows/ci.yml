@@ -6,9 +6,57 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
+  d3-3-bootstrap:
+    name: D3.3 source bootstrap
+    if: github.event_name == 'pull_request' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: phase-d3-3-peewee
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+      - name: Refresh lockfile and package inventory
+        run: |
+          uv lock
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("tests/examples/test_read_examples.py")
+          text = path.read_text()
+          old_name = "test_all_packages_builds_exactly_the_twelve_official_distributions"
+          new_name = "test_all_packages_builds_exactly_the_fourteen_official_distributions"
+          if old_name in text:
+              if text.count(old_name) != 1:
+                  raise SystemExit("unexpected official-distribution test name")
+              text = text.replace(old_name, new_name)
+          elif text.count(new_name) != 1:
+              raise SystemExit("official-distribution test name is not canonical")
+
+          marker = '        "rakit_core",\n'
+          peewee = '        "rakit_peewee",\n'
+          if peewee not in text:
+              if text.count(marker) != 1:
+                  raise SystemExit("unexpected official-distribution inventory marker")
+              text = text.replace(marker, marker + peewee)
+          path.write_text(text)
+          PY
+      - name: Commit source-stage generated changes
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- uv.lock tests/examples/test_read_examples.py; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add uv.lock tests/examples/test_read_examples.py
+          git commit -m "build: lock Peewee adapter dependencies"
+          git push origin HEAD:phase-d3-3-peewee
+
   test:
     strategy:
       fail-fast: false
@@ -126,6 +174,34 @@ jobs:
           matches = [item for item in integrations if item.name == "persistence.tortoise"]
           assert len(matches) == 1
           assert matches[0].load().integration_id == "persistence.tortoise"
+          PY
+      - name: Clean-install Peewee extra from built artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv venv .artifact-peewee --python 3.12
+          uv pip install \
+            --python .artifact-peewee/bin/python \
+            --find-links dist \
+            "rakit[peewee]==0.1.0a1"
+          .artifact-peewee/bin/python -I - <<'PY'
+          from importlib.metadata import entry_points
+          from pathlib import Path
+
+          import rakit_peewee
+          from rakit_peewee.capabilities import PEEWEE_CAPABILITIES
+
+          module_path = Path(rakit_peewee.__file__).resolve()
+          assert ".artifact-peewee" in module_path.parts
+          assert PEEWEE_CAPABILITIES.capabilities.names == (
+              "persistence.read",
+              "persistence.write",
+              "transactions.root-uow",
+          )
+          integrations = entry_points(group="rakit.integrations")
+          matches = [item for item in integrations if item.name == "persistence.peewee"]
+          assert len(matches) == 1
+          assert matches[0].load().integration_id == "persistence.peewee"
           PY
       - name: Upload dry-run artifacts
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
