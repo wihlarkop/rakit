@@ -3,6 +3,8 @@ name: D3.3 Peewee source smoke
 on:
   push:
     branches: [phase-d3-3-peewee]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
@@ -184,7 +186,7 @@ jobs:
                   success=True,
               )
               assert delete_context.durable_commit_completed is True
-              assert await db.count(Widget.select()) == 3
+              assert await db.run(Widget.select().count) == 3
 
               assert PEEWEE_CAPABILITIES.capabilities.names == (
                   PERSISTENCE_READ.name,
