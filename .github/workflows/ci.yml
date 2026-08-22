@@ -2,96 +2,107 @@ name: CI
 
 on:
   pull_request:
+  push:
+    branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  d3-scope-sync:
-    if: github.head_ref == 'phase-d3-2-tortoise'
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          ref: phase-d3-2-tortoise
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - run: uv sync --all-packages --dev --locked
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run ty check
+      - run: uv run pytest
+
+  web-assets:
+    name: Web asset reproducibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.3.14"
+      - run: bun install --frozen-lockfile
+      - run: bun run css:build
+      - name: Verify committed CSS matches canonical source
+        run: git diff --exit-code -- packages/rakit-web/src/rakit_web/static/rakit.css
+
+  dependency-compatibility:
+    name: Dependencies (${{ matrix.mode }})
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [lowest-direct, latest]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           python-version: "3.12"
           enable-cache: true
-      - name: Remove SQLModel subphase and renumber D3 closure
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import re
+      - name: Sync minimum supported direct dependencies
+        if: matrix.mode == 'lowest-direct'
+        run: uv sync --all-packages --dev --resolution lowest-direct
+      - name: Sync latest allowed dependencies
+        if: matrix.mode == 'latest'
+        run: uv sync --all-packages --dev --upgrade
+      - name: Run test suite without re-syncing
+        run: uv run --no-sync pytest -q --tb=short --maxfail=5
 
-          def replace_once(text: str, old: str, new: str, label: str) -> str:
-              if text.count(old) != 1:
-                  raise SystemExit(f"{label}: expected one match, got {text.count(old)}")
-              return text.replace(old, new, 1)
+  release-gate:
+    name: Plan 07 release gate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-packages --dev --locked
+      - run: uv run pytest --cov
+      - run: uv run mkdocs build --strict
+      - run: uv run python scripts/check_artifacts.py
 
-          spec_path = Path("docs/superpowers/specs/2026-08-22-phase-d3-persistence-adapter-ecosystem-design.md")
-          spec = spec_path.read_text(encoding="utf-8")
-          spec = replace_once(spec, "7. **SQLModel is supported as a compatibility profile over the SQLAlchemy ORM adapter, not as a duplicate persistence adapter.** SQLModel models are SQLAlchemy models; creating a second claimant would add ambiguity without adding a new persistence semantic. D3 adds real SQLModel compatibility/conformance proof and a convenience install extra.\n8. **Django ORM is deliberately deferred from first-party D3 implementation.**", "7. **Django ORM is deliberately deferred from first-party D3 implementation.**", "spec decision SQLModel")
-          for old, new in (("9. **Document/remote", "8. **Document/remote"), ("10. D3 does", "9. D3 does"), ("11. Native persistence", "10. Native persistence"), ("12. D3 is delivered", "11. D3 is delivered"), ("13. No release", "12. No release")):
-              spec = replace_once(spec, old, new, f"spec decision renumber {old}")
-          spec = replace_once(spec, "- **D3.5 — Masonite ORM Feasibility / Adapter**\n- **D3.6 — SQLModel Compatibility Profile**\n- **D3.7 — Persistence Integration DX, Compatibility Matrix & Closure**", "- **D3.5 — Masonite ORM Feasibility / Adapter**\n- **D3.6 — Persistence Integration DX, Compatibility Matrix & Closure**", "spec phase list")
-          spec, count = re.subn(r"\n## D3\.6 — SQLModel Compatibility Profile\n.*?(?=\n## Shared canonical capability semantics)", "", spec, flags=re.S)
-          if count != 1:
-              raise SystemExit(f"spec SQLModel section: expected 1, got {count}")
-          spec = replace_once(spec, "\nSQLModel -- compatibility proof --> rakit-sqlalchemy / persistence.sqlalchemy\n", "\n", "spec architecture SQLModel")
-          spec = replace_once(spec, "- SQLAlchemy declarative/SQLModel classes are owned by the SQLAlchemy ORM claimant.", "- SQLAlchemy declarative classes are owned by the SQLAlchemy ORM claimant.", "spec claimant SQLModel")
-          spec = replace_once(spec, "- `pip install \"rakit[sqlmodel]\"` — SQLAlchemy adapter plus supported SQLModel dependency; provider remains `persistence.sqlalchemy`.\n", "", "spec install SQLModel")
-          spec, count = re.subn(r"\n### D3\.6 — SQLModel Compatibility Profile\n.*?(?=\n### D3\.7 — Persistence Integration DX, Compatibility Matrix & Closure)", "", spec, flags=re.S)
-          if count != 1:
-              raise SystemExit(f"spec delivery SQLModel: expected 1, got {count}")
-          spec = spec.replace("### D3.7 — Persistence Integration DX, Compatibility Matrix & Closure", "### D3.6 — Persistence Integration DX, Compatibility Matrix & Closure")
-          spec = replace_once(spec, "- forced capability parity;\n", "- forced capability parity;\n- dedicated SQLModel compatibility phases, extras, or provider-specific maintenance; SQLModel follows the SQLAlchemy ORM integration upstream;\n", "spec non-goal SQLModel")
-          spec = replace_once(spec, "8. Real SQLModel models pass the supported SQLAlchemy compatibility matrix without a duplicate persistence provider.\n9. Core/web contain no concrete backend persistence imports.\n10. Discovery/configured-integration metadata is deterministic and actionable.\n11. Clean-installed extras and official artifacts are tested outside the repository checkout.\n12. The public persistence compatibility matrix documents capability differences and intentional non-parity.\n13. No temporary CI/helper files remain in final subphase PRs.\n14. `docs/roadmap.md` exposes D3.0–D3.7 status and marks D3 overall Complete only after all accepted subphases pass canonical CI.\n15. Every D3 PR is exact-head green and squash-merged.", "8. Core/web contain no concrete backend persistence imports.\n9. Discovery/configured-integration metadata is deterministic and actionable.\n10. Clean-installed extras and official artifacts are tested outside the repository checkout.\n11. The public persistence compatibility matrix documents capability differences and intentional non-parity.\n12. No temporary CI/helper files remain in final subphase PRs.\n13. `docs/roadmap.md` exposes D3.0–D3.6 status and marks D3 overall Complete only after all accepted subphases pass canonical CI.\n14. Every D3 PR is exact-head green and squash-merged.", "spec acceptance SQLModel")
-          spec_path.write_text(spec, encoding="utf-8")
-
-          plan_path = Path("docs/superpowers/plans/2026-08-22-phase-d3-persistence-adapter-ecosystem.md")
-          plan = plan_path.read_text(encoding="utf-8")
-          plan = replace_once(plan, "Masonite ORM feasibility, and SQLModel compatibility", "and Masonite ORM feasibility", "plan goal")
-          plan = replace_once(plan, "; D3.6 proves SQLModel compatibility through the existing SQLAlchemy ORM adapter; D3.7 closes", "; D3.6 closes", "plan architecture")
-          plan = replace_once(plan, ", SQLModel 0.0.x", "", "plan tech stack")
-          plan = replace_once(plan, "- SQLModel uses the existing `persistence.sqlalchemy` provider; do not create a duplicate SQLModel persistence claimant.\n", "", "plan global SQLModel")
-          plan = plan.replace("D3.0–D3.7", "D3.0–D3.6")
-          plan = plan.replace("until D3.7 closure", "until D3.6 closure")
-          plan, count = re.subn(r"\n## D3\.6 — SQLModel Compatibility Profile\n.*?(?=\n## D3\.7 — Persistence Integration DX, Compatibility Matrix & Closure)", "", plan, flags=re.S)
-          if count != 1:
-              raise SystemExit(f"plan SQLModel phase: expected 1, got {count}")
-          plan = plan.replace("## D3.7 — Persistence Integration DX, Compatibility Matrix & Closure", "## D3.6 — Persistence Integration DX, Compatibility Matrix & Closure")
-          plan = plan.replace("### Task 24: Publish persistence adapter guide and compatibility matrix", "### Task 22: Publish persistence adapter guide and compatibility matrix")
-          plan = plan.replace("### Task 25: Final artifact/install/discovery consistency", "### Task 23: Final artifact/install/discovery consistency")
-          plan = plan.replace("### Task 26: Close D3 and hand off D4", "### Task 24: Close D3 and hand off D4")
-          plan = replace_once(plan, "- [ ] Document SQLModel as a compatibility profile rather than a provider.\n", "", "plan closure SQLModel")
-          plan = plan.replace("Squash merge the D3.7 closure PR", "Squash merge the D3.6 closure PR")
-          plan_path.write_text(plan, encoding="utf-8")
-
-          roadmap_path = Path("docs/roadmap.md")
-          roadmap = roadmap_path.read_text(encoding="utf-8")
-          roadmap = replace_once(roadmap, "### D3 — Persistence Adapter Ecosystem\n\n**Status: Next**", "### D3 — Persistence Adapter Ecosystem\n\n**Status: Active**", "roadmap D3 status")
-          roadmap = replace_once(roadmap, "**Status: Next — implementation verified on stacked draft; pending maintainer-directed landing**", "**Status: Complete**", "roadmap D3.0 status")
-          roadmap = replace_once(roadmap, "#### D3.1 — SQLAlchemy ORM Hardening + SQLAlchemy Core/Table\n\n**Status: Planned**", "#### D3.1 — SQLAlchemy ORM Hardening + SQLAlchemy Core/Table\n\n**Status: Complete**", "roadmap D3.1 status")
-          roadmap = replace_once(roadmap, "#### D3.2 — Tortoise ORM\n\n**Status: Planned; read foundation exists on the D3 umbrella draft**", "#### D3.2 — Tortoise ORM\n\n**Status: Active**", "roadmap D3.2 status")
-          roadmap, count = re.subn(r"\n#### D3\.6 — SQLModel Compatibility Profile\n\n\*\*Status: Planned\*\*\n\nProve SQLModel models through the existing `persistence\.sqlalchemy` provider rather than creating a duplicate persistence claimant, and add convenience install UX if compatibility is verified\.\n", "", roadmap)
-          if count != 1:
-              raise SystemExit(f"roadmap SQLModel block: expected 1, got {count}")
-          roadmap = roadmap.replace("#### D3.7 — Persistence Integration DX, Compatibility Matrix & Closure", "#### D3.6 — Persistence Integration DX, Compatibility Matrix & Closure")
-          roadmap_path.write_text(roadmap, encoding="utf-8")
-          PY
-      - name: Verify removed SQLModel scope
+  artifact-dry-run:
+    name: Artifact dry run
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-packages --dev --locked
+      - run: uv run pytest tests/release -v
+      - name: Build all official distributions
         shell: bash
         run: |
           set -euo pipefail
-          ! grep -R "D3.7\|D3.6 — SQLModel\|rakit\[sqlmodel\]" docs/superpowers/specs/2026-08-22-phase-d3-persistence-adapter-ecosystem-design.md docs/superpowers/plans/2026-08-22-phase-d3-persistence-adapter-ecosystem.md docs/roadmap.md
-      - name: Commit revised D3 scope
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/superpowers/specs/2026-08-22-phase-d3-persistence-adapter-ecosystem-design.md docs/superpowers/plans/2026-08-22-phase-d3-persistence-adapter-ecosystem.md docs/roadmap.md
-          git commit -m "docs: remove SQLModel from D3 scope"
-          git push origin HEAD:phase-d3-2-tortoise
+          rm -rf dist
+          mkdir -p dist
+          for project in packages/*; do
+            uv build "$project" --out-dir dist
+          done
+          ls -la dist
+      - name: Upload dry-run artifacts
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: pr-python-distributions
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
