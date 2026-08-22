@@ -7,6 +7,7 @@ class InstallExtra(str, Enum):
     STANDARD = "standard"
     SQLALCHEMY = "sqlalchemy"
     TORTOISE = "tortoise"
+    PEEWEE = "peewee"
     AUTH_SQLALCHEMY = "auth-sqlalchemy"
     STORAGE_LOCAL = "storage-local"
     MSGSPEC = "msgspec"
@@ -18,11 +19,12 @@ _EXTRA_ORDER = {
     InstallExtra.STANDARD: 0,
     InstallExtra.SQLALCHEMY: 1,
     InstallExtra.TORTOISE: 2,
-    InstallExtra.AUTH_SQLALCHEMY: 3,
-    InstallExtra.STORAGE_LOCAL: 4,
-    InstallExtra.MSGSPEC: 5,
-    InstallExtra.UVICORN: 6,
-    InstallExtra.GRANIAN: 7,
+    InstallExtra.PEEWEE: 3,
+    InstallExtra.AUTH_SQLALCHEMY: 4,
+    InstallExtra.STORAGE_LOCAL: 5,
+    InstallExtra.MSGSPEC: 6,
+    InstallExtra.UVICORN: 7,
+    InstallExtra.GRANIAN: 8,
 }
 
 
