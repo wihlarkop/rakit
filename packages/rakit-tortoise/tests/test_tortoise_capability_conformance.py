@@ -188,17 +188,43 @@ class TortoisePersistenceConformanceHarness:
 
     async def assert_root_uow_semantics(self) -> None:
         await self._reset()
-        rolled_back, rollback_context = await self._execute(
+        stable, _ = await self._execute(
             GeneratedCrudRequest.create(
                 GeneratedInput(
-                    values={"name": "Rollback", "group": "test", "score": 1},
+                    values={"name": "Stable", "group": "test", "score": 1},
                     present_fields=frozenset({"name", "group", "score"}),
                 )
             ),
-            success=False,
+            success=True,
         )
-        assert rolled_back.record is not None
-        assert await self._rows() == ()
+
+        rollback_context = OperationContext(
+            deadline=None,
+            cancellation=CancellationContext(),
+            resource_id="widgets",
+        )
+        async with self.factory.open(
+            policy=TransactionPolicy.AUTO,
+            event_publisher=None,
+            operation_context=rollback_context,
+        ) as uow:
+            object.__setattr__(rollback_context, "unit_of_work", uow)
+            try:
+                rolled_back = await self.executor.execute(
+                    rollback_context,
+                    GeneratedCrudRequest.update_partial(
+                        stable.identity,
+                        GeneratedInput(
+                            values={"name": "Rolled back"},
+                            present_fields=frozenset({"name"}),
+                        ),
+                    ),
+                )
+                assert cast(Widget, rolled_back.record).name == "Rolled back"
+            finally:
+                object.__setattr__(rollback_context, "unit_of_work", None)
+        stable_row = await Widget.get(id=stable.identity.values["id"])
+        assert stable_row.name == "Stable"
         assert rollback_context.durable_commit_completed is False
 
         observed: list[str] = []
@@ -209,26 +235,44 @@ class TortoisePersistenceConformanceHarness:
 
         bus.subscribe(ResourceCreated, observe_created)
         publisher = EventPublisher(bus)
-        committed, commit_context = await self._execute(
-            GeneratedCrudRequest.create(
-                GeneratedInput(
-                    values={"name": "Commit", "group": "test", "score": 2},
-                    present_fields=frozenset({"name", "group", "score"}),
-                )
-            ),
-            success=True,
+        commit_context = OperationContext(
+            deadline=None,
+            cancellation=CancellationContext(),
+            resource_id="widgets",
+            events=publisher,
+        )
+        async with self.factory.open(
+            policy=TransactionPolicy.AUTO,
             event_publisher=publisher,
-        )
+            operation_context=commit_context,
+        ) as uow:
+            object.__setattr__(commit_context, "unit_of_work", uow)
+            try:
+                committed = await self.executor.execute(
+                    commit_context,
+                    GeneratedCrudRequest.create(
+                        GeneratedInput(
+                            values={"name": "Commit", "group": "test", "score": 2},
+                            present_fields=frozenset({"name", "group", "score"}),
+                        )
+                    ),
+                )
+                assert observed == []
+                assert commit_context.durable_commit_completed is False
+                await uow.mark_success()
+                assert observed == []
+                assert commit_context.durable_commit_completed is False
+            finally:
+                object.__setattr__(commit_context, "unit_of_work", None)
+
         assert observed == ["created"]
-        assert await self._rows() == (
-            {
-                "id": committed.identity.values["id"],
-                "name": "Commit",
-                "group": "test",
-                "score": 2,
-            },
-        )
         assert commit_context.durable_commit_completed is True
+        committed_row = await Widget.get(id=committed.identity.values["id"])
+        assert (committed_row.name, committed_row.group, committed_row.score) == (
+            "Commit",
+            "test",
+            2,
+        )
 
 
 def test_tortoise_conforms_to_every_advertised_v1_capability() -> None:
