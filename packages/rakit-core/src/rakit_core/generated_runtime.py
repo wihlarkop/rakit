@@ -41,6 +41,7 @@ class ResourceAdapterRuntime:
     data_source: DataSource
     generated_executor_provider: GeneratedResourceExecutorProvider | None = None
     write_service_provider: ResourceWriteServiceProvider | None = None
+    unit_of_work_provider_id: str | None = None
 
 
 def normalize_resource_adapter_runtime(

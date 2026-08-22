@@ -395,7 +395,58 @@ Phase D proves that Rakit's capability architecture works across multiple concre
 
 **Status: Next**
 
-Add a second persistence implementation and use it to pressure-test data-source, write-service, transaction, pagination, relationship, and generated-operation contracts without importing ORM-specific semantics into core.
+D3 expands persistence from one reference ORM into a multi-adapter ecosystem while keeping `rakit-core` and `rakit-web` backend-neutral. SQLAlchemy ORM remains the default provider; every additional adapter advertises only capabilities proven against the canonical contracts.
+
+#### D3.0 — Persistence Integration Contract & Adapter Subject Generalization
+
+**Status: Next — implementation verified on stacked draft; pending maintainer-directed landing**
+
+- backend-neutral adapter subjects, including native non-class persistence objects;
+- resource-owned, multi-provider operation UoW registration and deterministic selection;
+- fail-closed ambiguity instead of install-order selection;
+- shared persistence conformance seams that remain backend-neutral.
+
+#### D3.1 — SQLAlchemy ORM Hardening + SQLAlchemy Core/Table
+
+**Status: Planned**
+
+Add native SQLAlchemy `Table` support in `rakit-sqlalchemy` through the distinct `persistence.sqlalchemy-core` provider while preserving the existing ORM provider.
+
+#### D3.2 — Tortoise ORM
+
+**Status: Planned; read foundation exists on the D3 umbrella draft**
+
+Complete the first-party Tortoise adapter, then add writes, root-UoW behavior, and higher capabilities only where public Tortoise APIs satisfy the canonical contracts cleanly.
+
+#### D3.3 — Peewee 4 Async ORM
+
+**Status: Planned**
+
+Add a first-party `persistence.peewee` adapter using Peewee 4's official async execution layer and advertise only verified behavior.
+
+#### D3.4 — Piccolo ORM
+
+**Status: Planned**
+
+Add a first-party `persistence.piccolo` adapter with conservative capability advertisement and public-API-only transaction/query integration.
+
+#### D3.5 — Masonite ORM Feasibility / Adapter
+
+**Status: Planned**
+
+Evaluate the maintained Masonite ORM line against Rakit's async and root-UoW contracts. Ship `persistence.masonite` only if the feasibility gate passes without semantic distortion.
+
+#### D3.6 — SQLModel Compatibility Profile
+
+**Status: Planned**
+
+Prove SQLModel models through the existing `persistence.sqlalchemy` provider rather than creating a duplicate persistence claimant, and add convenience install UX if compatibility is verified.
+
+#### D3.7 — Persistence Integration DX, Compatibility Matrix & Closure
+
+**Status: Planned**
+
+Publish install/discovery guidance and the verified capability matrix, close D3 packaging/artifact consistency, then hand Phase D to D4.0 Web Integration Contract.
 
 ### D4 — Web Framework Integrations
 

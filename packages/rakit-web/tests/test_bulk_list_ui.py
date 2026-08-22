@@ -162,7 +162,7 @@ def _app(principal: Principal) -> ASGIApp:
         superuser_bypass=True,
         deadline_seconds=30,
         operation_scope=operation_scope,
-        unit_of_work_factory=lambda: None,
+        unit_of_work_factory_for_resource=lambda _resource_id: None,
         label="Operations",
     )
     binding = ResourceBinding(definition=definition, service=service, templates=templates)

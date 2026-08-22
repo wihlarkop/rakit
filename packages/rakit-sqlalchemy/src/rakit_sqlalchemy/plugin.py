@@ -4,7 +4,6 @@ from rakit_core.di import ServiceScope
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.generated_runtime import ResourceAdapterRuntime
 from rakit_core.integrations import ConfiguredIntegration
-from rakit_core.transactions import OperationUnitOfWorkFactory
 from sqlalchemy.exc import NoInspectionAvailable
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -19,6 +18,7 @@ from .write_provider import SQLAlchemyWriteServiceProvider
 
 class SQLAlchemyPlugin:
     plugin_id = "sqlalchemy"
+    unit_of_work_provider_id = "persistence.sqlalchemy"
 
     def __init__(self, *, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._session_factory = session_factory
@@ -31,18 +31,20 @@ class SQLAlchemyPlugin:
         builder.registry.add_value(
             async_sessionmaker, self._session_factory, scope=ServiceScope.APPLICATION
         )
-        builder.registry.add_value(
-            OperationUnitOfWorkFactory,
+        builder.register_unit_of_work_factory(
+            self.unit_of_work_provider_id,
             SQLAlchemyOperationUnitOfWorkFactory(self._session_factory),
-            scope=ServiceScope.APPLICATION,
         )
         builder.register_adapter("sqlalchemy", self._claim)
 
     def _claim(
         self,
-        model: type[object],
+        subject: object,
         field_policy: ResourceFieldPolicy,
     ) -> ResourceAdapterRuntime | None:
+        if not isinstance(subject, type):
+            return None
+        model = subject
         try:
             inspect_model(model)
         except NoInspectionAvailable:
@@ -82,4 +84,5 @@ class SQLAlchemyPlugin:
                 model=model,
                 session_factory=self._session_factory,
             ),
+            unit_of_work_provider_id=self.unit_of_work_provider_id,
         )
