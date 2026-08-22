@@ -102,16 +102,16 @@ def is_peewee_model(subject: object) -> bool:
 
 
 def _field_python_type(field: Field) -> type[Any]:
-    if isinstance(field, (CharField, FixedCharField, TextField)):
+    if isinstance(field, CharField | FixedCharField | TextField):
         return str
     if isinstance(field, BooleanField):
         return bool
     if isinstance(
         field,
-        (AutoField, BigAutoField, IdentityField, IntegerField, BigIntegerField, SmallIntegerField),
+        AutoField | BigAutoField | IdentityField | IntegerField | BigIntegerField | SmallIntegerField,
     ):
         return int
-    if isinstance(field, (FloatField, DoubleField)):
+    if isinstance(field, FloatField | DoubleField):
         return float
     if isinstance(field, DecimalField):
         return Decimal
@@ -160,7 +160,7 @@ def inspect_model(
                 field=field,
                 python_type=python_type,
                 nullable=bool(field.null),
-                generated=isinstance(field, (AutoField, BigAutoField, IdentityField)),
+                generated=isinstance(field, AutoField | BigAutoField | IdentityField),
                 primary_key=bool(field.primary_key),
                 default=field.default,
             )
