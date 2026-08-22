@@ -11,6 +11,7 @@ members = [
     "rakit",
     "rakit-auth-sqlalchemy",
     "rakit-core",
+    "rakit-peewee",
     "rakit-schema-msgspec",
     "rakit-schema-pydantic",
     "rakit-server",
@@ -1024,6 +1025,15 @@ wheels = [
 ]
 
 [[package]]
+name = "peewee"
+version = "4.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/94/d3/d506f871ca4173e1e3b0754459181f7dd4d7f12c32367865ab8cad3d16bf/peewee-4.3.0.tar.gz", hash = "sha256:f2e6686e6fc61d236fd12f370bfd42955b7b42bbd9954f207d02434a0328c3de", size = 795277, upload-time = "2026-07-31T16:51:22.784Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/33/fa/297ed34cba9ef22e29271a95b34d2b6191dba6de39e2d1918e3363cd6555/peewee-4.3.0-py3-none-any.whl", hash = "sha256:62a43d5934e7986747285124059c5ad8908cc70e538472aadae5cb5e9f10006c", size = 179479, upload-time = "2026-07-31T16:51:21.288Z" },
+]
+
+[[package]]
 name = "platformdirs"
 version = "4.11.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1329,6 +1339,9 @@ granian = [
 msgspec = [
     { name = "rakit-schema-msgspec" },
 ]
+peewee = [
+    { name = "rakit-peewee" },
+]
 sqlalchemy = [
     { name = "rakit-sqlalchemy" },
 ]
@@ -1353,6 +1366,7 @@ requires-dist = [
     { name = "rakit-auth-sqlalchemy", marker = "extra == 'auth-sqlalchemy'", editable = "packages/rakit-auth-sqlalchemy" },
     { name = "rakit-auth-sqlalchemy", marker = "extra == 'standard'", editable = "packages/rakit-auth-sqlalchemy" },
     { name = "rakit-core", editable = "packages/rakit-core" },
+    { name = "rakit-peewee", marker = "extra == 'peewee'", editable = "packages/rakit-peewee" },
     { name = "rakit-schema-msgspec", marker = "extra == 'msgspec'", editable = "packages/rakit-schema-msgspec" },
     { name = "rakit-schema-pydantic", editable = "packages/rakit-schema-pydantic" },
     { name = "rakit-server", editable = "packages/rakit-server" },
@@ -1366,7 +1380,7 @@ requires-dist = [
     { name = "rakit-tortoise", marker = "extra == 'tortoise'", editable = "packages/rakit-tortoise" },
     { name = "rakit-web", editable = "packages/rakit-web" },
 ]
-provides-extras = ["uvicorn", "granian", "sqlalchemy", "tortoise", "auth-sqlalchemy", "storage-local", "msgspec", "standard"]
+provides-extras = ["uvicorn", "granian", "sqlalchemy", "tortoise", "peewee", "auth-sqlalchemy", "storage-local", "msgspec", "standard"]
 
 [[package]]
 name = "rakit-auth-sqlalchemy"
@@ -1426,6 +1440,37 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "pytest", specifier = ">=8.3,<9" },
+    { name = "pytest-anyio", specifier = ">=0.0.0" },
+]
+
+[[package]]
+name = "rakit-peewee"
+version = "0.1.0a1"
+source = { editable = "packages/rakit-peewee" }
+dependencies = [
+    { name = "greenlet" },
+    { name = "peewee" },
+    { name = "rakit-core" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "aiosqlite" },
+    { name = "pytest" },
+    { name = "pytest-anyio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "greenlet", specifier = ">=3.1,<4" },
+    { name = "peewee", specifier = ">=4.0,<5" },
+    { name = "rakit-core", editable = "packages/rakit-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "aiosqlite", specifier = ">=0.20,<1" },
     { name = "pytest", specifier = ">=8.3,<9" },
     { name = "pytest-anyio", specifier = ">=0.0.0" },
 ]
