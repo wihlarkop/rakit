@@ -50,8 +50,7 @@ def test_tortoise_generated_crud_compiles_with_resource_owned_uow() -> None:
     compiled = compile_application(builder)
 
     assert tuple(
-        requirement.requirement_id
-        for requirement in compiled.capability_requirements
+        requirement.requirement_id for requirement in compiled.capability_requirements
     ) == ("generated-api:widgets:write",)
     report = compiled.capability_reports[0]
     assert report.requirement.requirement_id == "generated-api:widgets:write"
