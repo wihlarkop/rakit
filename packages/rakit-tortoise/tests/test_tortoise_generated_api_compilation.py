@@ -56,9 +56,7 @@ def test_tortoise_generated_crud_compiles_with_resource_owned_uow() -> None:
     assert report.requirement.requirement_id == "generated-api:widgets:write"
     assert report.satisfied is True
     assert report.missing.names == ()
-    assert dict(compiled.resource_unit_of_work_provider_ids) == {
-        "widgets": "persistence.tortoise"
-    }
+    assert dict(compiled.resource_unit_of_work_provider_ids) == {"widgets": "persistence.tortoise"}
     assert "widgets" in dict(compiled.generated_resource_executor_providers)
     assert "persistence.tortoise" in dict(compiled.unit_of_work_factories)
     assert tuple(item.integration_id for item in compiled.configured_integrations) == (
