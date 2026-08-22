@@ -108,7 +108,12 @@ def _field_python_type(field: Field) -> type[Any]:
         return bool
     if isinstance(
         field,
-        AutoField | BigAutoField | IdentityField | IntegerField | BigIntegerField | SmallIntegerField,
+        AutoField
+        | BigAutoField
+        | IdentityField
+        | IntegerField
+        | BigIntegerField
+        | SmallIntegerField,
     ):
         return int
     if isinstance(field, FloatField | DoubleField):
