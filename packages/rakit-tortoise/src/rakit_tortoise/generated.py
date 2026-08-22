@@ -17,6 +17,7 @@ from rakit_core.generated_runtime import (
 from rakit_core.identity import RecordIdentity
 from rakit_core.mutations import ResourceCreated, ResourceDeleted, ResourceUpdated
 from rakit_core.operations import OperationContext, OperationExecutorCapabilities
+from tortoise.backends.base.client import BaseDBAsyncClient
 from tortoise.models import Model
 
 from .datasource import TortoiseDataSource
@@ -99,10 +100,14 @@ class TortoiseGeneratedResourceExecutor:
 
     async def _record(
         self,
-        connection: object,
+        connection: BaseDBAsyncClient,
         identity: RecordIdentity,
     ) -> Model | None:
-        return await self.model.filter(**self._identity_kwargs(identity)).using_db(connection).first()
+        return (
+            await self.model.filter(**self._identity_kwargs(identity))
+            .using_db(connection)
+            .first()
+        )
 
     async def execute(
         self,
@@ -126,7 +131,7 @@ class TortoiseGeneratedResourceExecutor:
     async def _create(
         self,
         context: OperationContext,
-        connection: object,
+        connection: BaseDBAsyncClient,
         request: GeneratedCrudRequest,
     ) -> GeneratedMutationResult:
         if request.input is None:
@@ -152,7 +157,7 @@ class TortoiseGeneratedResourceExecutor:
     async def _update(
         self,
         context: OperationContext,
-        connection: object,
+        connection: BaseDBAsyncClient,
         request: GeneratedCrudRequest,
     ) -> GeneratedMutationResult:
         if request.identity is None or request.input is None:
@@ -164,9 +169,11 @@ class TortoiseGeneratedResourceExecutor:
         current = await self._record(connection, request.identity)
         if current is None:
             raise _not_found(self.resource_id)
-        updated = await self.model.filter(**self._identity_kwargs(request.identity)).using_db(
-            connection
-        ).update(**request.input.values)
+        updated = (
+            await self.model.filter(**self._identity_kwargs(request.identity))
+            .using_db(connection)
+            .update(**request.input.values)
+        )
         if updated != 1:
             raise _not_found(self.resource_id)
         record = await self._record(connection, request.identity)
@@ -184,7 +191,7 @@ class TortoiseGeneratedResourceExecutor:
     async def _delete(
         self,
         context: OperationContext,
-        connection: object,
+        connection: BaseDBAsyncClient,
         request: GeneratedCrudRequest,
     ) -> GeneratedMutationResult:
         if request.identity is None:
@@ -193,9 +200,11 @@ class TortoiseGeneratedResourceExecutor:
                 "generated_api_tortoise_delete_request_invalid",
                 "Generated delete request is incomplete.",
             )
-        deleted = await self.model.filter(**self._identity_kwargs(request.identity)).using_db(
-            connection
-        ).delete()
+        deleted = (
+            await self.model.filter(**self._identity_kwargs(request.identity))
+            .using_db(connection)
+            .delete()
+        )
         if deleted != 1:
             raise _not_found(self.resource_id)
         if context.events is not None:
