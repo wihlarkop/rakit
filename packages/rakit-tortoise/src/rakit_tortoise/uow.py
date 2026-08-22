@@ -7,7 +7,7 @@ import anyio
 from rakit_core.events import EventPublisher
 from rakit_core.operations import OperationContext
 from rakit_core.transactions import TransactionPolicy
-from tortoise.backends.base.client import BaseDBAsyncClient
+from tortoise.backends.base.client import TransactionalDBClient
 from tortoise.transactions import in_transaction
 
 
@@ -45,7 +45,7 @@ class TortoiseUnitOfWork:
         self.policy = policy
         self.event_publisher = event_publisher
         self.operation_context = operation_context
-        self.connection: BaseDBAsyncClient
+        self.connection: TransactionalDBClient
         self._transaction_context: Any = None
         self._success = False
         self._completed = False
@@ -110,12 +110,11 @@ class TortoiseUnitOfWork:
             return
 
         transaction_context = self._transaction_context
-        connection = self.connection
         if transaction_context is not None:
             if cause is not None:
                 await transaction_context.__aexit__(type(cause), cause, cause.__traceback__)
             else:
-                await connection.rollback()
+                await self.connection.rollback()
                 await transaction_context.__aexit__(None, None, None)
             self._transaction_context = None
 
