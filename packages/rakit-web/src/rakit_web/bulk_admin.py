@@ -46,7 +46,7 @@ def build_admin_bulk_action_routes(
     superuser_bypass: bool,
     deadline_seconds: float,
     operation_scope: Callable[[], AbstractAsyncContextManager[ServiceResolver]],
-    unit_of_work_factory: Callable[[], OperationUnitOfWorkFactory | None],
+    unit_of_work_factory_for_resource: Callable[[str], OperationUnitOfWorkFactory | None],
     label: str,
 ) -> list[Route]:
     """Materialize framework bulk delete plus compiled custom BULK actions."""
@@ -203,7 +203,9 @@ def build_admin_bulk_action_routes(
             record_version=provider.version_for if provider is not None else None,
             deadline_seconds=deadline_seconds,
             operation_scope=operation_scope,
-            unit_of_work_factory=unit_of_work_factory,
+            unit_of_work_factory=(
+                lambda resource_id=resource_id: unit_of_work_factory_for_resource(resource_id)
+            ),
             label=label,
         )
         routes.extend(build_mature_bulk_action_routes(binding))

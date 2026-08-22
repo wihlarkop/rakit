@@ -180,7 +180,7 @@ class _AdapterPlugin:
     def configure(self, builder: ApplicationBuilder) -> None:
         provider = self.provider
 
-        def claim(model: type[object], _field_policy: object) -> ResourceAdapterRuntime | None:
+        def claim(model: object, _field_policy: object) -> ResourceAdapterRuntime | None:
             if model is not _Model:
                 return None
             return ResourceAdapterRuntime(

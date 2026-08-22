@@ -19,7 +19,7 @@ from rakit_core.operations import (
     run_operation_plan,
 )
 from rakit_core.permissions import PermissionRequirement
-from rakit_core.transactions import OperationUnitOfWorkFactory, TransactionPolicy
+from rakit_core.transactions import TransactionPolicy
 from rakit_sqlalchemy.plugin import SQLAlchemyPlugin
 from rakit_sqlalchemy.uow import SQLAlchemyOperationUnitOfWorkFactory, SQLAlchemyUnitOfWork
 from sqlalchemy import func, select
@@ -98,11 +98,12 @@ async def _count(factory: async_sessionmaker[AsyncSession]) -> int:
 
 
 @pytest.mark.anyio
-async def test_sqlalchemy_plugin_registers_the_generic_uow_factory(session_factory) -> None:
+async def test_sqlalchemy_plugin_registers_named_uow_provider(session_factory) -> None:
     builder = ApplicationBuilder(admin_id="ops")
     SQLAlchemyPlugin(session_factory=session_factory).configure(builder)
-    resolver = builder.registry.application_scope()
-    factory = resolver.require(OperationUnitOfWorkFactory)
+    factories = dict(builder.unit_of_work_factories)
+    assert tuple(factories) == ("persistence.sqlalchemy",)
+    factory = factories["persistence.sqlalchemy"]
     assert isinstance(factory, SQLAlchemyOperationUnitOfWorkFactory)
     assert factory._session_factory is session_factory
 

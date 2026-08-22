@@ -21,8 +21,8 @@ from rakit_core.auth import Principal, SessionRecord
 from rakit_core.concurrency import AttributeVersionProvider
 from rakit_core.datasource import DataSourceCapabilities
 from rakit_core.definitions import PageDefinition
-from rakit_core.di import ServiceScope
 from rakit_core.errors import ErrorCode, RakitError
+from rakit_core.generated_runtime import ResourceAdapterRuntime
 from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, OperationReceipt
 from rakit_core.operations import OperationExecutorCapabilities
 from rakit_core.transactions import OperationUnitOfWorkFactory, TransactionPolicy
@@ -124,6 +124,19 @@ class _RecordAdmin(ResourceAdmin):
     list_fields = ("id",)
     detail_fields = ("id", "version")
     data_source = _Source()
+
+
+class _BoundRecordAdmin(ResourceAdmin):
+    resource_id = "records"
+    path = "/records"
+    label = "Records"
+    singular_label = "Record"
+    list_fields = ("id",)
+    detail_fields = ("id", "version")
+    data_source = ResourceAdapterRuntime(
+        data_source=_Source(),
+        unit_of_work_provider_id="test.uow",
+    )
 
 
 class _ManagedExecutor(DomainActionExecutor):
@@ -288,13 +301,12 @@ def test_prepared_concurrent_action_fails_until_c2b_atomic_path_exists() -> None
         ),
     )
     admin = _admin(permissions=frozenset({"ops.actions.approve.execute"}))
-    admin.register(_RecordAdmin)
-    admin.register_concurrency_provider("records", AttributeVersionProvider("version"))
-    admin.builder.registry.add_value(
-        OperationUnitOfWorkFactory,
+    admin.builder.register_unit_of_work_factory(
+        "test.uow",
         cast(OperationUnitOfWorkFactory, _NeverOpenedFactory()),
-        scope=ServiceScope.APPLICATION,
     )
+    admin.register(_BoundRecordAdmin)
+    admin.register_concurrency_provider("records", AttributeVersionProvider("version"))
     admin.builder.add_action(action)
     with pytest.raises(RakitError) as caught:
         admin.asgi()

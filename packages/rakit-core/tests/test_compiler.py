@@ -732,7 +732,7 @@ def test_post_compile_mutation_still_raises_registry_frozen() -> None:
 def test_register_adapter_stores_claim_callback() -> None:
     builder = ApplicationBuilder()
 
-    def claim(model: type, policy: object) -> DataSource | None:
+    def claim(model: object, policy: object) -> DataSource | None:
         return None
 
     builder.register_adapter("sqlalchemy", claim)

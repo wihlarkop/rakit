@@ -24,7 +24,7 @@ from rakit_core.definitions import (
     ResourceFieldPolicy,
     RouteDefinition,
 )
-from rakit_core.di import ServiceKey, ServiceRegistry, ServiceResolver, ServiceScope
+from rakit_core.di import ServiceRegistry, ServiceResolver, ServiceScope
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.events import EventBus, EventPublisher
 from rakit_core.filters import ResourceFilter
@@ -116,6 +116,7 @@ from .security.validation import (
     validate_session_store_for_production,
 )
 from .system_responses import SystemPageRenderer, unexpected_api_error
+from .uow_selection import ResourceUnitOfWorkRegistry
 
 _FIELD_POLICY_NAMES = (
     "list_fields",
@@ -696,6 +697,7 @@ class Admin:
             definition,
             data_source,
             generated_executor_provider=adapter_runtime.generated_executor_provider,
+            unit_of_work_provider_id=adapter_runtime.unit_of_work_provider_id,
         )
         for action in actions:
             self._builder.add_action(action)
@@ -967,7 +969,8 @@ class Admin:
         verify_submission_token: Callable[[Request], Awaitable[bool]],
         token_service: TokenService,
         operation_scope: Callable[[], AbstractAsyncContextManager[ServiceResolver]],
-        unit_of_work_factory: Callable[[], OperationUnitOfWorkFactory | None],
+        unit_of_work_factory_for_resource: Callable[[str], OperationUnitOfWorkFactory | None],
+        page_unit_of_work_factory: Callable[[], OperationUnitOfWorkFactory | None],
     ) -> tuple[ActionBinding, ...]:
         """Materialize the compiled action routes as web bindings.
 
@@ -1051,7 +1054,11 @@ class Admin:
                     idempotency_store=idempotency_store,
                     deadline_seconds=self._mutation_deadline_seconds,
                     operation_scope=operation_scope,
-                    unit_of_work_factory=unit_of_work_factory,
+                    unit_of_work_factory=(
+                        lambda resource_id=resource_id: unit_of_work_factory_for_resource(
+                            resource_id
+                        )
+                    ),
                     advanced_response_adapter=self._advanced_action_response_adapter,
                     label=self.config.title,
                 )
@@ -1075,7 +1082,7 @@ class Admin:
                     idempotency_store=idempotency_store,
                     deadline_seconds=self._mutation_deadline_seconds,
                     operation_scope=operation_scope,
-                    unit_of_work_factory=unit_of_work_factory,
+                    unit_of_work_factory=page_unit_of_work_factory,
                     advanced_response_adapter=self._advanced_action_response_adapter,
                     label=self.config.title,
                 )
@@ -1242,11 +1249,11 @@ class Admin:
         write_routes: list[Route] = []
         action_routes: list[Route] = []
         page_routes: list[Route] = []
-        uow_factory_registered = (
-            ServiceKey(OperationUnitOfWorkFactory, None) in self._compiled_registry.providers
-            if self._compiled_registry is not None
-            else False
+        uow_registry = ResourceUnitOfWorkRegistry(
+            factories=dict(compiled_app.unit_of_work_factories),
+            resource_provider_ids=dict(compiled_app.resource_unit_of_work_provider_ids),
         )
+        uow_factory_registered = uow_registry.has_any_provider
         validate_page_runtime(
             self.compiled,
             auth_enabled=self._auth_backend is not None and self._session_store is not None,
@@ -1285,12 +1292,22 @@ class Admin:
             validate_idempotency_store_for_production(
                 self._operation_idempotency_store, debug=self.config.debug
             )
-            if not uow_factory_registered:
+            missing_crud_uow = tuple(
+                sorted(
+                    api.resource_id
+                    for api in crud_apis
+                    if uow_registry.for_resource(api.resource_id) is None
+                )
+            )
+            if missing_crud_uow:
                 raise RakitError(
                     code=ErrorCode.CONFIG_INVALID,
-                    message="Generated CRUD requires a registered operation unit of work.",
+                    message=("Generated CRUD requires a resource-owned operation unit of work."),
                     status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-                    details={"reason": "generated_api_uow_required"},
+                    details={
+                        "reason": "generated_api_uow_required",
+                        "resources": missing_crud_uow,
+                    },
                 )
 
         if self.compiled.action_routes:
@@ -1353,21 +1370,32 @@ class Admin:
                                 "reason": "executor_not_uow_managed",
                             },
                         )
-                    if not uow_factory_registered:
+                    selected_uow = (
+                        uow_registry.sole_provider()
+                        if action.scope is ActionScope.PAGE
+                        else uow_registry.for_resource(action.resource_id or "")
+                    )
+                    if selected_uow is None:
+                        ambiguous_page_uow = (
+                            action.scope is ActionScope.PAGE and uow_registry.provider_count > 1
+                        )
                         raise RakitError(
                             code=ErrorCode.CONFIG_INVALID,
                             message=(
                                 f'Action "{action.action_id}" ({action.scope.value}, owner '
-                                f'"{owner}") requires a registered operation unit-of-work '
-                                "provider (install a persistence plugin such as "
-                                "SQLAlchemyPlugin)."
+                                f'"{owner}") requires an unambiguous operation unit-of-work '
+                                "provider."
                             ),
                             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                             details={
                                 "action_id": action.action_id,
                                 "owner": owner,
                                 "transaction_policy": str(action.transaction_policy),
-                                "reason": "operation_uow_not_configured",
+                                "reason": (
+                                    "operation_uow_ambiguous"
+                                    if ambiguous_page_uow
+                                    else "operation_uow_not_configured"
+                                ),
                             },
                         )
                 if action.requires_concurrency:
@@ -1664,29 +1692,23 @@ class Admin:
                 ):
                     yield operation_services
 
-            def action_uow_factory() -> OperationUnitOfWorkFactory | None:
-                if self._application_resolver is None:
-                    return None
-                return self._application_resolver.require(OperationUnitOfWorkFactory)
+            def resource_uow_factory(resource_id: str) -> OperationUnitOfWorkFactory | None:
+                return uow_registry.for_resource(resource_id)
+
+            def page_uow_factory() -> OperationUnitOfWorkFactory | None:
+                return uow_registry.sole_provider()
 
             if crud_apis:
                 assert self._operation_idempotency_store is not None
                 executor_providers = dict(self.compiled.generated_resource_executor_providers)
                 concurrency_tokens = ConcurrencyTokenService(write_token_service)
 
-                class _GeneratedUowFactory:
-                    def open(_self, *, policy, event_publisher, operation_context):
-                        if self._application_resolver is None:
-                            raise RuntimeError("Application services are not available")
-                        factory = self._application_resolver.require(OperationUnitOfWorkFactory)
-                        return factory.open(
-                            policy=policy,
-                            event_publisher=event_publisher,
-                            operation_context=operation_context,
-                        )
-
-                generated_uow_factory = _GeneratedUowFactory()
                 for api in crud_apis:
+                    generated_uow_factory = uow_registry.for_resource(api.resource_id)
+                    if generated_uow_factory is None:
+                        raise RuntimeError(
+                            f"Compiled CRUD resource {api.resource_id!r} has no UoW provider"
+                        )
                     provider = executor_providers.get(api.resource_id)
                     if provider is None:
                         raise RakitError(
@@ -1795,7 +1817,7 @@ class Admin:
                     idempotency_store=self._operation_idempotency_store,
                     deadline_seconds=self._mutation_deadline_seconds,
                     operation_scope=operation_scope,
-                    unit_of_work_factory=action_uow_factory,
+                    unit_of_work_factory=page_uow_factory,
                     label=self.config.title,
                 )
 
@@ -1809,7 +1831,8 @@ class Admin:
                     verify_submission_token=verify_submission_token,
                     token_service=write_token_service,
                     operation_scope=operation_scope,
-                    unit_of_work_factory=action_uow_factory,
+                    unit_of_work_factory_for_resource=resource_uow_factory,
+                    page_unit_of_work_factory=page_uow_factory,
                 ):
                     action_routes.extend(build_action_routes(action_binding))
             if secured_write_bindings or self.compiled.action_routes:
@@ -1829,7 +1852,7 @@ class Admin:
                         superuser_bypass=self._superuser_bypass,
                         deadline_seconds=self._mutation_deadline_seconds,
                         operation_scope=operation_scope,
-                        unit_of_work_factory=action_uow_factory,
+                        unit_of_work_factory_for_resource=resource_uow_factory,
                         label=self.config.title,
                     )
                 )

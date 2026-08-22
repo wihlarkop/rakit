@@ -32,6 +32,7 @@ from .integrations import ConfiguredIntegration
 from .pagination import PaginationStrategy
 from .permissions import PermissionRequirement
 from .relationships import CompiledRelationship
+from .transactions import OperationUnitOfWorkFactory
 
 # Path prefixes Rakit owns. An application route allowed to occupy one of
 # these is an authorization bypass, not merely a collision: `/auth/login`
@@ -66,7 +67,7 @@ class Plugin(Protocol):
 
 
 type AdapterClaim = Callable[
-    [type, ResourceFieldPolicy], DataSource | ResourceAdapterRuntime | None
+    [object, ResourceFieldPolicy], DataSource | ResourceAdapterRuntime | None
 ]
 
 
@@ -184,6 +185,8 @@ class ApplicationBuilder:
     _resource_generated_executor_providers: dict[str, GeneratedResourceExecutorProvider] = field(
         default_factory=dict
     )
+    _unit_of_work_factories: dict[str, OperationUnitOfWorkFactory] = field(default_factory=dict)
+    _resource_unit_of_work_provider_ids: dict[str, str] = field(default_factory=dict)
     _capability_providers: dict[str, CapabilityProvider] = field(default_factory=dict)
     _capability_requirements: dict[str, CapabilityRequirement] = field(default_factory=dict)
     _configured_integrations: list[ConfiguredIntegration] = field(default_factory=list)
@@ -246,6 +249,16 @@ class ApplicationBuilder:
     ) -> tuple[tuple[str, GeneratedResourceExecutorProvider], ...]:
         return tuple(self._resource_generated_executor_providers.items())
 
+    @property
+    def unit_of_work_factories(
+        self,
+    ) -> tuple[tuple[str, OperationUnitOfWorkFactory], ...]:
+        return tuple(self._unit_of_work_factories.items())
+
+    @property
+    def resource_unit_of_work_provider_ids(self) -> tuple[tuple[str, str], ...]:
+        return tuple(self._resource_unit_of_work_provider_ids.items())
+
     def _check_not_compiled(self) -> None:
         if self._compiled:
             raise RakitError(
@@ -268,6 +281,7 @@ class ApplicationBuilder:
         data_source: DataSource,
         *,
         generated_executor_provider: GeneratedResourceExecutorProvider | None = None,
+        unit_of_work_provider_id: str | None = None,
     ) -> None:
         self._check_not_compiled()
         if any(existing.resource_id == definition.resource_id for existing in self._resources):
@@ -302,6 +316,24 @@ class ApplicationBuilder:
             self._resource_generated_executor_providers[definition.resource_id] = (
                 generated_executor_provider
             )
+        if unit_of_work_provider_id is not None:
+            if unit_of_work_provider_id not in self._unit_of_work_factories:
+                raise RakitError(
+                    code=ErrorCode.CONFIG_INVALID_RESOURCE_POLICY,
+                    message=(
+                        f'Resource "{definition.resource_id}" references an unknown operation '
+                        "unit-of-work provider."
+                    ),
+                    status_code=500,
+                    details={
+                        "resource_id": definition.resource_id,
+                        "provider": unit_of_work_provider_id,
+                        "reason": "unit_of_work_provider_not_registered",
+                    },
+                )
+            self._resource_unit_of_work_provider_ids[definition.resource_id] = (
+                unit_of_work_provider_id
+            )
 
     def add_page(self, definition: PageDefinition) -> None:
         self._check_not_compiled()
@@ -331,6 +363,24 @@ class ApplicationBuilder:
                 details={"adapter": name},
             )
         self._adapters[name] = claim
+
+    def register_unit_of_work_factory(
+        self, provider_id: str, factory: OperationUnitOfWorkFactory
+    ) -> None:
+        self._check_not_compiled()
+        if not provider_id or provider_id != provider_id.strip():
+            raise ValueError("provider_id must be a non-empty normalized string")
+        if provider_id in self._unit_of_work_factories:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message=f'Operation unit-of-work provider "{provider_id}" is already registered.',
+                status_code=500,
+                details={
+                    "provider": provider_id,
+                    "reason": "duplicate_unit_of_work_provider",
+                },
+            )
+        self._unit_of_work_factories[provider_id] = factory
 
     def register_configured_integration(self, integration: ConfiguredIntegration) -> None:
         self._check_not_compiled()
@@ -464,6 +514,8 @@ class _InstallSnapshot:
     adapters: dict[str, AdapterClaim]
     resource_data_sources: dict[str, DataSource]
     resource_generated_executor_providers: dict[str, GeneratedResourceExecutorProvider]
+    unit_of_work_factories: dict[str, OperationUnitOfWorkFactory]
+    resource_unit_of_work_provider_ids: dict[str, str]
     capability_providers: dict[str, CapabilityProvider]
     capability_requirements: dict[str, CapabilityRequirement]
     configured_integrations: list[ConfiguredIntegration]
@@ -485,6 +537,8 @@ class _InstallSnapshot:
             resource_generated_executor_providers=dict(
                 builder._resource_generated_executor_providers
             ),
+            unit_of_work_factories=dict(builder._unit_of_work_factories),
+            resource_unit_of_work_provider_ids=dict(builder._resource_unit_of_work_provider_ids),
             capability_providers=dict(builder._capability_providers),
             capability_requirements=dict(builder._capability_requirements),
             configured_integrations=list(builder._configured_integrations),
@@ -509,6 +563,10 @@ class _InstallSnapshot:
         builder._resource_generated_executor_providers.update(
             self.resource_generated_executor_providers
         )
+        builder._unit_of_work_factories.clear()
+        builder._unit_of_work_factories.update(self.unit_of_work_factories)
+        builder._resource_unit_of_work_provider_ids.clear()
+        builder._resource_unit_of_work_provider_ids.update(self.resource_unit_of_work_provider_ids)
         builder._capability_providers.clear()
         builder._capability_providers.update(self.capability_providers)
         builder._capability_requirements.clear()
@@ -535,6 +593,8 @@ class CompiledApplication:
     generated_resource_executor_providers: tuple[
         tuple[str, GeneratedResourceExecutorProvider], ...
     ] = ()
+    unit_of_work_factories: tuple[tuple[str, OperationUnitOfWorkFactory], ...] = ()
+    resource_unit_of_work_provider_ids: tuple[tuple[str, str], ...] = ()
     capability_providers: tuple[CapabilityProvider, ...] = ()
     capability_requirements: tuple[CapabilityRequirement, ...] = ()
     capability_reports: tuple[CapabilityReport, ...] = ()
@@ -1169,6 +1229,8 @@ def compile_application(builder: ApplicationBuilder) -> CompiledApplication:
         _action_route_pairs(all_routes, compiled_actions),
         compiled_resource_apis=generated_api.resources,
         generated_resource_executor_providers=(builder.generated_resource_executor_providers),
+        unit_of_work_factories=builder.unit_of_work_factories,
+        resource_unit_of_work_provider_ids=builder.resource_unit_of_work_provider_ids,
         capability_providers=capability_analysis.providers,
         capability_requirements=capability_analysis.requirements,
         capability_reports=capability_analysis.reports,

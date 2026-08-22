@@ -26,9 +26,12 @@ class TortoisePlugin:
 
     def _claim(
         self,
-        model: type[object],
+        subject: object,
         field_policy: ResourceFieldPolicy,
     ) -> ResourceAdapterRuntime | None:
+        if not isinstance(subject, type):
+            return None
+        model = subject
         try:
             metadata = inspect_model(model)
         except TypeError:

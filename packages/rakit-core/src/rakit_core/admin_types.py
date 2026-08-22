@@ -9,6 +9,7 @@ from .pagination import ResourcePaginationPolicy
 
 if TYPE_CHECKING:
     from .actions import ActionDefinition
+    from .generated_runtime import ResourceAdapterRuntime
     from .relationships import RelationshipDefinition
 
 
@@ -101,11 +102,17 @@ class ResourceAdmin:
     relationships: tuple["RelationshipDefinition", ...] = ()
     actions: tuple["ActionDefinition", ...] = ()
     api: ResourceApiDefinition = ResourceApiDefinition()
-    data_source: "DataSource | None" = None
+    data_source: "DataSource | ResourceAdapterRuntime | None" = None
     write: ResourceWriteDefinition | None = None
 
 
 class ModelAdmin(ResourceAdmin):
-    """A `ResourceAdmin` backed by a model claimed by an installed adapter."""
+    """A `ResourceAdmin` backed by a native subject claimed by an installed adapter.
 
-    model: type[object]
+    ``model`` keeps its established public name for source compatibility, but
+    the value is intentionally backend-neutral: ORM integrations may require a
+    model class while schema-centric integrations can claim native objects such
+    as SQLAlchemy ``Table`` instances.
+    """
+
+    model: object
