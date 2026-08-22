@@ -4,11 +4,18 @@ from rakit_core.testing.capability_conformance import CANONICAL_CONFORMANCE_SPEC
 from rakit_tortoise.capabilities import TORTOISE_CAPABILITIES
 from rakit_tortoise.discovery import TORTOISE_INTEGRATION
 from rakit_tortoise.plugin import TortoisePlugin
+from rakit_tortoise.uow import TortoiseOperationUnitOfWorkFactory
 
 
-def test_tortoise_advertises_only_proven_read_capability() -> None:
+def test_tortoise_advertises_only_proven_capabilities() -> None:
     assert TORTOISE_CAPABILITIES.provider_id == "persistence.tortoise"
-    assert TORTOISE_CAPABILITIES.capabilities.names == ("persistence.read",)
+    assert TORTOISE_CAPABILITIES.capabilities.names == (
+        "persistence.read",
+        "persistence.write",
+        "transactions.root-uow",
+    )
+    assert "persistence.relationships" not in TORTOISE_CAPABILITIES.capabilities.names
+    assert "concurrency.atomic-optimistic" not in TORTOISE_CAPABILITIES.capabilities.names
 
 
 def test_tortoise_discovery_matches_runtime_provider() -> None:
@@ -25,7 +32,7 @@ def test_tortoise_advertised_capabilities_have_v1_conformance_specs() -> None:
     } <= CANONICAL_CONFORMANCE_SPEC_REGISTRY.keys()
 
 
-def test_tortoise_plugin_records_configured_integration() -> None:
+def test_tortoise_plugin_records_configured_integration_and_uow_provider() -> None:
     builder = ApplicationBuilder()
 
     builder.install(TortoisePlugin())
@@ -33,3 +40,6 @@ def test_tortoise_plugin_records_configured_integration() -> None:
     assert tuple(item.integration_id for item in builder.configured_integrations) == (
         "persistence.tortoise",
     )
+    factories = dict(builder.unit_of_work_factories)
+    assert tuple(factories) == ("persistence.tortoise",)
+    assert isinstance(factories["persistence.tortoise"], TortoiseOperationUnitOfWorkFactory)

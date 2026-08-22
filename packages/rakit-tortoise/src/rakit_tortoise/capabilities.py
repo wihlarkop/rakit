@@ -1,9 +1,17 @@
-from rakit_core.adapter_capabilities import PERSISTENCE_READ
+from rakit_core.adapter_capabilities import (
+    PERSISTENCE_READ,
+    PERSISTENCE_WRITE,
+    TRANSACTIONS_ROOT_UOW,
+)
 from rakit_core.capabilities import CapabilityProvider, CapabilitySet
 
 TORTOISE_CAPABILITIES = CapabilityProvider(
     provider_id="persistence.tortoise",
-    capabilities=CapabilitySet.of(PERSISTENCE_READ),
+    capabilities=CapabilitySet.of(
+        PERSISTENCE_READ,
+        PERSISTENCE_WRITE,
+        TRANSACTIONS_ROOT_UOW,
+    ),
 )
 
 __all__ = ["TORTOISE_CAPABILITIES"]
