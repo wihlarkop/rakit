@@ -33,8 +33,8 @@ Rakit remains under active pre-release development. The current package version 
 | **Phase C overall** | **Complete** |
 | Phase D1 adapter contract hardening | **Complete** |
 | Phase D2 schema adapter ecosystem | **Complete** |
-| Phase D3 persistence adapter ecosystem | **Next** |
-| Phase D adapter ecosystem | **Next** |
+| Phase D3 persistence adapter ecosystem | **Active** |
+| Phase D adapter ecosystem | **Active** |
 | Phase E generated APIs v1 | **Planned; foundation exists** |
 | Public release | **Deferred until explicit maintainer approval** |
 
@@ -365,7 +365,7 @@ C4 closed with canonical CI and became the discovery foundation used by Phase D 
 
 ## Phase D — Adapter ecosystem
 
-**Status: Next**
+**Status: Active**
 
 Phase D proves that Rakit's capability architecture works across multiple concrete implementations. New adapters are added deliberately and must advertise only behavior they can prove against canonical contracts.
 
@@ -414,9 +414,13 @@ Add native SQLAlchemy `Table` support in `rakit-sqlalchemy` through the distinct
 
 #### D3.2 — Tortoise ORM
 
-**Status: Active**
+**Status: Complete**
 
-Complete the first-party Tortoise adapter, then add writes, root-UoW behavior, and higher capabilities only where public Tortoise APIs satisfy the canonical contracts cleanly.
+- native Tortoise model introspection and deterministic read/query support;
+- generated scalar create, partial update, and delete through one root-owned Tortoise transaction;
+- verified `persistence.read`, `persistence.write`, and `transactions.root-uow` capability profile;
+- permanent SQLite-backed conformance, generated compiler regression, lowest/latest dependency verification, and clean-installed artifact smoke;
+- relationships and atomic optimistic concurrency remain deliberately unadvertised because D3.2 does not yet provide the neutral mutation/token implementations required to prove those canonical contracts.
 
 #### D3.3 — Peewee 4 Async ORM
 
