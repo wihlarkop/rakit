@@ -1,9 +1,9 @@
+from peewee import TextField
 from playhouse.pwasyncio import AsyncSqliteDatabase
 from rakit_core.compiler import ApplicationBuilder, compile_application
 from rakit_core.definitions import ResourceDefinition, ResourceFieldPolicy
 from rakit_core.generated_api import ApiExposure, ResourceApiDefinition
 from rakit_peewee.plugin import PeeweePlugin
-from peewee import TextField
 
 
 def test_peewee_generated_crud_compiles_with_resource_owned_uow() -> None:

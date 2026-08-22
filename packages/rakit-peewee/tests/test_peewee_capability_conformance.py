@@ -131,7 +131,7 @@ class PeeweePersistenceConformanceHarness:
             )
         )
         assert isinstance(page, PageResult)
-        assert [getattr(item, "name") for item in page.items] == ["alpha", "bravo"]
+        assert [item.name for item in page.items] == ["alpha", "bravo"]
         assert page.has_next is True
         assert page.total_count == 3
         await self._release_connection()
@@ -146,7 +146,7 @@ class PeeweePersistenceConformanceHarness:
                 search="a",
             )
         )
-        assert [getattr(item, "name") for item in filtered.items] == ["bravo", "charlie"]
+        assert [item.name for item in filtered.items] == ["bravo", "charlie"]
         await self._release_connection()
 
         offset = await self.source.list(
@@ -158,7 +158,7 @@ class PeeweePersistenceConformanceHarness:
             )
         )
         assert isinstance(offset, LimitOffsetResult)
-        assert [getattr(item, "name") for item in offset.items] == ["bravo"]
+        assert [item.name for item in offset.items] == ["bravo"]
         assert offset.has_previous is True
         assert offset.has_next is True
         await self._release_connection()
@@ -193,7 +193,7 @@ class PeeweePersistenceConformanceHarness:
             ),
             success=True,
         )
-        assert getattr(updated.record, "score") == 2
+        assert updated.record.score == 2
 
         await self._execute(GeneratedCrudRequest.delete(created.identity), success=True)
         assert await self._rows() == ()
@@ -232,11 +232,11 @@ class PeeweePersistenceConformanceHarness:
                         ),
                     ),
                 )
-                assert getattr(rolled_back.record, "name") == "Rolled back"
+                assert rolled_back.record.name == "Rolled back"
             finally:
                 object.__setattr__(rollback_context, "unit_of_work", None)
         stable_row = await self.source.detail(stable.identity)
-        assert getattr(stable_row, "name") == "Stable"
+        assert stable_row.name == "Stable"
         assert rollback_context.durable_commit_completed is False
         await self._release_connection()
 
@@ -282,9 +282,9 @@ class PeeweePersistenceConformanceHarness:
         assert commit_context.durable_commit_completed is True
         committed_row = await self.source.detail(committed.identity)
         assert (
-            getattr(committed_row, "name"),
-            getattr(committed_row, "group"),
-            getattr(committed_row, "score"),
+            committed_row.name,
+            committed_row.group,
+            committed_row.score,
         ) == ("Commit", "test", 2)
         await self._release_connection()
 
