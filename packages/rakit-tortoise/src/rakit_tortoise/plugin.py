@@ -7,20 +7,32 @@ from rakit_core.integrations import ConfiguredIntegration
 from .capabilities import TORTOISE_CAPABILITIES
 from .datasource import TortoiseDataSource
 from .discovery import TORTOISE_INTEGRATION
+from .generated import TortoiseGeneratedResourceExecutorProvider
 from .introspection import (
     UnsupportedTortoiseFieldPolicyError,
     UnsupportedTortoiseIdentityError,
     inspect_model,
 )
+from .uow import TortoiseOperationUnitOfWorkFactory
 
 
 class TortoisePlugin:
     plugin_id = "tortoise"
+    provider_id = "persistence.tortoise"
+
+    def __init__(self, *, connection_name: str = "default") -> None:
+        if not connection_name or connection_name != connection_name.strip():
+            raise ValueError("connection_name must be a non-empty normalized string")
+        self._connection_name = connection_name
 
     def configure(self, builder: ApplicationBuilder) -> None:
         builder.register_capability_provider(TORTOISE_CAPABILITIES)
         builder.register_configured_integration(
             ConfiguredIntegration.from_descriptor(TORTOISE_INTEGRATION)
+        )
+        builder.register_unit_of_work_factory(
+            self.provider_id,
+            TortoiseOperationUnitOfWorkFactory(connection_name=self._connection_name),
         )
         builder.register_adapter("tortoise", self._claim)
 
@@ -61,7 +73,14 @@ class TortoisePlugin:
                 details={"model": model.__name__, "field": exc.field, "policy": exc.policy},
                 cause=exc,
             ) from exc
-        return ResourceAdapterRuntime(data_source=data_source)
+        return ResourceAdapterRuntime(
+            data_source=data_source,
+            generated_executor_provider=TortoiseGeneratedResourceExecutorProvider(
+                model=metadata.model,
+                data_source=data_source,
+            ),
+            unit_of_work_provider_id=self.provider_id,
+        )
 
 
 __all__ = ["TortoisePlugin"]
