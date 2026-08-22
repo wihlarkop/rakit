@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Build a real first-party persistence ecosystem around SQLAlchemy ORM, SQLAlchemy Core/Table, Tortoise ORM, Peewee 4 async, Piccolo ORM, Masonite ORM feasibility, and SQLModel compatibility while keeping Rakit core/web backend-neutral and advertising only behaviorally proven capabilities.
+**Goal:** Build a real first-party persistence ecosystem around SQLAlchemy ORM, SQLAlchemy Core/Table, Tortoise ORM, Peewee 4 async, Piccolo ORM, and Masonite ORM feasibility while keeping Rakit core/web backend-neutral and advertising only behaviorally proven capabilities.
 
-**Architecture:** D3 is an umbrella phase delivered in independently reviewable subphases. D3.0 generalizes the adapter subject so persistence resources are not forced to be classes. D3.1 adds SQLAlchemy Core/Table inside `rakit-sqlalchemy`; D3.2 adds Tortoise; D3.3 adds Peewee 4 async; D3.4 adds Piccolo; D3.5 evaluates/implements the maintained Masonite ORM line; D3.6 proves SQLModel compatibility through the existing SQLAlchemy ORM adapter; D3.7 closes packaging, docs, compatibility matrix, and roadmap. SQLAlchemy ORM remains the default throughout.
+**Architecture:** D3 is an umbrella phase delivered in independently reviewable subphases. D3.0 generalizes the adapter subject so persistence resources are not forced to be classes. D3.1 adds SQLAlchemy Core/Table inside `rakit-sqlalchemy`; D3.2 adds Tortoise; D3.3 adds Peewee 4 async; D3.4 adds Piccolo; D3.5 evaluates/implements the maintained Masonite ORM line; D3.6 closes packaging, docs, compatibility matrix, and roadmap. SQLAlchemy ORM remains the default throughout.
 
-**Tech Stack:** Python 3.12+, uv workspace, SQLAlchemy 2.0.x, Tortoise ORM 1.1.x, Peewee 4.x official asyncio layer, Piccolo 1.x, maintained `masonite-framework-orm` 3.x line, SQLModel 0.0.x, SQLite/aiosqlite for deterministic contract verification, pytest, Ruff, ty, MkDocs, GitHub Actions.
+**Tech Stack:** Python 3.12+, uv workspace, SQLAlchemy 2.0.x, Tortoise ORM 1.1.x, Peewee 4.x official asyncio layer, Piccolo 1.x, maintained `masonite-framework-orm` 3.x line, SQLite/aiosqlite for deterministic contract verification, pytest, Ruff, ty, MkDocs, GitHub Actions.
 
 **Spec:** `docs/superpowers/specs/2026-08-22-phase-d3-persistence-adapter-ecosystem-design.md`
 
@@ -18,7 +18,6 @@
 - Peewee integration id/provider id is exactly `persistence.peewee`.
 - Piccolo integration id/provider id is exactly `persistence.piccolo`.
 - Masonite integration id/provider id is `persistence.masonite` only if D3.5 feasibility passes; otherwise no provider is shipped.
-- SQLModel uses the existing `persistence.sqlalchemy` provider; do not create a duplicate SQLModel persistence claimant.
 - Native backend models/schemas remain native; no Rakit persistence DSL or fake wrapper classes.
 - Do not force capability parity.
 - Core/web must not import concrete persistence backend APIs.
@@ -64,8 +63,8 @@
 **Files:**
 - Modify: `docs/roadmap.md`
 
-- [ ] Add D3.0–D3.7 entries under Phase D.
-- [ ] Mark only completed landed subphases Complete; D3 overall remains Next/Active until D3.7 closure.
+- [ ] Add D3.0–D3.6 entries under Phase D.
+- [ ] Mark only completed landed subphases Complete; D3 overall remains Next/Active until D3.6 closure.
 - [ ] Preserve D4.0–D4.6 structure already accepted.
 
 ### D3.0 verification and merge
@@ -349,41 +348,9 @@
 
 ---
 
-## D3.6 — SQLModel Compatibility Profile
+## D3.6 — Persistence Integration DX, Compatibility Matrix & Closure
 
-### Task 22: Prove SQLModel through the SQLAlchemy ORM adapter
-
-**Files:**
-- Add: `packages/rakit-sqlalchemy/tests/test_sqlmodel_compatibility.py`
-- Modify install/extras tests as needed.
-
-- [ ] Define real SQLModel table models.
-- [ ] Prove `SQLAlchemyPlugin` claims them without a second adapter path.
-- [ ] Prove representative read, field metadata, generated scalar write, root UoW, and optimistic behavior supported by the underlying SQLAlchemy mapping.
-- [ ] Assert configured integration remains `persistence.sqlalchemy`.
-- [ ] Add no `rakit-sqlmodel` distribution and no `persistence.sqlmodel` provider.
-
-### Task 23: Add SQLModel convenience install UX
-
-**Files:**
-- Modify: `packages/rakit/pyproject.toml`
-- Modify: `packages/rakit/src/rakit/_install.py`
-- Modify relevant artifact/install smoke scripts/tests.
-- Update: `uv.lock`
-
-- [ ] Add `rakit[sqlmodel]` containing `rakit-sqlalchemy` plus a supported SQLModel dependency floor determined by lowest-direct verification.
-- [ ] Document that SQLModel uses the SQLAlchemy provider.
-
-### D3.6 verification and merge
-
-- [ ] Lowest-direct/latest SQLModel compatibility and full canonical CI green.
-- [ ] Squash merge D3.6 PR.
-
----
-
-## D3.7 — Persistence Integration DX, Compatibility Matrix & Closure
-
-### Task 24: Publish persistence adapter guide and compatibility matrix
+### Task 22: Publish persistence adapter guide and compatibility matrix
 
 **Files:**
 - Create/expand: `docs/guides/persistence-adapters.md`
@@ -392,12 +359,11 @@
 
 - [ ] Document SQLAlchemy ORM default and SQLAlchemy Core native `Table` support.
 - [ ] Document Tortoise, Peewee, Piccolo, and Masonite outcome/install paths.
-- [ ] Document SQLModel as a compatibility profile rather than a provider.
 - [ ] Publish a matrix for all five persistence/transaction/concurrency canonical capabilities showing only verified claims.
 - [ ] Record deferred non-relational directions: MongoDB/Beanie, Turso/libSQL, CouchDB; retain them for D6/contract research.
 - [ ] Record Django ORM async transaction mismatch as a deliberate deferral.
 
-### Task 25: Final artifact/install/discovery consistency
+### Task 23: Final artifact/install/discovery consistency
 
 **Files:**
 - Modify relevant `packages/rakit/tests/` install/discovery tests.
@@ -409,15 +375,15 @@
 - [ ] Verify extras do not silently change the default provider.
 - [ ] Verify simultaneous installation is deterministic and ambiguous subjects fail closed.
 
-### Task 26: Close D3 and hand off D4
+### Task 24: Close D3 and hand off D4
 
 **Files:**
 - Modify: `docs/roadmap.md`
 
-- [ ] Mark D3.0–D3.7 Complete only for landed verified work; a documented Masonite feasibility rejection counts as completed D3.5 if no adapter can honestly ship.
+- [ ] Mark D3.0–D3.6 Complete only for landed verified work; a documented Masonite feasibility rejection counts as completed D3.5 if no adapter can honestly ship.
 - [ ] Mark Phase D3 overall Complete.
 - [ ] Mark D4 / D4.0 Web Integration Contract Next.
 - [ ] Run Ruff format/check, `ty check`, full pytest/coverage, strict MkDocs, artifact checks, clean-install smoke, lowest/latest dependency jobs, Python 3.12/3.13/3.14 jobs.
 - [ ] Audit changed files for temporary helpers/workflows.
 - [ ] Require exact-head canonical CI success.
-- [ ] Squash merge the D3.7 closure PR.
+- [ ] Squash merge the D3.6 closure PR.

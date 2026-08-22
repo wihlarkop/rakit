@@ -393,13 +393,13 @@ Phase D proves that Rakit's capability architecture works across multiple concre
 
 ### D3 — Persistence Adapter Ecosystem
 
-**Status: Next**
+**Status: Active**
 
 D3 expands persistence from one reference ORM into a multi-adapter ecosystem while keeping `rakit-core` and `rakit-web` backend-neutral. SQLAlchemy ORM remains the default provider; every additional adapter advertises only capabilities proven against the canonical contracts.
 
 #### D3.0 — Persistence Integration Contract & Adapter Subject Generalization
 
-**Status: Next — implementation verified on stacked draft; pending maintainer-directed landing**
+**Status: Complete**
 
 - backend-neutral adapter subjects, including native non-class persistence objects;
 - resource-owned, multi-provider operation UoW registration and deterministic selection;
@@ -408,13 +408,13 @@ D3 expands persistence from one reference ORM into a multi-adapter ecosystem whi
 
 #### D3.1 — SQLAlchemy ORM Hardening + SQLAlchemy Core/Table
 
-**Status: Planned**
+**Status: Complete**
 
 Add native SQLAlchemy `Table` support in `rakit-sqlalchemy` through the distinct `persistence.sqlalchemy-core` provider while preserving the existing ORM provider.
 
 #### D3.2 — Tortoise ORM
 
-**Status: Planned; read foundation exists on the D3 umbrella draft**
+**Status: Active**
 
 Complete the first-party Tortoise adapter, then add writes, root-UoW behavior, and higher capabilities only where public Tortoise APIs satisfy the canonical contracts cleanly.
 
@@ -436,13 +436,7 @@ Add a first-party `persistence.piccolo` adapter with conservative capability adv
 
 Evaluate the maintained Masonite ORM line against Rakit's async and root-UoW contracts. Ship `persistence.masonite` only if the feasibility gate passes without semantic distortion.
 
-#### D3.6 — SQLModel Compatibility Profile
-
-**Status: Planned**
-
-Prove SQLModel models through the existing `persistence.sqlalchemy` provider rather than creating a duplicate persistence claimant, and add convenience install UX if compatibility is verified.
-
-#### D3.7 — Persistence Integration DX, Compatibility Matrix & Closure
+#### D3.6 — Persistence Integration DX, Compatibility Matrix & Closure
 
 **Status: Planned**
 

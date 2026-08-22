@@ -24,13 +24,12 @@ The purpose of D3 is not to replace SQLAlchemy ORM. It is to prove that Rakit ca
 4. **Peewee 4 is a first-party D3 target** because its current 4.x line has official asyncio support and exercises a different query/model style. It lives in `rakit-peewee` with integration id `persistence.peewee`.
 5. **Piccolo ORM is a first-party D3 target** and lives in `rakit-piccolo` with integration id `persistence.piccolo`. It provides another native async ORM/query model independent of SQLAlchemy and Tortoise.
 6. **Masonite ORM is included as a D3 feasibility/implementation subphase.** The maintained upstream package is now `masonite-framework-orm` while imports remain `masoniteorm`. If its public runtime/transaction APIs satisfy Rakit's async contracts cleanly, Rakit adds `rakit-masonite-orm` / `persistence.masonite`; if not, D3 records the precise pressure point and defers first-party runtime support rather than adding blocking/thread-wrapper semantics merely for parity.
-7. **SQLModel is supported as a compatibility profile over the SQLAlchemy ORM adapter, not as a duplicate persistence adapter.** SQLModel models are SQLAlchemy models; creating a second claimant would add ambiguity without adding a new persistence semantic. D3 adds real SQLModel compatibility/conformance proof and a convenience install extra.
-8. **Django ORM is deliberately deferred from first-party D3 implementation.** Django 6.0 supports async ORM queries but still does not support transactions in async mode; transaction-bound work must be wrapped synchronously. That conflicts with Rakit's async root-UoW contract.
-9. **Document/remote persistence families such as MongoDB/Beanie, Turso/libSQL, and CouchDB remain accepted future ecosystem directions but are not forced through the relational ORM v1 contract.** They move to D6/contract research so identity, query, relationship, and transaction semantics can be modeled honestly.
-10. D3 does **not** force capability parity. Every provider advertises only capabilities proven by real behavioral conformance.
-11. Native persistence models/schemas remain native. Rakit does not introduce a persistence DSL, base model, or fake wrapper merely to fit the current API.
-12. D3 is delivered as multiple squash-merged subphase PRs. D3 overall becomes Complete only after all accepted D3 subphases and the compatibility matrix are green on `main`.
-13. No release, tag, or publication is part of D3.
+7. **Django ORM is deliberately deferred from first-party D3 implementation.** Django 6.0 supports async ORM queries but still does not support transactions in async mode; transaction-bound work must be wrapped synchronously. That conflicts with Rakit's async root-UoW contract.
+8. **Document/remote persistence families such as MongoDB/Beanie, Turso/libSQL, and CouchDB remain accepted future ecosystem directions but are not forced through the relational ORM v1 contract.** They move to D6/contract research so identity, query, relationship, and transaction semantics can be modeled honestly.
+9. D3 does **not** force capability parity. Every provider advertises only capabilities proven by real behavioral conformance.
+10. Native persistence models/schemas remain native. Rakit does not introduce a persistence DSL, base model, or fake wrapper merely to fit the current API.
+11. D3 is delivered as multiple squash-merged subphase PRs. D3 overall becomes Complete only after all accepted D3 subphases and the compatibility matrix are green on `main`.
+12. No release, tag, or publication is part of D3.
 
 ## Why D3 is split
 
@@ -42,8 +41,7 @@ Supporting SQLAlchemy Core plus several independent ORMs in one monolithic PR wo
 - **D3.3 — Peewee 4 Async ORM**
 - **D3.4 — Piccolo ORM**
 - **D3.5 — Masonite ORM Feasibility / Adapter**
-- **D3.6 — SQLModel Compatibility Profile**
-- **D3.7 — Persistence Integration DX, Compatibility Matrix & Closure**
+- **D3.6 — Persistence Integration DX, Compatibility Matrix & Closure**
 
 Each subphase must be independently testable and may use its own PR. Every PR uses squash merge.
 
@@ -168,19 +166,6 @@ D3 includes this ecosystem direction, but implementation is gated by public API 
 
 A feasibility result is considered valid D3 work; capability parity is not required.
 
-## D3.6 — SQLModel Compatibility Profile
-
-SQLModel is both a Pydantic model system and a SQLAlchemy ORM model layer. D3 therefore does **not** create `rakit-sqlmodel` or a second adapter claim path.
-
-Instead D3 adds:
-
-- real SQLModel models exercised through `SQLAlchemyPlugin`;
-- compatibility tests proving introspection, reads, generated writes, transactions, and concurrency continue to work where the underlying SQLAlchemy mapping supports them;
-- a convenience `rakit[sqlmodel]` extra that installs the existing SQLAlchemy adapter plus a supported SQLModel version;
-- documentation that the configured persistence provider remains `persistence.sqlalchemy`.
-
-This avoids duplicate ownership and keeps capability reporting truthful.
-
 ## Shared canonical capability semantics
 
 ### `persistence.read@v1`
@@ -224,7 +209,6 @@ rakit-core
    |-- rakit-piccolo                      (independent async ORM)
    `-- rakit-masonite-orm                 (only if D3.5 feasibility passes)
 
-SQLModel -- compatibility proof --> rakit-sqlalchemy / persistence.sqlalchemy
 
 rakit-web -> neutral DataSource / generated runtime / UoW contracts only
 rakit     -> extras, install guidance, discovery inventory
@@ -234,7 +218,7 @@ rakit     -> extras, install guidance, discovery inventory
 
 No first-installed-wins behavior is introduced.
 
-- SQLAlchemy declarative/SQLModel classes are owned by the SQLAlchemy ORM claimant.
+- SQLAlchemy declarative classes are owned by the SQLAlchemy ORM claimant.
 - SQLAlchemy `Table` objects are owned by the SQLAlchemy Core claimant.
 - Tortoise model classes are owned by Tortoise.
 - Peewee models are owned by Peewee.
@@ -268,7 +252,6 @@ Unsupported JSON/binary/custom fields may be readable but must not silently pret
 - `pip install "rakit[peewee]"` — Peewee adapter.
 - `pip install "rakit[piccolo]"` — Piccolo adapter.
 - `pip install "rakit[masonite-orm]"` — only added if D3.5 ships a conforming adapter.
-- `pip install "rakit[sqlmodel]"` — SQLAlchemy adapter plus supported SQLModel dependency; provider remains `persistence.sqlalchemy`.
 - `pip install "rakit[standard]"` — remains SQLAlchemy ORM-oriented; D3 does not turn `standard` into an install-everything bundle.
 
 Direct distribution installation remains supported for first-party adapter packages.
@@ -299,11 +282,7 @@ Add `rakit-piccolo` and prove its honest capability profile.
 
 Evaluate the maintained `masonite-framework-orm` line against Rakit async/UoW requirements; ship an adapter only if public APIs satisfy the contract cleanly.
 
-### D3.6 — SQLModel Compatibility Profile
-
-Add real SQLModel compatibility tests and install UX on top of the SQLAlchemy ORM adapter. No duplicate provider.
-
-### D3.7 — Persistence Integration DX, Compatibility Matrix & Closure
+### D3.6 — Persistence Integration DX, Compatibility Matrix & Closure
 
 Publish a provider/capability matrix, clean-install smoke coverage for extras, artifact inventory, lowest/latest dependency compatibility, docs, and canonical roadmap closure. Mark D4 Next only after the accepted D3 matrix is green on `main`.
 
@@ -318,6 +297,7 @@ Each subphase may be a separate PR. Every merge uses **squash**. If implementati
 - Rakit persistence model DSL/base classes;
 - automatic dependency uninstall/switch CLI;
 - forced capability parity;
+- dedicated SQLModel compatibility phases, extras, or provider-specific maintenance; SQLModel follows the SQLAlchemy ORM integration upstream;
 - Django async transaction emulation through thread wrappers;
 - forcing MongoDB/Beanie, Turso/libSQL, or CouchDB through relational ORM v1 semantics;
 - release, tag, or publication.
@@ -333,11 +313,10 @@ D3 overall is complete when:
 5. `rakit-peewee` is an official typed distribution and every advertised Peewee capability has a real proof.
 6. `rakit-piccolo` is an official typed distribution and every advertised Piccolo capability has a real proof.
 7. Masonite ORM has either a clean first-party adapter with proven capabilities or a documented feasibility rejection explaining why Rakit intentionally does not ship it yet.
-8. Real SQLModel models pass the supported SQLAlchemy compatibility matrix without a duplicate persistence provider.
-9. Core/web contain no concrete backend persistence imports.
-10. Discovery/configured-integration metadata is deterministic and actionable.
-11. Clean-installed extras and official artifacts are tested outside the repository checkout.
-12. The public persistence compatibility matrix documents capability differences and intentional non-parity.
-13. No temporary CI/helper files remain in final subphase PRs.
-14. `docs/roadmap.md` exposes D3.0–D3.7 status and marks D3 overall Complete only after all accepted subphases pass canonical CI.
-15. Every D3 PR is exact-head green and squash-merged.
+8. Core/web contain no concrete backend persistence imports.
+9. Discovery/configured-integration metadata is deterministic and actionable.
+10. Clean-installed extras and official artifacts are tested outside the repository checkout.
+11. The public persistence compatibility matrix documents capability differences and intentional non-parity.
+12. No temporary CI/helper files remain in final subphase PRs.
+13. `docs/roadmap.md` exposes D3.0–D3.6 status and marks D3 overall Complete only after all accepted subphases pass canonical CI.
+14. Every D3 PR is exact-head green and squash-merged.
