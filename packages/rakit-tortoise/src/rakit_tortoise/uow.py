@@ -7,6 +7,7 @@ import anyio
 from rakit_core.events import EventPublisher
 from rakit_core.operations import OperationContext
 from rakit_core.transactions import TransactionPolicy
+from tortoise.backends.base.client import BaseDBAsyncClient
 from tortoise.transactions import in_transaction
 
 
@@ -44,7 +45,7 @@ class TortoiseUnitOfWork:
         self.policy = policy
         self.event_publisher = event_publisher
         self.operation_context = operation_context
-        self.connection: Any = None
+        self.connection: BaseDBAsyncClient
         self._transaction_context: Any = None
         self._success = False
         self._completed = False
