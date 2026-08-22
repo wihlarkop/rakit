@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 from uuid import UUID
 
 from peewee import DoesNotExist, Model
@@ -103,7 +104,7 @@ class PeeweeGeneratedResourceExecutor:
             )
         return identity.values[identity_field]
 
-    def _identity_field(self) -> object:
+    def _identity_field(self) -> Any:
         return getattr(self.model, self.data_source.identity_fields[0])
 
     async def _record(self, identity: RecordIdentity) -> Model | None:
