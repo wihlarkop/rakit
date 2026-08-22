@@ -1089,6 +1089,7 @@ def test_all_packages_builds_exactly_the_twelve_official_distributions(
         "rakit_server_granian",
         "rakit_server_uvicorn",
         "rakit_sqlalchemy",
+        "rakit_tortoise",
         "rakit_storage",
         "rakit_storage_local",
         "rakit_web",

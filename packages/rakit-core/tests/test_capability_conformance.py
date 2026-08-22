@@ -3,6 +3,11 @@ from dataclasses import replace
 import pytest
 import rakit_core.adapter_capabilities as adapter_capabilities
 import rakit_core.conformance as conformance
+from rakit_core.testing.capability_conformance import (
+    CANONICAL_CONFORMANCE_SPEC_REGISTRY,
+    PersistenceConformanceHarness,
+    PersistenceReadConformanceHarness,
+)
 
 TEST_PERSISTENCE_INTEGRATION = conformance.IntegrationDescriptor(
     integration_id="test.persistence",
@@ -15,6 +20,11 @@ TEST_PERSISTENCE_INTEGRATION = conformance.IntegrationDescriptor(
         adapter_capabilities.CONCURRENCY_ATOMIC_OPTIMISTIC,
     ),
 )
+
+
+class ReadOnlyPersistenceHarness:
+    async def assert_read_semantics(self) -> None:
+        return None
 
 
 async def _pass(_harness: object) -> None:
@@ -97,6 +107,28 @@ async def test_behavior_failures_are_structured_and_deterministic() -> None:
     assert [failure.check_id for failure in result.failures] == ["read.first", "read.second"]
     assert "first failure" in result.failures[0].message
     assert "second failure" in result.failures[1].message
+
+
+@pytest.mark.anyio
+async def test_persistence_conformance_validates_only_the_advertised_capability_harness() -> None:
+    descriptor = replace(
+        TEST_PERSISTENCE_INTEGRATION,
+        advertised_capabilities=conformance.CapabilitySet.of(adapter_capabilities.PERSISTENCE_READ),
+    )
+    harness = ReadOnlyPersistenceHarness()
+
+    assert isinstance(harness, PersistenceReadConformanceHarness)
+    assert not isinstance(harness, PersistenceConformanceHarness)
+
+    result = await conformance.run_capability_conformance(
+        descriptor=descriptor,
+        capability=adapter_capabilities.PERSISTENCE_READ,
+        harness=harness,
+        specs=CANONICAL_CONFORMANCE_SPEC_REGISTRY,
+    )
+
+    assert result.passed
+    assert result.failures == ()
 
 
 @pytest.mark.anyio

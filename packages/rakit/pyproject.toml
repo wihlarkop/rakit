@@ -19,6 +19,7 @@ dependencies = [
 uvicorn = ["rakit-server-uvicorn==0.1.0a1"]
 granian = ["rakit-server-granian==0.1.0a1"]
 sqlalchemy = ["rakit-sqlalchemy==0.1.0a1"]
+tortoise = ["rakit-tortoise==0.1.0a1"]
 auth-sqlalchemy = ["rakit-auth-sqlalchemy==0.1.0a1"]
 storage-local = ["rakit-storage-local==0.1.0a1"]
 msgspec = ["rakit-schema-msgspec==0.1.0a1"]
@@ -39,6 +40,7 @@ rakit-server = { workspace = true }
 rakit-server-uvicorn = { workspace = true }
 rakit-server-granian = { workspace = true }
 rakit-sqlalchemy = { workspace = true }
+rakit-tortoise = { workspace = true }
 rakit-auth-sqlalchemy = { workspace = true }
 rakit-storage = { workspace = true }
 rakit-storage-local = { workspace = true }

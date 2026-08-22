@@ -27,32 +27,55 @@ from rakit_core.schema import PartialInputSchemaAdapter, SchemaAdapter, SchemaVa
 
 
 @runtime_checkable
-class PersistenceConformanceHarness(Protocol):
-    """Behavior-only proof seam for persistence capability implementations.
-
-    Implementations must exercise their real adapter components. These methods
-    describe Rakit semantics rather than any ORM-specific API.
-    """
-
+class PersistenceReadConformanceHarness(Protocol):
     async def assert_read_semantics(self) -> None:
         """Prove list/detail identity, query, ordering, pagination, and portable errors."""
         ...
 
+
+@runtime_checkable
+class PersistenceWriteConformanceHarness(Protocol):
     async def assert_write_semantics(self) -> None:
         """Prove create/update/delete persistence with explicit mutation semantics."""
         ...
 
+
+@runtime_checkable
+class PersistenceRelationshipsConformanceHarness(Protocol):
     async def assert_relationship_semantics(self) -> None:
         """Prove relationship reads/mutations preserve neutral relationship semantics."""
         ...
 
+
+@runtime_checkable
+class TransactionsRootUowConformanceHarness(Protocol):
     async def assert_root_uow_semantics(self) -> None:
         """Prove one root unit of work owns commit/rollback for a mutation boundary."""
         ...
 
+
+@runtime_checkable
+class AtomicOptimisticConformanceHarness(Protocol):
     async def assert_atomic_optimistic_semantics(self) -> None:
         """Prove optimistic checks and writes are atomic under the owning transaction."""
         ...
+
+
+@runtime_checkable
+class PersistenceConformanceHarness(
+    PersistenceReadConformanceHarness,
+    PersistenceWriteConformanceHarness,
+    PersistenceRelationshipsConformanceHarness,
+    TransactionsRootUowConformanceHarness,
+    AtomicOptimisticConformanceHarness,
+    Protocol,
+):
+    """Aggregate compatibility protocol for full persistence conformance harnesses.
+
+    Canonical checks validate the capability-specific protocols above so an
+    integration can honestly prove only the capabilities it advertises. This
+    aggregate remains useful for full-featured first-party harnesses.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,27 +107,27 @@ class WebConformanceHarness:
 
 
 async def _persistence_read(harness: object) -> None:
-    assert isinstance(harness, PersistenceConformanceHarness)
+    assert isinstance(harness, PersistenceReadConformanceHarness)
     await harness.assert_read_semantics()
 
 
 async def _persistence_write(harness: object) -> None:
-    assert isinstance(harness, PersistenceConformanceHarness)
+    assert isinstance(harness, PersistenceWriteConformanceHarness)
     await harness.assert_write_semantics()
 
 
 async def _persistence_relationships(harness: object) -> None:
-    assert isinstance(harness, PersistenceConformanceHarness)
+    assert isinstance(harness, PersistenceRelationshipsConformanceHarness)
     await harness.assert_relationship_semantics()
 
 
 async def _transactions_root_uow(harness: object) -> None:
-    assert isinstance(harness, PersistenceConformanceHarness)
+    assert isinstance(harness, TransactionsRootUowConformanceHarness)
     await harness.assert_root_uow_semantics()
 
 
 async def _concurrency_atomic_optimistic(harness: object) -> None:
-    assert isinstance(harness, PersistenceConformanceHarness)
+    assert isinstance(harness, AtomicOptimisticConformanceHarness)
     await harness.assert_atomic_optimistic_semantics()
 
 
@@ -303,7 +326,12 @@ CANONICAL_CONFORMANCE_SPEC_REGISTRY = build_conformance_spec_registry(CANONICAL_
 __all__ = [
     "CANONICAL_CONFORMANCE_SPECS",
     "CANONICAL_CONFORMANCE_SPEC_REGISTRY",
+    "AtomicOptimisticConformanceHarness",
     "PersistenceConformanceHarness",
+    "PersistenceReadConformanceHarness",
+    "PersistenceRelationshipsConformanceHarness",
+    "PersistenceWriteConformanceHarness",
     "SchemaConformanceHarness",
+    "TransactionsRootUowConformanceHarness",
     "WebConformanceHarness",
 ]
