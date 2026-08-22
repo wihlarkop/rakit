@@ -17,5 +17,28 @@ operators and duplicate/contradictory values are rejected before adapter executi
 Use `ModelAdmin` only after installing exactly one adapter that can claim its model. Zero claimers
 and ambiguous claimers are configuration errors.
 
-For a minimal custom source see `examples/custom_datasource`; for SQLAlchemy see
+## SQLAlchemy ORM and Core
+
+`rakit-sqlalchemy` contains two distinct persistence integrations. The existing
+`persistence.sqlalchemy` provider claims SQLAlchemy ORM mapped classes and remains the default
+SQLAlchemy experience. The `persistence.sqlalchemy-core` provider claims native
+`sqlalchemy.Table` objects; it does not synthesize ORM classes or take ownership of application
+metadata.
+
+The Core provider currently proves the canonical `persistence.read`, `persistence.write`, and
+`transactions.root-uow` v1 capabilities. Generated scalar create, partial update, and delete
+operations share one root `AsyncConnection` / transaction, so commit and rollback remain owned by
+the Rakit operation lifecycle rather than individual mutation helpers.
+
+Core deliberately does not advertise `persistence.relationships` merely because a table has
+foreign keys. It also does not advertise `concurrency.atomic-optimistic`: D3.1 does not introduce
+a Core-specific version-field convention solely to chase capability parity. Those capabilities
+remain unavailable until a portable declaration and real behavior can satisfy their canonical
+contracts without backend-specific semantic distortion.
+
+SQLAlchemy ORM and Core may be installed together because their claim subjects are disjoint:
+mapped ORM classes are handled by `persistence.sqlalchemy`, while native `Table` objects are
+handled by `persistence.sqlalchemy-core`.
+
+For a minimal custom source see `examples/custom_datasource`; for SQLAlchemy ORM see
 `examples/fastapi_sqlalchemy`.
