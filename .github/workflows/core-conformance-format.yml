@@ -1,0 +1,37 @@
+name: Core conformance verifier
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  verify-and-clean:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: parity-p1-sqlalchemy-core
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-packages --dev --locked
+      - name: Format and verify Core five-capability conformance
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE=packages/rakit-sqlalchemy/tests/test_core_capability_conformance.py
+          uv run ruff format "$FILE"
+          uv run ruff check --fix "$FILE"
+          uv run ruff format "$FILE"
+          uv run ruff check "$FILE"
+          uv run ty check
+          uv run pytest "$FILE" -q --tb=short
+          rm .github/workflows/core-conformance-format.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$FILE" .github/workflows/core-conformance-format.yml
+          git commit -m "test(core): format five-capability conformance"
+          git push origin HEAD:parity-p1-sqlalchemy-core
