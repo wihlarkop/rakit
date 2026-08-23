@@ -18,7 +18,7 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --all-packages --dev --locked
-      - name: Apply lint and typed receipt fixes
+      - name: Apply lint and SQLAlchemy typing fixes
         shell: bash
         run: |
           set -euo pipefail
@@ -38,14 +38,24 @@ jobs:
                   1,
               )
 
-          long_message = '"Direct child create, update, and delete require an explicit child write service.",'
-          if long_message not in text:
-              raise SystemExit("expected long child-service message not found")
           text = text.replace(
-              long_message,
-              '(\n                        "Direct child create, update, and delete require an explicit "\n                        "child write service."\n                    ),',
+              "from sqlalchemy.engine import CursorResult\n",
+              "from sqlalchemy.engine import CursorResult, RowMapping\n",
               1,
           )
+          text = text.replace(
+              "        row: Mapping[str, object], field_names: tuple[str, ...]\n",
+              "        row: RowMapping, field_names: tuple[str, ...]\n",
+              1,
+          )
+
+          long_message = '"Direct child create, update, and delete require an explicit child write service.",'
+          if long_message in text:
+              text = text.replace(
+                  long_message,
+                  '(\n                        "Direct child create, update, and delete require an explicit "\n                        "child write service."\n                    ),',
+                  1,
+              )
 
           pattern = re.compile(
               r"            kind=\(\n"
@@ -54,10 +64,7 @@ jobs:
               r'                "update"\n'
               r"            \),"
           )
-          text, count = pattern.subn("            kind=RelationshipMutationKind.UPDATE,", text, count=1)
-          if count != 1:
-              raise SystemExit("expected aggregate graph receipt block not found")
-
+          text, _ = pattern.subn("            kind=RelationshipMutationKind.UPDATE,", text, count=1)
           path.write_text(text)
           PY
           uv run ruff format "$FILE"
@@ -67,5 +74,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add "$FILE" .github/workflows/core-lint-fix.yml
-          git commit -m "style(core): apply relationship runtime lint fixes"
+          git commit -m "style(core): apply relationship runtime static fixes"
           git push origin HEAD:parity-p1-sqlalchemy-core
