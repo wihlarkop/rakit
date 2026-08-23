@@ -1,12 +1,12 @@
 # Persistence Capability Parity Research
 
-**Status:** Active research
+**Status:** Provider research complete; cross-provider implementation planning pending
 
 **Date:** 2026-08-23
 
 **Branch:** `research/persistence-capability-parity`
 
-**Purpose:** Record evidence-backed feasibility decisions for first-party persistence providers before any capability promotion or follow-on security/authentication work. This document is a research input, not an implementation plan and not proof that a capability is already shipped.
+**Purpose:** Record evidence-backed feasibility decisions for first-party persistence providers before any capability promotion or follow-on security/authentication work. This document is research input, not an implementation plan and not proof that a capability is already shipped.
 
 ## Why this research exists
 
@@ -20,21 +20,21 @@ The five canonical persistence capability identifiers are:
 - `persistence.relationships`
 - `concurrency.atomic-optimistic`
 
-This research asks whether providers that currently expose only part of that profile could honestly support additional capabilities through their native public APIs, without adding a universal persistence DSL, fake ORM layer, backend-specific concerns in `rakit-core`, or semantic compromises.
+The SQLAlchemy ORM reference provider already proves all five. SQLAlchemy Core, Tortoise, Peewee, and Piccolo currently advertise only read, write, and root-UoW. This research asks whether those four providers can honestly satisfy the remaining neutral Rakit semantics through their native public APIs without introducing a universal persistence DSL, fake ORM layer, backend-specific concerns in `rakit-core`, or silent semantic degradation.
 
-The findings will also be used when revisiting Plan 03 — Authentication, Authorization, and Security — because the built-in authentication/session implementation is SQLAlchemy-backed and future work should distinguish genuinely generic persistence behavior from SQLAlchemy-ORM-only assumptions.
+The findings are also intended to inform later work around Plan 03 — Authentication, Authorization, and Security — because built-in authentication/session persistence is currently SQLAlchemy-backed. Future work should distinguish genuinely persistence-neutral behavior from SQLAlchemy-ORM-only implementation assumptions.
 
 ## Research rules
 
 - Do not change advertised capabilities during research.
 - Do not treat foreign-key metadata alone as proof of `persistence.relationships`.
 - Do not emulate optimistic concurrency with a non-atomic read-check-write sequence.
-- Use public, maintained backend APIs for new parity behavior.
+- Use maintained public or intentionally documented backend metadata/query APIs for new parity behavior.
 - Preserve one Rakit root unit of work for mutations that claim `transactions.root-uow`.
-- Fail closed on ambiguous or unsupported native shapes.
-- Capability parity is allowed only when neutral Rakit semantics are actually satisfied; backend feature parity is not required.
-- Composite resource identity remains outside this research unless a separate core contract change is explicitly approved.
-- A feasibility PASS does not authorize capability promotion. Source implementation, source-first smoke, permanent conformance, dependency matrices, and exact-head CI remain mandatory later.
+- Fail closed on ambiguous, unsupported, or unproven native shapes.
+- Capability parity means neutral Rakit behavioral parity, not full backend feature parity.
+- Composite Rakit resource identity remains outside this research unless separately designed and approved.
+- A feasibility PASS does not authorize capability promotion. Source implementation, source-first smoke, permanent conformance, dependency/runtime matrices, and exact-head CI remain mandatory later.
 
 ---
 
@@ -56,7 +56,7 @@ Provider: `persistence.sqlalchemy-core`
 
 ## Atomic optimistic concurrency
 
-The current Core generated mutation executor already executes through the `AsyncConnection` owned by `SQLAlchemyCoreUnitOfWork`; it only lacks the concurrency predicate/runtime wiring and currently advertises `atomic_concurrency=False`.
+The current Core generated mutation executor already executes through the `AsyncConnection` owned by `SQLAlchemyCoreUnitOfWork`; it only lacks concurrency predicate/runtime wiring and currently advertises `atomic_concurrency=False`.
 
 The required native shape is one conditional mutation inside the existing root UoW:
 
@@ -68,36 +68,38 @@ WHERE id = :id
   AND version = :expected_version
 ```
 
-- affected row count `1` → success;
-- affected row count `0` → stale conflict;
-- conditional delete follows the same rule;
-- no read-check-write durability window;
-- uncertain row-count semantics must fail closed;
-- Core records are mappings, so Core needs mapping-aware concurrency field access rather than ORM-style `getattr` assumptions.
+Required behavior:
 
-Decision records:
+- one matched row → success;
+- zero matched rows → stale/race conflict after initial existence/token validation;
+- conditional delete follows the same atomic predicate rule;
+- no read-check-unconditional-write fallback;
+- uncertain affected/matched-row semantics fail closed;
+- Core records are mappings, so Core needs mapping-aware concurrency field access rather than pretending row mappings are ORM instances.
+
+### Atomic decision records
 
 - **CORE-R1:** SQLAlchemy Core optimistic concurrency is feasible. **PASS**.
 - **CORE-R2:** Concurrency must use one conditional SQL mutation; no read-check-write emulation.
 - **CORE-R3:** Reliable affected/matched-row semantics are mandatory; uncertain dialect behavior fails closed.
-- **CORE-R4:** Core requires mapping-aware concurrency version access rather than pretending row mappings are ORM instances.
+- **CORE-R4:** Core requires mapping-aware concurrency version access rather than ORM-style attribute assumptions.
 
 ## Relationships
 
-`RelationshipDefinition` remains the semantic source of truth. SQLAlchemy Core only validates/binds that intent to native `Table`, column, foreign-key, unique-constraint, and association-table metadata.
+`RelationshipDefinition` remains the semantic source of truth. SQLAlchemy Core only validates and binds that intent to native `Table`, column, foreign-key, uniqueness, and association-table metadata.
 
-Feasible neutral shapes:
+Feasible neutral shapes include:
 
 - many-to-one;
 - one-to-many;
-- one-to-one;
+- one-to-one when uniqueness is proven;
 - many-to-many;
 - explicit association object;
-- ordering/reordering through an explicit position field;
+- ordering through an explicit position field;
 - explicit destructive policy;
-- all relationship writes inside the existing Core root UoW.
+- graph mutation inside the existing Core root UoW.
 
-Schema metadata is not always sufficient to infer intent. Multiple foreign keys to the same target or multiple bridge tables are genuine ambiguities. Therefore:
+Schema metadata cannot always infer application intent. Multiple foreign keys to the same target or multiple possible bridge tables are genuine ambiguities:
 
 ```text
 exactly one compatible physical path -> inference may be allowed
@@ -105,11 +107,11 @@ zero compatible paths                -> configuration error
 multiple compatible paths            -> explicit adapter binding required
 ```
 
-A future adapter-only binding may conceptually identify the Rakit relationship id, source/target tables, and physical local/remote columns. This is not a final API and must not become a Rakit-wide persistence DSL.
+A future SQLAlchemy-Core-only binding may identify the Rakit relationship id, source/target tables, and physical local/remote columns. It must not become a Rakit-wide persistence DSL.
 
-A truthful neutral capability does not require SQLAlchemy ORM feature parity. Arbitrary mapper `primaryjoin`, custom operators, mapper lazy-loading behavior, mapper `viewonly`, and mapper cascade/delete-orphan authority may remain unsupported. Composite Rakit identities also remain outside this parity effort.
+A neutral PASS does not require arbitrary SQLAlchemy ORM mapper behavior such as custom `primaryjoin`, mapper lazy-loading semantics, `viewonly`, or cascade/delete-orphan authority.
 
-Decision records:
+### Relationship decision records
 
 - **CORE-R5:** SQLAlchemy Core relationships are feasible without ORM mapping. **PASS**.
 - **CORE-R6:** `RelationshipDefinition` remains the semantic source of truth.
@@ -133,7 +135,7 @@ Fail-closed semantics          REQUIRED
 Capability promotion now       NO
 ```
 
-`*` PASS means conformance with the neutral Rakit relationship contract, not complete SQLAlchemy ORM relationship feature parity.
+`*` Relationship PASS means conformance with the neutral Rakit relationship contract, not complete SQLAlchemy ORM feature parity.
 
 ---
 
@@ -143,7 +145,7 @@ Capability promotion now       NO
 
 Provider: `persistence.tortoise`
 
-Rakit currently supports `tortoise-orm>=1.1.7,<2`. Upstream 1.1.8 was also inspected during this research. The current Rakit adapter advertises read, write, and root-UoW only.
+Rakit currently supports `tortoise-orm>=1.1.7,<2`. The research also inspected the maintained 1.1.8 line.
 
 | Capability | Shipped now | Research verdict |
 | --- | --- | --- |
@@ -153,35 +155,11 @@ Rakit currently supports `tortoise-orm>=1.1.7,<2`. Upstream 1.1.8 was also inspe
 | `persistence.relationships` | No | **PASS with explicit association-resource semantics** |
 | `concurrency.atomic-optimistic` | No | **PASS with backend/conformance gate** |
 
-**Feasibility conclusion:** Tortoise ORM can plausibly reach a truthful **5/5** Rakit persistence capability profile using its native model/query/relation APIs. No blocking architectural mismatch was found. The implementation must, however, avoid treating Tortoise's table-oriented M2M `through` option as a full association-object model and must prove affected-row behavior across the database/runtime matrix that Rakit intends to claim.
+**Feasibility conclusion:** Tortoise can plausibly reach a truthful **5/5** profile using native model/query/relation APIs. No new transaction architecture or core redesign is required.
 
-## Existing Rakit foundation
+## Atomic optimistic concurrency
 
-Relevant seams:
-
-- `packages/rakit-tortoise/src/rakit_tortoise/capabilities.py`
-- `packages/rakit-tortoise/src/rakit_tortoise/introspection.py`
-- `packages/rakit-tortoise/src/rakit_tortoise/generated.py`
-- `packages/rakit-tortoise/src/rakit_tortoise/uow.py`
-
-The existing generated executor already routes CRUD through the `TransactionalDBClient` owned by `TortoiseUnitOfWork`:
-
-- reads use `QuerySet.using_db(connection)`;
-- create uses `Model.create(using_db=connection, ...)`;
-- update uses `QuerySet.using_db(connection).update(...)`;
-- delete uses `QuerySet.using_db(connection).delete()`.
-
-The root UoW is already based on Tortoise `in_transaction()` and owns commit/rollback. Higher capabilities therefore do not require a second transaction architecture.
-
-## Tortoise atomic optimistic concurrency
-
-### Verdict
-
-**PASS with an implementation-time backend/conformance gate.**
-
-### Native strategy
-
-Tortoise `QuerySet.update()` composes queryset filters into the UPDATE and returns an integer affected-row count. Tortoise also exposes `F` expressions specifically for database-side field updates. The version-column strategy can therefore remain one atomic statement:
+The existing adapter already routes CRUD through the `TransactionalDBClient` owned by `TortoiseUnitOfWork`. A version-column mutation can be one database statement:
 
 ```python
 from tortoise.expressions import F
@@ -200,95 +178,42 @@ Required interpretation:
 
 ```text
 updated == 1 -> success
-updated == 0 -> stale/conflict path
+updated == 0 -> stale/race conflict
 other count  -> fail closed
 ```
 
-Conditional delete can use the same identity + concurrency predicate and the returned delete count.
+A preceding scoped read may validate existence and the signed Rakit token, but it must never authorize a separate unconditional write.
 
-The important property is that identity predicate, expected version predicate, user changes, and version advancement are executed by the database as one mutation. A preceding read may be used to validate the signed Rakit token and a later read may classify/reload state, but neither read may authorize a separate unconditional write.
+Tortoise records are attribute-bearing model instances, so the neutral attribute version-provider shape is naturally compatible.
 
-### Version-provider compatibility
+A dedicated integer version column is the strongest first target because a successful mutation necessarily changes that field. Snapshot/no-op concurrency is more subtle because backend drivers can differ in changed-row versus matched-row reporting. Snapshot behavior must therefore be proven across the claimed database matrix or fail closed.
 
-Unlike SQLAlchemy Core row mappings, Tortoise records are attribute-bearing model instances, so the existing neutral `AttributeVersionProvider` shape is naturally compatible.
-
-An integer version field is the strongest first implementation target:
-
-- `version=expected` participates in the WHERE predicate;
-- `version=F("version") + 1` guarantees a physical change on a successful match;
-- the current generated executor already reloads after UPDATE, which is appropriate because Tortoise documents that model values are stale after `F`-expression writes until refreshed/reloaded.
-
-Datetime next-values can also be supplied as literal next values in the same conditional UPDATE, subject to the same canonical token/time-resolution rules already owned by Rakit core.
-
-Snapshot concurrency is more subtle. `SnapshotVersionProvider.next_values_for()` is empty, so a user mutation that writes values identical to current values may be a no-op. Some DB drivers report changed rows rather than merely matched rows. Tortoise's MySQL client, for example, directly returns driver `cursor.rowcount`; SQLite derives its count from connection changes; asyncpg parses the server's command count. Consequently, implementation must not assume that every backend gives identical semantics for a snapshot/no-op UPDATE.
-
-Initial parity implementation should therefore either:
-
-1. prove snapshot/no-op behavior for every database backend included in the advertised support matrix; or
-2. fail closed / restrict atomic concurrency to a version strategy whose successful match necessarily changes a concurrency-managed field until broader behavior is proven.
-
-This does not block the capability feasibility result; it is an explicit implementation acceptance gate.
-
-### Conflict classification
-
-A zero-row conditional mutation can mean stale predicate or that the row disappeared. Rakit should preserve its neutral error behavior deliberately:
-
-- initial scoped read absent → not found;
-- signed token mismatch against the loaded record → conflict;
-- conditional mutation returns zero after the initial record/token check → concurrency race/conflict unless a safe same-UoW classification step proves the row no longer exists and the neutral contract requires not-found classification.
-
-The mutation itself must remain atomic regardless of how the final error is classified.
-
-### Atomic concurrency decision records
+### Atomic decision records
 
 - **TORTOISE-R1:** Tortoise can express optimistic compare-and-write as one native conditional UPDATE. **PASS**.
-- **TORTOISE-R2:** Use `QuerySet.filter(...).using_db(root_connection).update(...)`; never read-check then issue an unconditional update.
-- **TORTOISE-R3:** Prefer a version-column strategy for the first implementation; integer version plus `F("version") + 1` is the clearest cross-backend shape.
-- **TORTOISE-R4:** Affected-row behavior is an implementation acceptance gate across the database matrix, especially for snapshot/no-op writes.
-- **TORTOISE-R5:** Zero-row mutation maps to the neutral race/conflict path after initial existence/token validation; classification must not weaken atomicity.
-- **TORTOISE-R6:** All concurrency reads and writes must explicitly use the existing root UoW connection.
+- **TORTOISE-R2:** Use filtered `QuerySet.update()` bound to the root transaction; never read-check then update unconditionally.
+- **TORTOISE-R3:** Prefer version-column concurrency first; integer version plus `F("version") + 1` is the clearest cross-backend shape.
+- **TORTOISE-R4:** Affected-row behavior is an implementation acceptance gate, especially for snapshot/no-op writes.
+- **TORTOISE-R5:** Zero-row conditional mutation maps to the neutral race/conflict path after initial existence/token validation.
+- **TORTOISE-R6:** All concurrency reads and writes must use the existing root UoW connection.
 
-## Tortoise relationships
+## Relationships
 
-### Verdict
+Tortoise is relationship-native. Public model description metadata exposes forward FK, backward FK, forward O2O, backward O2O, and M2M collections. New parity introspection should prefer public `Model.describe()` where sufficient rather than deepening new private metadata coupling.
 
-**PASS with explicit association-resource semantics.**
+Neutral mapping:
 
-Tortoise is relationship-native. Its public model description API exposes separate collections for:
+- `ForeignKeyField` → many-to-one;
+- backward FK relation → one-to-many;
+- `OneToOneField` → one-to-one;
+- native M2M relation → many-to-many;
+- explicit application-owned model with two relationship edges and scalar fields → association object.
 
-- forward foreign keys;
-- backward foreign keys;
-- forward one-to-one;
-- backward one-to-one;
-- many-to-many.
+Native M2M `add`, `remove`, and `clear` accept an explicit database client, so they can remain inside the Rakit root transaction. Candidate identities must still be resolved through scoped Rakit queries rather than accepting arbitrary transport-supplied objects.
 
-This aligns well with Rakit's portable cardinalities. New parity introspection should prefer public `Model.describe()` metadata rather than deepening reliance on private `_meta` structures merely for convenience. Current scalar adapter code already uses `_meta`; this research does not require rewriting that existing code, but new relationship support should use the public seam wherever sufficient.
+### Association object boundary
 
-### Many-to-one
-
-Native `ForeignKeyField` is a direct fit. Tortoise exposes both the relationship and its backing raw id field. Rakit can validate target/cardinality and perform link/unlink through an explicit conditional update inside the root connection.
-
-### One-to-many
-
-Tortoise exposes backward FK relations. Reverse relation querysets support ordinary filtering/ordering, and related child creation accepts `using_db`, so child creation can remain inside the root transaction.
-
-### One-to-one
-
-Tortoise has a dedicated `OneToOneField`; its implementation is FK-derived with uniqueness semantics. Both forward and backward O2O are represented separately in public model description metadata.
-
-### Many-to-many
-
-Tortoise's `ManyToManyRelation` provides native `add`, `remove`, and `clear`, and those mutation methods accept an explicit `using_db` connection. Upstream source shows that the supplied DB client is used for bridge-table SELECT/INSERT/DELETE operations. That lets Rakit preserve root-UoW ownership.
-
-The relation APIs accept saved model instances. Rakit should resolve candidate identities through a scoped queryset on the same root connection before calling relation mutation methods; candidate resolution must remain subject to Rakit permissions/scope rather than accepting arbitrary model objects supplied by user code or transport input.
-
-### Association object
-
-This is the main Tortoise-specific design boundary.
-
-Tortoise native `ManyToManyField(..., through=...)` currently treats `through` as a table name. In the inspected 1.1.8 relational source there is still an explicit upstream TODO to support `through` as a Model. Therefore Rakit must **not** pretend a native Tortoise M2M through table is a rich association-object model.
-
-Rakit association-object semantics should instead use an explicit application-owned Tortoise model, for example conceptually:
+Tortoise native `ManyToManyField(..., through=...)` treats `through` as a table-oriented construct; the inspected upstream line still notes that richer through-as-Model support is not the model being provided by that API. Rakit must therefore use an explicit Tortoise model for `ASSOCIATION_OBJECT` semantics:
 
 ```python
 class Membership(Model):
@@ -299,83 +224,35 @@ class Membership(Model):
     position = fields.IntField()
 ```
 
-`RelationshipDefinition` already identifies the association resource, target resource, and exposed association scalars. The Tortoise adapter can validate that explicit association resource through normal model metadata and execute it using ordinary model/query CRUD. This avoids depending on unsupported richer semantics in native M2M `through`.
-
-### Ordered relationships
-
-Ordering remains a Rakit-declared behavior. It should require an explicit scalar position field on the child or association resource. Reads use an ordered queryset; reorder writes explicitly update that position field inside the root UoW. Tortoise default model ordering is not sufficient proof of writable Rakit ordering by itself.
-
-### Destructive behavior
-
-Tortoise relation fields expose `on_delete`, but this is database/ORM relationship behavior, not Rakit authorization. As with SQLAlchemy, `CASCADE` or another ORM delete rule must never silently grant destructive UI/API behavior. Rakit's explicit destructive policy remains authoritative.
-
-### Ambiguity and explicit declaration
-
-Unlike SQLAlchemy Core, Tortoise relationship fields already have application-level names, so multiple FKs to the same model are normally distinguishable by field name. Rakit should bind a `RelationshipDefinition` to that named native relationship and validate target/cardinality. It must still fail closed when:
-
-- the declared relationship field does not exist;
-- its native target does not match the declared target resource;
-- cardinality does not match;
-- a declared association resource is structurally incompatible;
-- the ordered relationship lacks the declared position field;
-- a relation shape requires unsupported custom/convention-only behavior.
-
-### Relationship reads and root UoW
-
-Relation reads must not accidentally escape to Tortoise's default connection. Use one of the public explicit-connection paths:
-
-- relation queryset followed by `.using_db(root_connection)`;
-- model/query methods that accept `using_db`;
-- `fetch_related(..., using_db=root_connection)` where appropriate.
-
-Likewise all writes must pass the root connection to M2M/reverse relation operations or use querysets explicitly bound with `using_db`.
-
-### Relationship concurrency
-
-Child/association records that participate in optimistic concurrency can use the same conditional-update mechanism as ordinary Tortoise resources. Parent graph changes that require a parent concurrency claim should use a versioned parent update in the same root transaction before/with relationship mutations, following the neutral Rakit graph-mutation contract rather than relying on Tortoise relation container state.
+Ordering requires an explicit position field. ORM/database `on_delete` behavior never grants Rakit destructive permission.
 
 ### Relationship decision records
 
-- **TORTOISE-R7:** Native Tortoise FK/reverse-FK/O2O/M2M metadata is sufficient for Rakit relationship validation. **PASS**.
-- **TORTOISE-R8:** Prefer public `Model.describe()` as the new relationship introspection seam; do not deepen private `_meta` coupling merely to chase parity.
-- **TORTOISE-R9:** Relationship declarations bind by explicit Tortoise field/relation name and validate target/cardinality; no heuristic guessing is required for multiple named FKs.
-- **TORTOISE-R10:** Native M2M `add/remove/clear` is usable only with the Rakit root connection explicitly supplied.
-- **TORTOISE-R11:** Rakit association objects use an explicit Tortoise model with its own identity, two relationship edges, and scalar fields; native M2M `through` table metadata is not treated as an association model.
-- **TORTOISE-R12:** Ordered relationships require an explicit position field; default ORM ordering alone does not grant writable ordering semantics.
-- **TORTOISE-R13:** Tortoise `on_delete` behavior never grants Rakit destructive permission.
-- **TORTOISE-R14:** Candidate/relationship resolution must remain scoped and must use the root UoW connection.
-- **TORTOISE-R15:** Unsupported or structurally inconsistent relation declarations fail closed.
+- **TORTOISE-R7:** Native FK/reverse-FK/O2O/M2M metadata is sufficient for neutral relationship validation. **PASS**.
+- **TORTOISE-R8:** Prefer public `Model.describe()` for new relationship introspection where sufficient.
+- **TORTOISE-R9:** Bind declarations by explicit Tortoise relationship name and validate target/cardinality; no heuristic first-match behavior.
+- **TORTOISE-R10:** Native M2M operations are usable only when bound to the Rakit root transaction.
+- **TORTOISE-R11:** Association objects use an explicit Tortoise model; a native M2M through table is not treated as a rich association model.
+- **TORTOISE-R12:** Writable ordering requires an explicit position field.
+- **TORTOISE-R13:** Tortoise `on_delete` semantics never grant Rakit destructive permission.
+- **TORTOISE-R14:** Candidate/relationship resolution remains scoped and inside the root UoW.
+- **TORTOISE-R15:** Unsupported or structurally inconsistent declarations fail closed.
 
-## Deliberately unsupported / fail-closed shapes
-
-A neutral Tortoise 5/5 implementation does not need to promise every ORM convenience. The adapter may reject:
-
-- convention-only relationships not represented by declared Tortoise relation fields or an explicit association resource;
-- composite Rakit identities;
-- native M2M through tables being used as if they were rich association models;
-- relationship mutation that cannot be bound to the root UoW connection;
-- ambiguous/incompatible declarations;
-- destructive behavior inferred only from ORM/database cascade configuration;
-- concurrency modes whose affected-row behavior has not been proven for the advertised database matrix.
-
-## Tortoise implementation acceptance matrix — research output
-
-Before capability promotion, implementation must prove at least:
+## Tortoise implementation acceptance matrix
 
 | Area | Required proof |
 | --- | --- |
 | FK / many-to-one | read, link, nullable unlink, target validation |
 | reverse FK / one-to-many | read, scoped child create/update/unlink where allowed |
 | one-to-one | forward/backward read and writable supported direction |
-| many-to-many | read, add, duplicate-safe add behavior, remove, clear/policy behavior, same root UoW |
+| many-to-many | read, add, duplicate-safe behavior, remove, clear/policy behavior, same root UoW |
 | association object | explicit association model, scalar edits, target resolution, delete/unlink policy |
 | ordering | deterministic read + reorder through explicit position field |
-| transaction | all graph writes roll back together and commit together |
-| parent/child concurrency | stale parent/child graph changes reject without partial durability |
-| atomic update | identity + version/snapshot predicates and write in one statement |
-| atomic delete | identity + concurrency predicate in one delete |
-| affected rows | supported DB matrix proves reliable semantics or unsupported mode fails closed |
-| introspection | public metadata validates relation kind/target without hidden heuristic coupling |
+| graph transaction | all graph writes commit/rollback together |
+| parent/child concurrency | stale graph changes reject without partial durability |
+| atomic update/delete | identity + expected token predicate and mutation in one statement |
+| affected rows | claimed DB matrix proves suitable semantics or unsupported mode fails closed |
+| introspection | native metadata validates kind/target without heuristic guessing |
 
 ## Tortoise final research verdict
 
@@ -387,14 +264,13 @@ Core redesign required         NO
 New transaction model required NO
 Native relationship APIs       YES
 Explicit association model     YES for association-object semantics
-Public introspection seam      Model.describe()
 Fail-closed semantics          REQUIRED
 Capability promotion now       NO
 ```
 
-`*` Relationship PASS is for the neutral Rakit contract. A native Tortoise M2M `through` table is not considered a rich association object; explicit application-owned association models are required for that Rakit relationship kind.
+`*` Relationship PASS is for the neutral Rakit contract.
 
-`**` Atomic concurrency PASS is subject to an implementation-time affected-row/backend matrix. Version-column compare-and-write is the recommended first target. Snapshot/no-op behavior must be proven or rejected fail-closed for backends whose row-count semantics are not suitable.
+`**` Atomic PASS is subject to an implementation-time affected-row/backend matrix. Version-column compare-and-write is the recommended first target; snapshot/no-op behavior must be proven or rejected fail closed.
 
 ---
 
@@ -404,7 +280,7 @@ Capability promotion now       NO
 
 Provider: `persistence.peewee`
 
-Rakit currently ships `peewee>=4.0.2,<5` and advertises read, write, and root-UoW. This research inspected the current Rakit adapter, the async implementation at Peewee 4.0.2, the relevant fixes in 4.0.7, and the first upstream release that explicitly marks the asyncio extension stable, Peewee 4.0.8.
+Rakit currently ships `peewee>=4.0.2,<5`. Research inspected 4.0.2 behavior, the asyncpg row-count fix in 4.0.7, and the first upstream release which explicitly declares the asyncio API stable, 4.0.8.
 
 | Capability | Shipped now | Research verdict |
 | --- | --- | --- |
@@ -414,65 +290,30 @@ Rakit currently ships `peewee>=4.0.2,<5` and advertises read, write, and root-Uo
 | `persistence.relationships` | No | **PASS** |
 | `concurrency.atomic-optimistic` | No | **PASS with required parity floor bump** |
 
-**Feasibility conclusion:** Peewee async can plausibly reach a truthful **5/5** Rakit persistence profile, but **not while the parity implementation claims the current lower bound `peewee>=4.0.2`**. The recommended implementation floor for the 5/5 workstream is `peewee>=4.0.8,<5` because 4.0.7 fixes asyncpg UPDATE/DELETE row counts and 4.0.8 is the first release whose upstream changelog declares the asyncio APIs stable.
-
-This is a research recommendation only. The package dependency remains unchanged until a later implementation plan explicitly approves and verifies the floor change.
-
-## Existing Rakit foundation
-
-Relevant seams:
-
-- `packages/rakit-peewee/src/rakit_peewee/capabilities.py`
-- `packages/rakit-peewee/src/rakit_peewee/introspection.py`
-- `packages/rakit-peewee/src/rakit_peewee/datasource.py`
-- `packages/rakit-peewee/src/rakit_peewee/generated.py`
-- `packages/rakit-peewee/src/rakit_peewee/uow.py`
-
-The current generated executor already performs mutation through the configured `playhouse.pwasyncio.AsyncDatabaseMixin` database with `database.aexecute(...)` and checks that UPDATE/DELETE return exactly one affected row. The provider merely rejects concurrency configuration today and advertises `atomic_concurrency=False`.
-
-`PeeweeUnitOfWork` already enters the async database context and a single `database.atomic()` boundary. The async database keeps connection state per asyncio task. Therefore the additional relationship and concurrency behavior can reuse the existing root transaction rather than adding a second UoW design.
+**Feasibility conclusion:** Peewee async can plausibly reach a truthful **5/5** profile, but the atomic capability must not be promoted while claiming the current `peewee>=4.0.2` floor across all supported async backends.
 
 ## Dependency-floor finding
 
-### Current floor is sufficient for shipped 3/5 behavior, not sufficient for global atomic parity
+At 4.0.2:
 
-Rakit deliberately moved its original Peewee floor to 4.0.2 because Peewee 4.0.0–4.0.1 did not preserve the async SQLite affected-row behavior required by generated UPDATE/DELETE not-found semantics.
+- async SQLite obtains DML `cursor.rowcount`;
+- async MySQL obtains DML `cursor.rowcount`;
+- async PostgreSQL/asyncpg does not provide the reliable UPDATE/DELETE affected count Rakit needs for stale-write detection.
 
-However, inspecting Peewee 4.0.2 exposes a separate PostgreSQL issue relevant to `concurrency.atomic-optimistic`:
+Peewee 4.0.7 explicitly fixes asyncpg UPDATE/DELETE row counts. Peewee 4.0.8 additionally marks the asyncio APIs stable.
 
-- async SQLite obtains `cursor.rowcount`;
-- async MySQL obtains `cursor.rowcount`;
-- async PostgreSQL/asyncpg in 4.0.2 executes through `conn.fetch(...)` and constructs a cursor adapter without an explicit DML rowcount;
-- for an ordinary UPDATE/DELETE without returned rows, the cursor adapter therefore cannot report a truthful affected-row count for Rakit's stale-write decision.
-
-Peewee 4.0.7 explicitly fixes `playhouse.pwasyncio` asyncpg UPDATE/DELETE row counts by parsing the asyncpg command status. Peewee 4.0.8 then adds the polished query-level `BaseQuery.aexecute()` API, async model helpers, `afetch()`, and explicitly states that the asyncio extension is no longer preliminary.
-
-### Research recommendation
-
-For the parity implementation:
+Research recommendation for later parity implementation:
 
 ```text
-current shipped floor:   peewee>=4.0.2,<5
-recommended parity floor peewee>=4.0.8,<5
+current shipped floor:    peewee>=4.0.2,<5
+recommended parity floor: peewee>=4.0.8,<5
 ```
 
-Why not stop at 4.0.7?
+This document does not itself modify the package dependency.
 
-- 4.0.7 contains the necessary rowcount fix;
-- 4.0.8 is the first release where upstream marks the documented asyncio API stable;
-- choosing 4.0.8 gives Rakit a maintained, explicit async contract instead of building new 5/5 semantics on the last "preliminary" async release.
+## Atomic optimistic concurrency
 
-Rakit should not advertise `concurrency.atomic-optimistic` conditionally based on the database backend merely to preserve the 4.0.2 floor unless a separate dynamic-capability design is explicitly approved. A single provider capability should mean the behavior is honestly supported across the database/runtime matrix Rakit claims for that provider.
-
-## Peewee atomic optimistic concurrency
-
-### Verdict
-
-**PASS, conditional on raising the parity dependency floor and proving the database matrix.**
-
-### Native strategy
-
-Peewee supports database-side expressions in UPDATE statements and UPDATE execution returns the affected-row count. The Rakit executor can therefore compose identity and version predicates into the same statement that performs the user change and advances the version:
+A native conditional mutation is feasible:
 
 ```python
 updated = await database.aexecute(
@@ -486,7 +327,7 @@ updated = await database.aexecute(
 )
 ```
 
-Required interpretation:
+Required behavior:
 
 ```text
 updated == 1 -> success
@@ -494,105 +335,34 @@ updated == 0 -> stale/race conflict
 other count  -> fail closed
 ```
 
-Conditional delete follows the same shape:
+Conditional delete follows the same identity + version predicate pattern.
 
-```python
-deleted = await database.aexecute(
-    Model.delete().where(
-        (Model.id == identity)
-        & (Model.version == expected_version)
-    )
-)
-```
+Peewee model instances work naturally with the neutral attribute version-provider shape. Integer version-column concurrency is the recommended first target. Snapshot/no-op behavior requires explicit SQLite + asyncpg + aiomysql proof because the provider depends on backend affected-row semantics.
 
-The mutation is atomic because the expected-version predicate and data change are one database statement. A prior read may validate the Rakit token/existence and a later read may reload state; neither may be used to authorize a separate unconditional UPDATE.
+### Atomic decision records
 
-### Version-provider compatibility
+- **PEEWEE-R1:** Peewee can express optimistic compare-and-write as one conditional async UPDATE/DELETE. **PASS**.
+- **PEEWEE-R2:** The current `>=4.0.2` lower bound is insufficient for global atomic parity because pre-4.0.7 asyncpg DML rowcounts are not reliable enough.
+- **PEEWEE-R3:** The parity implementation should use `peewee>=4.0.8,<5`; 4.0.7 contains the rowcount fix and 4.0.8 is the first upstream-stable asyncio line.
+- **PEEWEE-R4:** Prefer integer version-column concurrency first; snapshot/no-op mode requires backend proof or fails closed.
+- **PEEWEE-R5:** All optimistic reads/writes remain in the existing `PeeweeUnitOfWork` task/database/`atomic()` boundary.
+- **PEEWEE-R6:** Zero-row conditional mutation maps to neutral race/conflict after initial existence/token validation.
 
-Peewee model records expose fields as attributes, so the existing neutral attribute-based version-provider shape is naturally compatible.
+## Relationships
 
-The strongest first target is an integer version column:
+Peewee has sufficient documented model metadata and query primitives for neutral Rakit relationship semantics.
 
-```text
-WHERE version = expected
-SET version = version + 1
-```
+Neutral mapping:
 
-A successful match necessarily changes the concurrency field, which avoids ambiguity on databases/drivers that distinguish changed rows from matched rows.
+- named `ForeignKeyField` → many-to-one;
+- named backref → one-to-many;
+- unique FK edge → one-to-one;
+- `ManyToManyField` / through model → many-to-many;
+- explicit intermediary model with two FKs and scalar fields → association object.
 
-Snapshot-style concurrency needs the same caution identified during Tortoise research. When `next_values_for()` is empty and the requested data is already equal to the stored data, the UPDATE can become a no-op. Peewee's async drivers ultimately expose backend-specific row-count semantics, so snapshot/no-op behavior must be proven for SQLite, PostgreSQL/asyncpg, and MySQL/aiomysql before that mode is advertised. Until then it should fail closed or remain unsupported for this provider.
+Peewee intentionally documents `Model._meta` as model metadata. Existing Rakit code already uses it. New parity behavior may use documented `_meta` fields/helpers, while avoiding undocumented lower-level implementation details where a documented seam exists.
 
-### Conflict classification
-
-Recommended neutral behavior:
-
-- initial scoped record absent → `RESOURCE_NOT_FOUND`;
-- signed token does not match the loaded record → `RESOURCE_CONFLICT`;
-- conditional mutation returns zero after existence/token validation → race/stale `RESOURCE_CONFLICT`;
-- no read-check-unconditional-write fallback.
-
-### Atomic concurrency decision records
-
-- **PEEWEE-R1:** Peewee can express optimistic compare-and-write as one conditional UPDATE/DELETE executed through the async database. **PASS**.
-- **PEEWEE-R2:** The current `>=4.0.2` lower bound is insufficient for global atomic capability because pre-4.0.7 asyncpg UPDATE/DELETE rowcounts are not reliable enough for Rakit's stale-write decision.
-- **PEEWEE-R3:** The parity implementation should raise the Peewee floor to `>=4.0.8,<5`; 4.0.7 contains the rowcount fix and 4.0.8 is the first upstream-stable asyncio API line.
-- **PEEWEE-R4:** Prefer integer version-column concurrency first, with `version = version + 1` in the same statement; snapshot/no-op mode requires explicit backend proof or fails closed.
-- **PEEWEE-R5:** All optimistic reads/writes must remain in the same `PeeweeUnitOfWork` task/database/`atomic()` boundary.
-- **PEEWEE-R6:** A zero-row conditional mutation maps to the neutral race/conflict path after initial existence/token validation.
-
-## Peewee relationships
-
-### Verdict
-
-**PASS.**
-
-Peewee has enough documented relationship metadata and query primitives to satisfy the neutral Rakit contract without inventing another ORM layer. Its native relationship model differs from Tortoise but maps cleanly when Rakit remains explicit about semantics.
-
-### Introspection seam
-
-Unlike the Tortoise case, Peewee documents `Model._meta` as the model metadata surface and exposes metadata helpers such as model graph/reference information. The existing Rakit adapter already uses `model._meta` for scalar identity and fields.
-
-For relationship parity, the adapter can extend this documented metadata seam to inspect:
-
-- named `ForeignKeyField` instances;
-- target model (`rel_model`);
-- nullability;
-- uniqueness;
-- backref names;
-- model references/backreferences;
-- many-to-many through models where the application uses `ManyToManyField`.
-
-The presence of an underscore in `_meta` should not automatically be treated as an unsupported private hack here: Peewee's public documentation intentionally exposes it as the model metadata object. Rakit should still avoid depending on undocumented implementation internals beneath that metadata surface when a documented field/helper is available.
-
-### Many-to-one
-
-A named `ForeignKeyField` maps directly to Rakit `MANY_TO_ONE`.
-
-Rakit can validate:
-
-- native field exists;
-- `rel_model` matches the declared target resource;
-- nullable semantics match the declaration.
-
-Link/unlink should use explicit asynchronous UPDATE through the bound database instead of relying on an implicit lazy save. A nullable unlink sets the FK column to `NULL` only when Rakit edit policy permits it.
-
-### One-to-many
-
-Peewee creates a back-reference for foreign keys and allows an explicit `backref=` name. That maps to `ONE_TO_MANY` when bound to the corresponding FK edge.
-
-Reads should use explicit joined/prefetched/query execution through the async bridge rather than triggering accidental synchronous lazy access. Child create/update/unlink can use ordinary Peewee INSERT/UPDATE queries with the parent FK bound explicitly.
-
-### One-to-one
-
-Peewee does not need a separate OneToOne field class. Rakit can treat an FK edge as `ONE_TO_ONE` only when the physical/model metadata proves singularity, for example a `ForeignKeyField(unique=True)` (or equivalent unique constraint that the adapter can verify without guessing).
-
-A plain FK must never be promoted to one-to-one based only on a Rakit declaration.
-
-### Many-to-many
-
-Peewee supports `ManyToManyField` and exposes a through model. For simple native M2M declarations, Rakit may validate the relation using that public through-model surface.
-
-For mutation, the preferred Rakit implementation is **explicit asynchronous DML against the through model** rather than relying first on synchronous-looking descriptor methods such as `.add()`/`.remove()`:
+For M2M mutation, Rakit should initially prefer explicit async DML against the through model rather than relying on synchronous-looking relation descriptor convenience methods:
 
 ```text
 link   -> INSERT through-model row
@@ -600,108 +370,41 @@ unlink -> DELETE through-model row
 clear  -> policy-authorized DELETE for this parent
 ```
 
-This keeps root-UoW participation and affected-row behavior visible through the same `database.aexecute(...)` path already used by the adapter.
+This keeps transaction ownership, error semantics, and affected-row behavior visible through the adapter's established async execution path.
 
-If a native relation helper is used later, it must be executed through the supported async bridge and proven to stay on the root UoW connection/task. No convenience API is allowed to create an independent commit boundary.
+Peewee async relationship reads must not accidentally trigger unbridged synchronous lazy I/O. Use explicit joined/prefetched/query paths through the async bridge.
 
-### Association object
-
-Peewee's recommended modeling style for more complex many-to-many relations is an explicit intermediary model. This fits Rakit association-object semantics very well.
-
-Conceptually:
-
-```python
-class Membership(BaseModel):
-    id = AutoField()
-    user = ForeignKeyField(User, backref="memberships")
-    team = ForeignKeyField(Team, backref="memberships")
-    role = TextField()
-    position = IntegerField()
-```
-
-Rakit can then treat `Membership` as the association resource, expose selected scalar association fields, and use normal async query mutation for link/update/unlink/reorder operations.
-
-The current Rakit identity contract still requires one scalar int/str/UUID primary key. A junction model using only a composite primary key must therefore fail closed for association-resource behavior until composite resource identity is separately designed and approved.
-
-### Ambiguous multiple FKs
-
-Peewee explicitly documents that when multiple FKs point to the same model, join intent must be made explicit. Rakit already has named `RelationshipDefinition` declarations, so it should bind to the named FK/backref/through edge and validate it.
-
-No heuristic "first matching FK" behavior is acceptable.
-
-### Ordered relationships
-
-Ordering is a Rakit semantic, not a Peewee default ordering shortcut. A writable ordered relation requires an explicit position field on the child or association model. Reorder mutations update that field inside the root UoW.
-
-### Destructive behavior
-
-Peewee FK `on_delete`/`on_update` configuration describes database relationship behavior. It does not authorize destructive Rakit API/UI actions. Rakit's explicit destructive policy remains authoritative.
-
-### Async relationship reads
-
-Peewee's async extension has a sharp boundary around lazy ORM access: ordinary synchronous lazy relationship loading cannot be allowed to escape the greenlet/async bridge.
-
-Rakit relationship code should therefore use explicit async-safe paths such as:
-
-- joined `Model.select()` executed by `database.list/get` or query `aexecute()` on the stable async line;
-- `database.aprefetch(...)` / explicit prefetch for collections;
-- `database.run(...)` only for documented synchronous Peewee operations that require the bridge;
-- explicit through-model queries for M2M/association relationships.
-
-The runtime must not depend on a transport/UI caller touching a model attribute that silently issues a synchronous query outside the bridge.
-
-### Relationship concurrency
-
-Child and association resources can reuse the same conditional-update concurrency primitive as ordinary Peewee resources. Graph mutations that claim parent concurrency must claim/advance the parent version in the same root transaction before or as part of the relationship graph write sequence, preserving Rakit's all-or-nothing graph semantics.
+Ordering requires an explicit position field. FK `on_delete` / `on_update` never grants Rakit destructive permission.
 
 ### Relationship decision records
 
-- **PEEWEE-R7:** Named `ForeignKeyField` plus documented back-reference/model metadata is sufficient for neutral many-to-one/one-to-many validation. **PASS**.
-- **PEEWEE-R8:** Use Peewee's documented `Model._meta`/metadata graph seam for relationship introspection; do not infer that `_meta` is unusable merely because of its name.
-- **PEEWEE-R9:** `ONE_TO_ONE` requires proven uniqueness on the FK edge; a plain FK is never promoted by declaration alone.
-- **PEEWEE-R10:** Native `ManyToManyField` may be recognized through its public through-model surface, but Rakit should prefer explicit async DML against the through model for mutations.
-- **PEEWEE-R11:** Rich association-object behavior uses an explicit intermediary Peewee model with its own supported scalar identity and exposed association fields.
-- **PEEWEE-R12:** Writable ordering requires an explicit position field; model default ordering alone is insufficient.
-- **PEEWEE-R13:** Peewee `on_delete`/`on_update` behavior never grants Rakit destructive permission.
-- **PEEWEE-R14:** Relationship reads/writes must remain on async-safe bridge/query paths inside the root-UoW task; unbridged lazy loads are not an acceptable implementation strategy.
-- **PEEWEE-R15:** Multiple FK paths, incompatible declarations, composite identities, or unsupported relation shapes fail closed.
-- **PEEWEE-R16:** Native M2M shapes with inheritance or other upstream-documented caveats must be rejected unless explicit through-model binding proves the neutral semantics.
+- **PEEWEE-R7:** Named `ForeignKeyField` plus documented back-reference metadata is sufficient for neutral many-to-one/one-to-many validation. **PASS**.
+- **PEEWEE-R8:** Use Peewee's documented `Model._meta` metadata seam; underscore naming alone does not make it an unsupported private API.
+- **PEEWEE-R9:** `ONE_TO_ONE` requires proven uniqueness on the FK edge.
+- **PEEWEE-R10:** Native M2M may be recognized through its through-model surface; prefer explicit async through-model DML for Rakit mutations.
+- **PEEWEE-R11:** Rich association-object behavior uses an explicit intermediary Peewee model with a supported scalar identity.
+- **PEEWEE-R12:** Writable ordering requires an explicit position field.
+- **PEEWEE-R13:** Peewee FK cascade behavior never grants Rakit destructive permission.
+- **PEEWEE-R14:** Relationship reads/writes stay on async-safe bridge/query paths inside the root-UoW task.
+- **PEEWEE-R15:** Multiple FK paths, incompatible declarations, composite identities, or unsupported shapes fail closed.
+- **PEEWEE-R16:** Native M2M shapes with upstream caveats must be rejected unless explicit through-model binding proves neutral semantics.
 
-## Deliberately unsupported / fail-closed shapes
-
-A neutral Peewee 5/5 implementation may reject:
-
-- relationships represented only by arbitrary ad-hoc join expressions rather than a declared FK/through/association resource;
-- ambiguous multiple FK/through paths without explicit binding;
-- composite Rakit resource identities;
-- synchronous lazy relation I/O outside the async bridge;
-- native M2M inheritance shapes whose semantics are not proven;
-- destructive behavior inferred only from FK cascade configuration;
-- snapshot/no-op concurrency whose affected-row semantics are not proven on the claimed backend matrix;
-- Peewee versions below the accepted parity floor for the atomic capability.
-
-## Peewee implementation acceptance matrix — research output
-
-Before capability promotion, implementation must prove at least:
+## Peewee implementation acceptance matrix
 
 | Area | Required proof |
 | --- | --- |
 | FK / many-to-one | introspection, read, scoped link, nullable unlink, target validation |
 | backref / one-to-many | read, scoped child create/update/unlink where policy permits |
 | one-to-one | unique-FK proof, forward/backward read, writable supported direction |
-| many-to-many | native through discovery, explicit async link/unlink/clear-policy behavior |
+| many-to-many | through discovery, explicit async link/unlink/clear-policy behavior |
 | association object | explicit intermediary model, scalar edits, target resolution, delete/unlink policy |
 | ordering | deterministic read + reorder through explicit position field |
 | async I/O | no accidental unbridged lazy relation query |
-| transaction | all graph mutations commit/rollback together inside existing `PeeweeUnitOfWork` |
+| transaction | graph mutations commit/rollback together in `PeeweeUnitOfWork` |
 | parent/child concurrency | stale graph writers reject without partial durability |
-| atomic update | identity + expected version + write + version advancement in one UPDATE |
-| atomic delete | identity + expected version in one DELETE |
-| affected rows | SQLite + PostgreSQL/asyncpg + MySQL/aiomysql behavior proven at accepted lower bound and latest allowed 4.x |
-| dependency | proposed `peewee>=4.0.8,<5` passes Python/lowest/latest/artifact matrices before promotion |
-| metadata | documented `_meta`/field/through-model seams only; unsupported shapes fail closed |
-
-The current Rakit permanent Peewee conformance suite is SQLite-based. A future 5/5 implementation should add database-specific proof where atomic rowcount behavior is part of the advertised guarantee rather than assuming the SQLite result generalizes to asyncpg/aiomysql.
+| atomic update/delete | identity + expected version + mutation in one statement |
+| affected rows | SQLite + PostgreSQL/asyncpg + MySQL/aiomysql proven at accepted floor and latest 4.x |
+| dependency | proposed `peewee>=4.0.8,<5` passes Python/lowest/latest/artifact matrices |
 
 ## Peewee final research verdict
 
@@ -713,68 +416,360 @@ Current 4.0.2 floor sufficient NO for global atomic parity
 Recommended parity floor       peewee>=4.0.8,<5
 Core redesign required         NO
 New transaction model required NO
-Explicit through/association   YES for rich graph semantics
 Async bridge discipline        REQUIRED
 Fail-closed semantics          REQUIRED
 Capability promotion now       NO
 ```
 
-`*` Relationship PASS means conformance with Rakit's neutral relationship contract, not support for every arbitrary Peewee join/query shape.
+`*` Relationship PASS means neutral Rakit relationship conformance, not arbitrary Peewee join/query parity.
 
-`**` Atomic concurrency PASS assumes the parity implementation raises the dependency floor to a line with fixed asyncpg DML rowcounts and stable upstream async APIs, and then proves affected-row behavior across the database matrix. If the dependency floor remains `>=4.0.2`, Rakit must **not** advertise the global atomic capability merely on SQLite evidence.
+`**` Atomic PASS assumes the later implementation raises the dependency floor and proves affected-row behavior across the claimed database matrix.
 
 ---
 
-# Remaining providers
+# Piccolo ORM
 
-## Piccolo ORM
+**Research status:** Complete / locked
 
-**Status:** Pending research
+Provider: `persistence.piccolo`
 
-Questions:
+Rakit currently ships `piccolo>=1.30,<2`. Research inspected the current Rakit adapter, Piccolo 1.30.0 as the supported lower bound, and the maintained 1.x line (1.36.0 at the time of this research).
 
-- Which native relation metadata maps cleanly to the Rakit contract?
-- Can optimistic predicates be included in one mutation through public Piccolo APIs?
-- Are transaction and affected-row semantics strong enough for honest capability advertisement?
+| Capability | Shipped now | Research verdict |
+| --- | --- | --- |
+| `persistence.read` | Yes | Existing |
+| `persistence.write` | Yes | Existing |
+| `transactions.root-uow` | Yes | Existing |
+| `persistence.relationships` | No | **PASS with explicit joining-table semantics** |
+| `concurrency.atomic-optimistic` | No | **PASS with RETURNING/backend conformance gate** |
+
+**Feasibility conclusion:** Piccolo can plausibly reach a truthful **5/5** Rakit persistence profile on the current `piccolo>=1.30,<2` dependency line. No dependency-floor bump, core redesign, or new transaction model is currently justified.
+
+## Existing Rakit foundation
+
+Relevant seams:
+
+- `packages/rakit-piccolo/src/rakit_piccolo/capabilities.py`
+- `packages/rakit-piccolo/src/rakit_piccolo/introspection.py`
+- `packages/rakit-piccolo/src/rakit_piccolo/generated.py`
+- `packages/rakit-piccolo/src/rakit_piccolo/uow.py`
+
+The current generated executor already uses Piccolo `UPDATE ... RETURNING identity` and `DELETE ... RETURNING identity`, then validates that exactly one row was returned. It merely rejects configured concurrency today and advertises `atomic_concurrency=False`.
+
+`PiccoloUnitOfWork` already owns the root `Engine.transaction()` boundary and rejects entering when an external root transaction already exists. Piccolo's transaction context tracks transaction existence, and ordinary Piccolo queries participate in that transaction. Higher capabilities can therefore reuse the existing UoW.
+
+## Piccolo atomic optimistic concurrency
+
+### Verdict
+
+**PASS with an implementation-time RETURNING/backend conformance gate.**
+
+### Native strategy
+
+Piccolo supports database-side arithmetic in UPDATE expressions and supports `returning(...)` for UPDATE and DELETE at the Rakit-supported 1.30 floor.
+
+A version-column mutation can therefore be expressed as one database statement:
+
+```python
+updated = await (
+    Model.update(
+        {
+            Model.name: proposed_name,
+            Model.version: Model.version + 1,
+        }
+    )
+    .where(
+        Model.id == identity,
+        Model.version == expected_version,
+    )
+    .returning(Model.id)
+)
+```
+
+Required interpretation:
+
+```text
+len(updated) == 1 -> success
+len(updated) == 0 -> stale/race conflict
+other count       -> fail closed
+```
+
+Conditional delete follows the same shape:
+
+```python
+deleted = await (
+    Model.delete()
+    .where(
+        Model.id == identity,
+        Model.version == expected_version,
+    )
+    .returning(Model.id)
+)
+```
+
+This is particularly useful for Rakit because success detection does **not** have to depend on backend driver rowcount semantics. The database returns the identities of rows matched and processed by the conditional mutation.
+
+A preceding scoped read may validate existence and the signed Rakit token; the final write must still include the expected concurrency predicate. A zero-row result after initial validation is the race/stale conflict path.
+
+### Version-provider compatibility
+
+Piccolo `Table` instances expose column values as attributes, so the existing neutral attribute version-provider shape is naturally compatible.
+
+Integer version-column concurrency is the recommended first implementation target and can use `version = version + 1` in the same UPDATE.
+
+Snapshot-style concurrency is architecturally more promising here than with rowcount-dependent providers because success is observed through `RETURNING`. Even so, snapshot/no-op behavior must be proven across the claimed Piccolo engine matrix before it is advertised; do not infer portability solely from PostgreSQL behavior.
+
+### RETURNING runtime gate
+
+Piccolo 1.30 documentation explicitly states that UPDATE/DELETE `returning()` is supported on all supported PostgreSQL versions but requires SQLite 3.35.0 or newer.
+
+This is not a new parity-only dependency: Rakit's **existing** Piccolo generated UPDATE/DELETE path already uses `returning(identity)`. Nevertheless, future 5/5 conformance should make the runtime assumption explicit and fail closed on a SQLite runtime which cannot support the existing required `RETURNING` behavior.
+
+Cockroach uses Piccolo's PostgreSQL-derived engine/transaction implementation, but capability promotion still requires direct Cockroach proof rather than assuming every PostgreSQL query behavior transfers unchanged.
+
+### Atomic decision records
+
+- **PICCOLO-R1:** Piccolo can express optimistic compare-and-write as a single conditional UPDATE/DELETE with `RETURNING`. **PASS**.
+- **PICCOLO-R2:** Reuse the current `returning(identity)` result as the authoritative success/stale detector; do not add a driver-rowcount dependency.
+- **PICCOLO-R3:** Prefer integer version-column concurrency first, using `version = version + 1` inside the same conditional UPDATE.
+- **PICCOLO-R4:** Snapshot concurrency is architecturally feasible but requires explicit engine-matrix proof before advertisement.
+- **PICCOLO-R5:** The current `piccolo>=1.30,<2` floor already contains the required UPDATE arithmetic, WHERE, RETURNING, transaction, FK, and M2M primitives; no floor bump is justified by this research.
+- **PICCOLO-R6:** SQLite older than 3.35 cannot satisfy the required RETURNING path and must fail closed; this is also an existing generated-write runtime constraint.
+- **PICCOLO-R7:** All optimistic concurrency activity remains inside the existing `PiccoloUnitOfWork` root transaction.
+
+## Piccolo relationships
+
+### Verdict
+
+**PASS with explicit joining-table semantics and a Cockroach conformance gate.**
+
+Piccolo exposes enough stable model metadata for neutral Rakit relationship validation. At the 1.30 floor, `TableMeta` contains:
+
+- `foreign_key_columns` for forward FK edges;
+- `foreign_key_references` for reverse FK edges;
+- `m2m_relationships` for named M2M declarations;
+- primary-key and ordinary column metadata.
+
+`ForeignKey` metadata exposes referenced table, target column, nullability, uniqueness, `on_delete`, and `on_update`. Piccolo itself documents and uses `Table._meta` as its metadata/introspection seam, including for external libraries, so `_meta` is acceptable here when Rakit uses stable documented fields rather than arbitrary implementation internals.
+
+### Many-to-one
+
+A named Piccolo `ForeignKey` maps directly to `MANY_TO_ONE`.
+
+Rakit must validate:
+
+- the named native FK exists;
+- the resolved referenced table matches the target resource;
+- nullable semantics are compatible;
+- the declared target column is supported.
+
+Link/unlink should use explicit conditional Piccolo UPDATE inside the root UoW.
+
+### One-to-many
+
+Piccolo records reverse FK edges through `foreign_key_references`. A Rakit `ONE_TO_MANY` declaration should bind to a specific reverse FK edge rather than infer a relationship merely from target-table equality.
+
+Child reads and writes can use explicit table queries with the parent FK predicate inside the same transaction.
+
+### One-to-one
+
+Piccolo does not need a dedicated O2O column type for Rakit semantics. An FK edge may be treated as one-to-one only when uniqueness is proven by native metadata or a compatible explicit unique constraint. A plain FK must never be promoted to O2O by declaration alone.
+
+### Many-to-many
+
+Piccolo M2M is backed by a real joining `Table`. `M2MMeta` exposes the resolved joining table plus primary/secondary FK information, and allows explicit `foreign_key_columns` when the joining table has more than two FKs.
+
+For Rakit, the preferred implementation is to treat that joining table as the physical source of truth and use explicit queries/DML for neutral reads and writes:
+
+```text
+link   -> INSERT joining-table row
+unlink -> DELETE joining-table row
+clear  -> policy-authorized DELETE for this parent
+read   -> joining-table query + scoped target resolution
+```
+
+Piccolo's native `add_m2m` / `remove_m2m` helpers are transaction-aware and upstream tests prove that M2M add works inside an already active transaction. They are useful evidence, but Rakit does not need to depend on those convenience helpers when explicit joining-table operations provide clearer scope, policy, concurrency, and backend behavior.
+
+### Association object
+
+Piccolo aligns especially well with Rakit's association-object model because the joining table is already an ordinary `Table` and can contain extra scalar columns.
+
+At the 1.30 floor, upstream tests model an M2M joining table with an additional scalar field and verify that `add_m2m(..., extra_column_values=...)` persists it.
+
+A Rakit association can therefore be represented conceptually as:
+
+```python
+class Membership(Table):
+    user = ForeignKey(User)
+    team = ForeignKey(Team)
+    role = Varchar()
+    position = Integer()
+```
+
+Piccolo supplies a scalar serial primary key by default unless the application overrides it, which fits Rakit's current single scalar identity contract. If an application replaces that with an unsupported/composite identity shape, association-resource behavior fails closed.
+
+Association scalar edits and reordering use ordinary Piccolo UPDATE statements on the joining table.
+
+### Cockroach M2M caveat
+
+Piccolo 1.30's own M2M test suite skips some M2M select-helper paths on Cockroach because of an upstream Cockroach decorrelation limitation under asyncpg.
+
+Rakit must not ignore this. It also does not automatically block the neutral relationship capability, because Rakit can avoid the affected M2M subquery shortcut and use explicit joining-table queries instead.
+
+Implementation promotion therefore requires one of two outcomes:
+
+1. prove the explicit joining-table Rakit read/write path on Cockroach; or
+2. fail closed / explicitly exclude the unsupported Cockroach shape from the claimed backend matrix.
+
+No silent fallback or untested assumption is acceptable.
+
+### Ordering and destructive behavior
+
+Writable ordering requires an explicit position field on the child or joining association table. Default query ordering alone is not writable relationship semantics.
+
+Piccolo `ForeignKey` `on_delete` / `on_update` configuration remains database/ORM behavior. It never grants destructive Rakit API/UI permission; Rakit's explicit destructive policy remains authoritative.
+
+### Relationship decision records
+
+- **PICCOLO-R8:** Piccolo `Table` metadata is sufficient for neutral FK/reverse-FK/M2M relationship validation. **PASS**.
+- **PICCOLO-R9:** Use stable Piccolo `_meta` seams such as `foreign_key_columns`, `foreign_key_references`, `m2m_relationships`, and resolved FK metadata; underscore naming alone does not make the documented metadata contract unusable.
+- **PICCOLO-R10:** `ONE_TO_ONE` requires proven uniqueness on the FK edge; a plain FK is never promoted by declaration alone.
+- **PICCOLO-R11:** M2M binds to a real joining `Table`; ambiguous or >2-FK joining shapes require explicit native FK selection rather than guessing.
+- **PICCOLO-R12:** Association-object behavior uses an explicit Piccolo joining `Table` resource with a supported scalar identity and ordinary scalar fields.
+- **PICCOLO-R13:** Prefer explicit joining-table queries/DML for Rakit graph semantics even though native M2M helpers can participate in an existing transaction.
+- **PICCOLO-R14:** Writable ordering requires an explicit position field.
+- **PICCOLO-R15:** Piccolo `on_delete` / `on_update` behavior never grants Rakit destructive permission.
+- **PICCOLO-R16:** The upstream Cockroach M2M select-helper caveat must be proven around through the explicit joining-table path or fail closed; it cannot be ignored.
+- **PICCOLO-R17:** Relationship reads/writes and scoped candidate resolution remain inside the existing Piccolo root UoW.
+- **PICCOLO-R18:** Unsupported/ambiguous relation shapes and unsupported/composite resource identities fail closed.
+
+## Piccolo implementation acceptance matrix
+
+| Area | Required proof |
+| --- | --- |
+| FK / many-to-one | introspection, scoped read/link, nullable unlink, target validation |
+| reverse FK / one-to-many | reverse-edge validation, read, child create/update/unlink where allowed |
+| one-to-one | unique-FK/constraint proof and supported writable direction |
+| many-to-many | joining-table discovery, explicit read/link/unlink/clear-policy semantics |
+| association object | explicit joining Table, scalar edits, target resolution, delete/unlink policy |
+| ordering | deterministic read + reorder through explicit position field |
+| transaction | all graph writes commit/rollback together in `PiccoloUnitOfWork` |
+| parent/child concurrency | stale graph writers reject without partial durability |
+| atomic update | identity + expected version + write + version advancement in one UPDATE + RETURNING |
+| atomic delete | identity + expected version in one DELETE + RETURNING |
+| SQLite runtime | RETURNING-capable SQLite runtime (>=3.35) |
+| PostgreSQL | conditional UPDATE/DELETE + RETURNING and graph paths proven |
+| Cockroach | conditional mutation proven; explicit joining-table M2M path proven or fails closed |
+| dependency | `piccolo>=1.30,<2` lowest/latest and Python/artifact matrices remain green |
+| metadata | stable `_meta` / FK / M2M joining-table seams only; ambiguity fails closed |
+
+## Piccolo final research verdict
+
+```text
+Atomic optimistic concurrency   PASS**
+Relationships                  PASS*
+Potential capability profile   5/5
+Current >=1.30 floor sufficient YES
+Dependency floor bump          NO
+Core redesign required         NO
+New transaction model required NO
+Explicit joining table         YES for M2M / association semantics
+RETURNING-based conflict proof YES
+Fail-closed semantics          REQUIRED
+Capability promotion now       NO
+```
+
+`*` Relationship PASS means neutral Rakit semantics. Cockroach requires explicit joining-table conformance because Piccolo's native M2M select shortcut has an upstream caveat there.
+
+`**` Atomic PASS uses conditional UPDATE/DELETE + RETURNING. Promotion still requires PostgreSQL, supported SQLite runtime, and Cockroach proof for the backend matrix Rakit chooses to advertise.
+
+---
+
+# Deferred provider
 
 ## Masonite ORM
 
 **Status:** Deferred research
 
-Masonite remains outside the D3 closure gate and should not be mixed into this parity work unless the maintainer explicitly resumes its dedicated feasibility pass.
+Masonite remains outside the completed D3 closure gate and outside this parity comparison unless the maintainer explicitly resumes its dedicated feasibility pass.
 
 ---
 
-# Cross-provider observations so far
+# Cross-provider observations after provider research
 
-After SQLAlchemy Core, Tortoise, and Peewee, several design principles are consistent:
+All four shipped 3/5 providers researched here are **architecturally capable of a truthful 5/5 profile under the neutral Rakit contracts**, subject to provider-specific implementation/conformance gates.
 
-1. **Capability equality does not imply implementation equality.** Core derives physical relation paths from schema plus explicit binding when needed; Tortoise uses named ORM relation metadata; Peewee uses named FK/backref/through metadata. All can still satisfy the same neutral Rakit behavior.
-2. **Atomic optimistic concurrency is one conditional database mutation, not a specific ORM feature.** SQLAlchemy Core uses SQL expressions, Tortoise uses filtered `QuerySet.update()`/`delete()`, and Peewee uses conditional model UPDATE/DELETE executed through the async database.
-3. **Version-column concurrency is the strongest cross-provider first target.** Advancing a dedicated version field in the same mutation avoids much of the changed-row vs matched-row ambiguity that affects snapshot/no-op updates.
-4. **Affected-row semantics are part of the dependency/runtime contract.** Peewee proves that an otherwise-capable query API is insufficient when a supported async driver cannot report UPDATE/DELETE rowcounts correctly at the declared lower bound.
-5. **Association objects should remain explicit resources.** Tortoise needs an explicit association model because its native M2M through option is table-oriented; Peewee naturally supports an explicit intermediary model and recommends that pattern for complex M2M. Core likewise can use an explicit association table/resource binding.
-6. **No shared core redesign is justified yet.** Provider-local adapters can express the researched behavior with existing neutral contracts. Wait for Piccolo before deciding whether any shared helper/generalization is warranted.
+| Provider | Relationships | Atomic optimistic | Important provider-specific gate |
+| --- | --- | --- | --- |
+| SQLAlchemy Core | PASS | PASS | explicit binding for ambiguous schema paths; sane rowcount |
+| Tortoise | PASS | PASS | affected-row / snapshot backend matrix; explicit association model |
+| Peewee async | PASS | PASS | parity floor should move to `peewee>=4.0.8,<5`; async DB matrix |
+| Piccolo | PASS | PASS | RETURNING runtime/backend proof; Cockroach explicit M2M path |
 
-The dependency-floor issue is provider-specific: capability promotion may legitimately require tightening one optional integration's upstream range when the old lower bound cannot satisfy the new behavioral guarantee. That should be treated as an explicit compatibility decision in the later implementation plan, never as an incidental version bump.
+The research establishes these common design principles:
+
+1. **Capability equality does not imply implementation equality.** Core uses schema/FK binding; Tortoise uses named relation metadata; Peewee uses named FK/backref/through metadata; Piccolo uses FK/reverse metadata and a real joining `Table`.
+2. **Atomic optimistic concurrency is defined by one conditional database mutation, not by a particular ORM API.**
+3. **Success detection is adapter-native.** SQLAlchemy Core uses sane rowcount; Tortoise and Peewee use affected-row counts; Piccolo can use `RETURNING(identity)` result length.
+4. **Version-column concurrency is the safest common first target.** A dedicated version field is advanced by the same mutation that applies the user change.
+5. **Snapshot/no-op concurrency should not be forced into a common mechanism.** Tortoise/Peewee need strong affected-row proof, SQLAlchemy Core needs sane matched-row semantics, and Piccolo's RETURNING path may support it more cleanly. Only neutral behavior should be shared.
+6. **Association objects remain explicit resources.** ORM M2M convenience must not erase association identity, scalar fields, ordering, policy, or concurrency.
+7. **Writable ordering always requires an explicit position field.** Default ORM ordering is not enough.
+8. **Database/ORM cascades never grant destructive Rakit permission.** Structure and destructive policy remain separate.
+9. **Ambiguity always fails closed.** A provider can use its native explicit-binding mechanism, but Rakit never chooses a first matching relationship path silently.
+10. **No shared core redesign is justified by the provider research.** Existing neutral relationship, concurrency, UoW, identity, and capability contracts are sufficient for the researched implementation shapes.
+11. **Compatibility gates are provider-specific and explicit.** Peewee may require a tighter dependency floor; Piccolo has a SQLite runtime and Cockroach M2M proof gate; these are plan decisions, not incidental implementation details.
+12. **D3 does not need to be reopened.** This parity effort can be an additive implementation workstream built on top of the completed D3 provider ecosystem.
+
+## Common implementation pressure to carry forward
+
+The eventual implementation plan should begin from neutral invariants, then let each adapter choose its native mechanism:
+
+```text
+Neutral optimistic invariant
+    scoped existence/token validation
+    + one conditional mutation
+    + deterministic success/stale observation
+    + same root UoW
+    + conflict without partial durability
+
+Neutral relationship invariant
+    explicit RelationshipDefinition
+    + native target/cardinality validation
+    + scoped candidate resolution
+    + explicit association/ordering metadata where needed
+    + same root UoW
+    + explicit destructive policy
+    + fail-closed ambiguity
+```
+
+The research does **not** support creating a universal relationship DSL beyond the existing neutral definitions, a universal query AST for adapter internals, or a shared rowcount abstraction merely to make implementation code look identical.
+
+---
 
 # Relationship to Plan 03
 
-Plan 03 covers Authentication, Authorization, and Security. Existing built-in auth/session persistence is SQLAlchemy-backed. This parity research should inform future Plan 03 work in two ways:
+Plan 03 covers Authentication, Authorization, and Security. Existing built-in authentication/session persistence is SQLAlchemy-backed. This parity research should inform future Plan 03 work in two ways:
 
-1. Keep auth/security contracts neutral where the behavior is genuinely persistence-neutral.
-2. Keep SQLAlchemy-specific storage/session implementation inside its adapter/package boundary rather than generalizing ORM assumptions into Rakit core.
+1. keep auth/security contracts neutral where the behavior is genuinely persistence-neutral; and
+2. keep SQLAlchemy-specific storage/session implementation inside its adapter/package boundary rather than generalizing ORM assumptions into Rakit core.
 
 This document does **not** authorize an auth backend rewrite and does not imply that every persistence provider must become an authentication storage provider. Authentication-provider parity must be evaluated separately from persistence capability parity.
 
+---
+
 # Research completion gate
 
-This research workstream is ready to become implementation input only after:
+Provider feasibility research is complete. Before this document becomes direct implementation input, the remaining cross-provider planning work is:
 
-- SQLAlchemy Core findings are recorded — **Complete**;
-- Tortoise findings are recorded — **Complete**;
-- Peewee findings are recorded — **Complete**;
-- Piccolo findings are recorded — Pending;
-- cross-provider comparison identifies any core-contract pressure;
-- implementation order and acceptance matrix are written explicitly;
+- SQLAlchemy Core findings — **Complete / locked**;
+- Tortoise findings — **Complete / locked**;
+- Peewee findings — **Complete / locked**;
+- Piccolo findings — **Complete / locked**;
+- cross-provider neutral semantics comparison — **Complete at research level**;
+- implementation ordering and workstream boundaries — Pending;
+- final shared acceptance/conformance matrix — Pending;
+- dependency/runtime compatibility decisions written into the implementation plan — Pending;
 - no capability is promoted solely from research evidence.
+
+Recommended next planning step after maintainer approval: turn these findings into an additive persistence capability-parity implementation plan, preserving the project's source-first workflow and provider-by-provider verification.
