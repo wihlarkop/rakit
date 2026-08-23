@@ -15,6 +15,7 @@ def test_first_party_installed_integrations_are_discovered_without_activation() 
     assert tuple(item.integration_id for item in discovered) == (
         "auth.sqlalchemy",
         "persistence.peewee",
+        "persistence.piccolo",
         "persistence.sqlalchemy",
         "persistence.sqlalchemy-core",
         "persistence.tortoise",
