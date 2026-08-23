@@ -1,5 +1,6 @@
 from playhouse.pwasyncio import AsyncSqliteDatabase
 from rakit_core.compiler import ApplicationBuilder
+from rakit_core.conformance import advertised_canonical_capabilities
 from rakit_core.testing.capability_conformance import CANONICAL_CONFORMANCE_SPEC_REGISTRY
 from rakit_peewee.capabilities import PEEWEE_CAPABILITIES
 from rakit_peewee.discovery import PEEWEE_INTEGRATION
@@ -25,7 +26,11 @@ def test_peewee_discovery_matches_runtime_provider() -> None:
 
 
 def test_peewee_advertised_capabilities_have_v1_conformance_specs() -> None:
-    assert set(PEEWEE_CAPABILITIES.capabilities.names) <= CANONICAL_CONFORMANCE_SPEC_REGISTRY.keys()
+    canonical = advertised_canonical_capabilities(PEEWEE_INTEGRATION)
+    assert canonical == PEEWEE_CAPABILITIES.capabilities
+    assert {
+        (capability.name, 1) for capability in canonical.values
+    } <= CANONICAL_CONFORMANCE_SPEC_REGISTRY.keys()
 
 
 def test_peewee_plugin_records_configured_integration_and_uow_provider() -> None:
