@@ -1,14 +1,14 @@
 name: D3.6 roadmap closure
 
 on:
-  push:
-    branches: [phase-d3-6-persistence-dx-closure]
+  pull_request:
 
 permissions:
   contents: write
 
 jobs:
   close-roadmap:
+    if: github.head_ref == 'phase-d3-6-persistence-dx-closure'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
