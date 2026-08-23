@@ -103,7 +103,7 @@ class PiccoloPersistenceConformanceHarness:
                 object.__setattr__(context, "unit_of_work", None)
 
     async def _rows(self) -> tuple[dict[str, Any], ...]:
-        rows = await Widget.select().order_by(Widget.id)
+        rows = await Widget.select().order_by(Widget._meta.primary_key)
         return tuple(dict(row) for row in rows)
 
     async def assert_read_semantics(self) -> None:
