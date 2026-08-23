@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from rakit_core.concurrency import AttributeVersionProvider, ConcurrencyTokenService
+from rakit_core.concurrency import ConcurrencyTokenService
 from rakit_core.config import SecretValue
 from rakit_core.crypto import TokenService
 from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.generated_runtime import GeneratedResourceExecutorContext
+from rakit_sqlalchemy.core_concurrency import MappingVersionProvider
 from rakit_sqlalchemy.core_datasource import SQLAlchemyCoreDataSource
 from rakit_sqlalchemy.core_generated import SQLAlchemyCoreGeneratedResourceExecutorProvider
 from sqlalchemy import Column, Integer, MetaData, String, Table
@@ -40,7 +41,7 @@ def test_core_generated_executor_accepts_complete_concurrency_runtime() -> None:
         GeneratedResourceExecutorContext(
             resource_id="items",
             data_source=data_source,
-            concurrency_provider=AttributeVersionProvider("version"),
+            concurrency_provider=MappingVersionProvider("version"),
             concurrency_tokens=token_service,
         )
     )
