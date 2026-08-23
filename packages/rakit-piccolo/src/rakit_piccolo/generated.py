@@ -168,7 +168,7 @@ class PiccoloGeneratedResourceExecutor:
                 "Generated update request is incomplete.",
             )
         updated = (
-            await self.model.update(request.input.values)
+            await self.model.update(dict(request.input.values))
             .where(self._identity_column() == self._identity_value(request.identity))
             .returning(self._identity_column())
         )
