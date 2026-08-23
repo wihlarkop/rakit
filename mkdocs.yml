@@ -23,6 +23,7 @@ nav:
       - Local File Storage: guides/local-file-storage.md
       - Capability Discovery: guides/capability-discovery.md
       - Schema Adapters: guides/schema-adapters.md
+      - Persistence Adapters: guides/persistence-adapters.md
   - Concepts:
       - Architecture: concepts/architecture.md
       - Operation Pipeline: concepts/operation-pipeline.md
