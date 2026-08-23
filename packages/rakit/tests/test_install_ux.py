@@ -28,6 +28,7 @@ def test_canonical_extras_match_package_metadata() -> None:
         "sqlalchemy",
         "tortoise",
         "peewee",
+        "piccolo",
         "auth-sqlalchemy",
         "storage-local",
         "msgspec",
@@ -52,6 +53,7 @@ def test_requirement_formatting_is_deterministic_and_deduplicated() -> None:
     assert rakit_requirement(InstallExtra.SQLALCHEMY) == "rakit[sqlalchemy]"
     assert rakit_requirement(InstallExtra.TORTOISE) == "rakit[tortoise]"
     assert rakit_requirement(InstallExtra.PEEWEE) == "rakit[peewee]"
+    assert rakit_requirement(InstallExtra.PICCOLO) == "rakit[piccolo]"
     assert rakit_requirement(InstallExtra.MSGSPEC) == "rakit[msgspec]"
     assert (
         rakit_requirement(

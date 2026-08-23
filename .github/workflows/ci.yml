@@ -155,6 +155,34 @@ jobs:
           assert len(matches) == 1
           assert matches[0].load().integration_id == "persistence.peewee"
           PY
+      - name: Clean-install Piccolo extra from built artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv venv .artifact-piccolo --python 3.12
+          uv pip install \
+            --python .artifact-piccolo/bin/python \
+            --find-links dist \
+            "rakit[piccolo]==0.1.0a1"
+          .artifact-piccolo/bin/python -I - <<'PY'
+          from importlib.metadata import entry_points
+          from pathlib import Path
+
+          import rakit_piccolo
+          from rakit_piccolo.capabilities import PICCOLO_CAPABILITIES
+
+          module_path = Path(rakit_piccolo.__file__).resolve()
+          assert ".artifact-piccolo" in module_path.parts
+          assert PICCOLO_CAPABILITIES.capabilities.names == (
+              "persistence.read",
+              "persistence.write",
+              "transactions.root-uow",
+          )
+          integrations = entry_points(group="rakit.integrations")
+          matches = [item for item in integrations if item.name == "persistence.piccolo"]
+          assert len(matches) == 1
+          assert matches[0].load().integration_id == "persistence.piccolo"
+          PY
       - name: Upload dry-run artifacts
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:

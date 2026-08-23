@@ -47,6 +47,7 @@ source = [
   "rakit_sqlalchemy",
   "rakit_tortoise",
   "rakit_peewee",
+  "rakit_piccolo",
   "rakit_auth_sqlalchemy",
   "rakit_storage",
   "rakit_storage_local",

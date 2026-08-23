@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rakit-piccolo"
+version = "0.1.0a1"
+requires-python = ">=3.12"
+dependencies = [
+  "piccolo>=1.30,<2",
+  "rakit-core==0.1.0a1",
+]
+
+[dependency-groups]
+dev = [
+  "aiosqlite>=0.20,<1",
+  "pytest>=8.3,<9",
+  "pytest-anyio>=0.0.0",
+]
+
+[project.entry-points."rakit.integrations"]
+"persistence.piccolo" = "rakit_piccolo.discovery:PICCOLO_INTEGRATION"
+
+[tool.uv.sources]
+rakit-core = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rakit_piccolo"]
