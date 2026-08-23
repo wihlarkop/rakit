@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 from uuid import UUID
 
+from piccolo.columns.base import Column
 from piccolo.table import Table
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.generated_api import GeneratedCrudOperation
@@ -167,8 +169,11 @@ class PiccoloGeneratedResourceExecutor:
                 "generated_api_piccolo_update_request_invalid",
                 "Generated update request is incomplete.",
             )
+        update_values: dict[Column | str, Any] = {
+            key: value for key, value in request.input.values.items()
+        }
         updated = (
-            await self.model.update(dict(request.input.values))
+            await self.model.update(update_values)
             .where(self._identity_column() == self._identity_value(request.identity))
             .returning(self._identity_column())
         )
