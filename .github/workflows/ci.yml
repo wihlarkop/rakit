@@ -183,6 +183,43 @@ jobs:
           assert len(matches) == 1
           assert matches[0].load().integration_id == "persistence.piccolo"
           PY
+      - name: Clean-install all persistence extras together
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv venv .artifact-persistence --python 3.12
+          uv pip install \
+            --python .artifact-persistence/bin/python \
+            --find-links dist \
+            "rakit[sqlalchemy,tortoise,peewee,piccolo]==0.1.0a1"
+          .artifact-persistence/bin/python -I - <<'PY'
+          from importlib.metadata import entry_points
+          from pathlib import Path
+
+          import rakit_peewee
+          import rakit_piccolo
+          import rakit_sqlalchemy
+          import rakit_tortoise
+
+          expected = (
+              "persistence.peewee",
+              "persistence.piccolo",
+              "persistence.sqlalchemy",
+              "persistence.sqlalchemy-core",
+              "persistence.tortoise",
+          )
+          modules = (rakit_sqlalchemy, rakit_tortoise, rakit_peewee, rakit_piccolo)
+          for module in modules:
+              module_path = Path(module.__file__).resolve()
+              assert ".artifact-persistence" in module_path.parts
+
+          integrations = entry_points(group="rakit.integrations")
+          persistence = tuple(
+              sorted(item.name for item in integrations if item.name.startswith("persistence."))
+          )
+          assert persistence == expected
+          assert "persistence.masonite" not in persistence
+          PY
       - name: Upload dry-run artifacts
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
