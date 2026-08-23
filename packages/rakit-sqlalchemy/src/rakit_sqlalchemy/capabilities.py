@@ -23,7 +23,9 @@ SQLALCHEMY_CORE_CAPABILITIES = CapabilityProvider(
     capabilities=CapabilitySet.of(
         PERSISTENCE_READ,
         PERSISTENCE_WRITE,
+        PERSISTENCE_RELATIONSHIPS,
         TRANSACTIONS_ROOT_UOW,
+        CONCURRENCY_ATOMIC_OPTIMISTIC,
     ),
 )
 
