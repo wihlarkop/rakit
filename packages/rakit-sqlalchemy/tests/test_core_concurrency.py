@@ -141,7 +141,7 @@ async def test_core_atomic_update_increments_version_and_rejects_stale_token() -
                     concurrency_token=stale_token,
                 ),
             )
-        assert raised.value.code is ErrorCode.RESOURCE_CONFLICT
+        assert raised.value.code == ErrorCode.RESOURCE_CONFLICT
         assert raised.value.status_code == 409
 
         async with engine.connect() as connection:
@@ -174,7 +174,7 @@ async def test_core_atomic_delete_requires_current_version_and_deletes_once() ->
                     concurrency_token=tokens.issue("items", identity, 2),
                 ),
             )
-        assert stale.value.code is ErrorCode.RESOURCE_CONFLICT
+        assert stale.value.code == ErrorCode.RESOURCE_CONFLICT
 
         deleted = await _execute(
             engine,
@@ -199,7 +199,7 @@ async def test_core_atomic_delete_requires_current_version_and_deletes_once() ->
                     concurrency_token=tokens.issue("items", identity, 3),
                 ),
             )
-        assert missing.value.code is ErrorCode.RESOURCE_NOT_FOUND
+        assert missing.value.code == ErrorCode.RESOURCE_NOT_FOUND
     finally:
         await engine.dispose()
 
@@ -227,7 +227,7 @@ async def test_core_atomic_runtime_fails_closed_for_managed_input_and_missing_to
                     GeneratedInput(values={"name": "after"}, present_fields=frozenset({"name"})),
                 ),
             )
-        assert missing_token.value.code is ErrorCode.RESOURCE_CONFLICT
+        assert missing_token.value.code == ErrorCode.RESOURCE_CONFLICT
 
         with pytest.raises(RakitError) as managed:
             await _execute(
@@ -242,7 +242,7 @@ async def test_core_atomic_runtime_fails_closed_for_managed_input_and_missing_to
                     concurrency_token=tokens.issue("items", identity, 1),
                 ),
             )
-        assert managed.value.code is ErrorCode.CONFIG_INVALID
+        assert managed.value.code == ErrorCode.CONFIG_INVALID
         assert managed.value.details["reason"] == (
             "generated_api_sqlalchemy_core_concurrency_field_writable"
         )
@@ -265,7 +265,7 @@ def test_core_atomic_provider_requires_complete_runtime_pair() -> None:
                 concurrency_provider=MappingVersionProvider("version"),
             )
         )
-    assert raised.value.code is ErrorCode.CONFIG_INVALID
+    assert raised.value.code == ErrorCode.CONFIG_INVALID
     assert raised.value.details["reason"] == "generated_api_sqlalchemy_core_concurrency_incomplete"
 
 
@@ -295,4 +295,6 @@ def test_core_atomic_rowcount_gate_fails_closed() -> None:
 
     with pytest.raises(RakitError) as unavailable:
         executor._require_sane_atomic_rowcount(MissingRowcountResult())
-    assert unavailable.value.details["reason"] == "generated_api_sqlalchemy_core_rowcount_unavailable"
+    assert (
+        unavailable.value.details["reason"] == "generated_api_sqlalchemy_core_rowcount_unavailable"
+    )

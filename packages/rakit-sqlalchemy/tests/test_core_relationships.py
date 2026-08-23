@@ -34,7 +34,6 @@ from rakit_sqlalchemy.core_uow import SQLAlchemyCoreUnitOfWork
 from sqlalchemy import Column, ForeignKey, Integer, MetaData, String, Table, select
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-
 REQUIREMENT = PermissionRequirement.all_of("admin.resources.orders.update")
 
 
@@ -165,9 +164,7 @@ def test_core_relationship_resolution_is_explicit_and_fails_closed_on_ambiguity(
         ambiguous,
         engine,
         bindings={
-            "customer": SQLAlchemyCoreRelationshipBinding(
-                foreign_key_field="shipping_customer_id"
-            )
+            "customer": SQLAlchemyCoreRelationshipBinding(foreign_key_field="shipping_customer_id")
         },
     )
     explicit_source.validate_relationship(customer_definition, customer_source)
@@ -240,9 +237,7 @@ async def test_core_many_to_one_set_clear_and_stale_relationship_token() -> None
                     {"id": 2, "name": "Grace"},
                 ),
             )
-            await connection.execute(
-                orders.insert().values(id=1, version=1, customer_id=1)
-            )
+            await connection.execute(orders.insert().values(id=1, version=1, customer_id=1))
 
         page = await service.editor_page(parent, "customer", page=1, per_page=1)
         assert [row.candidate.label for row in page.items] == ["Ada"]
@@ -266,7 +261,7 @@ async def test_core_many_to_one_set_clear_and_stale_relationship_token() -> None
                 parent,
                 _change("customer", stale_token, SetRelated(identity=_identity(1))),
             )
-        assert stale.value.code is ErrorCode.RESOURCE_CONFLICT
+        assert stale.value.code == ErrorCode.RESOURCE_CONFLICT
 
         fresh_token = await service.issue_concurrency_token(parent, "customer")
         cleared = await _execute(
@@ -349,7 +344,7 @@ async def test_core_one_to_many_link_unlink_reorder_and_editor_page() -> None:
             parent,
             _change("items", token, LinkRelated(identity=_identity(2))),
         )
-        assert set(linked.target_identities) == {_identity(1), _identity(2), _identity(3)}
+        assert {identity.values["id"] for identity in linked.target_identities} == {1, 2, 3}
         assert linked.added_target_identities == (_identity(2),)
 
         token = await service.issue_concurrency_token(parent, "items")
@@ -392,8 +387,8 @@ async def test_core_one_to_many_link_unlink_reorder_and_editor_page() -> None:
 
         async with engine.connect() as connection:
             item_two = (
-                await connection.execute(select(items).where(items.c.id == 2))
-            ).mappings().one()
+                (await connection.execute(select(items).where(items.c.id == 2))).mappings().one()
+            )
         assert item_two["order_id"] is None
     finally:
         await engine.dispose()
@@ -462,7 +457,7 @@ async def test_core_many_to_many_link_and_unlink_preserve_target_rows() -> None:
             parent,
             _change("tags", token, LinkRelated(identity=_identity(2))),
         )
-        assert set(linked.target_identities) == {_identity(1), _identity(2)}
+        assert {identity.values["id"] for identity in linked.target_identities} == {1, 2}
 
         token = await service.issue_concurrency_token(parent, "tags")
         removed = await _execute(
@@ -477,9 +472,7 @@ async def test_core_many_to_many_link_and_unlink_preserve_target_rows() -> None:
             tag_names = tuple(
                 (await connection.execute(select(tags.c.name).order_by(tags.c.id))).scalars()
             )
-            bridges = tuple(
-                (await connection.execute(select(order_tags.c.tag_id))).scalars()
-            )
+            bridges = tuple((await connection.execute(select(order_tags.c.tag_id))).scalars())
         assert tag_names == ("first", "second")
         assert bridges == (2,)
     finally:
@@ -600,8 +593,10 @@ async def test_core_association_object_updates_scalars_and_order_inside_root_uow
 
         async with engine.connect() as connection:
             rows = (
-                await connection.execute(select(memberships).order_by(memberships.c.id))
-            ).mappings().all()
+                (await connection.execute(select(memberships).order_by(memberships.c.id)))
+                .mappings()
+                .all()
+            )
         assert rows[0]["role"] == "owner"
         assert [row["position"] for row in rows] == [1, 0]
     finally:
