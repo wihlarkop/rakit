@@ -10,7 +10,7 @@
 
 ## Why this research exists
 
-Rakit currently advertises persistence capabilities conservatively and only after behavioral proof. The shipped providers intentionally do not have forced parity.
+Rakit advertises persistence capabilities conservatively and only after behavioral proof. The shipped providers intentionally do not have forced parity.
 
 The five canonical persistence capability identifiers are:
 
@@ -29,17 +29,18 @@ The findings will also be used when revisiting Plan 03 — Authentication, Autho
 - Do not change advertised capabilities during research.
 - Do not treat foreign-key metadata alone as proof of `persistence.relationships`.
 - Do not emulate optimistic concurrency with a non-atomic read-check-write sequence.
-- Use public, maintained backend APIs only.
+- Use public, maintained backend APIs for new parity behavior.
 - Preserve one Rakit root unit of work for mutations that claim `transactions.root-uow`.
 - Fail closed on ambiguous or unsupported native shapes.
 - Capability parity is allowed only when neutral Rakit semantics are actually satisfied; backend feature parity is not required.
 - Composite resource identity remains outside this research unless a separate core contract change is explicitly approved.
+- A feasibility PASS does not authorize capability promotion. Source implementation, source-first smoke, permanent conformance, dependency matrices, and exact-head CI remain mandatory later.
 
 ---
 
 # SQLAlchemy Core / Table
 
-## Current shipped profile
+**Research status:** Complete / locked
 
 Provider: `persistence.sqlalchemy-core`
 
@@ -53,30 +54,11 @@ Provider: `persistence.sqlalchemy-core`
 
 **Feasibility conclusion:** SQLAlchemy Core can plausibly reach a truthful **5/5** Rakit persistence capability profile without constructing ORM mapped classes or redesigning Rakit core.
 
-This is a feasibility result only. The provider remains at its currently shipped capability set until source implementation, manual verification, conformance coverage, and canonical CI prove the additional behavior.
-
-## Existing architectural foundation
-
-The current Core generated mutation executor already executes through the `AsyncConnection` owned by `SQLAlchemyCoreUnitOfWork`.
-
-Relevant implementation seams:
-
-- `packages/rakit-sqlalchemy/src/rakit_sqlalchemy/core_generated.py`
-- `packages/rakit-sqlalchemy/src/rakit_sqlalchemy/core_uow.py`
-- `packages/rakit-core/src/rakit_core/concurrency.py`
-- `docs/guides/relationships.md`
-
-The root Core UoW already owns one connection and transaction and is responsible for commit/rollback. Therefore neither relationship writes nor optimistic compare-and-write require a second transaction architecture.
-
 ## Atomic optimistic concurrency
 
-### Verdict
+The current Core generated mutation executor already executes through the `AsyncConnection` owned by `SQLAlchemyCoreUnitOfWork`; it only lacks the concurrency predicate/runtime wiring and currently advertises `atomic_concurrency=False`.
 
-**PASS**
-
-### Native strategy
-
-The required behavior can be represented as one conditional SQL mutation inside the existing root UoW:
+The required native shape is one conditional mutation inside the existing root UoW:
 
 ```sql
 UPDATE article
@@ -86,205 +68,57 @@ WHERE id = :id
   AND version = :expected_version
 ```
 
-Interpretation:
+- affected row count `1` → success;
+- affected row count `0` → stale conflict;
+- conditional delete follows the same rule;
+- no read-check-write durability window;
+- uncertain row-count semantics must fail closed;
+- Core records are mappings, so Core needs mapping-aware concurrency field access rather than ORM-style `getattr` assumptions.
 
-- matched row count `1` → mutation succeeded;
-- matched row count `0` → stale version / optimistic conflict;
-- no separate read-check-write durability window is permitted.
-
-The same principle applies to conditional delete.
-
-### Existing gap
-
-`SQLAlchemyCoreGeneratedResourceExecutorProvider` currently rejects configured concurrency and the executor advertises `atomic_concurrency=False`.
-
-The generic concurrency providers in `rakit-core` currently obtain fields through attribute access. Core records are mappings (`dict(row)`), so a Core implementation needs mapping-aware version access rather than pretending Core rows are ORM objects.
-
-Preferred implementation direction:
-
-- add an adapter-owned mapping-aware concurrency provider first;
-- avoid widening the neutral core record-access contract unless implementation pressure proves that generalization useful beyond SQLAlchemy Core.
-
-### Required safety constraints
-
-1. The version predicate must be part of the same SQL UPDATE/DELETE that performs the mutation.
-2. A next version value, when required, must be written by that same mutation.
-3. The mutation must use the connection from the Rakit root UoW.
-4. Stale mutation must become the neutral `RESOURCE_CONFLICT` / HTTP 409 behavior.
-5. Row-count semantics must be known to be usable for the active SQLAlchemy dialect/driver; uncertain row-count behavior must fail closed rather than silently treating a stale write as success.
-6. Initial implementation should not depend on a `RETURNING` path whose affected-row semantics are not portable enough for the neutral contract.
-
-### Atomic concurrency decision records
+Decision records:
 
 - **CORE-R1:** SQLAlchemy Core optimistic concurrency is feasible. **PASS**.
 - **CORE-R2:** Concurrency must use one conditional SQL mutation; no read-check-write emulation.
-- **CORE-R3:** Reliable matched-row semantics are mandatory; unsupported/uncertain dialect behavior fails closed.
-- **CORE-R4:** Core requires mapping-aware concurrency version access rather than ORM-style `getattr` assumptions.
+- **CORE-R3:** Reliable affected/matched-row semantics are mandatory; uncertain dialect behavior fails closed.
+- **CORE-R4:** Core requires mapping-aware concurrency version access rather than pretending row mappings are ORM instances.
 
 ## Relationships
 
-### Verdict
+`RelationshipDefinition` remains the semantic source of truth. SQLAlchemy Core only validates/binds that intent to native `Table`, column, foreign-key, unique-constraint, and association-table metadata.
 
-**PASS, with explicit physical binding required when schema paths are ambiguous.**
+Feasible neutral shapes:
 
-### Important distinction
+- many-to-one;
+- one-to-many;
+- one-to-one;
+- many-to-many;
+- explicit association object;
+- ordering/reordering through an explicit position field;
+- explicit destructive policy;
+- all relationship writes inside the existing Core root UoW.
 
-`persistence.relationships` is a Rakit behavioral capability. It does not mean that a provider must reproduce every feature of SQLAlchemy ORM `relationship()`.
-
-Rakit already declares portable relationship intent through `RelationshipDefinition`. SQLAlchemy Core only needs to validate and bind that semantic declaration to native `Table`, column, foreign-key, unique-constraint, and association-table metadata.
-
-The source of truth remains:
-
-```text
-Rakit RelationshipDefinition = semantic intent
-SQLAlchemy Core Table metadata = physical schema evidence
-```
-
-Core must not invent an ORM mapper or treat database metadata as complete application relationship intent.
-
-### Shapes that are natively feasible
-
-#### Many-to-one
-
-A local foreign key can support a singular target relationship.
+Schema metadata is not always sufficient to infer intent. Multiple foreign keys to the same target or multiple bridge tables are genuine ambiguities. Therefore:
 
 ```text
-orders.customer_id -> customers.id
+exactly one compatible physical path -> inference may be allowed
+zero compatible paths                -> configuration error
+multiple compatible paths            -> explicit adapter binding required
 ```
 
-#### One-to-many
+A future adapter-only binding may conceptually identify the Rakit relationship id, source/target tables, and physical local/remote columns. This is not a final API and must not become a Rakit-wide persistence DSL.
 
-The inverse collection can be implemented from the corresponding foreign-key path.
+A truthful neutral capability does not require SQLAlchemy ORM feature parity. Arbitrary mapper `primaryjoin`, custom operators, mapper lazy-loading behavior, mapper `viewonly`, and mapper cascade/delete-orphan authority may remain unsupported. Composite Rakit identities also remain outside this parity effort.
 
-#### One-to-one
-
-A foreign key combined with the necessary uniqueness semantics can provide physical evidence for one-to-one cardinality.
-
-#### Many-to-many
-
-A bridge table with foreign keys to source and target can implement link/unlink behavior through explicit Core INSERT/DELETE operations.
-
-#### Association object
-
-An association resource with its own identity and scalar fields can participate in the neutral association-object semantics, including editable association scalars and ordering when an explicit position field is declared.
-
-### Why automatic FK discovery alone is insufficient
-
-Schema metadata can identify physical foreign-key paths but cannot always know the relationship intent.
-
-Example:
-
-```text
-customer.billing_address_id  -> address.id
-customer.shipping_address_id -> address.id
-```
-
-There are two valid physical paths between the same tables. Core cannot safely guess which one a portable relationship declaration means.
-
-The same ambiguity can occur with multiple bridge tables between the same source and target.
-
-Therefore relationship support must be fail-closed:
-
-```text
-exactly one compatible physical path
-    -> may infer automatically
-
-zero compatible paths
-    -> configuration error
-
-more than one compatible path
-    -> explicit binding required
-```
-
-### Explicit binding direction
-
-A future adapter-owned binding may conceptually contain information such as:
-
-```python
-SQLAlchemyCoreRelationshipBinding(
-    relationship_id="customer",
-    source=orders,
-    target=customers,
-    local_columns=(orders.c.customer_id,),
-    remote_columns=(customers.c.id,),
-)
-```
-
-This example is intentionally non-final. The API must be designed separately before implementation.
-
-The binding exists only to connect Rakit relationship intent to physical Core schema. It must not become a Rakit-wide persistence DSL.
-
-### Relationship mutation strategy
-
-All supported mutations can stay inside the existing Core root UoW and use explicit SQL expressions:
-
-- many-to-one link → UPDATE local FK;
-- nullable unlink → UPDATE local FK to NULL;
-- one-to-many child creation → INSERT child with parent FK;
-- many-to-many link → INSERT bridge row;
-- many-to-many unlink → DELETE bridge row;
-- reorder → UPDATE explicit position field;
-- association scalar edit → UPDATE association resource;
-- destructive operations → explicit Rakit relationship/destructive policy, never inferred from ORM cascade semantics.
-
-### Deliberately unsupported / fail-closed shapes
-
-A truthful 5/5 Rakit capability does **not** require SQLAlchemy ORM feature parity. The initial Core implementation should be allowed to reject shapes that cannot be represented honestly by the neutral relationship contract, including:
-
-- arbitrary mapper-style `primaryjoin` expressions;
-- custom relationship operators;
-- convention-only relationships with no explicit physical binding/evidence;
-- ambiguous multiple foreign-key paths without explicit binding;
-- ambiguous multiple bridge tables without explicit binding;
-- mapper-only lazy-loading semantics;
-- mapper `viewonly` behavior as an implied Rakit relationship contract;
-- mapper cascade / `delete-orphan` semantics as authorization for destructive behavior;
-- composite Rakit resource identities until the global identity contract explicitly supports them.
-
-### Relationship decision records
+Decision records:
 
 - **CORE-R5:** SQLAlchemy Core relationships are feasible without ORM mapping. **PASS**.
 - **CORE-R6:** `RelationshipDefinition` remains the semantic source of truth.
 - **CORE-R7:** A unique compatible FK path may be inferred for ergonomics.
 - **CORE-R8:** Ambiguous paths require explicit adapter binding; Core must never guess.
-- **CORE-R9:** SQLAlchemy ORM feature parity is not a requirement for the neutral Rakit capability.
+- **CORE-R9:** SQLAlchemy ORM feature parity is not required for the neutral Rakit capability.
 - **CORE-R10:** Relationship mutation must remain inside the existing Core root UoW.
 - **CORE-R11:** Unsupported or ambiguous relationship shapes fail closed rather than silently degrade.
 - **CORE-R12:** Composite identity remains outside this parity effort unless separately approved.
-
-## Proposed implementation shape — research only
-
-```text
-Rakit Core
-    |
-    | RelationshipDefinition
-    v
-rakit-sqlalchemy Core adapter
-    |
-    +-- unique compatible schema path --> infer binding
-    |
-    +-- ambiguous schema path ---------> require explicit binding
-    |
-    v
-validate against Table / ForeignKeyConstraint metadata
-    |
-    v
-Core relationship runtime
-    |
-    v
-existing AsyncConnection
-    |
-    v
-existing Rakit root UoW
-```
-
-Not required:
-
-- fake SQLAlchemy mapper;
-- generated ORM classes;
-- universal persistence DSL;
-- magic `Table.info` convention;
-- treating constraint names as Rakit relationship identifiers.
 
 ## SQLAlchemy Core final research verdict
 
@@ -303,19 +137,268 @@ Capability promotion now       NO
 
 ---
 
+# Tortoise ORM
+
+**Research status:** Complete / locked
+
+Provider: `persistence.tortoise`
+
+Rakit currently supports `tortoise-orm>=1.1.7,<2`. Upstream 1.1.8 was also inspected during this research. The current Rakit adapter advertises read, write, and root-UoW only.
+
+| Capability | Shipped now | Research verdict |
+| --- | --- | --- |
+| `persistence.read` | Yes | Existing |
+| `persistence.write` | Yes | Existing |
+| `transactions.root-uow` | Yes | Existing |
+| `persistence.relationships` | No | **PASS with explicit association-resource semantics** |
+| `concurrency.atomic-optimistic` | No | **PASS with backend/conformance gate** |
+
+**Feasibility conclusion:** Tortoise ORM can plausibly reach a truthful **5/5** Rakit persistence capability profile using its native model/query/relation APIs. No blocking architectural mismatch was found. The implementation must, however, avoid treating Tortoise's table-oriented M2M `through` option as a full association-object model and must prove affected-row behavior across the database/runtime matrix that Rakit intends to claim.
+
+## Existing Rakit foundation
+
+Relevant seams:
+
+- `packages/rakit-tortoise/src/rakit_tortoise/capabilities.py`
+- `packages/rakit-tortoise/src/rakit_tortoise/introspection.py`
+- `packages/rakit-tortoise/src/rakit_tortoise/generated.py`
+- `packages/rakit-tortoise/src/rakit_tortoise/uow.py`
+
+The existing generated executor already routes CRUD through the `TransactionalDBClient` owned by `TortoiseUnitOfWork`:
+
+- reads use `QuerySet.using_db(connection)`;
+- create uses `Model.create(using_db=connection, ...)`;
+- update uses `QuerySet.using_db(connection).update(...)`;
+- delete uses `QuerySet.using_db(connection).delete()`.
+
+The root UoW is already based on Tortoise `in_transaction()` and owns commit/rollback. Higher capabilities therefore do not require a second transaction architecture.
+
+## Tortoise atomic optimistic concurrency
+
+### Verdict
+
+**PASS with an implementation-time backend/conformance gate.**
+
+### Native strategy
+
+Tortoise `QuerySet.update()` composes queryset filters into the UPDATE and returns an integer affected-row count. Tortoise also exposes `F` expressions specifically for database-side field updates. The version-column strategy can therefore remain one atomic statement:
+
+```python
+from tortoise.expressions import F
+
+updated = await (
+    Model.filter(pk=identity, version=expected_version)
+    .using_db(root_connection)
+    .update(
+        name=proposed_name,
+        version=F("version") + 1,
+    )
+)
+```
+
+Required interpretation:
+
+```text
+updated == 1 -> success
+updated == 0 -> stale/conflict path
+other count  -> fail closed
+```
+
+Conditional delete can use the same identity + concurrency predicate and the returned delete count.
+
+The important property is that identity predicate, expected version predicate, user changes, and version advancement are executed by the database as one mutation. A preceding read may be used to validate the signed Rakit token and a later read may classify/reload state, but neither read may authorize a separate unconditional write.
+
+### Version-provider compatibility
+
+Unlike SQLAlchemy Core row mappings, Tortoise records are attribute-bearing model instances, so the existing neutral `AttributeVersionProvider` shape is naturally compatible.
+
+An integer version field is the strongest first implementation target:
+
+- `version=expected` participates in the WHERE predicate;
+- `version=F("version") + 1` guarantees a physical change on a successful match;
+- the current generated executor already reloads after UPDATE, which is appropriate because Tortoise documents that model values are stale after `F`-expression writes until refreshed/reloaded.
+
+Datetime next-values can also be supplied as literal next values in the same conditional UPDATE, subject to the same canonical token/time-resolution rules already owned by Rakit core.
+
+Snapshot concurrency is more subtle. `SnapshotVersionProvider.next_values_for()` is empty, so a user mutation that writes values identical to current values may be a no-op. Some DB drivers report changed rows rather than merely matched rows. Tortoise's MySQL client, for example, directly returns driver `cursor.rowcount`; SQLite derives its count from connection changes; asyncpg parses the server's command count. Consequently, implementation must not assume that every backend gives identical semantics for a snapshot/no-op UPDATE.
+
+Initial parity implementation should therefore either:
+
+1. prove snapshot/no-op behavior for every database backend included in the advertised support matrix; or
+2. fail closed / restrict atomic concurrency to a version strategy whose successful match necessarily changes a concurrency-managed field until broader behavior is proven.
+
+This does not block the capability feasibility result; it is an explicit implementation acceptance gate.
+
+### Conflict classification
+
+A zero-row conditional mutation can mean stale predicate or that the row disappeared. Rakit should preserve its neutral error behavior deliberately:
+
+- initial scoped read absent → not found;
+- signed token mismatch against the loaded record → conflict;
+- conditional mutation returns zero after the initial record/token check → concurrency race/conflict unless a safe same-UoW classification step proves the row no longer exists and the neutral contract requires not-found classification.
+
+The mutation itself must remain atomic regardless of how the final error is classified.
+
+### Atomic concurrency decision records
+
+- **TORTOISE-R1:** Tortoise can express optimistic compare-and-write as one native conditional UPDATE. **PASS**.
+- **TORTOISE-R2:** Use `QuerySet.filter(...).using_db(root_connection).update(...)`; never read-check then issue an unconditional update.
+- **TORTOISE-R3:** Prefer a version-column strategy for the first implementation; integer version plus `F("version") + 1` is the clearest cross-backend shape.
+- **TORTOISE-R4:** Affected-row behavior is an implementation acceptance gate across the database matrix, especially for snapshot/no-op writes.
+- **TORTOISE-R5:** Zero-row mutation maps to the neutral race/conflict path after initial existence/token validation; classification must not weaken atomicity.
+- **TORTOISE-R6:** All concurrency reads and writes must explicitly use the existing root UoW connection.
+
+## Tortoise relationships
+
+### Verdict
+
+**PASS with explicit association-resource semantics.**
+
+Tortoise is relationship-native. Its public model description API exposes separate collections for:
+
+- forward foreign keys;
+- backward foreign keys;
+- forward one-to-one;
+- backward one-to-one;
+- many-to-many.
+
+This aligns well with Rakit's portable cardinalities. New parity introspection should prefer public `Model.describe()` metadata rather than deepening reliance on private `_meta` structures merely for convenience. Current scalar adapter code already uses `_meta`; this research does not require rewriting that existing code, but new relationship support should use the public seam wherever sufficient.
+
+### Many-to-one
+
+Native `ForeignKeyField` is a direct fit. Tortoise exposes both the relationship and its backing raw id field. Rakit can validate target/cardinality and perform link/unlink through an explicit conditional update inside the root connection.
+
+### One-to-many
+
+Tortoise exposes backward FK relations. Reverse relation querysets support ordinary filtering/ordering, and related child creation accepts `using_db`, so child creation can remain inside the root transaction.
+
+### One-to-one
+
+Tortoise has a dedicated `OneToOneField`; its implementation is FK-derived with uniqueness semantics. Both forward and backward O2O are represented separately in public model description metadata.
+
+### Many-to-many
+
+Tortoise's `ManyToManyRelation` provides native `add`, `remove`, and `clear`, and those mutation methods accept an explicit `using_db` connection. Upstream source shows that the supplied DB client is used for bridge-table SELECT/INSERT/DELETE operations. That lets Rakit preserve root-UoW ownership.
+
+The relation APIs accept saved model instances. Rakit should resolve candidate identities through a scoped queryset on the same root connection before calling relation mutation methods; candidate resolution must remain subject to Rakit permissions/scope rather than accepting arbitrary model objects supplied by user code or transport input.
+
+### Association object
+
+This is the main Tortoise-specific design boundary.
+
+Tortoise native `ManyToManyField(..., through=...)` currently treats `through` as a table name. In the inspected 1.1.8 relational source there is still an explicit upstream TODO to support `through` as a Model. Therefore Rakit must **not** pretend a native Tortoise M2M through table is a rich association-object model.
+
+Rakit association-object semantics should instead use an explicit application-owned Tortoise model, for example conceptually:
+
+```python
+class Membership(Model):
+    id = fields.IntField(primary_key=True)
+    user = fields.ForeignKeyField("models.User")
+    team = fields.ForeignKeyField("models.Team")
+    role = fields.CharField(max_length=64)
+    position = fields.IntField()
+```
+
+`RelationshipDefinition` already identifies the association resource, target resource, and exposed association scalars. The Tortoise adapter can validate that explicit association resource through normal model metadata and execute it using ordinary model/query CRUD. This avoids depending on unsupported richer semantics in native M2M `through`.
+
+### Ordered relationships
+
+Ordering remains a Rakit-declared behavior. It should require an explicit scalar position field on the child or association resource. Reads use an ordered queryset; reorder writes explicitly update that position field inside the root UoW. Tortoise default model ordering is not sufficient proof of writable Rakit ordering by itself.
+
+### Destructive behavior
+
+Tortoise relation fields expose `on_delete`, but this is database/ORM relationship behavior, not Rakit authorization. As with SQLAlchemy, `CASCADE` or another ORM delete rule must never silently grant destructive UI/API behavior. Rakit's explicit destructive policy remains authoritative.
+
+### Ambiguity and explicit declaration
+
+Unlike SQLAlchemy Core, Tortoise relationship fields already have application-level names, so multiple FKs to the same model are normally distinguishable by field name. Rakit should bind a `RelationshipDefinition` to that named native relationship and validate target/cardinality. It must still fail closed when:
+
+- the declared relationship field does not exist;
+- its native target does not match the declared target resource;
+- cardinality does not match;
+- a declared association resource is structurally incompatible;
+- the ordered relationship lacks the declared position field;
+- a relation shape requires unsupported custom/convention-only behavior.
+
+### Relationship reads and root UoW
+
+Relation reads must not accidentally escape to Tortoise's default connection. Use one of the public explicit-connection paths:
+
+- relation queryset followed by `.using_db(root_connection)`;
+- model/query methods that accept `using_db`;
+- `fetch_related(..., using_db=root_connection)` where appropriate.
+
+Likewise all writes must pass the root connection to M2M/reverse relation operations or use querysets explicitly bound with `using_db`.
+
+### Relationship concurrency
+
+Child/association records that participate in optimistic concurrency can use the same conditional-update mechanism as ordinary Tortoise resources. Parent graph changes that require a parent concurrency claim should use a versioned parent update in the same root transaction before/with relationship mutations, following the neutral Rakit graph-mutation contract rather than relying on Tortoise relation container state.
+
+### Relationship decision records
+
+- **TORTOISE-R7:** Native Tortoise FK/reverse-FK/O2O/M2M metadata is sufficient for Rakit relationship validation. **PASS**.
+- **TORTOISE-R8:** Prefer public `Model.describe()` as the new relationship introspection seam; do not deepen private `_meta` coupling merely to chase parity.
+- **TORTOISE-R9:** Relationship declarations bind by explicit Tortoise field/relation name and validate target/cardinality; no heuristic guessing is required for multiple named FKs.
+- **TORTOISE-R10:** Native M2M `add/remove/clear` is usable only with the Rakit root connection explicitly supplied.
+- **TORTOISE-R11:** Rakit association objects use an explicit Tortoise model with its own identity, two relationship edges, and scalar fields; native M2M `through` table metadata is not treated as an association model.
+- **TORTOISE-R12:** Ordered relationships require an explicit position field; default ORM ordering alone does not grant writable ordering semantics.
+- **TORTOISE-R13:** Tortoise `on_delete` behavior never grants Rakit destructive permission.
+- **TORTOISE-R14:** Candidate/relationship resolution must remain scoped and must use the root UoW connection.
+- **TORTOISE-R15:** Unsupported or structurally inconsistent relation declarations fail closed.
+
+## Deliberately unsupported / fail-closed shapes
+
+A neutral Tortoise 5/5 implementation does not need to promise every ORM convenience. The adapter may reject:
+
+- convention-only relationships not represented by declared Tortoise relation fields or an explicit association resource;
+- composite Rakit identities;
+- native M2M through tables being used as if they were rich association models;
+- relationship mutation that cannot be bound to the root UoW connection;
+- ambiguous/incompatible declarations;
+- destructive behavior inferred only from ORM/database cascade configuration;
+- concurrency modes whose affected-row behavior has not been proven for the advertised database matrix.
+
+## Tortoise implementation acceptance matrix — research output
+
+Before capability promotion, implementation must prove at least:
+
+| Area | Required proof |
+| --- | --- |
+| FK / many-to-one | read, link, nullable unlink, target validation |
+| reverse FK / one-to-many | read, scoped child create/update/unlink where allowed |
+| one-to-one | forward/backward read and writable supported direction |
+| many-to-many | read, add, duplicate-safe add behavior, remove, clear/policy behavior, same root UoW |
+| association object | explicit association model, scalar edits, target resolution, delete/unlink policy |
+| ordering | deterministic read + reorder through explicit position field |
+| transaction | all graph writes roll back together and commit together |
+| parent/child concurrency | stale parent/child graph changes reject without partial durability |
+| atomic update | identity + version/snapshot predicates and write in one statement |
+| atomic delete | identity + concurrency predicate in one delete |
+| affected rows | supported DB matrix proves reliable semantics or unsupported mode fails closed |
+| introspection | public metadata validates relation kind/target without hidden heuristic coupling |
+
+## Tortoise final research verdict
+
+```text
+Atomic optimistic concurrency   PASS**
+Relationships                  PASS*
+Potential capability profile   5/5
+Core redesign required         NO
+New transaction model required NO
+Native relationship APIs       YES
+Explicit association model     YES for association-object semantics
+Public introspection seam      Model.describe()
+Fail-closed semantics          REQUIRED
+Capability promotion now       NO
+```
+
+`*` Relationship PASS is for the neutral Rakit contract. A native Tortoise M2M `through` table is not considered a rich association object; explicit application-owned association models are required for that Rakit relationship kind.
+
+`**` Atomic concurrency PASS is subject to an implementation-time affected-row/backend matrix. Version-column compare-and-write is the recommended first target. Snapshot/no-op behavior must be proven or rejected fail-closed for backends whose row-count semantics are not suitable.
+
+---
+
 # Remaining providers
-
-These sections will be filled by the same research process before implementation decisions are made.
-
-## Tortoise ORM
-
-**Status:** Pending research
-
-Questions:
-
-- Can relationships satisfy the neutral writable relationship contract through public APIs?
-- Can optimistic compare-and-write be expressed atomically?
-- Can both remain inside the already proven root transaction/UoW semantics?
 
 ## Peewee 4 Async ORM
 
@@ -345,6 +428,15 @@ Masonite remains outside the D3 closure gate and should not be mixed into this p
 
 ---
 
+# Cross-provider observations so far
+
+After SQLAlchemy Core and Tortoise, two design principles are already consistent:
+
+1. **Capability equality does not imply implementation equality.** Core derives physical relation paths from schema plus explicit binding when needed; Tortoise uses named ORM relation metadata. Both can still satisfy the same neutral Rakit behavior.
+2. **Atomic optimistic concurrency should be defined by one conditional database mutation, not by a specific ORM API.** SQLAlchemy Core uses SQL expressions; Tortoise uses filtered `QuerySet.update()` / `delete()` with explicit root connection.
+
+A third pressure point is emerging and must be compared with Peewee/Piccolo before any shared core change: affected-row semantics for snapshot/no-op updates differ by driver/backend. Do not generalize a solution until the remaining providers are researched.
+
 # Relationship to Plan 03
 
 Plan 03 covers Authentication, Authorization, and Security. Existing built-in auth/session persistence is SQLAlchemy-backed. This parity research should inform future Plan 03 work in two ways:
@@ -359,7 +451,7 @@ This document does **not** authorize an auth backend rewrite and does not imply 
 This research workstream is ready to become implementation input only after:
 
 - SQLAlchemy Core findings are recorded — **Complete**;
-- Tortoise findings are recorded — Pending;
+- Tortoise findings are recorded — **Complete**;
 - Peewee findings are recorded — Pending;
 - Piccolo findings are recorded — Pending;
 - cross-provider comparison identifies any core-contract pressure;
