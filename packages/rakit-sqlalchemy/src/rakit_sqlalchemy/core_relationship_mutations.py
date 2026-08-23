@@ -17,6 +17,7 @@ from rakit_core.relationship_mutations import (
     RelationshipCandidate,
     RelationshipChangePlan,
     RelationshipEditorRow,
+    RelationshipMutationKind,
     RelationshipMutationResult,
     ReorderRelated,
     SetRelated,
@@ -26,7 +27,6 @@ from rakit_core.relationship_mutations import (
 )
 from rakit_core.relationships import (
     CompiledRelationship,
-    RelationshipCardinality,
     RelationshipKind,
     resolve_record_label,
 )
@@ -34,7 +34,7 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy import insert as sa_insert
 from sqlalchemy import select
 from sqlalchemy import update as sa_update
-from sqlalchemy.engine import CursorResult
+from sqlalchemy.engine import CursorResult, RowMapping
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .core_datasource import SQLAlchemyCoreDataSource
@@ -145,9 +145,7 @@ class SQLAlchemyCoreRelationshipMutationService:
         return identity.values[field]
 
     @staticmethod
-    def _mapping_from_subquery(
-        row: Mapping[str, object], field_names: tuple[str, ...]
-    ) -> dict[str, object]:
+    def _mapping_from_subquery(row: RowMapping, field_names: tuple[str, ...]) -> dict[str, object]:
         return {field: row[field] for field in field_names}
 
     async def _parent(
@@ -813,7 +811,10 @@ class SQLAlchemyCoreRelationshipMutationService:
             elif isinstance(step, CreateRelated | UpdateRelated | DeleteRelated):
                 raise self._configuration(
                     "relationship_child_mutation_service_required",
-                    "Direct child create, update, and delete require an explicit child write service.",
+                    (
+                        "Direct child create, update, and delete require an explicit "
+                        "child write service."
+                    ),
                 )
             else:
                 raise self._configuration(
@@ -835,11 +836,7 @@ class SQLAlchemyCoreRelationshipMutationService:
         return RelationshipMutationResult(
             parent_identity=parent_identity,
             relationship_id=change.relationship_id,
-            kind=(
-                # Graph plans can contain several concrete edge steps. The
-                # neutral receipt uses UPDATE as the aggregate graph intent.
-                "update"
-            ),
+            kind=RelationshipMutationKind.UPDATE,
             target_identities=after,
             added_target_identities=tuple(added),
             removed_target_identities=tuple(removed),
