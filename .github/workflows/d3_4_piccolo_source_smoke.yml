@@ -1,6 +1,8 @@
 name: D3.4 Piccolo source smoke
 
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [phase-d3-4-piccolo]
 
