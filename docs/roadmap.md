@@ -33,7 +33,8 @@ Rakit remains under active pre-release development. The current package version 
 | **Phase C overall** | **Complete** |
 | Phase D1 adapter contract hardening | **Complete** |
 | Phase D2 schema adapter ecosystem | **Complete** |
-| Phase D3 persistence adapter ecosystem | **Active** |
+| Phase D3 persistence adapter ecosystem | **Complete** |
+| Phase D4 web framework integrations | **Next** |
 | Phase D adapter ecosystem | **Active** |
 | Phase E generated APIs v1 | **Planned; foundation exists** |
 | Public release | **Deferred until explicit maintainer approval** |
@@ -393,7 +394,7 @@ Phase D proves that Rakit's capability architecture works across multiple concre
 
 ### D3 — Persistence Adapter Ecosystem
 
-**Status: Active**
+**Status: Complete**
 
 D3 expands persistence from one reference ORM into a multi-adapter ecosystem while keeping `rakit-core` and `rakit-web` backend-neutral. SQLAlchemy ORM remains the default provider; every additional adapter advertises only capabilities proven against the canonical contracts.
 
@@ -457,15 +458,27 @@ Retained on the roadmap, but intentionally deferred until a dedicated Masonite O
 
 #### D3.6 — Persistence Integration DX, Compatibility Matrix & Closure
 
-**Status: Next**
+**Status: Complete**
 
-Proceed with install/discovery guidance, the verified capability matrix for the adapters already shipped, and packaging/artifact consistency. D3 overall remains Active while D3.5 stays in Research; full D3 closure must not pretend Masonite feasibility has been resolved.
+D3.6 closes the shipped persistence-adapter ecosystem without converting deferred Masonite research into a false implementation milestone:
+
+- published install, discovery, native-subject ownership, transaction, and capability guidance for SQLAlchemy ORM/Core, Tortoise, Peewee, and Piccolo;
+- published the verified five-capability matrix: SQLAlchemy ORM proves all five canonical capabilities, while SQLAlchemy Core, Tortoise, Peewee, and Piccolo prove read, write, and root-UoW;
+- locked supported upstream dependency ranges and Python 3.12/3.13/3.14 compatibility documentation;
+- preserved `rakit[standard]` as SQLAlchemy-oriented and kept every alternative persistence adapter explicit and optional;
+- added a centralized regression matrix covering provider capabilities, extras, installed discovery, and the absence of an unresearched Masonite provider;
+- proved all shipped persistence extras can be clean-installed together from built wheels with deterministic discovery, in addition to the existing per-adapter artifact smokes;
+- passed canonical Python, lowest/latest dependency, coverage, strict documentation, artifact, and web-asset gates before closure.
+
+D3 is complete for its implemented and verified persistence ecosystem. D3.5 remains an explicit **Research** item outside the closure gate under the maintainer-approved postponement; it may be revisited later without implying that `persistence.masonite` exists today.
 
 ### D4 — Web Framework Integrations
 
-**Status: Planned**
+**Status: Next**
 
 #### D4.0 — Web Integration Contract
+
+**Status: Next**
 
 Define the framework-integration boundary and acceptance matrix before adding more host frameworks.
 
@@ -930,13 +943,12 @@ The following are intentionally outside Rakit's current product direction:
 
 ## Near-term execution order
 
-With Phases A–C, D1, D2, and D3.0–D3.4 complete, the preferred sequence is now:
+With Phases A–C and D1–D3 complete for their implemented and verified scope, the preferred sequence is now:
 
-1. **D3.6** — consolidate persistence-adapter install/discovery DX and the verified compatibility matrix for shipped adapters.
-2. **D3.5 Masonite** remains a parallel **Research** item and does not block the shipped-adapter DX work; revisit it only after a dedicated feasibility study.
-3. **D4.0** — define the shared web integration contract, then continue through the D4 framework integrations.
-4. **E** — mature generated REST into a documented API product with OpenAPI and machine authentication.
-5. Continue through F–P according to user value, architectural pressure, and implementation evidence.
+1. **D4.0** — define the shared web integration contract, then continue through the D4 framework integrations.
+2. **D3.5 Masonite** remains a parallel **Research** item and can be revisited after a dedicated feasibility study without reopening the completed shipped-adapter D3 scope.
+3. **E** — mature generated REST into a documented API product with OpenAPI and machine authentication.
+4. Continue through F–P according to user value, architectural pressure, and implementation evidence.
 
 The pagination research track can continue in parallel where it does not block committed product work.
 
