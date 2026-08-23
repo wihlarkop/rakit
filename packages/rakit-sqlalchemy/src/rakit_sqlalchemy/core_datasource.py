@@ -18,10 +18,16 @@ from rakit_core.pagination import (
     ResourceListResult,
 )
 from rakit_core.query import CountPolicy, NullPlacement, ResourceQuery, Sort, SortDirection
+from rakit_core.relationships import RelationshipDefinition, RelationshipMetadata
 from sqlalchemy import Table, func, or_, select
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from sqlalchemy.sql import ColumnElement, Select
 
+from .core_relationships import (
+    ResolvedCoreRelationship,
+    SQLAlchemyCoreRelationshipBinding,
+    resolve_relationship_definition,
+)
 from .datasource import (
     _OPERATOR_HANDLERS,
     _coerce_filter_value,
@@ -89,11 +95,15 @@ class SQLAlchemyCoreDataSource:
         table: Table,
         engine: AsyncEngine,
         field_policy: ResourceFieldPolicy,
+        relationship_bindings: Mapping[str, SQLAlchemyCoreRelationshipBinding] | None = None,
     ) -> None:
         self._table = table
         self._engine = engine
         self._metadata = inspect_table(table)
         self._field_policy = field_policy
+        self._relationship_bindings = dict(relationship_bindings or {})
+        self._relationship_metadata: dict[str, RelationshipMetadata] = {}
+        self._resolved_relationships: dict[str, ResolvedCoreRelationship] = {}
         _validate_field_policy_semantics(field_policy, self._metadata.field_metadata)
 
     @property
@@ -126,11 +136,91 @@ class SQLAlchemyCoreDataSource:
             for metadata in self._metadata.field_metadata
         )
 
+    @property
+    def relationship_metadata(self) -> dict[str, RelationshipMetadata]:
+        """Return only relationship facts already resolved from explicit definitions."""
+
+        return dict(self._relationship_metadata)
+
+    def validate_relationship(
+        self,
+        definition: RelationshipDefinition,
+        target_data_source: object,
+        association_target_data_source: object | None = None,
+    ) -> None:
+        if not isinstance(target_data_source, SQLAlchemyCoreDataSource):
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="Relationship target must use the SQLAlchemy Core adapter.",
+                status_code=500,
+                details={"relationship_id": definition.relationship_id},
+            )
+        if association_target_data_source is not None and not isinstance(
+            association_target_data_source, SQLAlchemyCoreDataSource
+        ):
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="Association target must use the SQLAlchemy Core adapter.",
+                status_code=500,
+                details={"relationship_id": definition.relationship_id},
+            )
+        relationship_id = str(definition.relationship_id)
+        resolved = resolve_relationship_definition(
+            definition,
+            source_table=self._table,
+            target_table=target_data_source._table,
+            association_target_table=(
+                association_target_data_source._table
+                if isinstance(association_target_data_source, SQLAlchemyCoreDataSource)
+                else None
+            ),
+            binding=self._relationship_bindings.get(relationship_id),
+        )
+        self._resolved_relationships[relationship_id] = resolved
+        self._relationship_metadata[relationship_id] = resolved.metadata
+
+    def resolved_relationship(self, relationship_id: str) -> ResolvedCoreRelationship:
+        try:
+            return self._resolved_relationships[relationship_id]
+        except KeyError as exc:
+            raise RakitError(
+                code=ErrorCode.CONFIG_INVALID,
+                message="SQLAlchemy Core relationship was not compiled before runtime use.",
+                status_code=500,
+                details={"relationship_id": relationship_id},
+                cause=exc,
+            ) from exc
+
     def _column(self, field: str):
         return self._table.c[field]
 
     def _base_statement(self) -> Select:
         return select(self._table)
+
+    def scoped_statement(self) -> Select:
+        """Return the canonical Core visibility statement used by relationship resolution."""
+
+        return self._base_statement()
+
+    def identity_conditions(self, identity: RecordIdentity) -> tuple[ColumnElement[bool], ...]:
+        identity_field = self._metadata.identity_field
+        if set(identity.values) != {identity_field}:
+            raise _invalid_identity(identity_field)
+        column = self._column(identity_field)
+        try:
+            value = _coerce_identity_component(column.type, identity.values[identity_field])
+        except (ArithmeticError, TypeError, ValueError) as exc:
+            raise _invalid_identity(identity_field, cause=exc) from exc
+        return (column == value,)
+
+    async def resolve_scoped(
+        self, connection: AsyncConnection, identity: RecordIdentity
+    ) -> dict[str, object] | None:
+        result = await connection.execute(
+            self.scoped_statement().where(*self.identity_conditions(identity))
+        )
+        row = result.mappings().one_or_none()
+        return None if row is None else dict(row)
 
     def _apply_filter(self, statement: Select, filter_):
         column = self._column(filter_.field)
@@ -280,20 +370,8 @@ class SQLAlchemyCoreDataSource:
         return await self._count(self._filtered_statement(query))
 
     async def detail(self, identity: RecordIdentity) -> object | None:
-        identity_field = self._metadata.identity_field
-        if set(identity.values) != {identity_field}:
-            raise _invalid_identity(identity_field)
-
-        column = self._column(identity_field)
-        try:
-            value = _coerce_identity_component(column.type, identity.values[identity_field])
-        except (ArithmeticError, TypeError, ValueError) as exc:
-            raise _invalid_identity(identity_field, cause=exc) from exc
-
         async with self._engine.connect() as connection:
-            result = await connection.execute(self._base_statement().where(column == value))
-            row = result.mappings().one_or_none()
-        return None if row is None else dict(row)
+            return await self.resolve_scoped(connection, identity)
 
     def identity_for(self, record: object) -> RecordIdentity:
         if not isinstance(record, Mapping):
