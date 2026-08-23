@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import tempfile
-from typing import Any
+from typing import Any, cast
 
 from peewee import IntegerField, TextField
 from playhouse.pwasyncio import AsyncSqliteDatabase
@@ -193,7 +193,7 @@ class PeeweePersistenceConformanceHarness:
             ),
             success=True,
         )
-        assert updated.record.score == 2
+        assert cast(Widget, updated.record).score == 2
 
         await self._execute(GeneratedCrudRequest.delete(created.identity), success=True)
         assert await self._rows() == ()
@@ -232,10 +232,10 @@ class PeeweePersistenceConformanceHarness:
                         ),
                     ),
                 )
-                assert rolled_back.record.name == "Rolled back"
+                assert cast(Widget, rolled_back.record).name == "Rolled back"
             finally:
                 object.__setattr__(rollback_context, "unit_of_work", None)
-        stable_row = await self.source.detail(stable.identity)
+        stable_row = cast(Widget, await self.source.detail(stable.identity))
         assert stable_row.name == "Stable"
         assert rollback_context.durable_commit_completed is False
         await self._release_connection()
@@ -280,7 +280,7 @@ class PeeweePersistenceConformanceHarness:
 
         assert observed == ["created"]
         assert commit_context.durable_commit_completed is True
-        committed_row = await self.source.detail(committed.identity)
+        committed_row = cast(Widget, await self.source.detail(committed.identity))
         assert (
             committed_row.name,
             committed_row.group,
