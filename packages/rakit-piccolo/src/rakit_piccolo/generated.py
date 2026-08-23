@@ -107,9 +107,11 @@ class PiccoloGeneratedResourceExecutor:
         return getattr(self.model, self.data_source.identity_fields[0])
 
     async def _record(self, identity: RecordIdentity) -> Table | None:
-        return await self.model.objects().where(
-            self._identity_column() == self._identity_value(identity)
-        ).first()
+        return (
+            await self.model.objects()
+            .where(self._identity_column() == self._identity_value(identity))
+            .first()
+        )
 
     async def execute(
         self,
@@ -149,9 +151,7 @@ class PiccoloGeneratedResourceExecutor:
                 "generated_api_piccolo_identity_unavailable",
                 "Generated create returned an unsupported primary-key value.",
             )
-        identity = RecordIdentity(
-            values={self.data_source.identity_fields[0]: identity_value}
-        )
+        identity = RecordIdentity(values={self.data_source.identity_fields[0]: identity_value})
         if context.events is not None:
             context.events.publish(ResourceCreated(identity))
         return GeneratedMutationResult(identity=identity, record=record)
@@ -167,9 +167,11 @@ class PiccoloGeneratedResourceExecutor:
                 "generated_api_piccolo_update_request_invalid",
                 "Generated update request is incomplete.",
             )
-        updated = await self.model.update(request.input.values).where(
-            self._identity_column() == self._identity_value(request.identity)
-        ).returning(self._identity_column())
+        updated = (
+            await self.model.update(request.input.values)
+            .where(self._identity_column() == self._identity_value(request.identity))
+            .returning(self._identity_column())
+        )
         if len(updated) != 1:
             raise _not_found(self.resource_id)
         record = await self._record(request.identity)
@@ -195,9 +197,11 @@ class PiccoloGeneratedResourceExecutor:
                 "generated_api_piccolo_delete_request_invalid",
                 "Generated delete request is incomplete.",
             )
-        deleted = await self.model.delete().where(
-            self._identity_column() == self._identity_value(request.identity)
-        ).returning(self._identity_column())
+        deleted = (
+            await self.model.delete()
+            .where(self._identity_column() == self._identity_value(request.identity))
+            .returning(self._identity_column())
+        )
         if len(deleted) != 1:
             raise _not_found(self.resource_id)
         if context.events is not None:
