@@ -127,6 +127,34 @@ jobs:
           assert len(matches) == 1
           assert matches[0].load().integration_id == "persistence.tortoise"
           PY
+      - name: Clean-install Peewee extra from built artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv venv .artifact-peewee --python 3.12
+          uv pip install \
+            --python .artifact-peewee/bin/python \
+            --find-links dist \
+            "rakit[peewee]==0.1.0a1"
+          .artifact-peewee/bin/python -I - <<'PY'
+          from importlib.metadata import entry_points
+          from pathlib import Path
+
+          import rakit_peewee
+          from rakit_peewee.capabilities import PEEWEE_CAPABILITIES
+
+          module_path = Path(rakit_peewee.__file__).resolve()
+          assert ".artifact-peewee" in module_path.parts
+          assert PEEWEE_CAPABILITIES.capabilities.names == (
+              "persistence.read",
+              "persistence.write",
+              "transactions.root-uow",
+          )
+          integrations = entry_points(group="rakit.integrations")
+          matches = [item for item in integrations if item.name == "persistence.peewee"]
+          assert len(matches) == 1
+          assert matches[0].load().integration_id == "persistence.peewee"
+          PY
       - name: Upload dry-run artifacts
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
