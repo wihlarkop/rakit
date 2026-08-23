@@ -4,21 +4,28 @@ on:
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  format-diff:
+  format-and-clean:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: parity-p1-sqlalchemy-core
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --all-packages --dev --locked
-      - name: Format Core relationship runtime and print canonical diff
+      - name: Apply canonical format and remove temporary probe
         shell: bash
         run: |
           set -euo pipefail
           uv run ruff format packages/rakit-sqlalchemy/src/rakit_sqlalchemy/core_relationship_mutations.py
-          git diff -- packages/rakit-sqlalchemy/src/rakit_sqlalchemy/core_relationship_mutations.py
+          rm .github/workflows/core-format-probe.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/rakit-sqlalchemy/src/rakit_sqlalchemy/core_relationship_mutations.py .github/workflows/core-format-probe.yml
+          git commit -m "style(core): apply canonical relationship formatting"
+          git push origin HEAD:parity-p1-sqlalchemy-core
