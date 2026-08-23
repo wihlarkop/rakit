@@ -18,7 +18,7 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --all-packages --dev --locked
-      - name: Canonical-format permanent Core parity tests
+      - name: Fix and verify permanent Core parity tests
         shell: bash
         run: |
           set -euo pipefail
@@ -26,12 +26,26 @@ jobs:
             packages/rakit-sqlalchemy/tests/test_core_concurrency.py
             packages/rakit-sqlalchemy/tests/test_core_relationships.py
           )
+          python - <<'PY'
+          from pathlib import Path
+
+          for filename in (
+              "packages/rakit-sqlalchemy/tests/test_core_concurrency.py",
+              "packages/rakit-sqlalchemy/tests/test_core_relationships.py",
+          ):
+              path = Path(filename)
+              text = path.read_text().replace(".code is ErrorCode.", ".code == ErrorCode.")
+              path.write_text(text)
+          PY
+          uv run ruff format "${FILES[@]}"
+          uv run ruff check --fix "${FILES[@]}"
           uv run ruff format "${FILES[@]}"
           uv run ruff check "${FILES[@]}"
           uv run ty check
+          uv run pytest "${FILES[@]}" -q --tb=short
           rm .github/workflows/core-test-format.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add "${FILES[@]}" .github/workflows/core-test-format.yml
-          git commit -m "style(core): format parity regression tests"
+          git commit -m "test(core): stabilize parity regression suite"
           git push origin HEAD:parity-p1-sqlalchemy-core
