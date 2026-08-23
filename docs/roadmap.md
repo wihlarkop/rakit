@@ -424,13 +424,20 @@ Add native SQLAlchemy `Table` support in `rakit-sqlalchemy` through the distinct
 
 #### D3.3 — Peewee 4 Async ORM
 
-**Status: Planned**
+**Status: Complete**
 
-Add a first-party `persistence.peewee` adapter using Peewee 4's official async execution layer and advertise only verified behavior.
+D3.3 adds the first-party `rakit-peewee` / `persistence.peewee` integration on Peewee 4's official `playhouse.pwasyncio` execution layer:
+
+- native Peewee models remain application-owned and are claimed only when bound to the configured async Peewee database;
+- generated scalar create, partial update, and delete participate in one root-owned Peewee async transaction in the operation task;
+- verified `persistence.read`, `persistence.write`, and `transactions.root-uow` capability profile;
+- permanent SQLite-backed conformance, generated compiler regression, Python 3.12/3.13/3.14 verification, lowest/latest dependency matrices, coverage, strict docs, artifact validation, and clean-installed `rakit[peewee]` smoke;
+- the supported Peewee floor is `peewee>=4.0.2,<5`: Peewee 4.0.0–4.0.1 do not preserve async SQLite UPDATE/DELETE row counts required for correct generated write not-found semantics, while the 4.0.2 floor passes the canonical suite;
+- relationships and atomic optimistic concurrency remain deliberately unadvertised because D3.3 does not provide neutral implementations that prove those canonical contracts.
 
 #### D3.4 — Piccolo ORM
 
-**Status: Planned**
+**Status: Active**
 
 Add a first-party `persistence.piccolo` adapter with conservative capability advertisement and public-API-only transaction/query integration.
 
