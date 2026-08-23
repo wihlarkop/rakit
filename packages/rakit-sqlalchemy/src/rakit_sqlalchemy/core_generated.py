@@ -70,7 +70,10 @@ class SQLAlchemyCoreGeneratedResourceExecutorProvider(GeneratedResourceExecutorP
             raise _config_error(
                 context.resource_id,
                 "generated_api_sqlalchemy_core_concurrency_incomplete",
-                "SQLAlchemy Core generated CRUD concurrency requires both provider and token service.",
+                (
+                    "SQLAlchemy Core generated CRUD concurrency requires both provider "
+                    "and token service."
+                ),
             )
         return SQLAlchemyCoreGeneratedResourceExecutor(
             resource_id=context.resource_id,
@@ -200,7 +203,10 @@ class SQLAlchemyCoreGeneratedResourceExecutor:
             raise _config_error(
                 self.resource_id,
                 "generated_api_sqlalchemy_core_rowcount_not_sane",
-                "SQLAlchemy Core atomic concurrency requires sane UPDATE/DELETE rowcount semantics.",
+                (
+                    "SQLAlchemy Core atomic concurrency requires sane UPDATE/DELETE "
+                    "rowcount semantics."
+                ),
             )
         rowcount = getattr(result, "rowcount", None)
         if not isinstance(rowcount, int) or isinstance(rowcount, bool) or rowcount < 0:
