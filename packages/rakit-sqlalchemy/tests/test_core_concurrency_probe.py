@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from rakit_core.concurrency import AttributeVersionProvider
+from rakit_core.concurrency import AttributeVersionProvider, ConcurrencyTokenService
+from rakit_core.config import SecretValue
+from rakit_core.crypto import TokenService
 from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.generated_runtime import GeneratedResourceExecutorContext
 from rakit_sqlalchemy.core_datasource import SQLAlchemyCoreDataSource
@@ -26,13 +28,20 @@ def test_core_generated_executor_accepts_complete_concurrency_runtime() -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     data_source = SQLAlchemyCoreDataSource(table=items, engine=engine, field_policy=policy)
     provider = SQLAlchemyCoreGeneratedResourceExecutorProvider(data_source=data_source)
+    token_service = ConcurrencyTokenService(
+        TokenService.single_key(
+            key_id="test",
+            value=SecretValue("core-concurrency-probe-secret"),
+            admin_id="test",
+        )
+    )
 
     executor = provider.build(
         GeneratedResourceExecutorContext(
             resource_id="items",
             data_source=data_source,
             concurrency_provider=AttributeVersionProvider("version"),
-            concurrency_tokens=object(),  # type: ignore[arg-type]
+            concurrency_tokens=token_service,
         )
     )
 
