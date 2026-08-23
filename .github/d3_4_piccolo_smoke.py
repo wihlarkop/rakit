@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import tempfile
+from typing import cast
 
 from piccolo.columns import Integer, Varchar
 from piccolo.engine.sqlite import SQLiteEngine
@@ -94,7 +95,7 @@ async def main() -> None:
             success=True,
         )
         assert create_context.durable_commit_completed is True
-        committed = await runtime.data_source.detail(created.identity)
+        committed = cast(Widget, await runtime.data_source.detail(created.identity))
         assert committed.name == "alpha"
 
         page = await runtime.data_source.list(
@@ -126,7 +127,7 @@ async def main() -> None:
         )
         assert rolled_back.record.name == "rolled-back"
         assert rollback_context.durable_commit_completed is False
-        stable = await runtime.data_source.detail(created.identity)
+        stable = cast(Widget, await runtime.data_source.detail(created.identity))
         assert stable.name == "alpha"
 
         updated, update_context = await execute(
