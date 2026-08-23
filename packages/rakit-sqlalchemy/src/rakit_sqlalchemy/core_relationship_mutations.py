@@ -132,14 +132,10 @@ class SQLAlchemyCoreRelationshipMutationService:
         return self._target_data_sources[self._target_resource_id(entry)]
 
     def _resolved(self, entry: CompiledRelationship) -> ResolvedCoreRelationship:
-        return self._parent_data_source.resolved_relationship(
-            str(entry.definition.relationship_id)
-        )
+        return self._parent_data_source.resolved_relationship(str(entry.definition.relationship_id))
 
     @staticmethod
-    def _identity_value(
-        data_source: SQLAlchemyCoreDataSource, identity: RecordIdentity
-    ) -> object:
+    def _identity_value(data_source: SQLAlchemyCoreDataSource, identity: RecordIdentity) -> object:
         field = data_source.identity_fields[0]
         if set(identity.values) != {field}:
             raise SQLAlchemyCoreRelationshipMutationService._configuration(
@@ -234,8 +230,7 @@ class SQLAlchemyCoreRelationshipMutationService:
                 .select_from(
                     target_scope.join(
                         association_alias,
-                        target_scope.c[target_identity_field]
-                        == association_alias.c[target_field],
+                        target_scope.c[target_identity_field] == association_alias.c[target_field],
                     )
                 )
                 .where(association_alias.c[parent_field] == parent_value)
@@ -248,8 +243,7 @@ class SQLAlchemyCoreRelationshipMutationService:
                     _RelatedRow(
                         target=self._mapping_from_subquery(row, target_source.fields),
                         association={
-                            field: row[f"rakit_association_{field}"]
-                            for field in association_fields
+                            field: row[f"rakit_association_{field}"] for field in association_fields
                         },
                     )
                 )
@@ -343,17 +337,16 @@ class SQLAlchemyCoreRelationshipMutationService:
         editor_rows = []
         association_source = None
         if entry.definition.kind is RelationshipKind.ASSOCIATION_OBJECT:
-            association_source = self._target_data_sources.get(str(entry.definition.target_resource_id))
+            association_source = self._target_data_sources.get(
+                str(entry.definition.target_resource_id)
+            )
         for row in selected:
             candidate_identity = target_source.identity_for(row.target)
             association_identity = None
             values = {field: row.target[field] for field in child_fields}
             if row.association is not None:
                 values.update(
-                    {
-                        field: row.association[field]
-                        for field in entry.definition.association_fields
-                    }
+                    {field: row.association[field] for field in entry.definition.association_fields}
                 )
                 if association_source is not None:
                     association_identity = association_source.identity_for(row.association)
@@ -743,7 +736,9 @@ class SQLAlchemyCoreRelationshipMutationService:
             )
         current = await self._related_rows(connection, parent_identity, entry)
         target_source = self._target_source(entry)
-        current_keys = {self._identity_key(target_source.identity_for(row.target)) for row in current}
+        current_keys = {
+            self._identity_key(target_source.identity_for(row.target)) for row in current
+        }
         requested_keys = {self._identity_key(identity) for identity in step.identities}
         if current_keys != requested_keys:
             raise self._conflict("Reorder identities do not match the current relationship state.")
@@ -791,9 +786,7 @@ class SQLAlchemyCoreRelationshipMutationService:
         entry = self._entry(change.relationship_id)
         parent = await self._parent(connection, parent_identity)
         if not new_parent:
-            await self._verify_and_claim_parent(
-                connection, parent_identity, parent, entry, change
-            )
+            await self._verify_and_claim_parent(connection, parent_identity, parent, entry, change)
 
         before_rows = await self._related_rows(connection, parent_identity, entry)
         target_source = self._target_source(entry)
