@@ -1,0 +1,70 @@
+name: D3.3 roadmap closure
+
+on:
+  push:
+    branches: [phase-d3-3-peewee]
+
+permissions:
+  contents: write
+
+jobs:
+  roadmap:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: phase-d3-3-peewee
+      - name: Close D3.3 and activate D3.4
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("docs/roadmap.md")
+          text = path.read_text()
+
+          old_d33 = '''#### D3.3 — Peewee 4 Async ORM
+
+          **Status: Planned**
+
+          Add a first-party `persistence.peewee` adapter using Peewee 4's official async execution layer and advertise only verified behavior.
+          '''
+          new_d33 = '''#### D3.3 — Peewee 4 Async ORM
+
+          **Status: Complete**
+
+          D3.3 adds the first-party `rakit-peewee` / `persistence.peewee` integration on Peewee 4's official `playhouse.pwasyncio` execution layer:
+
+          - native Peewee models remain application-owned and are claimed only when bound to the configured async Peewee database;
+          - generated scalar create, partial update, and delete participate in one root-owned Peewee async transaction in the operation task;
+          - verified `persistence.read`, `persistence.write`, and `transactions.root-uow` capability profile;
+          - permanent SQLite-backed conformance, generated compiler regression, Python 3.12/3.13/3.14 verification, lowest/latest dependency matrices, coverage, strict docs, artifact validation, and clean-installed `rakit[peewee]` smoke;
+          - the supported Peewee floor is `peewee>=4.0.2,<5`: Peewee 4.0.0–4.0.1 do not preserve async SQLite UPDATE/DELETE row counts required for correct generated write not-found semantics, while the 4.0.2 floor passes the canonical suite;
+          - relationships and atomic optimistic concurrency remain deliberately unadvertised because D3.3 does not provide neutral implementations that prove those canonical contracts.
+          '''
+          if old_d33 not in text:
+              raise SystemExit("D3.3 roadmap block did not match expected text")
+          text = text.replace(old_d33, new_d33, 1)
+
+          old_d34 = '''#### D3.4 — Piccolo ORM
+
+          **Status: Planned**
+          '''
+          new_d34 = '''#### D3.4 — Piccolo ORM
+
+          **Status: Active**
+          '''
+          if old_d34 not in text:
+              raise SystemExit("D3.4 roadmap block did not match expected text")
+          text = text.replace(old_d34, new_d34, 1)
+
+          path.write_text(text)
+          PY
+      - name: Commit roadmap closure
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/roadmap.md
+          git commit -m "docs(roadmap): complete D3.3 Peewee"
+          git push origin HEAD:phase-d3-3-peewee
