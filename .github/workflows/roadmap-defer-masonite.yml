@@ -1,0 +1,92 @@
+name: Roadmap defer Masonite
+
+on:
+  push:
+    branches: [chore/roadmap-defer-masonite]
+
+permissions:
+  contents: write
+
+jobs:
+  update-roadmap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: chore/roadmap-defer-masonite
+          fetch-depth: 0
+      - name: Defer Masonite research and advance D3.6
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("docs/roadmap.md")
+          text = path.read_text()
+
+          old = '''#### D3.5 — Masonite ORM Feasibility / Adapter
+
+**Status: Active**
+
+Evaluate the maintained Masonite ORM line against Rakit's async and root-UoW contracts. Ship `persistence.masonite` only if the feasibility gate passes without semantic distortion.
+
+#### D3.6 — Persistence Integration DX, Compatibility Matrix & Closure
+
+**Status: Planned**
+
+Publish install/discovery guidance and the verified capability matrix, close D3 packaging/artifact consistency, then hand Phase D to D4.0 Web Integration Contract.
+'''
+          new = '''#### D3.5 — Masonite ORM Feasibility / Adapter
+
+**Status: Research**
+
+Retained on the roadmap, but intentionally deferred until a dedicated Masonite ORM research pass is completed. No `persistence.masonite` provider or install extra should ship before that feasibility work proves Python/runtime compatibility, non-blocking integration with Rakit's async runtime, and honest root-UoW semantics.
+
+#### D3.6 — Persistence Integration DX, Compatibility Matrix & Closure
+
+**Status: Next**
+
+Proceed with install/discovery guidance, the verified capability matrix for the adapters already shipped, and packaging/artifact consistency. D3 overall remains Active while D3.5 stays in Research; full D3 closure must not pretend Masonite feasibility has been resolved.
+'''
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise RuntimeError("Expected D3.5/D3.6 roadmap block was not found")
+
+          old_order = '''## Near-term execution order
+
+With Phase B, C1, and C2 complete, the preferred sequence is now:
+
+1. **C3** — normalize installation/extras UX.
+2. **C4** — strengthen capability discovery and diagnostics.
+3. **D** — prove the capability architecture with a carefully selected second adapter.
+4. **E** — mature generated REST into a documented API product with OpenAPI and machine authentication.
+5. Continue through F–P according to user value, architectural pressure, and implementation evidence.
+'''
+          new_order = '''## Near-term execution order
+
+With Phases A–C, D1, D2, and D3.0–D3.4 complete, the preferred sequence is now:
+
+1. **D3.6** — consolidate persistence-adapter install/discovery DX and the verified compatibility matrix for shipped adapters.
+2. **D3.5 Masonite** remains a parallel **Research** item and does not block the shipped-adapter DX work; revisit it only after a dedicated feasibility study.
+3. **D4.0** — define the shared web integration contract, then continue through the D4 framework integrations.
+4. **E** — mature generated REST into a documented API product with OpenAPI and machine authentication.
+5. Continue through F–P according to user value, architectural pressure, and implementation evidence.
+'''
+          if old_order in text:
+              text = text.replace(old_order, new_order, 1)
+          elif new_order not in text:
+              raise RuntimeError("Expected near-term execution block was not found")
+
+          path.write_text(text)
+          PY
+      - name: Commit roadmap update
+        run: |
+          git add docs/roadmap.md
+          if git diff --cached --quiet; then
+            echo "Roadmap already updated."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "docs(roadmap): defer Masonite research"
+          git push origin HEAD:chore/roadmap-defer-masonite
