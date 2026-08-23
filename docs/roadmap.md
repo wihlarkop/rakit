@@ -451,15 +451,15 @@ D3.4 adds the first-party `rakit-piccolo` / `persistence.piccolo` integration us
 
 #### D3.5 — Masonite ORM Feasibility / Adapter
 
-**Status: Active**
+**Status: Research**
 
-Evaluate the maintained Masonite ORM line against Rakit's async and root-UoW contracts. Ship `persistence.masonite` only if the feasibility gate passes without semantic distortion.
+Retained on the roadmap, but intentionally deferred until a dedicated Masonite ORM research pass is completed. No `persistence.masonite` provider or install extra should ship before that feasibility work proves Python/runtime compatibility, non-blocking integration with Rakit's async runtime, and honest root-UoW semantics.
 
 #### D3.6 — Persistence Integration DX, Compatibility Matrix & Closure
 
-**Status: Planned**
+**Status: Next**
 
-Publish install/discovery guidance and the verified capability matrix, close D3 packaging/artifact consistency, then hand Phase D to D4.0 Web Integration Contract.
+Proceed with install/discovery guidance, the verified capability matrix for the adapters already shipped, and packaging/artifact consistency. D3 overall remains Active while D3.5 stays in Research; full D3 closure must not pretend Masonite feasibility has been resolved.
 
 ### D4 — Web Framework Integrations
 
@@ -930,11 +930,11 @@ The following are intentionally outside Rakit's current product direction:
 
 ## Near-term execution order
 
-With Phase B, C1, and C2 complete, the preferred sequence is now:
+With Phases A–C, D1, D2, and D3.0–D3.4 complete, the preferred sequence is now:
 
-1. **C3** — normalize installation/extras UX.
-2. **C4** — strengthen capability discovery and diagnostics.
-3. **D** — prove the capability architecture with a carefully selected second adapter.
+1. **D3.6** — consolidate persistence-adapter install/discovery DX and the verified compatibility matrix for shipped adapters.
+2. **D3.5 Masonite** remains a parallel **Research** item and does not block the shipped-adapter DX work; revisit it only after a dedicated feasibility study.
+3. **D4.0** — define the shared web integration contract, then continue through the D4 framework integrations.
 4. **E** — mature generated REST into a documented API product with OpenAPI and machine authentication.
 5. Continue through F–P according to user value, architectural pressure, and implementation evidence.
 
