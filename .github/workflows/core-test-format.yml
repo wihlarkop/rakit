@@ -35,6 +35,14 @@ jobs:
           ):
               path = Path(filename)
               text = path.read_text().replace(".code is ErrorCode.", ".code == ErrorCode.")
+              text = text.replace(
+                  "assert set(linked.target_identities) == {_identity(1), _identity(2), _identity(3)}",
+                  'assert {identity.values["id"] for identity in linked.target_identities} == {1, 2, 3}',
+              )
+              text = text.replace(
+                  "assert set(linked.target_identities) == {_identity(1), _identity(2)}",
+                  'assert {identity.values["id"] for identity in linked.target_identities} == {1, 2}',
+              )
               path.write_text(text)
           PY
           uv run ruff format "${FILES[@]}"
