@@ -1,0 +1,23 @@
+name: D3.4 Piccolo source smoke
+
+on:
+  push:
+    branches: [phase-d3-4-piccolo]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+      - run: uv venv .smoke --python 3.12
+      - name: Install source packages
+        run: |
+          uv pip install --python .smoke/bin/python -e packages/rakit-core -e packages/rakit-piccolo aiosqlite anyio
+      - name: Run real SQLite source smoke
+        run: .smoke/bin/python .github/d3_4_piccolo_smoke.py
