@@ -1,0 +1,71 @@
+name: D3.4 Piccolo roadmap closure
+
+on:
+  push:
+    branches: [phase-d3-4-piccolo]
+
+permissions:
+  contents: write
+
+jobs:
+  roadmap:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: phase-d3-4-piccolo
+      - name: Close D3.4 and activate D3.5
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("docs/roadmap.md")
+          text = path.read_text()
+
+          old_d34 = '''#### D3.4 — Piccolo ORM
+
+          **Status: Active**
+
+          Add a first-party `persistence.piccolo` adapter with conservative capability advertisement and public-API-only transaction/query integration.
+          '''
+          new_d34 = '''#### D3.4 — Piccolo ORM
+
+          **Status: Complete**
+
+          D3.4 adds the first-party `rakit-piccolo` / `persistence.piccolo` integration using native Piccolo `Table` models and configured `Engine` ownership:
+
+          - native Piccolo tables remain application-owned, with fail-closed engine, identity, and field-policy validation;
+          - deterministic list/detail/count, page and limit/offset pagination, declared filter/search/sort, and scalar create/update/delete use public Piccolo query APIs;
+          - generated mutations participate in one root-owned public Piccolo transaction, with rollback-before-success and durable-commit-before-event semantics;
+          - verified `persistence.read`, `persistence.write`, and `transactions.root-uow` capability profile;
+          - permanent SQLite-backed conformance, generated compiler and introspection regressions, Python 3.12/3.13/3.14 verification, lowest/latest dependency matrices, coverage, strict docs, artifact validation, and clean-installed `rakit[piccolo]` smoke;
+          - the supported Piccolo floor is `piccolo>=1.30,<2`: Piccolo 1.30.0 is the Python 3.14-capable floor selected for Rakit's canonical matrix and passes lowest-direct verification, while the current 1.x latest line also passes;
+          - relationships and atomic optimistic concurrency remain deliberately unadvertised because D3.4 does not provide neutral implementations that prove those canonical contracts.
+          '''
+          if old_d34 not in text:
+              raise SystemExit("D3.4 roadmap block did not match expected text")
+          text = text.replace(old_d34, new_d34, 1)
+
+          old_d35 = '''#### D3.5 — Masonite ORM Feasibility / Adapter
+
+          **Status: Planned**
+          '''
+          new_d35 = '''#### D3.5 — Masonite ORM Feasibility / Adapter
+
+          **Status: Active**
+          '''
+          if old_d35 not in text:
+              raise SystemExit("D3.5 roadmap block did not match expected text")
+          text = text.replace(old_d35, new_d35, 1)
+
+          path.write_text(text)
+          PY
+      - name: Commit roadmap closure
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/roadmap.md
+          git commit -m "docs(roadmap): complete D3.4 Piccolo"
+          git push origin HEAD:phase-d3-4-piccolo
