@@ -372,9 +372,7 @@ class CorePersistenceConformanceHarness:
         identity = RecordIdentity(values={"id": 1})
         async with self.engine.begin() as connection:
             await connection.execute(delete(atomic_items))
-            await connection.execute(
-                atomic_items.insert().values(id=1, name="before", version=1)
-            )
+            await connection.execute(atomic_items.insert().values(id=1, name="before", version=1))
 
         stale_token = self.tokens.issue("atomic-items", identity, 1)
         updated, _ = await self._execute(
@@ -439,11 +437,11 @@ def test_sqlalchemy_core_conforms_to_every_advertised_v1_capability() -> None:
             )
 
             assert SQLALCHEMY_CORE_INTEGRATION.advertised_capabilities.names == (
-                "persistence.read",
-                "persistence.write",
-                "persistence.relationships",
-                "transactions.root-uow",
                 "concurrency.atomic-optimistic",
+                "persistence.read",
+                "persistence.relationships",
+                "persistence.write",
+                "transactions.root-uow",
             )
             assert result.passed, result.failures
             rows = conformance_matrix_rows((result,))
