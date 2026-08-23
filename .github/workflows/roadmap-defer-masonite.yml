@@ -3,6 +3,8 @@ name: Roadmap defer Masonite
 on:
   push:
     branches: [chore/roadmap-defer-masonite]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
