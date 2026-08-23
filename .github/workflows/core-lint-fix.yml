@@ -25,28 +25,44 @@ jobs:
           FILE=packages/rakit-sqlalchemy/src/rakit_sqlalchemy/core_relationship_mutations.py
           uv run ruff check --fix --exit-zero "$FILE"
           python - <<'PY'
+          import re
           from pathlib import Path
 
           path = Path("packages/rakit-sqlalchemy/src/rakit_sqlalchemy/core_relationship_mutations.py")
           text = path.read_text()
+
+          if "RelationshipMutationKind," not in text:
+              text = text.replace(
+                  "    RelationshipMutationResult,\n",
+                  "    RelationshipMutationKind,\n    RelationshipMutationResult,\n",
+                  1,
+              )
+
+          long_message = '"Direct child create, update, and delete require an explicit child write service.",'
+          if long_message not in text:
+              raise SystemExit("expected long child-service message not found")
           text = text.replace(
-              "    RelationshipMutationResult,\n",
-              "    RelationshipMutationKind,\n    RelationshipMutationResult,\n",
+              long_message,
+              '(\n                        "Direct child create, update, and delete require an explicit "\n                        "child write service."\n                    ),',
+              1,
           )
-          text = text.replace(
-              '                    "Direct child create, update, and delete require an explicit child write service.",',
-              '                    (\n                        "Direct child create, update, and delete require an explicit "\n                        "child write service."\n                    ),',
+
+          pattern = re.compile(
+              r"            kind=\(\n"
+              r"                # Graph plans can contain several concrete edge steps\. The\n"
+              r"                # neutral receipt uses UPDATE as the aggregate graph intent\.\n"
+              r'                "update"\n'
+              r"            \),"
           )
-          old = '''            kind=(
-                # Graph plans can contain several concrete edge steps. The
-                # neutral receipt uses UPDATE as the aggregate graph intent.
-                "update"
-            ),'''
-          text = text.replace(old, "            kind=RelationshipMutationKind.UPDATE,")
+          text, count = pattern.subn("            kind=RelationshipMutationKind.UPDATE,", text, count=1)
+          if count != 1:
+              raise SystemExit("expected aggregate graph receipt block not found")
+
           path.write_text(text)
           PY
           uv run ruff format "$FILE"
           uv run ruff check "$FILE"
+          uv run ty check
           rm .github/workflows/core-lint-fix.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
