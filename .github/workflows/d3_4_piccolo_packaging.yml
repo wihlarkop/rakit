@@ -1,0 +1,76 @@
+name: D3.4 Piccolo packaging refresh
+
+on:
+  push:
+    branches: [phase-d3-4-piccolo]
+
+permissions:
+  contents: write
+
+jobs:
+  packaging:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: phase-d3-4-piccolo
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+      - name: Add permanent Piccolo artifact smoke
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/ci.yml')
+          text = path.read_text()
+          marker = '''      - name: Upload dry-run artifacts\n'''
+          block = '''      - name: Clean-install Piccolo extra from built artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv venv .artifact-piccolo --python 3.12
+          uv pip install \\
+            --python .artifact-piccolo/bin/python \\
+            --find-links dist \\
+            "rakit[piccolo]==0.1.0a1"
+          .artifact-piccolo/bin/python -I - <<'PYCODE'
+          from importlib.metadata import entry_points
+          from pathlib import Path
+
+          import rakit_piccolo
+          from rakit_piccolo.capabilities import PICCOLO_CAPABILITIES
+
+          module_path = Path(rakit_piccolo.__file__).resolve()
+          assert ".artifact-piccolo" in module_path.parts
+          assert PICCOLO_CAPABILITIES.capabilities.names == (
+              "persistence.read",
+              "persistence.write",
+              "transactions.root-uow",
+          )
+          integrations = entry_points(group="rakit.integrations")
+          matches = [item for item in integrations if item.name == "persistence.piccolo"]
+          assert len(matches) == 1
+          assert matches[0].load().integration_id == "persistence.piccolo"
+          PYCODE
+'''
+          if 'Clean-install Piccolo extra from built artifacts' not in text:
+              if marker not in text:
+                  raise SystemExit('artifact upload marker not found')
+              text = text.replace(marker, block + marker, 1)
+              path.write_text(text)
+          PY
+      - name: Refresh lock
+        run: uv lock
+      - name: Commit permanent packaging wiring
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- .github/workflows/ci.yml uv.lock; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/ci.yml uv.lock
+          git commit -m "chore(piccolo): wire artifact smoke and lock"
+          git push origin HEAD:phase-d3-4-piccolo
