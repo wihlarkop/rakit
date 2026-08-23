@@ -118,17 +118,20 @@ For each P1-P4 provider:
 14. [ ] Squash merge only when the exact head is green and review is clean.
 15. [ ] Refresh the next provider work from new canonical `main`.
 
-Suggested provider-local command baseline:
+Provider-local test commands:
 
 ```bash
 uv sync --all-packages --dev --locked
-uv run pytest packages/<provider-package>/tests -q
+uv run pytest packages/rakit-sqlalchemy/tests -q
+uv run pytest packages/rakit-tortoise/tests -q
+uv run pytest packages/rakit-piccolo/tests -q
+uv run pytest packages/rakit-peewee/tests -q
 uv run ruff format --check .
 uv run ruff check .
 uv run ty check
 ```
 
-Use additional backend commands defined in the provider subplan. Do not treat a SQLite-only run as proof for a capability whose research gate explicitly names PostgreSQL/MySQL/Cockroach behavior.
+During a provider PR, run the matching provider package command rather than requiring all four package suites after every small source edit; run the full repository suite at that provider's final gate. Use additional backend commands defined in the provider subplan. Do not treat a SQLite-only run as proof for a capability whose research gate explicitly names PostgreSQL/MySQL/Cockroach behavior.
 
 ---
 
