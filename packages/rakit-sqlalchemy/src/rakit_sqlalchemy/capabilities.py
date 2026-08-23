@@ -18,6 +18,8 @@ SQLALCHEMY_CAPABILITIES = CapabilityProvider(
     ),
 )
 
+# Core reaches the same neutral behavioral contract through native Table/FK
+# semantics; this capability set does not imply ORM mapper emulation.
 SQLALCHEMY_CORE_CAPABILITIES = CapabilityProvider(
     provider_id="persistence.sqlalchemy-core",
     capabilities=CapabilitySet.of(
