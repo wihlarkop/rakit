@@ -51,7 +51,7 @@ class PiccoloUnitOfWork:
             raise RuntimeError("Piccolo root UoW is only used for transactional operations")
         if self.engine.transaction_exists():
             raise RuntimeError("Piccolo root UoW requires ownership of the root transaction")
-        transaction = self.engine.transaction(allow_nested=False)
+        transaction = self.engine.transaction()
         await transaction.__aenter__()
         self._transaction = transaction
         return self
