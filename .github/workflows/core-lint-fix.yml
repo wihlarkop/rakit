@@ -1,0 +1,55 @@
+name: Core lint fix
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-clean:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: parity-p1-sqlalchemy-core
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-packages --dev --locked
+      - name: Apply lint and typed receipt fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE=packages/rakit-sqlalchemy/src/rakit_sqlalchemy/core_relationship_mutations.py
+          uv run ruff check --fix --exit-zero "$FILE"
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("packages/rakit-sqlalchemy/src/rakit_sqlalchemy/core_relationship_mutations.py")
+          text = path.read_text()
+          text = text.replace(
+              "    RelationshipMutationResult,\n",
+              "    RelationshipMutationKind,\n    RelationshipMutationResult,\n",
+          )
+          text = text.replace(
+              '                    "Direct child create, update, and delete require an explicit child write service.",',
+              '                    (\n                        "Direct child create, update, and delete require an explicit "\n                        "child write service."\n                    ),',
+          )
+          old = '''            kind=(
+                # Graph plans can contain several concrete edge steps. The
+                # neutral receipt uses UPDATE as the aggregate graph intent.
+                "update"
+            ),'''
+          text = text.replace(old, "            kind=RelationshipMutationKind.UPDATE,")
+          path.write_text(text)
+          PY
+          uv run ruff format "$FILE"
+          uv run ruff check "$FILE"
+          rm .github/workflows/core-lint-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$FILE" .github/workflows/core-lint-fix.yml
+          git commit -m "style(core): apply relationship runtime lint fixes"
+          git push origin HEAD:parity-p1-sqlalchemy-core
