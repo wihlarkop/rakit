@@ -92,7 +92,12 @@ def inspect_model(
         raise TypeError("Piccolo resources must subclass piccolo.table.Table")
 
     model = cast(type[Table], subject)
-    model_engine = model._meta.db
+    try:
+        model_engine = model._meta.db
+    except Exception as exc:
+        raise UnsupportedPiccoloEngineError(
+            "Piccolo resources require a configured Engine"
+        ) from exc
     if not isinstance(model_engine, Engine):
         raise UnsupportedPiccoloEngineError("Piccolo resources require a configured Engine")
     if engine is not None and model_engine is not engine:
