@@ -36,14 +36,18 @@ def test_core_generated_executor_accepts_complete_concurrency_runtime() -> None:
             admin_id="test",
         )
     )
+    concurrency_provider = MappingVersionProvider("version")
 
     executor = provider.build(
         GeneratedResourceExecutorContext(
             resource_id="items",
             data_source=data_source,
-            concurrency_provider=MappingVersionProvider("version"),
+            concurrency_provider=concurrency_provider,
             concurrency_tokens=token_service,
         )
     )
 
+    assert concurrency_provider.version_for({"version": 1}) == 1
+    assert concurrency_provider.predicate_values_for({"version": 1}) == {"version": 1}
+    assert concurrency_provider.next_values_for({"version": 1}) == {"version": 2}
     assert executor.capabilities.atomic_concurrency is True
