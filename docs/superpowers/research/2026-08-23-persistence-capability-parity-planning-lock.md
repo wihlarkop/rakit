@@ -1,6 +1,6 @@
 # Persistence Capability Parity — Planning Lock
 
-**Status:** Locked / approved for implementation-plan drafting
+**Status:** Locked / implementation plans ready for execution selection
 
 **Date:** 2026-08-23
 
@@ -12,11 +12,20 @@ This addendum closes the planning items that were still marked Pending at the en
 
 `docs/superpowers/research/2026-08-23-persistence-capability-parity.md`
 
-The approved design is now authoritative for implementation ordering, shared conformance requirements, compatibility gates, and workstream boundaries:
+The approved design remains authoritative for implementation ordering, shared conformance requirements, compatibility gates, and workstream boundaries:
 
 `docs/superpowers/specs/2026-08-23-persistence-capability-parity-design.md`
 
-The provider evidence and provider-specific decision records in the original research document remain unchanged and continue to be the evidence source behind the design.
+The executable plan set is:
+
+- `docs/superpowers/plans/2026-08-23-persistence-capability-parity.md`
+- `docs/superpowers/plans/2026-08-23-persistence-capability-parity-p1-sqlalchemy-core.md`
+- `docs/superpowers/plans/2026-08-23-persistence-capability-parity-p2-tortoise.md`
+- `docs/superpowers/plans/2026-08-23-persistence-capability-parity-p3-piccolo.md`
+- `docs/superpowers/plans/2026-08-23-persistence-capability-parity-p4-peewee.md`
+- `docs/superpowers/plans/2026-08-23-persistence-capability-parity-p5-closure.md`
+
+The provider evidence and provider-specific decision records in the original research document remain unchanged and continue to be the evidence source behind the design and plans.
 
 ## Locked completion state
 
@@ -29,7 +38,7 @@ Cross-provider neutral comparison   Complete / locked
 Implementation ordering             Complete / locked
 Shared conformance matrix           Complete / locked
 Compatibility decision boundaries   Complete / locked
-Implementation plan                 Not written yet
+Implementation plan set             Complete / ready
 Runtime implementation              Not started
 Capability promotion                Not started
 ```
@@ -78,4 +87,4 @@ atomic optimistic source
 
 ## Next gate
 
-The next artifact may be the detailed implementation plan only after the maintainer reviews the written design spec. Runtime/source implementation begins only after that implementation plan is approved.
+Select an execution mode for the approved plan set. Runtime/source implementation begins at P0/P1 only after that selection; capability promotion remains the final step of each provider implementation, never an upfront edit.
