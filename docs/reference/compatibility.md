@@ -15,6 +15,21 @@ and migration guidance.
 Supported Python starts at 3.12. Removing a supported Python line is a compatibility change and must
 be documented with the release that changes the floor.
 
+## Persistence integrations
+
+The shipped persistence ecosystem is verified on Python 3.12, 3.13, and 3.14 and against both the
+lowest-direct and latest-allowed dependency matrices. Current supported upstream lines are:
+
+- SQLAlchemy ORM / Core: `sqlalchemy[asyncio]>=2.0.16,<2.1`;
+- Tortoise ORM: `tortoise-orm>=1.1.7,<2`;
+- Peewee: `peewee>=4.0.2,<5`;
+- Piccolo: `piccolo>=1.30,<2`.
+
+Support is capability-specific rather than parity-based. See the
+[Persistence adapters](../guides/persistence-adapters.md) guide for installation, provider ids, and
+the verified capability matrix. Masonite remains deferred research and is not currently a shipped
+or supported persistence provider.
+
 ## Stability categories
 
 - **stable**: documented application/extension facade for the current pre-1.0 policy;
