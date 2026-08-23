@@ -437,13 +437,21 @@ D3.3 adds the first-party `rakit-peewee` / `persistence.peewee` integration on P
 
 #### D3.4 — Piccolo ORM
 
-**Status: Active**
+**Status: Complete**
 
-Add a first-party `persistence.piccolo` adapter with conservative capability advertisement and public-API-only transaction/query integration.
+D3.4 adds the first-party `rakit-piccolo` / `persistence.piccolo` integration using native Piccolo `Table` models and configured `Engine` ownership:
+
+- native Piccolo tables remain application-owned, with fail-closed engine, identity, and field-policy validation;
+- deterministic list/detail/count, page and limit/offset pagination, declared filter/search/sort, and scalar create/update/delete use public Piccolo query APIs;
+- generated mutations participate in one root-owned public Piccolo transaction, with rollback-before-success and durable-commit-before-event semantics;
+- verified `persistence.read`, `persistence.write`, and `transactions.root-uow` capability profile;
+- permanent SQLite-backed conformance, generated compiler and introspection regressions, Python 3.12/3.13/3.14 verification, lowest/latest dependency matrices, coverage, strict docs, artifact validation, and clean-installed `rakit[piccolo]` smoke;
+- the supported Piccolo floor is `piccolo>=1.30,<2`: Piccolo 1.30.0 is the Python 3.14-capable floor selected for Rakit's canonical matrix and passes lowest-direct verification, while the current 1.x latest line also passes;
+- relationships and atomic optimistic concurrency remain deliberately unadvertised because D3.4 does not provide neutral implementations that prove those canonical contracts.
 
 #### D3.5 — Masonite ORM Feasibility / Adapter
 
-**Status: Planned**
+**Status: Active**
 
 Evaluate the maintained Masonite ORM line against Rakit's async and root-UoW contracts. Ship `persistence.masonite` only if the feasibility gate passes without semantic distortion.
 
