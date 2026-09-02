@@ -175,6 +175,12 @@ class SQLAlchemyCoreGeneratedResourceExecutor:
         )
         predicate_values = dict(provider.predicate_values_for(current))
         next_values = dict(provider.next_values_for(current))
+        if not predicate_values:
+            raise _config_error(
+                self.resource_id,
+                "generated_api_sqlalchemy_core_concurrency_predicate_required",
+                "Atomic optimistic concurrency requires a non-empty expected-state predicate.",
+            )
         known_columns = set(self.data_source._table.c.keys())
         unknown_fields = (set(predicate_values) | set(next_values)).difference(known_columns)
         if unknown_fields:
@@ -276,6 +282,12 @@ class SQLAlchemyCoreGeneratedResourceExecutor:
 
         changes = dict(request.input.values)
         predicate_values, next_values = self._concurrency_values(current, request)
+        if self.concurrency_provider is not None and not next_values:
+            raise _config_error(
+                self.resource_id,
+                "generated_api_sqlalchemy_core_concurrency_next_values_required",
+                "Atomic optimistic UPDATE requires a non-empty next-state mutation.",
+            )
         overlap = set(changes).intersection(next_values)
         if overlap:
             raise _config_error(
