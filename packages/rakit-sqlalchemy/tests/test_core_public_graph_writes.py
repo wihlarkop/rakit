@@ -247,6 +247,7 @@ async def _runtime() -> tuple[
         verify_submission_token=_allow,
         issue_submission_token=lambda _request: "submission-1",
         resource_id="orders",
+        deadline_seconds=1.0,
         idempotency_store=store,
         mutation_authorizer=_mutation_authorizer,
         graph_mutation_authorizer=_graph_authorizer,
