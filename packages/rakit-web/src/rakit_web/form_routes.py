@@ -308,10 +308,13 @@ async def _parse_form(
 
 
 def _record_values(binding: WriteResourceBinding, record: object) -> dict[str, object]:
+    def value_for(field_id: str) -> object:
+        if isinstance(record, Mapping):
+            return record.get(field_id, "")
+        return getattr(record, field_id, "")
+
     return {
-        field.field_id: binding.form_schema.format_value(
-            field.field_id, getattr(record, field.field_id, "")
-        )
+        field.field_id: binding.form_schema.format_value(field.field_id, value_for(field.field_id))
         for field in binding.form_schema.fields
         if field.writable and field.readable and not field.sensitive
     }

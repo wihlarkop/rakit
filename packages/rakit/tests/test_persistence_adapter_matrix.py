@@ -22,7 +22,9 @@ _EXPECTED_CAPABILITIES = {
         "transactions.root-uow",
     ),
     "persistence.sqlalchemy-core": (
+        "concurrency.atomic-optimistic",
         "persistence.read",
+        "persistence.relationships",
         "persistence.write",
         "transactions.root-uow",
     ),

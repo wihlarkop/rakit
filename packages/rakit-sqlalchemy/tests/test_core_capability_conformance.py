@@ -4,26 +4,47 @@ import asyncio
 from collections.abc import Mapping
 
 from rakit_core.adapter_capabilities import (
+    CONCURRENCY_ATOMIC_OPTIMISTIC,
     PERSISTENCE_READ,
+    PERSISTENCE_RELATIONSHIPS,
     PERSISTENCE_WRITE,
     TRANSACTIONS_ROOT_UOW,
 )
 from rakit_core.compiler import ApplicationBuilder
+from rakit_core.concurrency import ConcurrencyTokenService
+from rakit_core.config import SecretValue
 from rakit_core.conformance import conformance_matrix_rows, run_integration_conformance
+from rakit_core.crypto import TokenService
 from rakit_core.definitions import ResourceFieldPolicy
+from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.generated_input import GeneratedInput
 from rakit_core.generated_operations import GeneratedCrudRequest
 from rakit_core.generated_runtime import GeneratedResourceExecutorContext
+from rakit_core.identity import RecordIdentity
 from rakit_core.operations import CancellationContext, OperationContext
+from rakit_core.permissions import PermissionRequirement
+from rakit_core.relationship_mutations import RelationshipChangePlan, SetRelated
+from rakit_core.relationships import (
+    CompiledRelationship,
+    RelationshipCardinality,
+    RelationshipDefinition,
+    RelationshipEditMode,
+    RelationshipKind,
+)
 from rakit_core.testing import DataSourceContractSuite
 from rakit_core.testing.capability_conformance import CANONICAL_CONFORMANCE_SPEC_REGISTRY
 from rakit_core.transactions import TransactionPolicy
+from rakit_sqlalchemy.core_concurrency import MappingVersionProvider
 from rakit_sqlalchemy.core_datasource import SQLAlchemyCoreDataSource
-from rakit_sqlalchemy.core_generated import SQLAlchemyCoreGeneratedResourceExecutor
+from rakit_sqlalchemy.core_generated import (
+    SQLAlchemyCoreGeneratedResourceExecutor,
+    SQLAlchemyCoreGeneratedResourceExecutorProvider,
+)
 from rakit_sqlalchemy.core_plugin import SQLAlchemyCorePlugin
+from rakit_sqlalchemy.core_relationship_mutations import SQLAlchemyCoreRelationshipMutationService
 from rakit_sqlalchemy.core_uow import SQLAlchemyCoreOperationUnitOfWorkFactory
 from rakit_sqlalchemy.discovery import SQLALCHEMY_CORE_INTEGRATION
-from sqlalchemy import Column, Integer, MetaData, String, Table, delete, select
+from sqlalchemy import Column, ForeignKey, Integer, MetaData, String, Table, delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 metadata = MetaData()
@@ -34,6 +55,26 @@ items = Table(
     Column("name", String(100), nullable=False),
     Column("group", String(100), nullable=False),
     Column("score", Integer, nullable=False),
+)
+atomic_items = Table(
+    "core_conformance_atomic_items",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("name", String(100), nullable=False),
+    Column("version", Integer, nullable=False),
+)
+customers = Table(
+    "core_conformance_customers",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("name", String(100), nullable=False),
+)
+orders = Table(
+    "core_conformance_orders",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("version", Integer, nullable=False),
+    Column("customer_id", ForeignKey(customers.c.id), nullable=True),
 )
 
 FIXTURE: tuple[Mapping[str, object], ...] = (
@@ -53,6 +94,11 @@ POLICY = ResourceFieldPolicy(
     search_fields=("name",),
     sort_fields=("name", "group", "score"),
 )
+ATOMIC_POLICY = ResourceFieldPolicy(
+    list_fields=("id", "name", "version"),
+    detail_fields=("id", "name", "version"),
+)
+RELATIONSHIP_REQUIREMENT = PermissionRequirement.all_of("admin.resources.orders.update")
 
 
 class CoreReadContract(DataSourceContractSuite):
@@ -94,6 +140,13 @@ class CorePersistenceConformanceHarness:
         assert isinstance(factory, SQLAlchemyCoreOperationUnitOfWorkFactory)
         self.executor = executor
         self.factory = factory
+        self.tokens = ConcurrencyTokenService(
+            TokenService.single_key(
+                key_id="test",
+                value=SecretValue("core-conformance-concurrency-secret"),
+                admin_id="test",
+            )
+        )
 
     async def _reset(self, records: tuple[Mapping[str, object], ...] = ()) -> None:
         async with self.engine.begin() as connection:
@@ -101,11 +154,18 @@ class CorePersistenceConformanceHarness:
             if records:
                 await connection.execute(items.insert(), [dict(record) for record in records])
 
-    async def _execute(self, request: GeneratedCrudRequest, *, success: bool):
+    async def _execute(
+        self,
+        request: GeneratedCrudRequest,
+        *,
+        success: bool,
+        executor: SQLAlchemyCoreGeneratedResourceExecutor | None = None,
+        resource_id: str = "items",
+    ):
         context = OperationContext(
             deadline=None,
             cancellation=CancellationContext(),
-            resource_id="items",
+            resource_id=resource_id,
         )
         async with self.factory.open(
             policy=TransactionPolicy.AUTO,
@@ -114,7 +174,7 @@ class CorePersistenceConformanceHarness:
         ) as uow:
             object.__setattr__(context, "unit_of_work", uow)
             try:
-                result = await self.executor.execute(context, request)
+                result = await (executor or self.executor).execute(context, request)
                 if success:
                     await uow.mark_success()
                 return result, context
@@ -171,6 +231,95 @@ class CorePersistenceConformanceHarness:
         await self._execute(GeneratedCrudRequest.delete(created.identity), success=True)
         assert await self._rows() == ()
 
+    async def assert_relationship_semantics(self) -> None:
+        parent_source = SQLAlchemyCoreDataSource(
+            table=orders,
+            engine=self.engine,
+            field_policy=ResourceFieldPolicy(
+                list_fields=("id", "version", "customer_id"),
+                detail_fields=("id", "version", "customer_id"),
+            ),
+        )
+        target_source = SQLAlchemyCoreDataSource(
+            table=customers,
+            engine=self.engine,
+            field_policy=ResourceFieldPolicy(
+                list_fields=("id", "name"),
+                detail_fields=("id", "name"),
+            ),
+        )
+        definition = RelationshipDefinition(
+            relationship_id="customer",
+            target_resource_id="customers",
+            label="Customer",
+            kind=RelationshipKind.MANY_TO_ONE,
+            cardinality=RelationshipCardinality.TO_ONE,
+            nullable=True,
+            edit_mode=RelationshipEditMode.LINK,
+            writable=True,
+            record_label_field="name",
+        )
+        parent_source.validate_relationship(definition, target_source)
+        relationship = CompiledRelationship(
+            source_resource_id="orders",
+            definition=definition,
+            mutation_permission=RELATIONSHIP_REQUIREMENT,
+            target_delete_permission=None,
+            route_path="/orders/{identity}/_relationships/customer",
+        )
+        service = SQLAlchemyCoreRelationshipMutationService(
+            parent_data_source=parent_source,
+            relationships=(relationship,),
+            target_data_sources={"customers": target_source},
+            concurrency_provider=MappingVersionProvider("version"),
+            concurrency_tokens=self.tokens,
+        )
+        parent_identity = RecordIdentity(values={"id": 1})
+        target_identity = RecordIdentity(values={"id": 2})
+        async with self.engine.begin() as connection:
+            await connection.execute(delete(orders))
+            await connection.execute(delete(customers))
+            await connection.execute(
+                customers.insert(),
+                ({"id": 1, "name": "Ada"}, {"id": 2, "name": "Grace"}),
+            )
+            await connection.execute(orders.insert().values(id=1, version=1, customer_id=1))
+
+        token = await service.issue_concurrency_token(parent_identity, "customer")
+        change = RelationshipChangePlan(
+            operation_id="relationship:orders:customer:update",
+            relationship_id="customer",
+            steps=(SetRelated(identity=target_identity),),
+            authorization_requirement=RELATIONSHIP_REQUIREMENT,
+            concurrency_token=token,
+        )
+        context = OperationContext(
+            deadline=None,
+            cancellation=CancellationContext(),
+            resource_id="orders",
+        )
+        async with self.factory.open(
+            policy=TransactionPolicy.AUTO,
+            event_publisher=None,
+            operation_context=context,
+        ) as uow:
+            object.__setattr__(context, "unit_of_work", uow)
+            try:
+                result = await service.execute_in_uow(
+                    uow,
+                    parent_identity=parent_identity,
+                    change=change,
+                )
+                await uow.mark_success()
+            finally:
+                object.__setattr__(context, "unit_of_work", None)
+        assert result.target_identities == (target_identity,)
+        assert result.added_target_identities == (target_identity,)
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(select(orders))).mappings().one()
+        assert row["customer_id"] == 2
+        assert row["version"] == 2
+
     async def assert_root_uow_semantics(self) -> None:
         await self._reset()
         rolled_back, rollback_context = await self._execute(
@@ -205,6 +354,66 @@ class CorePersistenceConformanceHarness:
         )
         assert commit_context.durable_commit_completed is True
 
+    async def assert_atomic_optimistic_semantics(self) -> None:
+        source = SQLAlchemyCoreDataSource(
+            table=atomic_items,
+            engine=self.engine,
+            field_policy=ATOMIC_POLICY,
+        )
+        executor = SQLAlchemyCoreGeneratedResourceExecutorProvider(source).build(
+            GeneratedResourceExecutorContext(
+                resource_id="atomic-items",
+                data_source=source,
+                concurrency_provider=MappingVersionProvider("version"),
+                concurrency_tokens=self.tokens,
+            )
+        )
+        assert isinstance(executor, SQLAlchemyCoreGeneratedResourceExecutor)
+        identity = RecordIdentity(values={"id": 1})
+        async with self.engine.begin() as connection:
+            await connection.execute(delete(atomic_items))
+            await connection.execute(atomic_items.insert().values(id=1, name="before", version=1))
+
+        stale_token = self.tokens.issue("atomic-items", identity, 1)
+        updated, _ = await self._execute(
+            GeneratedCrudRequest.update_partial(
+                identity,
+                GeneratedInput(
+                    values={"name": "after"},
+                    present_fields=frozenset({"name"}),
+                ),
+                concurrency_token=stale_token,
+            ),
+            success=True,
+            executor=executor,
+            resource_id="atomic-items",
+        )
+        assert updated.record == {"id": 1, "name": "after", "version": 2}
+
+        try:
+            await self._execute(
+                GeneratedCrudRequest.update_partial(
+                    identity,
+                    GeneratedInput(
+                        values={"name": "stale"},
+                        present_fields=frozenset({"name"}),
+                    ),
+                    concurrency_token=stale_token,
+                ),
+                success=True,
+                executor=executor,
+                resource_id="atomic-items",
+            )
+        except RakitError as exc:
+            assert exc.code == ErrorCode.RESOURCE_CONFLICT
+            assert exc.status_code == 409
+        else:
+            raise AssertionError("stale Core optimistic update must fail")
+
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(select(atomic_items))).mappings().one()
+        assert dict(row) == {"id": 1, "name": "after", "version": 2}
+
 
 def test_sqlalchemy_core_conforms_to_every_advertised_v1_capability() -> None:
     async def scenario() -> None:
@@ -217,7 +426,9 @@ def test_sqlalchemy_core_conforms_to_every_advertised_v1_capability() -> None:
             harnesses = {
                 PERSISTENCE_READ.name: harness,
                 PERSISTENCE_WRITE.name: harness,
+                PERSISTENCE_RELATIONSHIPS.name: harness,
                 TRANSACTIONS_ROOT_UOW.name: harness,
+                CONCURRENCY_ATOMIC_OPTIMISTIC.name: harness,
             }
             result = await run_integration_conformance(
                 descriptor=SQLALCHEMY_CORE_INTEGRATION,
@@ -226,13 +437,15 @@ def test_sqlalchemy_core_conforms_to_every_advertised_v1_capability() -> None:
             )
 
             assert SQLALCHEMY_CORE_INTEGRATION.advertised_capabilities.names == (
+                "concurrency.atomic-optimistic",
                 "persistence.read",
+                "persistence.relationships",
                 "persistence.write",
                 "transactions.root-uow",
             )
             assert result.passed, result.failures
             rows = conformance_matrix_rows((result,))
-            assert len(rows) == 3
+            assert len(rows) == 5
             assert all(row.contract_version == 1 and row.passed for row in rows)
         finally:
             await engine.dispose()

@@ -79,6 +79,9 @@ The project follows Semantic Versioning. Until a release is actually tagged, cha
   Product and Order CRUD plus the public lifecycle facade, removing application-level mutation
   service/token boilerplate while retaining explicit forms, writable fields, concurrency, and
   permissions.
+- SQLAlchemy Core now provides native `Table`-based persistence capability parity for scoped
+  relationships, root-unit-of-work graph writes, and atomic optimistic concurrency without ORM
+  model emulation.
 
 ### Security
 

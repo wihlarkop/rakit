@@ -39,7 +39,7 @@ The five canonical persistence/transaction/concurrency capabilities are intentio
 | Provider | Read | Write | Root UoW | Relationships | Atomic optimistic concurrency |
 | --- | --- | --- | --- | --- | --- |
 | `persistence.sqlalchemy` | Yes | Yes | Yes | Yes | Yes |
-| `persistence.sqlalchemy-core` | Yes | Yes | Yes | No | No |
+| `persistence.sqlalchemy-core` | Yes | Yes | Yes | Yes | Yes |
 | `persistence.tortoise` | Yes | Yes | Yes | No | No |
 | `persistence.peewee` | Yes | Yes | Yes | No | No |
 | `persistence.piccolo` | Yes | Yes | Yes | No | No |
@@ -79,6 +79,10 @@ Each first-party provider claims only its native resource shape:
 - Peewee claims native Peewee model classes bound to the configured async database layer.
 - Piccolo claims native Piccolo `Table` classes owned by the configured engine.
 
+SQLAlchemy Core relationship support stays table-native. Rakit derives unique foreign-key paths from public `Table` metadata and fails closed when no path exists. If several physical paths could satisfy one relationship, the application must provide an explicit adapter-local `SQLAlchemyCoreRelationshipBinding`; Rakit does not infer relationship identity from constraint names, `Table.info`, or a "first matching FK" rule. One-to-one requires uniqueness proof, writable ordering requires an explicit position field, and association-object semantics use an explicit association resource.
+
+SQLAlchemy Core optimistic concurrency is likewise table-native. A mapping-aware concurrency provider supplies the expected predicate and next version. UPDATE and DELETE combine the record identity and expected state in one SQL mutation inside the root unit of work. Rakit requires sane matched-row semantics from the SQLAlchemy result and fails closed when rowcount cannot safely decide whether the optimistic claim succeeded; RETURNING is not used as the concurrency decision mechanism.
+
 If two configured adapters claim the same resource subject, compilation fails closed with adapter ambiguity rather than choosing by registration or installation order.
 
 ## Discovery
@@ -97,7 +101,7 @@ Use `rakit capabilities TARGET` or `rakit check TARGET` to inspect configured ca
 
 `transactions.root-uow` means one Rakit operation owns the durable commit/rollback boundary. Generated scalar mutations for every provider advertising this capability participate in that root unit of work instead of independently committing.
 
-SQLAlchemy ORM additionally proves relationship mutation and atomic optimistic concurrency. SQLAlchemy Core, Tortoise, Peewee, and Piccolo deliberately stop at the capabilities they currently prove.
+SQLAlchemy ORM and SQLAlchemy Core both prove relationship mutation and atomic optimistic concurrency. Their implementations intentionally differ: ORM uses mapper-native relationship state while Core uses explicit table/FK structure and adapter-local binding when physical metadata is ambiguous. Tortoise, Peewee, and Piccolo deliberately stop at the capabilities they currently prove.
 
 ## Deferred persistence directions
 

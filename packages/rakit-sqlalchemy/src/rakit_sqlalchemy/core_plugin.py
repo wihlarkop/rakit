@@ -10,6 +10,7 @@ from .capabilities import SQLALCHEMY_CORE_CAPABILITIES
 from .core_datasource import SQLAlchemyCoreDataSource, inspect_table
 from .core_generated import SQLAlchemyCoreGeneratedResourceExecutorProvider
 from .core_uow import SQLAlchemyCoreOperationUnitOfWorkFactory
+from .core_write import SQLAlchemyCoreWriteServiceProvider
 from .discovery import SQLALCHEMY_CORE_INTEGRATION
 from .introspection import UnsupportedFieldPolicyError, UnsupportedIdentityError
 
@@ -74,6 +75,10 @@ class SQLAlchemyCorePlugin:
             data_source=data_source,
             generated_executor_provider=SQLAlchemyCoreGeneratedResourceExecutorProvider(
                 data_source=data_source
+            ),
+            write_service_provider=SQLAlchemyCoreWriteServiceProvider(
+                data_source=data_source,
+                engine=self._engine,
             ),
             unit_of_work_provider_id=self.provider_id,
         )
