@@ -34,7 +34,7 @@ Rakit remains under active pre-release development. The current package version 
 | Phase D1 adapter contract hardening | **Complete** |
 | Phase D2 schema adapter ecosystem | **Complete** |
 | Phase D3 persistence adapter ecosystem | **Complete** |
-| Phase D4 web framework integrations | **Next** |
+| Phase D4 web framework integrations | **Active** |
 | Phase D adapter ecosystem | **Active** |
 | Phase E generated APIs v1 | **Planned; foundation exists** |
 | Public release | **Deferred until explicit maintainer approval** |
@@ -478,7 +478,7 @@ D3 is complete for its implemented and verified persistence ecosystem. D3.5 rema
 
 #### D4.0 — Web Portability / ASGI Integration Contract
 
-**Status: In progress**
+**Status: Complete**
 
 Define the protocol-first ASGI integration boundary and acceptance matrix before adding more host frameworks. Rakit application semantics must remain portable when the host framework changes; the current Starlette runtime is the reference Rakit web runtime, not a Starlette host lock-in. The lifecycle-safe golden path is generic ASGI composition, with coordinated host/Rakit lifespan, exact mount routing, `root_path`, isolated scopes/state, and independent security ownership.
 
@@ -943,9 +943,9 @@ The following are intentionally outside Rakit's current product direction:
 
 ## Near-term execution order
 
-With Phases A–C and D1–D3 complete for their implemented and verified scope, the preferred sequence is now:
+With Phases A–C and D1–D4.0 complete for their implemented and verified scope, the preferred sequence is now:
 
-1. **D4.0** — define the shared web integration contract, then continue through the D4 framework integrations.
+1. **D4.1** — Litestar proof against the shared D4.0 contract.
 2. **D3.5 Masonite** remains a parallel **Research** item and can be revisited after a dedicated feasibility study without reopening the completed shipped-adapter D3 scope.
 3. **E** — mature generated REST into a documented API product with OpenAPI and machine authentication.
 4. Continue through F–P according to user value, architectural pressure, and implementation evidence.

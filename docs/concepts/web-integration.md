@@ -1,4 +1,4 @@
-  # Web Integration
+# Web Integration
 
 Rakit separates application semantics from the web runtime and the host server:
 
