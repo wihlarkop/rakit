@@ -61,7 +61,7 @@ Rakit remains under active pre-release development. The current package version 
 
 - `ResourceAdmin` and resource registration.
 - read-only resource pages.
-- Starlette-based standalone and mountable ASGI runtime.
+- Starlette-based standalone and protocol-composable ASGI runtime.
 - bundled templates, assets, and HTMX progressive enhancement.
 
 ### Plan 03 — Authentication, authorization, and security
@@ -463,7 +463,7 @@ Retained on the roadmap, but intentionally deferred until a dedicated Masonite O
 D3.6 closes the shipped persistence-adapter ecosystem without converting deferred Masonite research into a false implementation milestone:
 
 - published install, discovery, native-subject ownership, transaction, and capability guidance for SQLAlchemy ORM/Core, Tortoise, Peewee, and Piccolo;
-- published the verified five-capability matrix: SQLAlchemy ORM proves all five canonical capabilities, while SQLAlchemy Core, Tortoise, Peewee, and Piccolo prove read, write, and root-UoW;
+- published the verified five-capability matrix: SQLAlchemy ORM and SQLAlchemy Core prove all five canonical capabilities, while Tortoise, Peewee, and Piccolo prove read, write, and root-UoW;
 - locked supported upstream dependency ranges and Python 3.12/3.13/3.14 compatibility documentation;
 - preserved `rakit[standard]` as SQLAlchemy-oriented and kept every alternative persistence adapter explicit and optional;
 - added a centralized regression matrix covering provider capabilities, extras, installed discovery, and the absence of an unresearched Masonite provider;
@@ -474,37 +474,37 @@ D3 is complete for its implemented and verified persistence ecosystem. D3.5 rema
 
 ### D4 — Web Framework Integrations
 
-**Status: Next**
+**Status: In progress**
 
-#### D4.0 — Web Integration Contract
+#### D4.0 — Web Portability / ASGI Integration Contract
 
-**Status: Next**
+**Status: In progress**
 
-Define the framework-integration boundary and acceptance matrix before adding more host frameworks.
+Define the protocol-first ASGI integration boundary and acceptance matrix before adding more host frameworks. Rakit application semantics must remain portable when the host framework changes; the current Starlette runtime is the reference Rakit web runtime, not a Starlette host lock-in. The lifecycle-safe golden path is generic ASGI composition, with coordinated host/Rakit lifespan, exact mount routing, `root_path`, isolated scopes/state, and independent security ownership.
 
 #### D4.1 — Litestar
 
-Add first-class Litestar integration against the D4.0 contract.
+First independent ASGI-native proof against the D4.0 contract. Add framework-specific code only if Litestar provides value beyond the generic ASGI composition boundary.
 
 #### D4.2 — FastAPI
 
-Promote FastAPI mounting/composition from guidance into a first-class integration where that adds real value beyond Starlette compatibility.
+Second independent ASGI-native proof against the D4.0 contract. FastAPI-specific code is justified only where it adds real value beyond generic ASGI composition.
 
 #### D4.3 — Starlette
 
-Harden and document Starlette as the canonical ASGI/reference integration under the shared web contract.
+Harden and document the current Starlette runtime/reference integration under the shared web contract. Reference runtime status does not define host-framework compatibility.
 
-#### D4.4 — Flask
+#### D4.4 — Sanic (conditional)
 
-Explore and implement an honest Flask integration without pretending WSGI and ASGI semantics are identical.
+Add Sanic integration only if its runtime maps cleanly to the D4.0 ASGI contract and the conformance proof is honest.
 
-#### D4.5 — Sanic
+#### D4.5 — ASGI Integration DX & Compatibility Matrix
 
-Add Sanic integration if the D4 contract maps cleanly to its runtime model.
+Unify install guidance, generic composition examples, conformance evidence, and supported-version policy after the ASGI-native proofs.
 
-#### D4.6 — Integration DX & Compatibility Matrix
+#### Postponed — Flask / WSGI research (outside the D4 closure gate)
 
-Unify install guidance, discovery, conformance, examples, and supported-version policy across first-party web integrations.
+Flask and generic WSGI integration are explicitly postponed. D4 may close without Flask; no Flask dependency, `WsgiToAsgi` bridge, WSGI parity claim, or Flask production adapter is part of the current D4 work. Revisit only in a separately approved research/implementation phase after the ASGI-native integration ecosystem is complete and stable.
 
 ### D5 — Adapter Authoring DX / SDK
 

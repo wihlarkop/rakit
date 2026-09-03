@@ -25,7 +25,7 @@ may still evolve under the documented pre-1.0 compatibility policy.
 
 ## Implemented alpha scope
 
-- Standalone or mountable Starlette-based ASGI application.
+- Standalone Starlette-based ASGI application with lifecycle-safe ASGI host composition.
 - SQLAlchemy CRUD with relationships, filters, search, sorting, and pagination.
 - Custom resources, pages, actions, endpoints, dashboards, and widgets.
 - Optional SQLAlchemy authentication, Argon2 password hashing, sessions, and allow-only RBAC.
@@ -128,7 +128,7 @@ app = admin.asgi()
 Executable journeys live under `examples/`:
 
 - `minimal` — smallest read-only custom data source;
-- `fastapi_sqlalchemy` — FastAPI mount + SQLAlchemy adapter;
+- `fastapi_sqlalchemy` — FastAPI host composition + SQLAlchemy adapter;
 - `builtin_auth` — built-in login/session protocol shape;
 - `relationships` — portable relationship declarations;
 - `internal_tools` — page, action, service registration, endpoint;

@@ -1,10 +1,10 @@
-"""FastAPI application mounting a SQLAlchemy-backed Rakit admin at ``/admin``."""
+"""FastAPI host composed with a SQLAlchemy-backed Rakit admin at ``/admin``."""
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from rakit import Admin, ModelAdmin, SecretValue
+from rakit import Admin, ModelAdmin, SecretValue, compose_asgi
 from rakit.sqlalchemy import SQLAlchemyPlugin
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -75,8 +75,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await engine.dispose()
 
 
-app = FastAPI(lifespan=lifespan)
-app.mount("/admin", admin.asgi(), name="rakit-admin")
+host = FastAPI(lifespan=lifespan)
+app = compose_asgi(host, admin, path="/admin")
 
 
 if __name__ == "__main__":

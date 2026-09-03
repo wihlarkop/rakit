@@ -100,7 +100,10 @@ def test_existing_standard_plan_is_additive_and_isolated(tmp_path: Path) -> None
     assert not any(item.path == tmp_path / ".gitignore" for item in plan.files)
     assert plan.dependency_action is None
     assert any("No host entrypoint" in line for line in plan.guidance)
-    assert any('app.mount("/admin", rakit_app' in line for line in plan.guidance)
+    assert any("from rakit import compose_asgi" in line for line in plan.guidance)
+    assert any(
+        'app = compose_asgi(app, rakit_admin, path="/admin")' in line for line in plan.guidance
+    )
     db_source = next(item.content for item in plan.files if item.path.name == "db.py")
     assert '".rakit"' in db_source
 

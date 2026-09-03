@@ -26,6 +26,7 @@ nav:
       - Persistence Adapters: guides/persistence-adapters.md
   - Concepts:
       - Architecture: concepts/architecture.md
+      - Web Integration: concepts/web-integration.md
       - Operation Pipeline: concepts/operation-pipeline.md
       - DI and Transactions: concepts/di-transactions.md
       - Events: concepts/events.md

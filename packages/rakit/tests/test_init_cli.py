@@ -102,7 +102,7 @@ def test_existing_ambiguous_package_fails_under_yes_and_explicit_package_resolve
         assert not (root / "src" / "beta" / "rakit_admin").exists()
 
 
-def test_existing_fastapi_mode_is_additive_and_prints_mount_snippet() -> None:
+def test_existing_fastapi_mode_is_additive_and_prints_composition_snippet() -> None:
     runner = CliRunner()
     with runner.isolated_filesystem():
         root = Path("host")
@@ -126,4 +126,6 @@ def test_existing_fastapi_mode_is_additive_and_prints_mount_snippet() -> None:
         assert (package / "rakit_admin" / "app.py").is_file()
         assert not (root / ".env.example").exists()
         assert "No host entrypoint" in result.output
-        assert 'app.mount("/admin", rakit_app' in result.output
+        assert "from rakit import compose_asgi" in result.output
+        assert 'app = compose_asgi(app, rakit_admin, path="/admin")' in result.output
+        assert 'app.mount("/admin", rakit_app' not in result.output

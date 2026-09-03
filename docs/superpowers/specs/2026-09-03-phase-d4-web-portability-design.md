@@ -333,6 +333,13 @@ cannot be safely reconciled with the decoded `path`, composition fails
 explicitly instead of fabricating an inconsistent child scope. Query bytes are
 not part of `raw_path` and remain exclusively in `query_string`.
 
+The current Rakit web runtime has a private Starlette compatibility translation
+inside its own boundary: after composition has delivered the required
+mount-relative child scope, it can reconstruct a Starlette-internal path for
+deeper Rakit-owned mounts such as static assets. This preserves the public ASGI
+contract without moving Starlette mechanics into `rakit-core` or changing the
+host scope.
+
 ## 17. Security ownership
 
 Composition does not merge host security into Rakit:
@@ -509,4 +516,3 @@ Flask/WSGI is outside this sequence and outside the D4 closure gate.
 | Capability discipline | Existing `web.starlette` identity remains; no speculative IDs |
 | Documentation | Architecture, standalone/composed usage, and Flask postponement are clear |
 | Verification | Focused, package, full, multi-Python, dependency, docs, artifact, and CI gates are recorded |
-
