@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from datetime import timedelta
 from typing import Any, cast
 
@@ -22,7 +23,12 @@ from rakit_core.mutations import (
     OperationAuthorizationSet,
 )
 from rakit_core.operations import current_operation_context
-from rakit_core.relationship_mutations import RelationshipChangePlan
+from rakit_core.relationship_mutations import (
+    CreateRelated,
+    DeleteRelated,
+    RelationshipChangePlan,
+    UpdateRelated,
+)
 from rakit_core.transactions import TransactionPolicy
 from sqlalchemy import Select
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -114,6 +120,7 @@ class SQLAlchemyCoreMutationService:
 
     def bind_scoped_statement(self, statement: Callable[[], Select]) -> None:
         self._scoped_statement = statement
+        self._executor = replace(self._executor, scoped_statement=statement)
 
     def _require_authorization(
         self,
@@ -177,6 +184,40 @@ class SQLAlchemyCoreMutationService:
                 raise _forbidden(
                     "Relationship mutation requires an exact authorization capability."
                 ) from exc
+            target_resource_id = str(
+                entry.definition.association_target_resource_id
+                or entry.definition.target_resource_id
+            )
+            for step in change.steps:
+                if isinstance(step, CreateRelated):
+                    target_requirement = entry.target_create_permission
+                    target_identity = None
+                    target_operation = "target-create"
+                elif isinstance(step, UpdateRelated):
+                    target_requirement = entry.target_update_permission
+                    target_identity = step.identity
+                    target_operation = "target-update"
+                elif isinstance(step, DeleteRelated):
+                    target_requirement = entry.target_delete_permission
+                    target_identity = step.identity
+                    target_operation = "target-delete"
+                else:
+                    continue
+                if target_requirement is None:
+                    raise _forbidden(
+                        "Relationship child mutation requires an exact target capability."
+                    )
+                try:
+                    authorizations.require(
+                        resource_id=target_resource_id,
+                        operation=f"{change.operation_id}:{target_operation}",
+                        requirement=target_requirement,
+                        target_identity=target_identity,
+                    )
+                except ValueError as exc:
+                    raise _forbidden(
+                        "Relationship child mutation requires an exact target capability."
+                    ) from exc
         return root
 
     def _prepare(self, submitted: Mapping[str, Any]) -> GeneratedInput:
@@ -192,7 +233,11 @@ class SQLAlchemyCoreMutationService:
     async def _record_in_uow(
         self, uow: SQLAlchemyCoreUnitOfWork, identity: RecordIdentity
     ) -> dict[str, object] | None:
-        return await self._data_source.resolve_scoped(uow.connection, identity)
+        result = await uow.connection.execute(
+            self._scoped_statement().where(*self._data_source.identity_conditions(identity))
+        )
+        row = result.mappings().one_or_none()
+        return None if row is None else dict(row)
 
     async def get(self, identity: RecordIdentity) -> object | None:
         if set(identity.values) != set(self._data_source.identity_fields):
@@ -575,7 +620,11 @@ class SQLAlchemyCoreMutationService:
         )
 
     async def _graph_replay(self, receipt: OperationReceipt | None) -> GraphMutationResult:
-        if receipt is None or receipt.result_kind != "core_graph_mutation" or receipt.payload is None:
+        if (
+            receipt is None
+            or receipt.result_kind != "core_graph_mutation"
+            or receipt.payload is None
+        ):
             raise RakitError(
                 code=ErrorCode.RESOURCE_CONFLICT,
                 message="Completed graph submission has no valid receipt.",

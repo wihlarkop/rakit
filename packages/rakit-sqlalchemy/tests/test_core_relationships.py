@@ -188,6 +188,32 @@ def test_core_relationship_resolution_is_explicit_and_fails_closed_on_ambiguity(
     assert profile_resolution.foreign_key_on_source is False
 
 
+def test_core_relationship_rowcount_gate_fails_closed() -> None:
+    service = SQLAlchemyCoreRelationshipMutationService.__new__(
+        SQLAlchemyCoreRelationshipMutationService
+    )
+
+    class UnsaneResult:
+        rowcount = 1
+
+        @staticmethod
+        def supports_sane_rowcount() -> bool:
+            return False
+
+    class MissingRowcountResult:
+        @staticmethod
+        def supports_sane_rowcount() -> bool:
+            return True
+
+    with pytest.raises(RakitError) as unsane:
+        service._require_sane_rowcount(UnsaneResult())  # type: ignore[arg-type]
+    assert unsane.value.details["reason"] == "relationship_rowcount_not_sane"
+
+    with pytest.raises(RakitError) as unavailable:
+        service._require_sane_rowcount(MissingRowcountResult())  # type: ignore[arg-type]
+    assert unavailable.value.details["reason"] == "relationship_rowcount_unavailable"
+
+
 @pytest.mark.anyio
 async def test_core_many_to_one_set_clear_and_stale_relationship_token() -> None:
     metadata = MetaData()
@@ -475,6 +501,87 @@ async def test_core_many_to_many_link_and_unlink_preserve_target_rows() -> None:
             bridges = tuple((await connection.execute(select(order_tags.c.tag_id))).scalars())
         assert tag_names == ("first", "second")
         assert bridges == (2,)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_core_unlink_resolves_target_through_scoped_datasource() -> None:
+    metadata = MetaData()
+    orders = Table(
+        "core_scoped_unlink_orders",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("version", Integer, nullable=False),
+    )
+    tags = Table(
+        "core_scoped_unlink_tags",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("tenant_id", Integer, nullable=False),
+        Column("name", String(100), nullable=False),
+    )
+    order_tags = Table(
+        "core_scoped_unlink_order_tags",
+        metadata,
+        Column("order_id", ForeignKey(orders.c.id), primary_key=True),
+        Column("tag_id", ForeignKey(tags.c.id), primary_key=True),
+    )
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    parent_source = _source(orders, engine)
+
+    class VisibleTagDataSource(SQLAlchemyCoreDataSource):
+        def scoped_statement(self):
+            return select(self._table).where(self._table.c.tenant_id == 1)
+
+    tag_source = VisibleTagDataSource(
+        table=tags,
+        engine=engine,
+        field_policy=ResourceFieldPolicy(
+            list_fields=("id", "tenant_id", "name"),
+            detail_fields=("id", "tenant_id", "name"),
+        ),
+    )
+    definition = RelationshipDefinition(
+        relationship_id="tags",
+        target_resource_id="tags",
+        label="Tags",
+        kind=RelationshipKind.MANY_TO_MANY,
+        cardinality=RelationshipCardinality.TO_MANY,
+        nullable=True,
+        edit_mode=RelationshipEditMode.LINK,
+        writable=True,
+        record_label_field="name",
+    )
+    parent_source.validate_relationship(definition, tag_source)
+    service = SQLAlchemyCoreRelationshipMutationService(
+        parent_data_source=parent_source,
+        relationships=(_compiled(definition),),
+        target_data_sources={"tags": tag_source},
+        concurrency_provider=MappingVersionProvider("version"),
+        concurrency_tokens=_tokens(),
+    )
+    parent = _identity(1)
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(metadata.create_all)
+            await connection.execute(orders.insert().values(id=1, version=1))
+            await connection.execute(tags.insert().values(id=1, tenant_id=2, name="hidden"))
+            await connection.execute(order_tags.insert().values(order_id=1, tag_id=1))
+
+        token = await service.issue_concurrency_token(parent, "tags")
+        with pytest.raises(RakitError) as raised:
+            await _execute(
+                engine,
+                service,
+                parent,
+                _change("tags", token, UnlinkRelated(identity=_identity(1))),
+            )
+        assert raised.value.code == ErrorCode.RESOURCE_NOT_FOUND
+
+        async with engine.connect() as connection:
+            bridge = (await connection.execute(select(order_tags))).mappings().one()
+        assert dict(bridge) == {"order_id": 1, "tag_id": 1}
     finally:
         await engine.dispose()
 

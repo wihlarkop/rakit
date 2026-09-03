@@ -64,7 +64,9 @@ async def test_core_plugin_claims_native_table_with_resource_owned_uow(engine) -
     providers = {provider.provider_id: provider for provider in builder.capability_providers}
     assert tuple(providers) == ("persistence.sqlalchemy-core",)
     assert providers["persistence.sqlalchemy-core"].capabilities.names == (
+        "concurrency.atomic-optimistic",
         "persistence.read",
+        "persistence.relationships",
         "persistence.write",
         "transactions.root-uow",
     )

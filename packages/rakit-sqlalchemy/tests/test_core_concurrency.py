@@ -205,6 +205,64 @@ async def test_core_atomic_delete_requires_current_version_and_deletes_once() ->
 
 
 @pytest.mark.anyio
+async def test_core_atomic_delete_rechecks_scope_at_final_write_boundary() -> None:
+    metadata = MetaData()
+    table = Table(
+        "core_scoped_atomic_items",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("tenant_id", Integer, nullable=False),
+        Column("name", String(100), nullable=False),
+        Column("version", Integer, nullable=False),
+    )
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    tokens = _tokens()
+    scope_calls = 0
+
+    class ChangingScopeDataSource(SQLAlchemyCoreDataSource):
+        def scoped_statement(self):
+            nonlocal scope_calls
+            scope_calls += 1
+            tenant_id = 1 if scope_calls == 1 else 999
+            return select(self._table).where(self._table.c.tenant_id == tenant_id)
+
+    source = ChangingScopeDataSource(
+        table=table,
+        engine=engine,
+        field_policy=ResourceFieldPolicy(
+            list_fields=("id", "tenant_id", "name", "version"),
+            detail_fields=("id", "tenant_id", "name", "version"),
+        ),
+    )
+    executor = _executor(source, tokens)
+    identity = _identity(1)
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(metadata.create_all)
+            await connection.execute(
+                table.insert().values(id=1, tenant_id=1, name="protected", version=1)
+            )
+
+        with pytest.raises(RakitError) as raised:
+            await _execute(
+                engine,
+                executor,
+                GeneratedCrudRequest.delete(
+                    identity,
+                    concurrency_token=tokens.issue("items", identity, 1),
+                ),
+            )
+        assert raised.value.code == ErrorCode.RESOURCE_CONFLICT
+        assert scope_calls == 2
+
+        async with engine.connect() as connection:
+            row = (await connection.execute(select(table))).mappings().one()
+        assert dict(row) == {"id": 1, "tenant_id": 1, "name": "protected", "version": 1}
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.anyio
 async def test_core_atomic_runtime_fails_closed_for_managed_input_and_missing_token() -> None:
     metadata = MetaData()
     table = _table(metadata)

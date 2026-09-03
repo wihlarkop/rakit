@@ -10,12 +10,19 @@ from rakit_core.concurrency import ConcurrencyTokenService
 from rakit_core.config import SecretValue
 from rakit_core.crypto import TokenService
 from rakit_core.definitions import ResourceFieldPolicy
+from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.fields import FieldDefinition
 from rakit_core.forms import FormSchema
 from rakit_core.idempotency import IdempotencyReservation, IdempotencyStatus, OperationReceipt
 from rakit_core.identity import RecordIdentity
-from rakit_core.mutations import MutationAuthorization, OperationAuthorization, OperationAuthorizationSet
+from rakit_core.mutations import (
+    MutationAuthorization,
+    OperationAuthorization,
+    OperationAuthorizationSet,
+)
+from rakit_core.operations import CancellationContext, OperationContext, activate_operation_context
 from rakit_core.permissions import PermissionRequirement
+from rakit_core.relationship_mutations import RelationshipChangePlan, UpdateRelated
 from rakit_core.relationships import (
     CompiledRelationship,
     RelationshipCardinality,
@@ -38,6 +45,7 @@ from rakit_web.resource_routes import build_templates
 from sqlalchemy import Column, ForeignKey, Integer, MetaData, String, Table, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from starlette.applications import Starlette
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 ROOT_REQUIREMENT = PermissionRequirement.all_of("admin.resources.orders.update")
 RELATIONSHIP_REQUIREMENT = PermissionRequirement.all_of(
@@ -91,16 +99,16 @@ class MemoryIdempotencyStore:
 
 
 class PrincipalMiddleware:
-    def __init__(self, app: object) -> None:
+    def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
-    async def __call__(self, scope: dict[str, object], receive: object, send: object) -> None:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http":
             state = scope.setdefault("state", {})
             assert isinstance(state, dict)
             state["principal"] = PRINCIPAL
             state["request_id"] = "core-public-graph-test"
-        await self.app(scope, receive, send)  # type: ignore[misc]
+        await self.app(scope, receive, send)
 
 
 def _token_service() -> TokenService:
@@ -144,13 +152,15 @@ async def _graph_authorizer(
     changes: tuple[object, ...],
 ) -> OperationAuthorizationSet:
     capabilities = []
-    for change in changes:
-        operation_id = getattr(change, "operation_id")
+    for raw_change in changes:
+        if not isinstance(raw_change, RelationshipChangePlan):
+            raise TypeError("test graph authorizer received a non-relationship change")
+        change = raw_change
         capabilities.append(
             OperationAuthorization.for_requirement(
                 admin_id="admin",
                 resource_id="orders",
-                operation=operation_id,
+                operation=change.operation_id,
                 principal_id="tester",
                 requirement=RELATIONSHIP_REQUIREMENT,
                 target_identity=parent_identity,
@@ -369,5 +379,56 @@ async def test_core_public_graph_stale_relationship_proof_rolls_back_scalar_chan
             "status": "draft",
             "customer_id": 2,
         }
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_core_graph_child_mutation_requires_exact_target_capability_before_execution() -> (
+    None
+):
+    engine, _customers, _orders, writer, _relationship_service, _binding = await _runtime()
+    parent = RecordIdentity(values={"id": 1})
+    root = await _mutation_authorizer(None, "update", parent)
+    change = RelationshipChangePlan(
+        operation_id="relationship:orders:customer:update",
+        relationship_id="customer",
+        steps=(UpdateRelated(identity=RecordIdentity(values={"id": 2}), values={"name": "new"}),),
+        authorization_requirement=RELATIONSHIP_REQUIREMENT,
+        concurrency_token="relationship-token",
+    )
+    context = OperationContext(
+        deadline=None,
+        cancellation=CancellationContext(),
+        principal=PRINCIPAL,
+        principal_id="tester",
+        admin_id="admin",
+        resource_id="orders",
+        operation="update",
+        permissions=root.permissions,
+        permission_requirement=root.requirement,
+    )
+    try:
+        with activate_operation_context(context), pytest.raises(RakitError) as raised:
+            await writer.update_graph(
+                parent,
+                {"status": "confirmed"},
+                relationship_changes=(change,),
+                concurrency_token=None,
+                authorizations=OperationAuthorizationSet(
+                    root=root,
+                    capabilities=(
+                        OperationAuthorization.for_requirement(
+                            admin_id="admin",
+                            resource_id="orders",
+                            operation=change.operation_id,
+                            principal_id="tester",
+                            requirement=RELATIONSHIP_REQUIREMENT,
+                            target_identity=parent,
+                        ),
+                    ),
+                ),
+            )
+        assert raised.value.code == ErrorCode.AUTH_FORBIDDEN
     finally:
         await engine.dispose()

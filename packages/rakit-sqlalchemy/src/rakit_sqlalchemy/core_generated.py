@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -20,9 +21,9 @@ from rakit_core.mutations import ResourceCreated, ResourceDeleted, ResourceUpdat
 from rakit_core.operations import OperationContext, OperationExecutorCapabilities
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import insert as sa_insert
-from sqlalchemy import select
 from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlalchemy.sql import Select
 
 from .core_datasource import SQLAlchemyCoreDataSource
 from .core_uow import SQLAlchemyCoreUnitOfWork
@@ -89,6 +90,7 @@ class SQLAlchemyCoreGeneratedResourceExecutor:
     data_source: SQLAlchemyCoreDataSource
     concurrency_provider: ConcurrencyVersionProvider | None = None
     concurrency_tokens: ConcurrencyTokenService | None = None
+    scoped_statement: Callable[[], Select] | None = None
 
     capabilities = OperationExecutorCapabilities(
         participates_in_uow=True,
@@ -104,6 +106,10 @@ class SQLAlchemyCoreGeneratedResourceExecutor:
                 "SQLAlchemy Core generated CRUD must execute inside the Rakit root unit of work.",
             )
         return uow
+
+    def _scoped(self) -> Select:
+        statement = self.scoped_statement
+        return (statement if statement is not None else self.data_source.scoped_statement)()
 
     async def execute(
         self,
@@ -136,9 +142,8 @@ class SQLAlchemyCoreGeneratedResourceExecutor:
                 "generated_api_sqlalchemy_core_identity_invalid",
                 "Generated CRUD identity does not match the SQLAlchemy Core resource.",
             )
-        column = self.data_source._table.c[identity_field]
         result = await connection.execute(
-            select(self.data_source._table).where(column == identity.values[identity_field])
+            self._scoped().where(*self.data_source.identity_conditions(identity))
         )
         row = result.mappings().one_or_none()
         return None if row is None else dict(row)
@@ -297,9 +302,15 @@ class SQLAlchemyCoreGeneratedResourceExecutor:
             )
 
         identity_field = self.data_source.identity_fields[0]
-        predicates = [
-            self.data_source._table.c[identity_field] == request.identity.values[identity_field]
-        ]
+        identity_column = self.data_source._table.c[identity_field]
+        predicates = [identity_column == request.identity.values[identity_field]]
+        scoped_identity = (
+            self._scoped()
+            .where(*self.data_source.identity_conditions(request.identity))
+            .with_only_columns(identity_column)
+            .scalar_subquery()
+        )
+        predicates.append(identity_column.in_(scoped_identity))
         predicates.extend(
             self.data_source._table.c[key] == value for key, value in predicate_values.items()
         )
@@ -347,9 +358,15 @@ class SQLAlchemyCoreGeneratedResourceExecutor:
             predicate_values, _ = self._concurrency_values(current, request)
 
         identity_field = self.data_source.identity_fields[0]
-        predicates = [
-            self.data_source._table.c[identity_field] == request.identity.values[identity_field]
-        ]
+        identity_column = self.data_source._table.c[identity_field]
+        predicates = [identity_column == request.identity.values[identity_field]]
+        scoped_identity = (
+            self._scoped()
+            .where(*self.data_source.identity_conditions(request.identity))
+            .with_only_columns(identity_column)
+            .scalar_subquery()
+        )
+        predicates.append(identity_column.in_(scoped_identity))
         predicates.extend(
             self.data_source._table.c[key] == value for key, value in predicate_values.items()
         )

@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import cast
 
 import pytest
-from rakit_core.concurrency import ConcurrencyTokenService
+from rakit_core.concurrency import ConcurrencyTokenService, ConcurrencyVersionProvider
 from rakit_core.config import SecretValue
 from rakit_core.crypto import TokenService
 from rakit_core.definitions import ResourceFieldPolicy
 from rakit_core.errors import ErrorCode, RakitError
 from rakit_core.generated_input import GeneratedInput
 from rakit_core.generated_operations import GeneratedCrudRequest
-from rakit_core.generated_runtime import GeneratedResourceExecutorContext, ResourceWriteServiceContext
+from rakit_core.generated_runtime import ResourceWriteServiceContext
 from rakit_core.identity import RecordIdentity
 from rakit_core.operations import CancellationContext, OperationContext
 from rakit_core.transactions import TransactionPolicy
@@ -25,7 +26,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 class EmptyPredicateProvider:
     def version_for(self, record: object) -> object:
         assert isinstance(record, Mapping)
-        return record["version"]
+        values = cast(Mapping[str, object], record)
+        return values["version"]
 
     def predicate_values_for(self, record: object) -> Mapping[str, object]:
         del record
@@ -33,17 +35,22 @@ class EmptyPredicateProvider:
 
     def next_values_for(self, record: object) -> Mapping[str, object]:
         assert isinstance(record, Mapping)
-        return {"version": int(record["version"]) + 1}
+        values = cast(Mapping[str, object], record)
+        version = values["version"]
+        assert isinstance(version, int)
+        return {"version": version + 1}
 
 
 class EmptyNextValuesProvider:
     def version_for(self, record: object) -> object:
         assert isinstance(record, Mapping)
-        return record["version"]
+        values = cast(Mapping[str, object], record)
+        return values["version"]
 
     def predicate_values_for(self, record: object) -> Mapping[str, object]:
         assert isinstance(record, Mapping)
-        return {"version": record["version"]}
+        values = cast(Mapping[str, object], record)
+        return {"version": values["version"]}
 
     def next_values_for(self, record: object) -> Mapping[str, object]:
         del record
@@ -128,7 +135,7 @@ async def _execute(
     ),
 )
 async def test_core_atomic_concurrency_fails_closed_before_unguarded_mutation(
-    provider: object,
+    provider: ConcurrencyVersionProvider,
     operation: str,
     reason: str,
 ) -> None:
@@ -141,7 +148,7 @@ async def test_core_atomic_concurrency_fails_closed_before_unguarded_mutation(
     executor = SQLAlchemyCoreGeneratedResourceExecutor(
         resource_id="items",
         data_source=source,
-        concurrency_provider=provider,  # type: ignore[arg-type]
+        concurrency_provider=provider,
         concurrency_tokens=tokens,
     )
     try:

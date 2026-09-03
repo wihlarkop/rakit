@@ -25,16 +25,17 @@ SQLAlchemy experience. The `persistence.sqlalchemy-core` provider claims native
 `sqlalchemy.Table` objects; it does not synthesize ORM classes or take ownership of application
 metadata.
 
-The Core provider currently proves the canonical `persistence.read`, `persistence.write`, and
-`transactions.root-uow` v1 capabilities. Generated scalar create, partial update, and delete
-operations share one root `AsyncConnection` / transaction, so commit and rollback remain owned by
-the Rakit operation lifecycle rather than individual mutation helpers.
+The Core provider proves all five canonical v1 capabilities: `persistence.read`,
+`persistence.write`, `persistence.relationships`, `transactions.root-uow`, and
+`concurrency.atomic-optimistic`. Relationship execution uses explicit table/FK bindings and
+mapping records; it does not synthesize ORM classes. Generated scalar and composed graph writes
+share one root `AsyncConnection` / transaction, and optimistic UPDATE/DELETE operations include
+identity plus expected-state predicates in their authoritative SQL mutation.
 
-Core deliberately does not advertise `persistence.relationships` merely because a table has
-foreign keys. It also does not advertise `concurrency.atomic-optimistic`: D3.1 does not introduce
-a Core-specific version-field convention solely to chase capability parity. Those capabilities
-remain unavailable until a portable declaration and real behavior can satisfy their canonical
-contracts without backend-specific semantic distortion.
+Core advertises relationship and atomic-concurrency support because those behaviors are covered by
+the same neutral conformance contracts as SQLAlchemy ORM. Foreign keys or a version-looking column
+alone do not promote a resource; the adapter must provide the scoped, fail-closed behavior required
+by the contract.
 
 SQLAlchemy ORM and Core may be installed together because their claim subjects are disjoint:
 mapped ORM classes are handled by `persistence.sqlalchemy`, while native `Table` objects are

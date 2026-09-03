@@ -76,6 +76,11 @@ class SQLAlchemyCoreRelationshipMutationService:
         for entry in relationships:
             if self._target_resource_id(entry) not in self._target_data_sources:
                 raise ValueError("Every Core relationship requires its target data source")
+            if (
+                entry.definition.kind is RelationshipKind.ASSOCIATION_OBJECT
+                and str(entry.definition.target_resource_id) not in self._target_data_sources
+            ):
+                raise ValueError("Every Core association object requires its resource data source")
 
     @staticmethod
     def _identity_key(identity: RecordIdentity) -> str:
@@ -121,6 +126,11 @@ class SQLAlchemyCoreRelationshipMutationService:
                 "Relationship is not compiled for this SQLAlchemy Core resource.",
             ) from exc
 
+    def compiled_relationship(self, relationship_id: str) -> CompiledRelationship:
+        """Return one compiled relationship for the public graph-write bridge."""
+
+        return self._entry(relationship_id)
+
     @staticmethod
     def _target_resource_id(entry: CompiledRelationship) -> str:
         if entry.definition.kind is RelationshipKind.ASSOCIATION_OBJECT:
@@ -130,6 +140,23 @@ class SQLAlchemyCoreRelationshipMutationService:
 
     def _target_source(self, entry: CompiledRelationship) -> SQLAlchemyCoreDataSource:
         return self._target_data_sources[self._target_resource_id(entry)]
+
+    def _association_source(self, entry: CompiledRelationship) -> SQLAlchemyCoreDataSource | None:
+        if entry.definition.kind is not RelationshipKind.ASSOCIATION_OBJECT:
+            return None
+        return self._target_data_sources[str(entry.definition.target_resource_id)]
+
+    @staticmethod
+    def _scoped_identity_subquery(
+        data_source: SQLAlchemyCoreDataSource,
+        identity: RecordIdentity | None = None,
+    ):
+        identity_field = data_source.identity_fields[0]
+        identity_column = data_source._table.c[identity_field]
+        statement = data_source.scoped_statement()
+        if identity is not None:
+            statement = statement.where(*data_source.identity_conditions(identity))
+        return statement.with_only_columns(identity_column).scalar_subquery()
 
     def _resolved(self, entry: CompiledRelationship) -> ResolvedCoreRelationship:
         return self._parent_data_source.resolved_relationship(str(entry.definition.relationship_id))
@@ -222,7 +249,11 @@ class SQLAlchemyCoreRelationshipMutationService:
             parent_field = resolved.foreign_key_field
             target_field = resolved.association_target_field
             assert parent_field is not None and target_field is not None
+            association_source = self._association_source(entry)
+            assert association_source is not None
             association_alias = association.alias("rakit_association")
+            association_identity_field = association_source.identity_fields[0]
+            association_scope = self._scoped_identity_subquery(association_source)
             statement = (
                 select(target_scope, association_alias)
                 .select_from(
@@ -231,7 +262,10 @@ class SQLAlchemyCoreRelationshipMutationService:
                         target_scope.c[target_identity_field] == association_alias.c[target_field],
                     )
                 )
-                .where(association_alias.c[parent_field] == parent_value)
+                .where(
+                    association_alias.c[parent_field] == parent_value,
+                    association_alias.c[association_identity_field].in_(association_scope),
+                )
             )
             result = await connection.execute(statement)
             association_fields = tuple(column.key for column in association.columns)
@@ -408,31 +442,38 @@ class SQLAlchemyCoreRelationshipMutationService:
         return targets
 
     def _require_sane_rowcount(self, result: CursorResult[object]) -> int:
-        if not result.supports_sane_rowcount():
+        supports_sane_rowcount = getattr(result, "supports_sane_rowcount", None)
+        if not callable(supports_sane_rowcount) or not supports_sane_rowcount():
             raise self._configuration(
                 "relationship_rowcount_not_sane",
                 "SQLAlchemy Core relationship mutation requires sane rowcount semantics.",
             )
-        rowcount = result.rowcount
-        if rowcount is None or rowcount < 0:
+        rowcount = getattr(result, "rowcount", None)
+        if not isinstance(rowcount, int) or isinstance(rowcount, bool) or rowcount < 0:
             raise self._configuration(
                 "relationship_rowcount_unavailable",
                 "SQLAlchemy Core relationship mutation could not observe matched rows.",
             )
         return rowcount
 
-    async def _verify_and_claim_parent(
+    async def _verify_parent_proof(
         self,
         connection: AsyncConnection,
         parent_identity: RecordIdentity,
         parent: dict[str, object],
         entry: CompiledRelationship,
         change: RelationshipChangePlan,
+        *,
+        expected_parent_version: object | None = None,
     ) -> None:
         token = change.concurrency_token
         if token is None:
             raise self._conflict("A relationship concurrency token is required.")
-        version = self._concurrency_provider.version_for(parent)
+        version = (
+            self._concurrency_provider.version_for(parent)
+            if expected_parent_version is None
+            else expected_parent_version
+        )
         self._concurrency_tokens.verify(
             token,
             self._token_resource_id(entry),
@@ -446,10 +487,57 @@ class SQLAlchemyCoreRelationshipMutationService:
             raise self._conflict("Relationship token does not match this relationship.")
         digest = await self._state_digest(connection, parent_identity, entry)
         if base.get("relationship_state_digest") != digest:
-            raise self._conflict()
+            raise self._conflict("The relationship changed since this mutation was prepared.")
+
+    async def validate_parent_proof_in_uow(
+        self,
+        uow: SQLAlchemyCoreUnitOfWork,
+        *,
+        parent_identity: RecordIdentity,
+        change: RelationshipChangePlan,
+        expected_parent_version: object,
+    ) -> None:
+        """Validate relationship state without claiming or mutating the parent."""
+
+        entry = self._entry(change.relationship_id)
+        parent = await self._parent(uow.connection, parent_identity)
+        await self._verify_parent_proof(
+            uow.connection,
+            parent_identity,
+            parent,
+            entry,
+            change,
+            expected_parent_version=expected_parent_version,
+        )
+
+    async def _verify_and_claim_parent(
+        self,
+        connection: AsyncConnection,
+        parent_identity: RecordIdentity,
+        parent: dict[str, object],
+        entry: CompiledRelationship,
+        change: RelationshipChangePlan,
+    ) -> None:
+        await self._verify_parent_proof(
+            connection,
+            parent_identity,
+            parent,
+            entry,
+            change,
+        )
 
         predicate_values = dict(self._concurrency_provider.predicate_values_for(parent))
         next_values = dict(self._concurrency_provider.next_values_for(parent))
+        if not predicate_values:
+            raise self._configuration(
+                "relationship_concurrency_predicate_required",
+                "Atomic relationship concurrency requires a non-empty expected-state predicate.",
+            )
+        if not next_values:
+            raise self._configuration(
+                "relationship_concurrency_next_values_required",
+                "Atomic relationship concurrency requires a non-empty next-state mutation.",
+            )
         unknown = (set(predicate_values) | set(next_values)).difference(
             self._parent_data_source.fields
         )
@@ -458,15 +546,28 @@ class SQLAlchemyCoreRelationshipMutationService:
                 "relationship_concurrency_field_unknown",
                 "Relationship concurrency provider referenced an unknown parent field.",
             )
+        protected_next_fields = {
+            field
+            for field in next_values
+            if self._parent_data_source._table.c[field].primary_key
+            or self._parent_data_source._table.c[field].computed is not None
+        }
+        if protected_next_fields:
+            raise self._configuration(
+                "relationship_concurrency_field_not_writable",
+                "Relationship concurrency provider attempted to change a protected parent field.",
+            )
         statement = sa_update(self._parent_data_source._table).where(
             *self._parent_data_source.identity_conditions(parent_identity),
+            self._parent_data_source._table.c[self._parent_data_source.identity_fields[0]].in_(
+                self._scoped_identity_subquery(self._parent_data_source, parent_identity)
+            ),
             *(
                 self._parent_data_source._table.c[field] == value
                 for field, value in predicate_values.items()
             ),
         )
-        if next_values:
-            statement = statement.values(**next_values)
+        statement = statement.values(**next_values)
         result = await connection.execute(statement)
         if self._require_sane_rowcount(result) != 1:
             raise self._conflict()
@@ -486,7 +587,14 @@ class SQLAlchemyCoreRelationshipMutationService:
         if resolved.foreign_key_on_source:
             result = await connection.execute(
                 sa_update(self._parent_data_source._table)
-                .where(*self._parent_data_source.identity_conditions(parent_identity))
+                .where(
+                    *self._parent_data_source.identity_conditions(parent_identity),
+                    self._parent_data_source._table.c[
+                        self._parent_data_source.identity_fields[0]
+                    ].in_(
+                        self._scoped_identity_subquery(self._parent_data_source, parent_identity)
+                    ),
+                )
                 .values({resolved.foreign_key_field: target_value})
             )
             if self._require_sane_rowcount(result) != 1:
@@ -507,12 +615,22 @@ class SQLAlchemyCoreRelationshipMutationService:
                 else:
                     await connection.execute(
                         sa_update(target_table)
-                        .where(target_table.c[resolved.foreign_key_field] == parent_value)
+                        .where(
+                            target_table.c[resolved.foreign_key_field] == parent_value,
+                            target_table.c[target_source.identity_fields[0]].in_(
+                                self._scoped_identity_subquery(target_source)
+                            ),
+                        )
                         .values({resolved.foreign_key_field: None})
                     )
         result = await connection.execute(
             sa_update(target_table)
-            .where(*target_source.identity_conditions(target_identity))
+            .where(
+                *target_source.identity_conditions(target_identity),
+                target_table.c[target_source.identity_fields[0]].in_(
+                    self._scoped_identity_subquery(target_source, target_identity)
+                ),
+            )
             .values({resolved.foreign_key_field: parent_value})
         )
         if self._require_sane_rowcount(result) != 1:
@@ -534,15 +652,28 @@ class SQLAlchemyCoreRelationshipMutationService:
         if resolved.foreign_key_on_source:
             await connection.execute(
                 sa_update(self._parent_data_source._table)
-                .where(*self._parent_data_source.identity_conditions(parent_identity))
+                .where(
+                    *self._parent_data_source.identity_conditions(parent_identity),
+                    self._parent_data_source._table.c[
+                        self._parent_data_source.identity_fields[0]
+                    ].in_(
+                        self._scoped_identity_subquery(self._parent_data_source, parent_identity)
+                    ),
+                )
                 .values({resolved.foreign_key_field: None})
             )
             return
         parent_value = self._identity_value(self._parent_data_source, parent_identity)
-        target_table = self._target_source(entry)._table
+        target_source = self._target_source(entry)
+        target_table = target_source._table
         await connection.execute(
             sa_update(target_table)
-            .where(target_table.c[resolved.foreign_key_field] == parent_value)
+            .where(
+                target_table.c[resolved.foreign_key_field] == parent_value,
+                target_table.c[target_source.identity_fields[0]].in_(
+                    self._scoped_identity_subquery(target_source)
+                ),
+            )
             .values({resolved.foreign_key_field: None})
         )
 
@@ -561,7 +692,12 @@ class SQLAlchemyCoreRelationshipMutationService:
             assert resolved.foreign_key_field is not None
             result = await connection.execute(
                 sa_update(target_source._table)
-                .where(*target_source.identity_conditions(target_identity))
+                .where(
+                    *target_source.identity_conditions(target_identity),
+                    target_source._table.c[target_source.identity_fields[0]].in_(
+                        self._scoped_identity_subquery(target_source, target_identity)
+                    ),
+                )
                 .values({resolved.foreign_key_field: parent_value})
             )
             if self._require_sane_rowcount(result) != 1:
@@ -646,6 +782,9 @@ class SQLAlchemyCoreRelationshipMutationService:
                 .where(
                     *target_source.identity_conditions(target_identity),
                     column == parent_value,
+                    target_source._table.c[target_source.identity_fields[0]].in_(
+                        self._scoped_identity_subquery(target_source, target_identity)
+                    ),
                 )
                 .values({resolved.foreign_key_field: None})
             )
@@ -667,10 +806,16 @@ class SQLAlchemyCoreRelationshipMutationService:
             parent_field = resolved.foreign_key_field
             target_field = resolved.association_target_field
             assert parent_field is not None and target_field is not None
+            association_source = self._association_source(entry)
+            assert association_source is not None
+            association_identity_field = association_source.identity_fields[0]
             await connection.execute(
                 sa_delete(association).where(
                     association.c[parent_field] == parent_value,
                     association.c[target_field] == target_value,
+                    association.c[association_identity_field].in_(
+                        self._scoped_identity_subquery(association_source)
+                    ),
                 )
             )
             return
@@ -697,10 +842,26 @@ class SQLAlchemyCoreRelationshipMutationService:
                 "Association update contains fields outside the compiled allow-list.",
             )
         resolved = self._resolved(entry)
-        association_source = self._target_data_sources.get(str(entry.definition.target_resource_id))
+        association_source = self._association_source(entry)
+        assert association_source is not None
         association = resolved.target_table
         conditions = []
-        if step.association_identity is not None and association_source is not None:
+        if step.association_identity is not None:
+            association_record = await association_source.resolve_scoped(
+                connection, step.association_identity
+            )
+            if association_record is None:
+                raise self._not_found()
+            parent_field = resolved.foreign_key_field
+            target_field = resolved.association_target_field
+            assert parent_field is not None and target_field is not None
+            parent_value = self._identity_value(self._parent_data_source, parent_identity)
+            target_value = self._identity_value(self._target_source(entry), step.target_identity)
+            if (
+                association_record.get(parent_field) != parent_value
+                or association_record.get(target_field) != target_value
+            ):
+                raise self._not_found()
             conditions.extend(association_source.identity_conditions(step.association_identity))
         else:
             parent_field = resolved.foreign_key_field
@@ -714,6 +875,12 @@ class SQLAlchemyCoreRelationshipMutationService:
                     == self._identity_value(self._target_source(entry), step.target_identity),
                 )
             )
+        association_identity_field = association_source.identity_fields[0]
+        conditions.append(
+            association.c[association_identity_field].in_(
+                self._scoped_identity_subquery(association_source)
+            )
+        )
         result = await connection.execute(
             sa_update(association).where(*conditions).values(**dict(step.values))
         )
@@ -754,6 +921,9 @@ class SQLAlchemyCoreRelationshipMutationService:
                 parent_field = resolved.foreign_key_field
                 target_field = resolved.association_target_field
                 assert parent_field is not None and target_field is not None
+                association_source = self._association_source(entry)
+                assert association_source is not None
+                association_identity_field = association_source.identity_fields[0]
                 await connection.execute(
                     sa_update(association)
                     .where(
@@ -761,6 +931,9 @@ class SQLAlchemyCoreRelationshipMutationService:
                         == self._identity_value(self._parent_data_source, parent_identity),
                         association.c[target_field]
                         == self._identity_value(target_source, identity),
+                        association.c[association_identity_field].in_(
+                            self._scoped_identity_subquery(association_source)
+                        ),
                     )
                     .values({position_field: position})
                 )
@@ -777,13 +950,19 @@ class SQLAlchemyCoreRelationshipMutationService:
         parent_identity: RecordIdentity,
         change: RelationshipChangePlan,
         new_parent: bool = False,
+        parent_claimed: bool = False,
     ) -> RelationshipMutationResult:
         """Apply one neutral graph plan inside an already-owned root UoW."""
 
         connection = uow.connection
         entry = self._entry(change.relationship_id)
+        if new_parent and parent_claimed:
+            raise self._configuration(
+                "relationship_parent_handoff_ambiguous",
+                "A relationship mutation cannot mark a parent as both new and already claimed.",
+            )
         parent = await self._parent(connection, parent_identity)
-        if not new_parent:
+        if not new_parent and not parent_claimed:
             await self._verify_and_claim_parent(connection, parent_identity, parent, entry, change)
 
         before_rows = await self._related_rows(connection, parent_identity, entry)
@@ -802,6 +981,7 @@ class SQLAlchemyCoreRelationshipMutationService:
                 await self._resolve_targets(connection, entry, (step.identity,))
                 await self._link_many(connection, parent_identity, entry, step.identity)
             elif isinstance(step, UnlinkRelated):
+                await self._resolve_targets(connection, entry, (step.identity,))
                 await self._unlink_many(connection, parent_identity, entry, step.identity)
             elif isinstance(step, UpdateAssociationRelated):
                 await self._resolve_targets(connection, entry, (step.target_identity,))
