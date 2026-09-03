@@ -1111,15 +1111,9 @@ def test_cli_check_and_routes_accept_both_examples() -> None:
 
 def test_all_packages_builds_exactly_the_fifteen_official_distributions(
     tmp_path: Path,
+    all_package_distributions: Path,
 ) -> None:
-    output = tmp_path / "all-distributions"
-    subprocess.run(
-        ["uv", "build", "--all-packages", "--out-dir", str(output)],
-        cwd=repository,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    output = all_package_distributions
 
     expected = {
         "rakit",
@@ -1215,6 +1209,7 @@ def test_all_packages_builds_exactly_the_fifteen_official_distributions(
 
 def test_auth_migration_history_coexists_with_a_host_alembic_version_table(
     tmp_path: Path,
+    all_package_distributions: Path,
 ) -> None:
     """Rakit's own Alembic revision history must never share a version
     table with a host application's own Alembic history -- sharing
@@ -1224,14 +1219,7 @@ def test_auth_migration_history_coexists_with_a_host_alembic_version_table(
     source tree, since that's what a deployment actually does."""
     import sqlite3
 
-    output = tmp_path / "auth-migration-distributions"
-    subprocess.run(
-        ["uv", "build", "--all-packages", "--out-dir", str(output)],
-        cwd=repository,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    output = all_package_distributions
 
     installed = tmp_path / "installed-auth-sqlalchemy"
     subprocess.run(
