@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, MutableMapping
 
 import pytest
 from rakit import compose_asgi
 
 Scope = dict[str, Any]
-Message = dict[str, Any]
+Message = MutableMapping[str, Any]
 
 
 @dataclass
@@ -307,7 +307,7 @@ async def test_host_startup_failure_prevents_rakit_startup() -> None:
     async def send(message: Message) -> None:
         messages.append(dict(message))
 
-    task = asyncio.create_task(app(_scope("lifespan"), receive, send))
+    task = asyncio.ensure_future(app(_scope("lifespan"), receive, send))
     await receive_queue.put({"type": "lifespan.startup"})
     failed = await _wait_for_message(messages, "lifespan.startup.failed")
     with pytest.raises(RuntimeError):
@@ -333,7 +333,7 @@ async def test_rakit_startup_failure_rolls_host_back_and_never_ready() -> None:
     async def send(message: Message) -> None:
         messages.append(dict(message))
 
-    task = asyncio.create_task(app(_scope("lifespan"), receive, send))
+    task = asyncio.ensure_future(app(_scope("lifespan"), receive, send))
     await receive_queue.put({"type": "lifespan.startup"})
     failed = await _wait_for_message(messages, "lifespan.startup.failed")
     with pytest.raises(RuntimeError):
@@ -359,7 +359,7 @@ async def test_child_exception_after_accepting_startup_is_not_unsupported() -> N
     async def send(message: Message) -> None:
         messages.append(dict(message))
 
-    task = asyncio.create_task(app(_scope("lifespan"), receive, send))
+    task = asyncio.ensure_future(app(_scope("lifespan"), receive, send))
     await receive_queue.put({"type": "lifespan.startup"})
     failed = await _wait_for_message(messages, "lifespan.startup.failed")
     with pytest.raises(RuntimeError, match="accepted startup failure"):

@@ -335,8 +335,7 @@ async def test_run_shutdown_runs_remaining_callbacks_in_reverse_order_after_fail
     assert events == ["second_registered_ran", "first_registered_ran"]
     assert manager.state is RuntimeState.STOPPED
     assert any(
-        "boom: second callback failed" in str(error)
-        for error in shutdown_error.value.exceptions
+        "boom: second callback failed" in str(error) for error in shutdown_error.value.exceptions
     )
 
 
