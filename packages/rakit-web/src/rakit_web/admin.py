@@ -191,6 +191,36 @@ class RequestContextMiddleware:
             reset_request_context(tokens)
 
 
+class _StarletteScopeCompatibilityMiddleware:
+    """Adapt explicit composed child paths for Starlette's nested-route model."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        # D4 composition passes a mount-relative path with a mount-inclusive
+        # root_path. Starlette's nested Mount expects the path to include the
+        # root path when it dispatches deeper mounts such as static assets.
+        # Keep this implementation detail inside the Starlette Rakit runtime;
+        # the public composition contract remains protocol-level.
+        root_path = scope.get("root_path", "")
+        path = scope.get("path", "")
+        if (
+            scope.get("type") in {"http", "websocket"}
+            and isinstance(root_path, str)
+            and root_path
+            and root_path != "/"
+            and isinstance(path, str)
+            and not path.startswith(root_path)
+        ):
+            scope = dict(scope)
+            scope["path"] = root_path.rstrip("/") + path
+            raw_path = scope.get("raw_path")
+            if isinstance(raw_path, bytes):
+                scope["raw_path"] = root_path.encode("utf-8") + raw_path
+        await self.app(scope, receive, send)
+
+
 class Admin:
     def __init__(
         self,
@@ -1938,4 +1968,7 @@ class Admin:
             allowed_hosts=self.config.security.allowed_hosts,
             content_security_policy_enabled=self.config.security.content_security_policy_enabled,
         )
-        return RequestContextMiddleware(secured_app, admin_id=self.config.admin_id)
+        return RequestContextMiddleware(
+            _StarletteScopeCompatibilityMiddleware(secured_app),
+            admin_id=self.config.admin_id,
+        )

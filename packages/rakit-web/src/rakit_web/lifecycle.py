@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from http import HTTPStatus
+from typing import cast
 
 from rakit_core.errors import ErrorCode, RakitError
 
@@ -135,18 +136,38 @@ class LifecycleManager:
         # cleanup runs.
         self.state = RuntimeState.DRAINING
         self.state = RuntimeState.STOPPING
-        # Shutdown failure policy is log-and-continue (unlike startup, which
-        # fails fast): run every registered cleanup callback in reverse
-        # registration order (LIFO, matching AsyncExitStack's reverse
-        # acquisition-order close discipline), and never let one callback's
-        # failure stop the rest from running or leave state stuck at
-        # STOPPING.
+        # Shutdown remains cleanup-first rather than fail-fast: run every
+        # registered callback in reverse registration order (LIFO, matching
+        # AsyncExitStack's reverse acquisition-order close discipline). Keep
+        # failures observable after all callbacks have had an opportunity to
+        # run; silently logging them would make the ASGI shutdown contract
+        # report success for a failed Rakit cleanup.
+        failures: list[BaseException] = []
+        cancellation: BaseException | None = None
         for callback in reversed(self._stopping_callbacks):
             try:
                 await callback()
-            except Exception:
+            except BaseException as error:
+                if isinstance(error, asyncio.CancelledError):
+                    cancellation = cancellation or error
+                    continue
+                failures.append(error)
                 logger.exception("Shutdown cleanup callback %r failed", callback)
         self.state = RuntimeState.STOPPED
+        if cancellation is not None:
+            if failures:
+                raise BaseExceptionGroup(
+                    "Shutdown cleanup was cancelled and also failed",
+                    [cancellation, *failures],
+                )
+            raise cancellation
+        if failures:
+            if all(isinstance(error, Exception) for error in failures):
+                raise ExceptionGroup(
+                    "Shutdown cleanup callbacks failed",
+                    [cast(Exception, error) for error in failures],
+                )
+            raise BaseExceptionGroup("Shutdown cleanup callbacks failed", failures)
 
     async def check_ready(self) -> bool:
         if self.state is not RuntimeState.READY:

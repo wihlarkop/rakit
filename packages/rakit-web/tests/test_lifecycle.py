@@ -281,13 +281,15 @@ async def test_run_shutdown_logs_and_continues_when_stopping_callback_raises(cap
 
     manager.register_stopping_callback(failing_callback)
 
-    await manager.run_shutdown()
+    with pytest.raises(ExceptionGroup) as shutdown_error:
+        await manager.run_shutdown()
 
     captured = capsys.readouterr()
     output = captured.err or captured.out
 
     assert "failed" in output
     assert "boom: cleanup failed" in output
+    assert any("boom: cleanup failed" in str(error) for error in shutdown_error.value.exceptions)
 
 
 @pytest.mark.anyio
@@ -300,9 +302,11 @@ async def test_run_shutdown_reaches_stopped_when_stopping_callback_raises() -> N
 
     manager.register_stopping_callback(failing_callback)
 
-    await manager.run_shutdown()
+    with pytest.raises(ExceptionGroup) as shutdown_error:
+        await manager.run_shutdown()
 
     assert manager.state is RuntimeState.STOPPED
+    assert any("boom: cleanup failed" in str(error) for error in shutdown_error.value.exceptions)
 
 
 @pytest.mark.anyio
@@ -325,10 +329,15 @@ async def test_run_shutdown_runs_remaining_callbacks_in_reverse_order_after_fail
     manager.register_stopping_callback(first_registered)
     manager.register_stopping_callback(second_registered_raises)
 
-    await manager.run_shutdown()
+    with pytest.raises(ExceptionGroup) as shutdown_error:
+        await manager.run_shutdown()
 
     assert events == ["second_registered_ran", "first_registered_ran"]
     assert manager.state is RuntimeState.STOPPED
+    assert any(
+        "boom: second callback failed" in str(error)
+        for error in shutdown_error.value.exceptions
+    )
 
 
 @pytest.mark.anyio

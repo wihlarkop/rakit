@@ -1,7 +1,7 @@
 import httpx
 import pytest
 from conftest import LifespanDriver
-from rakit import Admin, SecretValue
+from rakit import Admin, SecretValue, compose_asgi
 from rakit_core.compiler import ApplicationBuilder
 from rakit_core.di import ServiceScope
 from rakit_web.lifecycle import LifecycleManager
@@ -24,6 +24,40 @@ async def test_admin_root_responds() -> None:
     assert response.status_code == 200
     assert "<h1" in response.text
     assert "Operations" in response.text
+
+
+@pytest.mark.anyio
+async def test_admin_composes_with_host_asgi_lifespan_and_routes() -> None:
+    from starlette.applications import Starlette
+    from starlette.responses import PlainTextResponse
+    from starlette.routing import Route
+
+    async def host_route(_request):
+        return PlainTextResponse("host")
+
+    admin = Admin(
+        admin_id="operations",
+        title="Operations",
+        debug=False,
+        secret_key=SecretValue("x" * 32),
+    )
+    host = Starlette(routes=[Route("/host", host_route)])
+    app = compose_asgi(host, admin, path="/admin")
+
+    async with (
+        LifespanDriver(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://localhost",
+        ) as client,
+    ):
+        host_response = await client.get("/host")
+        admin_response = await client.get("/admin/")
+
+    assert host_response.status_code == 200
+    assert host_response.text == "host"
+    assert admin_response.status_code == 200
+    assert "Operations" in admin_response.text
 
 
 @pytest.mark.anyio
@@ -84,17 +118,20 @@ async def test_application_resolver_detached_even_when_aexit_raises() -> None:
     app = admin.asgi()
     driver = LifespanDriver(app)
 
-    async with driver:
-        assert admin._application_resolver is not None
+    with pytest.raises(ExceptionGroup) as shutdown_error:
+        async with driver:
+            assert admin._application_resolver is not None
 
-        async def failing_cleanup() -> None:
-            raise RuntimeError("boom: resolver cleanup failed")
+            async def failing_cleanup() -> None:
+                raise RuntimeError("boom: resolver cleanup failed")
 
-        admin._application_resolver.stack.push_async_callback(failing_cleanup)
+            admin._application_resolver.stack.push_async_callback(failing_cleanup)
 
-    # Shutdown failure policy is log-and-continue: the LifespanDriver's
-    # __aexit__ must not raise, and the resolver reference must be detached
-    # regardless of the cleanup callback's failure.
+    # Shutdown cleanup remains best-effort across callbacks, but its failure is
+    # observable by the ASGI server instead of being reported as success.
+    assert any(
+        "boom: resolver cleanup failed" in str(error) for error in shutdown_error.value.exceptions
+    )
     assert admin._application_resolver is None
 
 
