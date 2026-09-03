@@ -436,6 +436,6 @@ SDK.
 - [x] Design postpones Flask/WSGI and rejects speculative universal web
   abstractions.
 - [x] Plan uses regression-first ordering and names exact files/interfaces.
-- [ ] Source-first probe, focused tests, package/full gates, multi-Python,
-  dependency, docs/artifact, review, PR, and exact-head CI evidence still need
-  to be generated during execution.
+- [x] Source-first probe, focused tests, package/full gates, multi-Python,
+  dependency, docs/artifact, and independent review evidence were generated
+  during execution; PR and exact-head CI evidence are recorded at handoff.
