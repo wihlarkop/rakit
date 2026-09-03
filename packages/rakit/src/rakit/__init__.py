@@ -100,6 +100,7 @@ from rakit_core.relationships import (
 )
 from rakit_core.transactions import TransactionPolicy
 from rakit_web.action_presentation import ActionIntent, ActionPresentation
+from rakit_web.asgi_composition import compose_asgi
 from rakit_web.dashboard_admin import Admin
 from rakit_web.field_presentation import (
     Autocomplete,
@@ -252,5 +253,6 @@ __all__ = [
     "WidgetLoadingMode",
     "WidgetSize",
     "__version__",
+    "compose_asgi",
     "run",
 ]

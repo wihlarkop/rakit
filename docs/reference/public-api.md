@@ -7,8 +7,8 @@ module in the repository.
 
 These are the primary application-facing surfaces and receive compatibility review:
 
-- `rakit`: `Admin`, `ResourceAdmin`, `ModelAdmin`, dashboard/page/action/endpoint/relationship public
-  declarations and result types;
+- `rakit`: `Admin`, `compose_asgi`, `ResourceAdmin`, `ModelAdmin`, dashboard/page/action/endpoint/
+  relationship public declarations and result types;
 - `rakit.core`: portable data-source/query/auth/DI/event/operation/permission contracts;
 - `rakit.sqlalchemy`: the documented SQLAlchemy plugin/mutation/relationship facade;
 - `rakit.auth.sqlalchemy`: documented SQLAlchemy auth facade;

@@ -11,8 +11,8 @@ authentication and allow-only RBAC, forms, actions, pages, typed endpoints, dash
 private storage, themes, accessibility contracts, lifecycle/health checks, and server adapters.
 
 Start with [Installation](getting-started/installation.md), then build your
-[First Admin](getting-started/first-admin.md). FastAPI users can mount the same Admin through the
-[FastAPI integration](getting-started/fastapi.md).
+[First Admin](getting-started/first-admin.md). FastAPI users can compose the same Admin through the
+[FastAPI host composition guide](getting-started/fastapi.md).
 
 !!! note "Alpha compatibility"
     Rakit is pre-1.0. Public surfaces are documented by stability category in the

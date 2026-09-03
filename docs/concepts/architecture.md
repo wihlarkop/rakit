@@ -31,3 +31,9 @@ storage. Unknown capabilities fail closed.
 The web layer is progressively enhanced: built-in HTML remains usable without JavaScript and local
 HTMX/UI assets add partial updates where supported. Core contracts never depend on HTMX, Jinja,
 Starlette, or SQLAlchemy.
+
+Web portability is defined at the ASGI boundary. Rakit application semantics and domain registration
+remain independent of the host framework; `rakit-web` supplies the current Starlette-based Rakit
+runtime, and `compose_asgi(host, admin, path="/admin")` creates the lifecycle-owning composition root
+for an ASGI host. See [Web Integration](web-integration.md) for routing, `root_path`, scope/state,
+lifespan, and security ownership rules.

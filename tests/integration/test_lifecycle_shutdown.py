@@ -56,7 +56,9 @@ async def test_shutdown_runs_all_cleanup_callbacks_even_when_one_fails() -> None
     manager.register_stopping_callback(broken)
     manager.register_stopping_callback(last)
     await manager.run_startup()
-    await manager.run_shutdown()
+    with pytest.raises(ExceptionGroup) as shutdown_error:
+        await manager.run_shutdown()
 
     assert calls == ["last", "broken", "first"]
+    assert any("cleanup failed" in str(error) for error in shutdown_error.value.exceptions)
     assert manager.state is RuntimeState.STOPPED

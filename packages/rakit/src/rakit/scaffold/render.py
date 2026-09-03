@@ -558,9 +558,10 @@ def _mount_snippet(config: InitConfig) -> tuple[str, ...]:
     if config.host_framework not in {"fastapi", "starlette"}:
         return ()
     return (
-        "Host integration snippet (not applied automatically):",
-        f"from {config.import_package}.app import app as rakit_app",
-        'app.mount("/admin", rakit_app, name="rakit-admin")',
+        "Lifecycle-safe ASGI host composition (not applied automatically):",
+        "from rakit import compose_asgi",
+        f"from {config.import_package}.app import admin as rakit_admin",
+        'app = compose_asgi(app, rakit_admin, path="/admin")',
     )
 
 

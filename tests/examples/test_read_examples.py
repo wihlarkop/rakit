@@ -1,3 +1,4 @@
+import asyncio
 import html
 import importlib
 import os
@@ -161,12 +162,12 @@ def test_readme_primary_example_executes_and_compiles_without_io() -> None:
     assert namespace["app"] is not None
 
 
-def test_fastapi_example_has_mounted_admin_and_compiles() -> None:
+def test_fastapi_example_has_composed_admin_and_compiles() -> None:
     module = importlib.import_module("examples.fastapi_sqlalchemy.main")
 
     assert module.app is not None
+    assert callable(module.app)
     assert module.admin.compile().resources
-    assert any(getattr(route, "path", None) == "/admin" for route in module.app.routes)
 
 
 @pytest.mark.anyio
@@ -912,10 +913,48 @@ def test_fastapi_is_not_an_official_package_runtime_dependency() -> None:
 
 @asynccontextmanager
 async def _started_client(app, *, base_url: str = "http://localhost"):
-    async with app.router.lifespan_context(app):
+    if hasattr(app, "router"):
+        async with app.router.lifespan_context(app):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url=base_url) as client:
+                yield client
+        return
+
+    receive_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    startup_complete = asyncio.Event()
+    shutdown_complete = asyncio.Event()
+    failure: dict[str, str] = {}
+
+    async def receive() -> dict[str, Any]:
+        return await receive_queue.get()
+
+    async def send(message: dict[str, Any]) -> None:
+        message_type = message.get("type")
+        if message_type in {"lifespan.startup.complete", "lifespan.startup.failed"}:
+            if message_type.endswith("failed"):
+                failure["startup"] = str(message.get("message", ""))
+            startup_complete.set()
+        elif message_type in {"lifespan.shutdown.complete", "lifespan.shutdown.failed"}:
+            if message_type.endswith("failed"):
+                failure["shutdown"] = str(message.get("message", ""))
+            shutdown_complete.set()
+
+    task = asyncio.create_task(app({"type": "lifespan", "state": {}}, receive, send))
+    await receive_queue.put({"type": "lifespan.startup"})
+    await startup_complete.wait()
+    if "startup" in failure:
+        await task
+        raise RuntimeError(failure["startup"])
+    try:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url=base_url) as client:
             yield client
+    finally:
+        await receive_queue.put({"type": "lifespan.shutdown"})
+        await shutdown_complete.wait()
+        await task
+    if "shutdown" in failure:
+        raise RuntimeError(failure["shutdown"])
 
 
 async def test_minimal_example_serves_read_routes_and_actual_query_contract() -> None:
@@ -965,7 +1004,7 @@ async def test_minimal_example_serves_read_routes_and_actual_query_contract() ->
     assert "Bench Clamp" in detail.text
 
 
-async def test_fastapi_sqlalchemy_example_mount_serves_full_and_htmx_reads() -> None:
+async def test_fastapi_sqlalchemy_example_composition_serves_full_and_htmx_reads() -> None:
     module = importlib.import_module("examples.fastapi_sqlalchemy.main")
 
     async with _started_client(module.app) as client:
@@ -1023,7 +1062,10 @@ async def test_fastapi_sqlalchemy_example_mount_serves_full_and_htmx_reads() -> 
     assert any(name.startswith("rakit.") and name.endswith(".css") for name in asset_names)
     assert any(name.startswith("htmx.min.") and name.endswith(".js") for name in asset_names)
     assert any(name.startswith("rakit-ui.") and name.endswith(".js") for name in asset_names)
-    assert all(response.status_code == 200 for response in asset_responses)
+    assert all(response.status_code == 200 for response in asset_responses), [
+        (path, response.status_code)
+        for path, response in zip(asset_paths, asset_responses, strict=True)
+    ]
     assert search_action == "/admin/users"
     assert search_response.status_code == 200
     assert sort_href.startswith("/admin/users?")

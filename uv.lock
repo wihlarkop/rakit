@@ -1804,6 +1804,7 @@ name = "rakit-web"
 version = "0.1.0a1"
 source = { editable = "packages/rakit-web" }
 dependencies = [
+    { name = "anyio" },
     { name = "jinja2" },
     { name = "python-multipart" },
     { name = "rakit-core" },
@@ -1820,6 +1821,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", specifier = ">=4.0,<5" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "rakit-core", editable = "packages/rakit-core" },
