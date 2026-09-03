@@ -17,6 +17,26 @@ uv run mkdocs serve
 Before opening a pull request, use the locked environment where applicable and run the focused tests
 for your change plus the full gate that is practical locally.
 
+## Testing
+
+The canonical test command is serial and preserves normal debugging semantics:
+
+```bash
+uv run pytest
+```
+
+For a faster local full-suite pass, pytest-xdist can use work stealing:
+
+```bash
+uv run pytest -n auto --dist worksteal
+```
+
+The parallel command is an optional developer shortcut; CI remains serial. Tests that create files,
+databases, generated projects, or subprocess workspaces must use pytest-managed temporary paths (or
+another worker-isolated resource) rather than fixed shared paths. On the benchmark Windows host,
+the final optional command was about 34.7% faster than the final serial median; this is a local
+measurement, not a fixed timing guarantee for other machines or CI runners.
+
 ## Architecture and dependency direction
 
 Keep portable policy/contracts in `rakit-core`. Web-framework behavior belongs in `rakit-web`;
