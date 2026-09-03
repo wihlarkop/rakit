@@ -113,6 +113,14 @@ and relevant failures remain observable.
 Each child receives its own copied lifespan and request state. Host lifespan
 state is visible to host requests; Rakit lifespan state is visible to Rakit
 requests; the two child states are not merged or leaked across the boundary.
+If the server omits optional ASGI lifespan state, composition preserves that
+absence rather than fabricating a shared empty state mapping.
+
+During a root lifespan startup, HTTP and WebSocket dispatch waits until both
+children have reached the startup outcome. Failed or stopped compositions
+return a composition-level not-ready response/close; a direct call made without
+any root lifespan exchange remains an unmanaged ASGI call and is dispatched
+normally.
 
 ## Security, middleware, and exceptions
 

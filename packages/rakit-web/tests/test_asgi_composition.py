@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import MutableMapping
 from dataclasses import dataclass, field
-from typing import Any, MutableMapping
+from typing import Any
 
 import pytest
 from rakit import compose_asgi
 
 Scope = dict[str, Any]
 Message = MutableMapping[str, Any]
+_NO_STATE = object()
 
 
 @dataclass
@@ -50,7 +52,8 @@ class ProbeApp:
                             }
                         )
                         return
-                    scope["state"].update(self.lifespan_state)
+                    if isinstance(scope.get("state"), dict):
+                        scope["state"].update(self.lifespan_state)
                     await send({"type": "lifespan.startup.complete"})
                 elif message["type"] == "lifespan.shutdown":
                     self.events.append(f"{self.name}.shutdown")
@@ -67,6 +70,35 @@ class ProbeApp:
             await send({"type": "http.response.body", "body": self.body})
         elif scope["type"] == "websocket":
             self.events.append(f"{self.name}.websocket")
+
+
+@dataclass
+class BlockingStartupApp:
+    name: str
+    started: asyncio.Event
+    release: asyncio.Event
+    finished: asyncio.Event
+    events: list[str]
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "lifespan":
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+            return
+
+        message = await receive()
+        assert message["type"] == "lifespan.startup"
+        self.events.append(f"{self.name}.startup")
+        self.started.set()
+        try:
+            await self.release.wait()
+        finally:
+            self.finished.set()
+        await send({"type": "lifespan.startup.complete"})
+        message = await receive()
+        assert message["type"] == "lifespan.shutdown"
+        self.events.append(f"{self.name}.shutdown")
+        await send({"type": "lifespan.shutdown.complete"})
 
 
 @dataclass
@@ -94,7 +126,7 @@ def _scope(
     raw_path: bytes | None = None,
     root_path: str = "",
     query_string: bytes = b"",
-    state: dict[str, Any] | None = None,
+    state: dict[str, Any] | None | object = None,
 ) -> Scope:
     result: Scope = {
         "type": scope_type,
@@ -103,9 +135,10 @@ def _scope(
         "raw_path": path.encode() if raw_path is None else raw_path,
         "root_path": root_path,
         "query_string": query_string,
-        "state": {} if state is None else state,
         "headers": [],
     }
+    if state is not _NO_STATE:
+        result["state"] = {} if state is None else state
     if scope_type == "http":
         result.update(
             {
@@ -146,7 +179,9 @@ async def _wait_for_message(messages: list[Message], message_type: str) -> Messa
     raise AssertionError(f"did not receive {message_type}: {messages}")
 
 
-async def _start_lifespan(app: Any, *, state: dict[str, Any] | None = None) -> LifespanSession:
+async def _start_lifespan(
+    app: Any, *, state: dict[str, Any] | None | object = _NO_STATE
+) -> LifespanSession:
     receive_queue: asyncio.Queue[Message] = asyncio.Queue()
     messages: list[Message] = []
 
@@ -290,6 +325,63 @@ async def test_composed_lifespan_orders_children_once_and_propagates_state() -> 
     assert events == ["host.startup", "rakit.startup", "rakit.shutdown", "host.shutdown"]
     assert host.invocations == 2
     assert rakit.invocations == 2
+
+
+@pytest.mark.anyio
+async def test_missing_lifespan_state_is_not_fabricated_or_shared() -> None:
+    host = ProbeApp("host")
+    rakit = ProbeApp("rakit")
+    app = compose_asgi(host, _fake_admin(rakit), path="/admin")
+
+    session = await _start_lifespan(app)
+    assert "state" not in host.scopes[0]
+    assert "state" not in rakit.scopes[0]
+
+    await _call(app, _scope("http", "/api", state=_NO_STATE))
+    await _call(app, _scope("http", "/admin", state=_NO_STATE))
+    assert "state" not in host.scopes[-1]
+    assert "state" not in rakit.scopes[-1]
+
+    await session.shutdown()
+
+
+@pytest.mark.anyio
+async def test_startup_cancellation_rolls_host_back_and_leaves_no_child_task() -> None:
+    events: list[str] = []
+    host = ProbeApp("host", events=events)
+    rakit = BlockingStartupApp(
+        "rakit",
+        started=asyncio.Event(),
+        release=asyncio.Event(),
+        finished=asyncio.Event(),
+        events=events,
+    )
+    app = compose_asgi(host, _fake_admin(rakit), path="/admin")
+    receive_queue: asyncio.Queue[Message] = asyncio.Queue()
+    messages: list[Message] = []
+
+    async def receive() -> Message:
+        return await receive_queue.get()
+
+    async def send(message: Message) -> None:
+        messages.append(dict(message))
+
+    task = asyncio.ensure_future(app(_scope("lifespan"), receive, send))
+    await receive_queue.put({"type": "lifespan.startup"})
+    await rakit.started.wait()
+    assert messages == []
+    request_task = asyncio.ensure_future(_call(app, _scope("http", "/host")))
+    await asyncio.sleep(0)
+    assert [scope["type"] for scope in host.scopes] == ["lifespan"]
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    request_messages = await request_task
+    assert request_messages[0]["status"] == 503
+    assert rakit.finished.is_set()
+    assert events == ["host.startup", "rakit.startup", "host.shutdown"]
 
 
 @pytest.mark.anyio

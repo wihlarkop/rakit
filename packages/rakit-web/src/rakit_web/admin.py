@@ -8,6 +8,7 @@ from math import isfinite
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
+from urllib.parse import quote
 
 import structlog
 from rakit_core.actions import ActionDefinition, ActionScope
@@ -217,7 +218,7 @@ class _StarletteScopeCompatibilityMiddleware:
             scope["path"] = root_path.rstrip("/") + path
             raw_path = scope.get("raw_path")
             if isinstance(raw_path, bytes):
-                scope["raw_path"] = root_path.encode("utf-8") + raw_path
+                scope["raw_path"] = quote(root_path, safe="/").encode("ascii") + raw_path
         await self.app(scope, receive, send)
 
 

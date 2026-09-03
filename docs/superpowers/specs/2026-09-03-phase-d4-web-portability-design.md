@@ -314,9 +314,22 @@ Rakit receive the Rakit lifespan state. A shallow copy is used at each ASGI
 boundary, matching the ASGI lifespan convention and preventing a child from
 mutating an unrelated child's state.
 
+Lifespan state is optional in ASGI. If the incoming root lifespan scope omits
+`state`, the composition preserves that absence for both children and their
+requests rather than fabricating an empty shared mapping. If state is present,
+each child receives its own copied mapping and only the selected child's
+lifespan state is overlaid onto its request copy.
+
 The composition does not merge two independent child states into one global
 dictionary. Applications remain responsible for choosing namespaced keys, and
 the host and Rakit children do not see each other's private state.
+
+While root startup is in progress, HTTP and WebSocket calls wait for the
+composition's readiness outcome. After a failed or stopped root, the
+composition returns a 503 HTTP response or closes a WebSocket rather than
+serving a partially ready child. A direct invocation without any root lifespan
+exchange is an unmanaged ASGI call and remains dispatchable, because lifespan
+support is optional at the protocol boundary.
 
 ## 16. HTTP and WebSocket dispatch
 

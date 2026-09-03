@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -14,8 +14,8 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 _ChildStatus = Literal["not-started", "unsupported", "started", "stopped"]
 _ChildEvent = tuple[str, Any]
-_ChildReceive = Callable[[], Awaitable[Message]]
-_ChildSend = Callable[[Message], Awaitable[None]]
+_LifecycleStatus = Literal["unmanaged", "starting", "ready", "stopping", "failed", "stopped"]
+_NOT_READY_BODY = b"Application is not ready"
 
 
 def _validate_prefix(path: str) -> str:
@@ -141,9 +141,10 @@ def _transform_rakit_scope(scope: Scope, prefix: str) -> Scope:
 
 def _request_scope(scope: Scope, lifespan_state: Mapping[str, Any]) -> Scope:
     copied = _copy_scope(scope)
-    state = _scope_state(copied)
-    state.update(lifespan_state)
-    copied["state"] = state
+    if copied.get("state") is not None:
+        state = _scope_state(copied)
+        state.update(lifespan_state)
+        copied["state"] = state
     return copied
 
 
@@ -224,8 +225,7 @@ class _ChildLifespan:
         self._events_send = events_send
         self._events = events_receive
         self._finished = anyio.Event()
-        self._scope = dict(self.parent_scope)
-        self._scope["state"] = _scope_state(self.parent_scope)
+        self._scope = _copy_scope(self.parent_scope)
         task_group.start_soon(self._run, input_receive, events_send)
 
     async def _close(self, *, cancel: bool) -> None:
@@ -341,6 +341,8 @@ class _ASGIComposition:
         self._prefix = prefix
         self._host_state: dict[str, Any] = {}
         self._rakit_state: dict[str, Any] = {}
+        self._lifecycle_status: _LifecycleStatus = "unmanaged"
+        self._readiness_event: anyio.Event | None = None
 
     def _matches_rakit(self, path: str) -> bool:
         return self._prefix == "/" or path == self._prefix or path.startswith(self._prefix + "/")
@@ -407,16 +409,17 @@ class _ASGIComposition:
                 rakit_started = rakit_lifespan.status == "started"
             except BaseException as error:
                 if _is_cancelled(error):
-                    rollback_failures = await self._stop_children(
-                        *(
-                            child
-                            for child, started in (
-                                (rakit_lifespan, rakit_started),
-                                (host_lifespan, host_started),
-                            )
-                            if started
-                        ),
-                    )
+                    with anyio.CancelScope(shield=True):
+                        rollback_failures = await self._stop_children(
+                            *(
+                                child
+                                for child, started in (
+                                    (rakit_lifespan, rakit_started),
+                                    (host_lifespan, host_started),
+                                )
+                                if started
+                            ),
+                        )
                     if rollback_failures:
                         raise BaseExceptionGroup(
                             "ASGI startup cancellation cleanup failed",
@@ -434,10 +437,16 @@ class _ASGIComposition:
             self._rakit_state = dict(rakit_lifespan.state)
             try:
                 await send({"type": "lifespan.startup.complete"})
+                self._lifecycle_status = "ready"
+                if self._readiness_event is not None:
+                    self._readiness_event.set()
                 message = await receive()
                 if message.get("type") != "lifespan.shutdown":
                     raise RuntimeError(f"unexpected root lifespan message {message.get('type')!r}")
+                self._lifecycle_status = "stopping"
             except BaseException as error:
+                if self._lifecycle_status == "ready":
+                    self._lifecycle_status = "stopping"
                 with anyio.CancelScope(shield=True):
                     cleanup_failures = await self._stop_children(rakit_lifespan, host_lifespan)
                 if _is_cancelled(error):
@@ -460,14 +469,50 @@ class _ASGIComposition:
             self._rakit_state = {}
 
     async def _lifespan(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if self._lifecycle_status in {"starting", "ready", "stopping"}:
+            raise RuntimeError("ASGI composition supports one root lifespan at a time")
+        self._lifecycle_status = "starting"
+        readiness_event = anyio.Event()
+        self._readiness_event = readiness_event
         error: BaseException | None = None
-        async with anyio.create_task_group() as task_group:
-            try:
-                await self._lifespan_with_group(scope, receive, send, task_group)
-            except BaseException as caught:
-                error = caught
+        try:
+            async with anyio.create_task_group() as task_group:
+                try:
+                    await self._lifespan_with_group(scope, receive, send, task_group)
+                except BaseException as caught:
+                    error = caught
+        finally:
+            if self._lifecycle_status == "starting":
+                self._lifecycle_status = "failed"
+            elif self._lifecycle_status == "stopping":
+                self._lifecycle_status = "stopped"
+            readiness_event.set()
+            self._readiness_event = None
         if error is not None:
             raise error
+
+    async def _request_is_ready(self) -> bool:
+        if self._lifecycle_status == "starting" and self._readiness_event is not None:
+            await self._readiness_event.wait()
+        return self._lifecycle_status in {"unmanaged", "ready"}
+
+    async def _send_not_ready(self, scope_type: str, send: Send) -> None:
+        if scope_type == "http":
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 503,
+                    "headers": [(b"content-type", b"text/plain; charset=utf-8")],
+                }
+            )
+            await send(
+                {
+                    "type": "http.response.body",
+                    "body": _NOT_READY_BODY,
+                }
+            )
+            return
+        await send({"type": "websocket.close", "code": 1013})
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         scope_type = scope.get("type")
@@ -476,13 +521,17 @@ class _ASGIComposition:
             return
 
         if scope_type in {"http", "websocket"}:
+            if not await self._request_is_ready():
+                await self._send_not_ready(scope_type, send)
+                return
             path = scope.get("path")
             if not isinstance(path, str):
                 raise ValueError("ASGI HTTP/WebSocket scope must contain a path")
             if self._matches_rakit(path):
                 child_scope = _transform_rakit_scope(scope, self._prefix)
-                child_scope["state"] = _scope_state(scope)
-                child_scope["state"].update(self._rakit_state)
+                if scope.get("state") is not None:
+                    child_scope["state"] = _scope_state(scope)
+                    child_scope["state"].update(self._rakit_state)
                 await self._rakit(child_scope, receive, send)
             else:
                 await self._host(_request_scope(scope, self._host_state), receive, send)
