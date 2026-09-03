@@ -1,4 +1,4 @@
-# Web Integration
+  # Web Integration
 
 Rakit separates application semantics from the web runtime and the host server:
 
@@ -85,9 +85,13 @@ The composition root uses exact segment-boundary matching. With
 
 The Rakit child receives a copied scope. Its `root_path` joins the incoming
 root path and `/admin`, so a proxy root `/proxy` produces `/proxy/admin` for
-Rakit while the host retains `/proxy`. Query-string bytes are unchanged. When
-`raw_path` is present, the composition preserves its encoding while removing
-the mounted prefix and rejects inconsistent path metadata explicitly.
+Rakit while the host retains `/proxy`. ASGI servers may present the effective
+route in `path` either with or without the incoming `root_path`; the composition
+normalizes that representation before applying the exact `/admin` match. A
+root `/proxy` is stripped from `/proxy/admin` but not from `/proxy2/admin` or
+`/proxy-admin/admin`. Query-string bytes are unchanged. When `raw_path` is
+present, the same normalization is applied while preserving percent-encoded
+suffix bytes; inconsistent path metadata is rejected explicitly.
 
 HTTP and WebSocket scopes use the same boundary rule. A host WebSocket outside
 the prefix is not interpreted or rewritten by Rakit.

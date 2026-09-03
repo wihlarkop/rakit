@@ -223,6 +223,30 @@ by the composition root.
 
 ## 10. `root_path` contract
 
+ASGI server and proxy layouts may represent the effective routing path in two
+equivalent ways: `scope["path"]` may already include `scope["root_path"]`, or it
+may exclude it. The composition boundary first computes a normalized route path
+for dispatch. It strips the incoming root only on an exact segment boundary:
+
+```text
+incoming root_path = /proxy
+incoming path      = /admin/products
+normalized route   = /admin/products
+
+incoming root_path = /proxy
+incoming path      = /proxy/admin/products
+normalized route   = /admin/products
+
+incoming root_path = /proxy
+incoming path      = /proxy2/admin/products
+normalized route   = /proxy2/admin/products
+```
+
+This normalization is protocol-level and does not identify or import a server
+implementation. It prevents a root such as `/proxy` from being stripped from
+`/proxy2` or `/proxy-admin`. The host continues to receive its original path
+and root-path representation unchanged.
+
 The Rakit child's `root_path` is the incoming `root_path` joined with the
 configured prefix. Existing nested deployment information is preserved:
 
@@ -340,11 +364,14 @@ handshake, disconnect, and close messages are not interpreted by the
 composition; they remain owned by the selected child.
 
 `raw_path` is optional ASGI data and must remain consistent with the transformed
-`path` when present. The implementation preserves raw percent-encoding while
-removing the raw representation of the Rakit prefix. If a present `raw_path`
-cannot be safely reconciled with the decoded `path`, composition fails
-explicitly instead of fabricating an inconsistent child scope. Query bytes are
-not part of `raw_path` and remain exclusively in `query_string`.
+`path` when present. The implementation applies the same normalized route-path
+decision to its raw representation, so it handles both incoming forms without
+assuming that `root_path` is absent from `raw_path`. It preserves raw
+percent-encoding in the suffix while removing the raw representations of the
+incoming root and Rakit prefix. If a present `raw_path` cannot be safely
+reconciled with the decoded `path`, composition fails explicitly instead of
+fabricating an inconsistent child scope. Query bytes are not part of
+`raw_path` and remain exclusively in `query_string`.
 
 The current Rakit web runtime has a private Starlette compatibility translation
 inside its own boundary: after composition has delivered the required

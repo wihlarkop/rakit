@@ -61,6 +61,23 @@ def _join_root_path(root_path: str, prefix: str) -> str:
     return root_path.rstrip("/") + prefix
 
 
+def _normalized_route_path(path: str, root_path: str) -> str:
+    """Normalize server-specific inclusion of ``root_path`` in ``path``."""
+
+    if not isinstance(path, str) or not path.startswith("/"):
+        raise ValueError("ASGI HTTP/WebSocket scope must contain an absolute path")
+    if not isinstance(root_path, str):
+        raise TypeError("ASGI scope root_path must be a string")
+    root = root_path.rstrip("/")
+    if not root or root == "/":
+        return path
+    if path == root:
+        return "/"
+    if path.startswith(root + "/"):
+        return path[len(root) :]
+    return path
+
+
 def _decoded_raw_path(raw_path: bytes) -> str:
     try:
         return unquote_to_bytes(raw_path).decode("utf-8")
@@ -101,23 +118,24 @@ def _raw_prefix_end(raw_path: bytes, prefix: str) -> int:
     return raw_index
 
 
-def _transform_rakit_scope(scope: Scope, prefix: str) -> Scope:
+def _transform_rakit_scope(scope: Scope, prefix: str, route_path: str) -> Scope:
     path = scope.get("path")
     if not isinstance(path, str) or not path.startswith("/"):
         raise ValueError("ASGI HTTP/WebSocket scope must contain an absolute path")
 
     copied = _copy_scope(scope)
     if prefix == "/":
-        child_path = path
-    elif path == prefix or path == prefix + "/":
+        child_path = route_path
+    elif route_path == prefix or route_path == prefix + "/":
         child_path = "/"
     else:
-        child_path = path[len(prefix) :]
+        child_path = route_path[len(prefix) :]
         if not child_path.startswith("/"):
             raise ValueError("ASGI mounted path transformation crossed a segment boundary")
 
     copied["path"] = child_path
-    copied["root_path"] = _join_root_path(scope.get("root_path", ""), prefix)
+    root_path = scope.get("root_path", "")
+    copied["root_path"] = _join_root_path(root_path, prefix)
 
     if "raw_path" in scope and scope["raw_path"] is not None:
         raw_path = scope["raw_path"]
@@ -125,11 +143,24 @@ def _transform_rakit_scope(scope: Scope, prefix: str) -> Scope:
             raise TypeError("ASGI raw_path must be bytes when present")
         if _decoded_raw_path(raw_path) != path:
             raise ValueError("ASGI raw_path is inconsistent with scope path")
+
+        normalized_raw_path = raw_path
+        normalized_root = root_path.rstrip("/")
+        if (
+            normalized_root
+            and normalized_root != "/"
+            and (path == normalized_root or path.startswith(normalized_root + "/"))
+        ):
+            raw_root_end = _raw_prefix_end(raw_path, normalized_root)
+            normalized_raw_path = raw_path[raw_root_end:] or b"/"
+            if _decoded_raw_path(normalized_raw_path) != route_path:
+                raise ValueError("ASGI raw_path is inconsistent with normalized scope path")
+
         if prefix == "/":
-            child_raw_path = raw_path
+            child_raw_path = normalized_raw_path
         else:
-            raw_end = _raw_prefix_end(raw_path, prefix)
-            child_raw_path = raw_path[raw_end:]
+            raw_end = _raw_prefix_end(normalized_raw_path, prefix)
+            child_raw_path = normalized_raw_path[raw_end:]
             if not child_raw_path:
                 child_raw_path = b"/"
             if _decoded_raw_path(child_raw_path) != child_path:
@@ -447,13 +478,26 @@ class _ASGIComposition:
             except BaseException as error:
                 if self._lifecycle_status == "ready":
                     self._lifecycle_status = "stopping"
+                cleanup_failures: list[BaseException] = []
+                cleanup_error: BaseException | None = None
                 with anyio.CancelScope(shield=True):
-                    cleanup_failures = await self._stop_children(rakit_lifespan, host_lifespan)
+                    try:
+                        cleanup_failures = await self._stop_children(rakit_lifespan, host_lifespan)
+                    except BaseException as caught_cleanup_error:
+                        cleanup_error = caught_cleanup_error
+                cleanup_errors = [*cleanup_failures]
+                if cleanup_error is not None:
+                    cleanup_errors.append(cleanup_error)
                 if _is_cancelled(error):
+                    if cleanup_errors:
+                        raise BaseExceptionGroup(
+                            "ASGI root cancellation cleanup failed",
+                            [error, *cleanup_errors],
+                        ) from None
                     raise
-                if cleanup_failures:
+                if cleanup_errors:
                     raise _combine_failures(
-                        "ASGI shutdown cleanup failed", [error, *cleanup_failures]
+                        "ASGI shutdown cleanup failed", [error, *cleanup_errors]
                     ) from None
                 raise
 
@@ -527,8 +571,9 @@ class _ASGIComposition:
             path = scope.get("path")
             if not isinstance(path, str):
                 raise ValueError("ASGI HTTP/WebSocket scope must contain a path")
-            if self._matches_rakit(path):
-                child_scope = _transform_rakit_scope(scope, self._prefix)
+            route_path = _normalized_route_path(path, scope.get("root_path", ""))
+            if self._matches_rakit(route_path):
+                child_scope = _transform_rakit_scope(scope, self._prefix, route_path)
                 if scope.get("state") is not None:
                     child_scope["state"] = _scope_state(scope)
                     child_scope["state"].update(self._rakit_state)

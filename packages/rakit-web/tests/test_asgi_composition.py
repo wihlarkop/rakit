@@ -269,6 +269,117 @@ async def test_nested_root_path_query_and_raw_path_are_transformed_consistently(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("path", "raw_path"),
+    [
+        ("/admin/products", b"/admin/products"),
+        ("/proxy/admin/products", b"/proxy/admin/products"),
+    ],
+    ids=["granian-style", "uvicorn-style"],
+)
+async def test_root_path_shapes_have_equivalent_rakit_mount_semantics(
+    path: str, raw_path: bytes
+) -> None:
+    """Both common server representations reach the same Rakit child scope."""
+
+    host = ProbeApp("host")
+    rakit = ProbeApp("rakit")
+    app = compose_asgi(host, _fake_admin(rakit), path="/admin")
+
+    await _call(app, _scope("http", path, raw_path=raw_path, root_path="/proxy"))
+
+    assert not host.scopes
+    child = rakit.scopes[-1]
+    assert child["root_path"] == "/proxy/admin"
+    assert child["path"] == "/products"
+    assert child["raw_path"] == b"/products"
+
+
+@pytest.mark.anyio
+async def test_root_path_included_raw_path_preserves_encoded_suffix() -> None:
+    host = ProbeApp("host")
+    rakit = ProbeApp("rakit")
+    app = compose_asgi(host, _fake_admin(rakit), path="/admin")
+
+    await _call(
+        app,
+        _scope(
+            "http",
+            "/proxy/admin/search/\u00e9",
+            raw_path=b"/proxy/admin/search/%C3%A9",
+            root_path="/proxy",
+        ),
+    )
+
+    assert rakit.scopes[-1]["path"] == "/search/\u00e9"
+    assert rakit.scopes[-1]["raw_path"] == b"/search/%C3%A9"
+
+
+@pytest.mark.anyio
+async def test_root_path_included_websocket_scope_reaches_rakit() -> None:
+    host = ProbeApp("host")
+    rakit = ProbeApp("rakit")
+    app = compose_asgi(host, _fake_admin(rakit), path="/admin")
+
+    await _call(
+        app,
+        _scope(
+            "websocket",
+            "/proxy/admin/socket",
+            raw_path=b"/proxy/admin/socket",
+            root_path="/proxy",
+        ),
+    )
+
+    assert not host.scopes
+    assert rakit.scopes[-1]["root_path"] == "/proxy/admin"
+    assert rakit.scopes[-1]["path"] == "/socket"
+    assert rakit.scopes[-1]["raw_path"] == b"/socket"
+
+
+@pytest.mark.anyio
+async def test_root_path_segment_boundaries_do_not_strip_or_match_accidentally() -> None:
+    host = ProbeApp("host")
+    rakit = ProbeApp("rakit")
+    app = compose_asgi(host, _fake_admin(rakit), path="/admin")
+
+    await _call(
+        app,
+        _scope(
+            "http",
+            "/proxy/administrator",
+            raw_path=b"/proxy/administrator",
+            root_path="/proxy",
+        ),
+    )
+    await _call(
+        app,
+        _scope(
+            "http",
+            "/proxy2/admin",
+            raw_path=b"/proxy2/admin",
+            root_path="/proxy",
+        ),
+    )
+    await _call(
+        app,
+        _scope(
+            "http",
+            "/proxy-admin/admin",
+            raw_path=b"/proxy-admin/admin",
+            root_path="/proxy",
+        ),
+    )
+
+    assert not rakit.scopes
+    assert [scope["path"] for scope in host.scopes] == [
+        "/proxy/administrator",
+        "/proxy2/admin",
+        "/proxy-admin/admin",
+    ]
+
+
+@pytest.mark.anyio
 async def test_host_websocket_and_unknown_scope_remain_host_owned() -> None:
     host = ProbeApp("host")
     rakit = ProbeApp("rakit")
@@ -382,6 +493,24 @@ async def test_startup_cancellation_rolls_host_back_and_leaves_no_child_task() -
     assert request_messages[0]["status"] == 503
     assert rakit.finished.is_set()
     assert events == ["host.startup", "rakit.startup", "host.shutdown"]
+
+
+@pytest.mark.anyio
+async def test_root_cancellation_preserves_cleanup_failure_and_cancellation() -> None:
+    events: list[str] = []
+    host = ProbeApp("host", events=events)
+    rakit = ProbeApp("rakit", shutdown_error=RuntimeError("rakit cleanup"), events=events)
+    app = compose_asgi(host, _fake_admin(rakit), path="/admin")
+    session = await _start_lifespan(app)
+
+    session.task.cancel()
+    with pytest.raises(BaseExceptionGroup) as root_error:
+        await session.task
+
+    assert events == ["host.startup", "rakit.startup", "rakit.shutdown", "host.shutdown"]
+    flattened = list(root_error.value.exceptions)
+    assert any(isinstance(error, asyncio.CancelledError) for error in flattened)
+    assert any("rakit cleanup" in str(error) for error in flattened)
 
 
 @pytest.mark.anyio
