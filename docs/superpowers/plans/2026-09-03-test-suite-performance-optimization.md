@@ -128,18 +128,21 @@
 - Ruff format check, Ruff lint, `ty`, strict MkDocs, 9 release tests, full artifact gate for 15 distributions, and Bun CSS reproducibility all passed.
 - No CI workflow command was changed, so no GitHub Actions timing comparison is applicable before exact-head PR CI.
 
-### Task 11: Final review, commit, push, draft PR, and exact-head CI — Pending
+### Task 11: Final review, commit, push, draft PR, and exact-head CI — Complete
 
 - Review the final diff against the starting SHA for scope, worker isolation, test/skip/coverage preservation, documentation accuracy, and no D4.1/product changes.
 - Stage only intended files, inspect the staged diff, commit, push normally, create a draft PR against `main`, wait for exact-head CI, and inspect every job.
 - Do not merge, tag, release, publish, or force-push.
 
+- Final review found only the intended fixture, test, documentation, and work-log changes; no tests were removed or skipped and no product or CI behavior changed.
+- The implementation commit was pushed normally, draft PR #63 was created, and exact-head CI completed successfully with every job successful.
+
 ## Final acceptance record
 
-- [ ] Implementation complete
-- [ ] Repeated stability verification complete
-- [ ] Before/after serial and optional fast-mode benchmark complete
-- [ ] Coverage and canonical quality gates complete
-- [ ] Exact-head CI complete
-- [ ] Final review complete
-- [ ] All completed tasks above marked `Complete`; rejected/deferred decisions retain reasons
+- [x] Implementation complete
+- [x] Repeated stability verification complete
+- [x] Before/after serial and optional fast-mode benchmark complete
+- [x] Coverage and canonical quality gates complete
+- [x] Exact-head CI complete
+- [x] Final review complete
+- [x] All completed tasks above marked `Complete`; rejected/deferred decisions retain reasons
