@@ -152,8 +152,9 @@ change, or copied Litestar-only test issue.
   Every job passed: `test (3.12)`, `test (3.13)`, `test (3.14)`,
   `Dependencies (lowest-direct)`, `Dependencies (latest)`, `Web asset
   reproducibility`, `Plan 07 release gate`, and `Artifact dry run`.
-- Final documentation-closure CI will be recorded here after the roadmap and
-  checklist closure commit; it is the deliberate final exact-head evidence.
+- Final documentation-closure CI is recorded on [draft PR #65](https://github.com/wihlarkop/rakit/pull/65)
+  and in the final handoff report. No further repository edit is made solely
+  to copy external CI results into this log, avoiding a documentation-SHA loop.
 
 ## Evidence format
 
