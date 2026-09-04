@@ -3,21 +3,26 @@
 Rakit separates application semantics from the web runtime and the host server:
 
 ```text
-Rakit application semantics
-  Admin, resources, forms, actions, pages, endpoints, APIs, permissions,
-  persistence, transactions, storage, and lifecycle declarations
-          |
-          v
-Rakit web runtime
-  current reference implementation: Starlette-based Admin.asgi()
-          |
-          v
-Host ASGI application
-  FastAPI, Litestar, Starlette, Sanic, or another ASGI-native host
-          |
-          v
 ASGI server
   Uvicorn, Granian, or another server
+          |
+          v
+ASGI composition root
+  compose_asgi(host, admin, path="/admin")
+       /                         \
+      /                           \
+Host ASGI application        Rakit web runtime
+  FastAPI, Litestar,          current reference
+  Starlette, Sanic, or        implementation:
+  another ASGI-native host    Starlette-based
+                              Admin.asgi()
+                                  ^
+                                  |
+                      Rakit application semantics
+                        Admin, resources, forms, actions,
+                        pages, endpoints, APIs, permissions,
+                        persistence, transactions, storage,
+                        and lifecycle declarations
 ```
 
 The host framework can change without rewriting Rakit registration or domain
@@ -65,13 +70,19 @@ from rakit import Admin, compose_asgi
 
 host = Litestar(...)
 admin = Admin(title="Backoffice")
+# admin.register(...)
 app = compose_asgi(host, admin, path="/admin")
 ```
 
-`compose_asgi` is a new lifecycle-owning application. It is intentionally not
-called `mount`: direct `host.mount("/admin", admin.asgi())` routing does not by
-itself prove that the host drives the child lifespan correctly and is not the
-canonical lifecycle-safe D4 integration path.
+`compose_asgi` is the outer, lifecycle-owning application. It receives the
+original ASGI scope before either child, decides host versus Rakit ownership,
+and passes the original host-owned scope to the host. Only the Rakit branch
+gets the copied and mount-relative scope. The host may perform its own routing
+or root-path normalization after that boundary.
+
+It is intentionally not called `mount`: direct host mounting of
+`admin.asgi()` does not by itself prove that the host drives the child lifespan
+correctly and is not the canonical lifecycle-safe D4 integration path.
 
 ## Routing and path metadata
 
@@ -140,6 +151,11 @@ can affect both children. Host exceptions remain host-owned and Rakit
 exceptions remain Rakit-owned; the composition root is not a universal
 exception translator.
 
+For the D4.1 proof, the real host is Litestar **2.24.0**. Litestar owns its
+routes, middleware, framework context, dependency injection, guards, and
+authentication. Rakit owns its routes, sessions, CSRF, permissions, and
+authentication. These concepts are not implicitly bridged by composition.
+
 ## Framework compatibility
 
 The current Rakit provider remains `web.starlette`: it identifies the Rakit web
@@ -148,6 +164,10 @@ provider merely because it can invoke an ASGI callable. D4 compatibility is
 proved through protocol behavior, the internal host-conformance harness, tests,
 and documented compatibility evidence. Framework-specific runtime bridges are
 deferred until they provide concrete value beyond ASGI composition.
+
+Litestar 2.24.0 is the bounded D4.1 tested version. This proof does not make a
+general Litestar 2.x or 3.x compatibility claim; compatibility-range policy is
+deferred to D4.5.
 
 Flask and generic WSGI integration are postponed research and are outside the
 D4 closure gate. D4 may close without Flask; no WSGI bridge or Flask support is
