@@ -58,7 +58,8 @@ only after that boundary.
 17. Final code review complete — **Complete**: the independent review found no
     Critical issues; its Important findings were resolved and retested before
     handoff.
-18. Commit/push/draft PR complete — Planned.
+18. Commit/push/draft PR complete — **Complete**: commits were pushed to
+    `phase-d4-1-litestar-proof` and draft PR #64 was opened against `main`.
 19. Exact-head CI complete — Planned.
 
 ## Decisions and boundaries
