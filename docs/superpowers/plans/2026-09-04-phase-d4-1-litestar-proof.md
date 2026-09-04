@@ -62,8 +62,9 @@ only after that boundary.
     handoff.
 18. Commit/push/draft PR complete — **Complete**: commits were pushed to
     `phase-d4-1-litestar-proof` and draft PR #64 was opened against `main`.
-19. Exact-head CI complete — **Complete**: CI run `33840869572` passed every
-    job for implementation head `96a368c7a65fae92c36b80db787e6897f7422b2e`.
+19. Exact-head CI complete — **Complete**: final-head CI run `33841277656`
+    passed every required job for final head
+    `9ed89f2d412a1cee9a97c930e9ef0353de70e0b0`.
 
 ## Decisions and boundaries
 
