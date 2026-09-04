@@ -29,8 +29,15 @@ app = compose_asgi(host, admin, path="/admin")
 ```
 
 `compose_asgi` owns the combined lifespan: the host starts before Rakit, and Rakit shuts down before
-the host. Direct `host.mount("/admin", admin.asgi())` is not the canonical lifecycle-safe D4 path
-unless a host integration separately proves its child-lifespan behavior.
+the host. Direct `host.mount("/admin", admin.asgi())` is not lifecycle-safe for
+the D4 contract because FastAPI does not execute mounted child lifespan events;
+use the explicit composition root instead.
+
+D4.2's real FastAPI proof exercises this composition boundary with the locked
+FastAPI `0.139.2` / Starlette `1.3.1` resolution, lowest-direct FastAPI
+`0.133.0` / Starlette `1.3.1`, and latest FastAPI `0.141.1` / Starlette `1.6.0`.
+These are bounded tested resolutions, not a claim that every version allowed
+by `fastapi>=0.116` is supported; D4.5 owns the compatibility-range policy.
 
 See `examples/fastapi_sqlalchemy` for the executable version, including SQLAlchemy engine creation,
 seed data, FastAPI lifespan ownership, and disposal.

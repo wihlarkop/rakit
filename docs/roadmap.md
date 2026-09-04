@@ -490,7 +490,12 @@ First independent ASGI-native proof against the D4.0 contract. Add framework-spe
 
 #### D4.2 — FastAPI
 
-Second independent ASGI-native proof against the D4.0 contract. FastAPI-specific code is justified only where it adds real value beyond generic ASGI composition.
+**Status: In progress — implementation and local verification complete; exact-head CI pending**
+
+Second independent ASGI-native proof against the D4.0 contract. The bounded
+real-host proof exercises the existing generic composition root across locked,
+lowest-direct, and latest FastAPI resolutions. FastAPI-specific production code
+is justified only where it adds real value beyond generic ASGI composition.
 
 #### D4.3 — Starlette
 
@@ -945,9 +950,10 @@ The following are intentionally outside Rakit's current product direction:
 
 ## Near-term execution order
 
-With Phases A–C and D1–D4.1 complete for their implemented and verified scope, the preferred sequence is now:
+With Phases A–C and D1–D4.1 complete, and D4.2 implementation and local
+verification complete pending exact-head CI, the preferred sequence is now:
 
-1. **D4.2** — FastAPI proof against the shared D4.0 contract.
+1. **D4.2** — finish exact-head acceptance for the FastAPI proof against the shared D4.0 contract.
 2. **D3.5 Masonite** remains a parallel **Research** item and can be revisited after a dedicated feasibility study without reopening the completed shipped-adapter D3 scope.
 3. **E** — mature generated REST into a documented API product with OpenAPI and machine authentication.
 4. Continue through F–P according to user value, architectural pressure, and implementation evidence.
