@@ -19,7 +19,9 @@ only after that boundary.
 ## Evidence checklist
 
 1. Canonical baseline verified — **Complete**: `origin/main` and the branch
-   both resolve to `28ae579`; canonical CI run `33795752898` is green.
+   parent resolve to `28ae57934443bb0234274ba41fe17c7dc2b04344`; canonical CI
+   run `33795752898` is green. The implementation branch currently starts at
+   `5d671217ca938b05622d88245286256dcfaa5751`.
 2. Litestar stable research verified — **Complete**: PyPI and stable `/2`
    documentation/source were checked; the bounded proof targets 2.24.0.
 3. D4.1 design approved — **Complete**: maintainer approval received on
@@ -36,8 +38,8 @@ only after that boundary.
 8. Root-path proof complete — **Complete**: separate and mount-inclusive
    `/proxy` representations pass, including false-boundary ownership.
 9. Middleware/security/state ownership proof complete — **Complete**: the
-   host marker/context is host-visible only; no state or security bridge is
-   introduced, and the ownership boundary is documented.
+   host marker and real Litestar guard are host-visible only; no state or
+   security bridge is introduced, and the ownership boundary is documented.
 10. WebSocket proof complete — **Complete**: a real Litestar WebSocket route
     remains host-owned.
 11. Native mount investigation recorded — **Complete**: pinned 2.24.0 probe
@@ -48,12 +50,14 @@ only after that boundary.
     reusable host-conformance suites pass 24 tests.
 14. Full repository verification complete — **Complete**: serial Python
     3.12 coverage, Python 3.13/3.14 suites, lowest-direct, and latest suites
-    all pass; coverage is 85.14%.
+    all pass; final coverage is 85.16%.
 15. Documentation complete — **Complete**: web integration documentation now
     records the outer composition boundary, ownership rules, and the bounded
     Litestar 2.24.0 proof.
 16. Roadmap updated — Planned.
-17. Final code review complete — Planned.
+17. Final code review complete — **Complete**: the independent review found no
+    Critical issues; its three Important findings were resolved and retested
+    before handoff.
 18. Commit/push/draft PR complete — Planned.
 19. Exact-head CI complete — Planned.
 
@@ -99,7 +103,7 @@ only after that boundary.
   — 904 passed.
 - `uv run pytest --cov --cov-report=term-missing -q
   --basetemp=.pytest-tmp-d41-final-full` — 2,123 passed, 1 skipped;
-  coverage 85.14%.
+  final review-fix rerun coverage 85.16%.
 - Python 3.13, Python 3.14, lowest-direct, and latest dependency full suites
   — each 2,123 passed, 1 skipped.
 - `uv run mkdocs build --strict` — passed.
@@ -109,6 +113,18 @@ only after that boundary.
   validated.
 - `bun install --frozen-lockfile` and `bun run css:build`, followed by the
   generated CSS diff check — passed with no asset drift.
+
+## Review resolution
+
+The independent review's Important findings were resolved as follows:
+
+- Added a test-only recorder immediately before Litestar to assert the
+  host-owned path, root path, raw path, query string, state, and absence of
+  Litestar framework keys at the composition boundary.
+- Added a real Litestar guard proof showing host-local rejection does not
+  affect a Rakit-owned route.
+- Corrected the baseline statement to distinguish the branch parent from the
+  implementation head.
 
 The `/proxy2/admin` real-host test asserts only that the composition boundary
 leaves the request Litestar-owned. It does not encode Litestar's subsequent

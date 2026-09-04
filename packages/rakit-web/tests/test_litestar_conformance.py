@@ -7,8 +7,10 @@ from typing import Any, cast
 
 import pytest
 from litestar import Litestar, Request, get, websocket_listener
+from litestar.connection import ASGIConnection
 from litestar.datastructures import State
 from litestar.exceptions import HTTPException
+from litestar.handlers import BaseRouteHandler
 from litestar.params import FromPath
 from litestar.testing import TestClient
 from rakit import Admin, ResourceAdmin, compose_asgi
@@ -65,7 +67,7 @@ def _build_admin() -> Admin:
     return admin
 
 
-def _compose(host: Litestar, admin: object) -> ASGIApp:
+def _compose(host: object, admin: object) -> ASGIApp:
     """Keep incompatible framework ASGI type aliases at this test seam."""
 
     return compose_asgi(cast(ASGIApp, host), admin, path="/admin")
@@ -120,6 +122,27 @@ class _RecordingAdmin:
         return recording_child
 
 
+class _RecordingHost:
+    """Record the host branch before the real Litestar app sees a scope."""
+
+    def __init__(self, host: Litestar) -> None:
+        self.host = host
+        self.scopes: list[dict[str, Any]] = []
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] in {"http", "websocket"}:
+            snapshot = dict(scope)
+            state = scope.get("state")
+            if isinstance(state, Mapping):
+                snapshot["state"] = dict(state)
+            self.scopes.append(snapshot)
+        await cast(ASGIApp, self.host)(scope, receive, send)
+
+
+async def _reject_host_request(_connection: ASGIConnection, _handler: BaseRouteHandler) -> None:
+    raise HTTPException(status_code=401, detail="litestar guard")
+
+
 def _build_host(
     events: list[str],
     *,
@@ -139,6 +162,10 @@ def _build_host(
     async def host_error() -> object:
         raise HTTPException(status_code=418, detail="litestar-owned")
 
+    @get("/host-protected", guards=[_reject_host_request])
+    async def host_protected() -> object:
+        return {"owner": "litestar"}
+
     @get("/{host_path:path}")
     async def host_fallback(host_path: FromPath[str]) -> dict[str, str]:
         return {"owner": "litestar", "host_path": host_path}
@@ -156,7 +183,13 @@ def _build_host(
         events.append("litestar.shutdown")
 
     return Litestar(
-        route_handlers=[host_route, host_error, host_fallback, host_websocket],
+        route_handlers=[
+            host_route,
+            host_error,
+            host_protected,
+            host_fallback,
+            host_websocket,
+        ],
         middleware=[cast(Any, _HostMarkerMiddleware)],
         on_startup=[startup],
         on_shutdown=[shutdown],
@@ -168,10 +201,12 @@ def test_real_litestar_routes_host_and_rakit_ownership_without_registration_bran
     events: list[str] = []
     admin = _build_admin()
     recorded_admin = _RecordingAdmin(admin)
-    app = _compose(_build_host(events), recorded_admin)
+    recorded_host = _RecordingHost(_build_host(events))
+    app = _compose(recorded_host, recorded_admin)
 
     with TestClient(cast(Any, app), base_url="http://localhost") as client:
         host = client.get("/host", params={"q": "preserved"})
+        host_protected = client.get("/host-protected")
         rakit_root = client.get("/admin")
         rakit_descendant = client.get("/admin/_system/health")
         false_boundary = client.get("/administrator")
@@ -184,6 +219,15 @@ def test_real_litestar_routes_host_and_rakit_ownership_without_registration_bran
         "host_state": "present",
     }
     assert host.headers["x-litestar-host-middleware"] == "1"
+    assert host_protected.status_code == 401
+    assert "litestar guard" in host_protected.text
+    host_scope = next(scope for scope in recorded_host.scopes if scope["path"] == "/host")
+    assert host_scope["path"] == "/host"
+    assert host_scope["root_path"] == ""
+    assert host_scope["raw_path"] == b"/host?q=preserved"
+    assert host_scope["query_string"] == b"q=preserved"
+    assert host_scope["state"] == {}
+    assert "litestar_app" not in host_scope
     assert rakit_root.status_code == 200
     assert "D4.1 Litestar proof" in rakit_root.text
     assert rakit_descendant.status_code == 200
@@ -265,7 +309,8 @@ def test_real_litestar_root_path_forms_preserve_composition_ownership() -> None:
     events: list[str] = []
     admin = _build_admin()
     recorded_admin = _RecordingAdmin(admin)
-    app = _compose(_build_host(events), recorded_admin)
+    recorded_host = _RecordingHost(_build_host(events))
+    app = _compose(recorded_host, recorded_admin)
 
     with TestClient(cast(Any, app), base_url="http://localhost", root_path="/proxy") as client:
         host_separate = client.get("/host")
@@ -281,6 +326,12 @@ def test_real_litestar_root_path_forms_preserve_composition_ownership() -> None:
     assert rakit_included.json() == {"status": "ready"}
     assert administrator.json()["owner"] == "litestar"
     assert proxy_two.json()["owner"] == "litestar"
+    proxy_two_scope = next(
+        scope for scope in recorded_host.scopes if scope["path"] == "/proxy2/admin"
+    )
+    assert proxy_two_scope["root_path"] == "/proxy"
+    assert proxy_two_scope["raw_path"] == b"/proxy2/admin"
+    assert proxy_two_scope["query_string"] == b""
     assert len(recorded_admin.scopes) == 2
     assert all(scope["path"].startswith("/") for scope in recorded_admin.scopes)
     assert all(scope["path"] not in {"/admin", "/proxy/admin"} for scope in recorded_admin.scopes)
