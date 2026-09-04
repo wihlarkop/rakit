@@ -156,6 +156,17 @@ routes, middleware, framework context, dependency injection, guards, and
 authentication. Rakit owns its routes, sessions, CSRF, permissions, and
 authentication. These concepts are not implicitly bridged by composition.
 
+For the D4.2 proof, a real FastAPI host was exercised through the same generic
+composition root. The focused conformance suite passed against the locked
+FastAPI `0.139.2` / Starlette `1.3.1` resolution, the lowest-direct FastAPI
+`0.133.0` / Starlette `1.3.1` resolution, and the latest FastAPI `0.141.1` /
+Starlette `1.6.0` resolution. The proof covers host routing and response-model
+semantics, `Depends` and host security ownership, host-local middleware and
+exception handling, coordinated lifespan and rollback, root-path/state
+separation, OpenAPI/docs ownership, and a host WebSocket. This is bounded
+evidence for those exercised resolutions, not a general claim for every
+version permitted by `fastapi>=0.116`; D4.5 owns compatibility-range policy.
+
 ## Framework compatibility
 
 The current Rakit provider remains `web.starlette`: it identifies the Rakit web
@@ -168,6 +179,12 @@ deferred until they provide concrete value beyond ASGI composition.
 Litestar 2.24.0 is the bounded D4.1 tested version. This proof does not make a
 general Litestar 2.x or 3.x compatibility claim; compatibility-range policy is
 deferred to D4.5.
+
+FastAPI `0.139.2`, `0.133.0`, and `0.141.1` are the bounded D4.2 tested
+resolutions described above. Native `host.mount("/admin", admin.asgi())` is
+not an equivalent lifecycle-safe path: FastAPI documents that mounted
+sub-application lifespan events do not run, and D4.2's disposable probe
+confirmed that the mounted child served requests without running its lifespan.
 
 Flask and generic WSGI integration are postponed research and are outside the
 D4 closure gate. D4 may close without Flask; no WSGI bridge or Flask support is
