@@ -52,10 +52,10 @@ compatibility-range claim.
 17. Existing D4.0/D4.1 regressions complete — Complete
 18. Full repository verification complete — Complete
 19. Documentation complete — Complete
-20. Roadmap updated — Complete (D4.2 remains in progress until exact-head CI; D4.3 not started)
+20. Roadmap updated — Complete (D4.2 is complete after exact-head CI; D4.3 is Next and not started)
 21. Final code review complete — Complete (no Critical findings; the Important stale-roadmap finding was resolved and docs/Ruff checks rerun)
-22. Commit/push/draft PR complete — Pending
-23. Exact-head CI complete — Pending
+22. Commit/push/draft PR complete — Complete (`e3be2a92d3a72ce778e0a59e2748c9b5b3d035a2` pushed; draft PR #65 created)
+23. Exact-head CI complete — Complete (implementation head `e3be2a92d3a72ce778e0a59e2748c9b5b3d035a2` passed run `33851064114`; final documentation head is recorded below)
 
 ## Decisions and rejected approaches
 
@@ -139,6 +139,21 @@ verification complete with exact-head CI pending, while overall D4 remains in
 progress and D4.3 remains unstarted. The reviewer found no production leakage,
 DI/security/middleware/exception/state bleed, OpenAPI brittleness, dependency
 change, or copied Litestar-only test issue.
+
+## Git and CI handoff evidence
+
+- Commit: `e3be2a92d3a72ce778e0a59e2748c9b5b3d035a2`, parent
+  `0c6a5491539df569869c7880a49548995389852b`.
+- Push: `origin/phase-d4-2-fastapi-proof` created without force-push.
+- Draft PR: [#65](https://github.com/wihlarkop/rakit/pull/65), titled
+  `feat(web): prove FastAPI host portability`.
+- Exact-head implementation CI: [run 33851064114](https://github.com/wihlarkop/rakit/actions/runs/33851064114),
+  head `e3be2a92d3a72ce778e0a59e2748c9b5b3d035a2`, conclusion `success`.
+  Every job passed: `test (3.12)`, `test (3.13)`, `test (3.14)`,
+  `Dependencies (lowest-direct)`, `Dependencies (latest)`, `Web asset
+  reproducibility`, `Plan 07 release gate`, and `Artifact dry run`.
+- Final documentation-closure CI will be recorded here after the roadmap and
+  checklist closure commit; it is the deliberate final exact-head evidence.
 
 ## Evidence format
 
