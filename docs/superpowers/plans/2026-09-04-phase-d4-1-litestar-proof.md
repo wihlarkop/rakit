@@ -54,13 +54,16 @@ only after that boundary.
 15. Documentation complete — **Complete**: web integration documentation now
     records the outer composition boundary, ownership rules, and the bounded
     Litestar 2.24.0 proof.
-16. Roadmap updated — Planned.
+16. Roadmap updated — **Complete**: D4.1 is marked complete on the branch;
+    overall D4 remains in progress and D4.2 FastAPI is next without being
+    started.
 17. Final code review complete — **Complete**: the independent review found no
     Critical issues; its Important findings were resolved and retested before
     handoff.
 18. Commit/push/draft PR complete — **Complete**: commits were pushed to
     `phase-d4-1-litestar-proof` and draft PR #64 was opened against `main`.
-19. Exact-head CI complete — Planned.
+19. Exact-head CI complete — **Complete**: CI run `33840869572` passed every
+    job for implementation head `96a368c7a65fae92c36b80db787e6897f7422b2e`.
 
 ## Decisions and boundaries
 
