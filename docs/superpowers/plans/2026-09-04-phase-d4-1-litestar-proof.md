@@ -50,14 +50,14 @@ only after that boundary.
     reusable host-conformance suites pass 24 tests.
 14. Full repository verification complete — **Complete**: serial Python
     3.12 coverage, Python 3.13/3.14 suites, lowest-direct, and latest suites
-    all pass; final coverage is 85.16%.
+    all pass; final Python 3.12 coverage is 85.15%.
 15. Documentation complete — **Complete**: web integration documentation now
     records the outer composition boundary, ownership rules, and the bounded
     Litestar 2.24.0 proof.
 16. Roadmap updated — Planned.
 17. Final code review complete — **Complete**: the independent review found no
-    Critical issues; its three Important findings were resolved and retested
-    before handoff.
+    Critical issues; its Important findings were resolved and retested before
+    handoff.
 18. Commit/push/draft PR complete — Planned.
 19. Exact-head CI complete — Planned.
 
@@ -103,7 +103,7 @@ only after that boundary.
   — 904 passed.
 - `uv run pytest --cov --cov-report=term-missing -q
   --basetemp=.pytest-tmp-d41-final-full` — 2,123 passed, 1 skipped;
-  final review-fix rerun coverage 85.16%.
+  final review-fix rerun coverage 85.15%.
 - Python 3.13, Python 3.14, lowest-direct, and latest dependency full suites
   — each 2,123 passed, 1 skipped.
 - `uv run mkdocs build --strict` — passed.
@@ -119,12 +119,15 @@ only after that boundary.
 The independent review's Important findings were resolved as follows:
 
 - Added a test-only recorder immediately before Litestar to assert the
-  host-owned path, root path, raw path, query string, state, and absence of
-  Litestar framework keys at the composition boundary.
+  host-owned path, root path, query string, state, and absence of Litestar
+  framework keys at the composition boundary. Raw-path transformations remain
+  covered by the framework-neutral D4.0 suite and the no-query root-path case.
 - Added a real Litestar guard proof showing host-local rejection does not
   affect a Rakit-owned route.
 - Corrected the baseline statement to distinguish the branch parent from the
   implementation head.
+- Removed the TestClient-specific query-bearing `raw_path` assertion; raw-path
+  semantics remain owned by the generic D4.0 direct-ASGI tests.
 
 The `/proxy2/admin` real-host test asserts only that the composition boundary
 leaves the request Litestar-owned. It does not encode Litestar's subsequent

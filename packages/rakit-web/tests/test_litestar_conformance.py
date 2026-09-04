@@ -224,7 +224,6 @@ def test_real_litestar_routes_host_and_rakit_ownership_without_registration_bran
     host_scope = next(scope for scope in recorded_host.scopes if scope["path"] == "/host")
     assert host_scope["path"] == "/host"
     assert host_scope["root_path"] == ""
-    assert host_scope["raw_path"] == b"/host?q=preserved"
     assert host_scope["query_string"] == b"q=preserved"
     assert host_scope["state"] == {}
     assert "litestar_app" not in host_scope
